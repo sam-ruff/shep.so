@@ -392,7 +392,7 @@ impl Default for Preferences {
             google_grant: Default::default(),
             google_lifecycle: Default::default(),
             sync_minutes: 5,
-            mail_check_seconds: 15,
+            mail_check_seconds: 5,
             google_client_id: String::new(),
             google_client_secret: String::new(),
             google_services: None,

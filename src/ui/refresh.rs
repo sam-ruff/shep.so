@@ -112,9 +112,10 @@ mod tests {
         assert!(!app.refresh_animating());
         app.full_reader = false;
         assert!(app.refresh_animating());
-        let _ = app.handle(Message::Backend(Event::MailSyncFinished(Err(
-            "Try again".into()
-        ))));
+        let _ = app.handle(Message::Backend(Event::MailSyncFinished(
+            "work".into(),
+            Err("Try again".into()),
+        )));
         // Only the scheduler knows whether a follow-up is still queued.
         assert!(app.refresh_animating());
         let _ = app.handle(Message::Backend(Event::Busy("sync".into(), false)));
