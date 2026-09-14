@@ -82,7 +82,11 @@ impl App {
                 token: receipt.recovery.clone().unwrap(),
                 original: original.clone(),
                 receipt: receipt.clone(),
-                stage: crate::mail_actions::journal::MoveStage::Committed,
+                stage: if receipt.local_only {
+                    crate::mail_actions::journal::MoveStage::Local
+                } else {
+                    crate::mail_actions::journal::MoveStage::Committed
+                },
                 error: None,
                 attempted: 0,
                 retained: None,
@@ -154,6 +158,10 @@ impl App {
                 display.current = Some(mail.clone());
                 self.confirm_move_display(&record.original, &display);
             }
+        } else if record.stage == MoveStage::Local {
+            let mut display = record.receipt.clone();
+            display.local_only = true;
+            self.confirm_move_display(&record.original, &display);
         } else {
             self.confirm_move_display(&record.original, &record.receipt);
         }

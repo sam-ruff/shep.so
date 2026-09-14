@@ -36,6 +36,7 @@ fn label(stage: MoveStage) -> &'static str {
         MoveStage::Started => "Move needs review",
         MoveStage::Copied => "Copy saved · finish move",
         MoveStage::Committed => "Move confirmed · recovery needed",
+        MoveStage::Local => "Moved on this device only · server retry pending",
         _ => "Recovery complete",
     }
 }
@@ -247,12 +248,13 @@ impl App {
             return space().into();
         };
         let busy = self.move_recovery.pending.contains_key(&record.token);
+        let local = record.stage == MoveStage::Local;
         container(
             row![
-                text(if busy {
-                    "Finishing move…"
-                } else {
-                    "Move not finished"
+                text(match (busy, local) {
+                    (true, _) => "Finishing move…",
+                    (false, true) => "Moved on this device only",
+                    (false, false) => "Move not finished",
                 })
                 .size(12),
                 space().width(Length::Fill),
@@ -392,6 +394,9 @@ impl App {
         let explanation = match action {
             RecoveryAction::Retry if record.stage == MoveStage::Copied => format!(
                 "Verify the copy in {destination}, then finish removing the source message."
+            ),
+            RecoveryAction::Retry if record.stage == MoveStage::Local => format!(
+                "Ask the server to move this message to {destination} again. Until that succeeds, only this device shows it there; Shep also retries automatically."
             ),
             RecoveryAction::Retry => format!(
                 "Find the confirmed copy in {destination} and reconnect it to this cached message."
