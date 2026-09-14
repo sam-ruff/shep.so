@@ -264,4 +264,39 @@ mod tests {
         assert_eq!(page.total, 512);
         assert!(page.rows.len() <= CONVERSATION_PAGE_SIZE);
     }
+
+    #[tokio::test]
+    async fn conversation_for_removed_anchor_is_empty_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path().join("plain.sqlite")).unwrap();
+        let messages = (0..2)
+            .map(|i| {
+                parse_mail("fixture", &i.to_string(), "INBOX",
+                    format!("From: Fictional <writer@example.test>\r\nSubject: Thread\r\nMessage-ID: <{i}@example.test>\r\nReferences: <root@example.test>\r\n\r\nFictional body.").into_bytes(), false, false).unwrap()
+            })
+            .collect::<Vec<_>>();
+        let anchor = messages[0].summary.id.clone();
+        store.upsert(messages).await.unwrap();
+        assert_eq!(
+            store
+                .conversation(anchor.clone(), None)
+                .await
+                .unwrap()
+                .total,
+            2
+        );
+
+        let removed = anchor.clone();
+        store
+            .run(move |c| {
+                c.execute("DELETE FROM messages WHERE id=?", [&removed])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        for id in [anchor, "never-synced".to_string()] {
+            let page = store.conversation(id.clone(), None).await.unwrap();
+            assert_eq!((page.anchor, page.total, page.rows.len()), (id, 0, 0));
+        }
+    }
 }
