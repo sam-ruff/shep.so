@@ -31,6 +31,18 @@ Menu key opens the text menu for the focused control. Passwords cannot be copied
 - Quoted reply history within each message can be collapsed, expanded or hidden. Attachments wrap alongside Reply. Click the sender for copyable addresses. Remote images default to blocked, with message/sender/domain exceptions and Block all / Contacts / Allow all policies in Privacy preferences. Contacts are currently a manually maintained list.
 - Preferences → General includes message font size and interface scaling, alongside Light, Dark and System appearance. Preferences → Shortcuts remaps every listed action and rejects duplicate bindings. Letter shortcuts do not activate inside text fields. `Mod` is Command on macOS and Control elsewhere.
 
+IMAP checks download bodies in two lanes. Within each folder the new
+messages from a metadata chunk are fetched smallest first (newest first among
+equal sizes) in the usual batches, so a run of small new mail never waits
+behind one large message. Anything over 1 MiB is recorded and fetched one
+message at a time only after every folder's small bodies have arrived, and
+messages over 25 MiB follow in the streamed staging pass. A folder's listing
+is reconciled once its small bodies are in; a deferred body is not cached
+yet, so it is never removed by that reconciliation. Inbox reports finished
+after its last body in whichever lane carries it. If the slow lane fails part
+way, the messages already received stay saved and the remaining deferred
+messages are still unknown, so the next check fetches them again.
+
 Contacts has a separate Preferences tab. Image policy and per-message/sender/domain exceptions remain under Privacy. Explicit Save buttons show a dismissible **Changes saved** toast after persistence succeeds.
 
 Archive and Move create a missing destination before moving mail. If an earlier
