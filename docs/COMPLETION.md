@@ -1,5 +1,20 @@
 # Completion audit
 
+## Related messages after archiving, 14 September 2026
+
+Archiving, moving or deleting the open email while its conversation was loading
+showed "Could not load related messages: Query returned no rows". The anchor's
+conversation row had already been removed, and the store surfaced SQLite's
+missing-row error. `conversation_around` now returns an empty conversation for
+a removed or never-synced anchor, so the reader falls back to the single
+message view without a notice.
+
+Source is pushed as [`3dabf16`](https://github.com/sam-ruff/shep.so/commit/3dabf16).
+A regression test covers a deleted anchor and an unknown one. The pre-push hook
+passed the full Rust suite and Clippy shows no new warnings. Not reproduced in
+the running desktop app, and Flutter/browser conversation loading has not been
+checked for the same fault.
+
 ## Desktop release CI preparation, 13 September 2026
 
 The requested desktop release pipeline now gates Linux and Windows archives on
