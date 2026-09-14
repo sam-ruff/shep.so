@@ -2,12 +2,23 @@
 //! a partial LIST followed by NO must never become an authoritative empty tree.
 use super::*;
 use crate::folder_actions::{Connection, Outcome, Step, valid_name};
-use crate::folders::{Mailbox, NameEncoding};
+use crate::folders::{FolderRole, Mailbox, NameEncoding};
 use async_imap::imap_proto::{MailboxDatum, Response, Status};
 use async_imap::types::{Capabilities, NameAttribute};
 
 mod creation;
 pub use creation::{ensure_exact, exists_exact};
+
+fn role(attributes: &[NameAttribute<'_>]) -> Option<FolderRole> {
+    attributes.iter().find_map(|attribute| match attribute {
+        NameAttribute::Archive => Some(FolderRole::Archive),
+        NameAttribute::Drafts => Some(FolderRole::Drafts),
+        NameAttribute::Junk => Some(FolderRole::Junk),
+        NameAttribute::Sent => Some(FolderRole::Sent),
+        NameAttribute::Trash => Some(FolderRole::Trash),
+        _ => None,
+    })
+}
 
 pub(super) fn encoding(capabilities: &Capabilities) -> NameEncoding {
     if capabilities.has_str("IMAP4rev2") && !capabilities.has_str("IMAP4rev1")
@@ -34,12 +45,14 @@ pub(super) fn mailbox(
         no_inferiors: attributes.contains(&NameAttribute::NoInferiors),
         non_existent,
         encoding,
+        role: role(attributes),
     }
 }
 
 pub struct ImapFolders<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug> {
     session: async_imap::Session<T>,
     encoding: NameEncoding,
+    create_special_use: bool,
 }
 
 impl ImapFolders<Tls> {
@@ -50,8 +63,12 @@ impl ImapFolders<Tls> {
         );
         tokio::time::timeout(Duration::from_secs(30), async {
             let mut session = imap(account, password).await?;
-            let encoding = encoding(&session.capabilities().await?);
-            Ok(Self { session, encoding })
+            let capabilities = session.capabilities().await?;
+            Ok(Self {
+                session,
+                encoding: encoding(&capabilities),
+                create_special_use: creation::create_special_use(&capabilities),
+            })
         })
         .await
         .context("The mail server took too long to connect.")?
@@ -165,6 +182,7 @@ mod tests {
             ImapFolders {
                 session,
                 encoding: NameEncoding::ImapUtf7,
+                create_special_use: false,
             },
             server,
         )
