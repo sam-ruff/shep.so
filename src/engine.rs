@@ -13,6 +13,7 @@ pub mod folders;
 mod google_lifecycle;
 mod lifecycle_work;
 mod mail_actions;
+mod mail_push;
 mod mail_sync;
 mod move_recovery;
 mod outgoing;
