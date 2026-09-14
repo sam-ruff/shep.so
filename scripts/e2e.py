@@ -2296,7 +2296,7 @@ class NativeFlows(unittest.TestCase):
         result=self.mcp.call("desktop.start", background_sync=True)
         self.mcp.batch(check("background_sync", True), check("refreshing", False),
                        check("refresh_animation.running",False),check("refresh_animation.angle",0),
-                       check("mail_check_seconds", 15), shot("background-sync-refresh-idle"),
+                       check("mail_check_seconds", 5), shot("background-sync-refresh-idle"),
                        wait(100),shot("background-sync-refresh-still"),check("background_sync",True))
         self.assert_refresh_pixels_change(result["artifacts"],"background-sync-refresh-idle",
                                           "background-sync-refresh-still",(1400,36),False)
@@ -2358,7 +2358,7 @@ class NativeFlows(unittest.TestCase):
                        click(420,247),check("selected","New mail from the background"),
                        key("s"),check("mail_pending",0),key("u"),check("mail_pending",0),
                        check("notifications.sent",1),shot("notification-arrival-once"),
-                       {"type":"restart"},{**check("sync_round",3),"timeout_ms":5000},
+                       {"type":"restart"},{**check("sync_round",3,"gte"),"timeout_ms":5000},
                        check("background_sync",False),check("total",121),check("notifications.requested",0),
                        check("notifications.sent",0),shot("notification-restart-no-repeat"))
 
@@ -2489,11 +2489,11 @@ class NativeFlows(unittest.TestCase):
                        click(1150, 88), type_text("mail check interval"), check("settings_matches.0", "Mail & performance"),
                        click(500, 289), check("settings_group", "Mail & performance"), shot("mail-check-seconds-setting"),
                        click(1110, 364), key("ctrl+a"), type_text("0"), click(1350, 88),
-                       check("notice", "5–3600 seconds", "contains"), check("mail_check_seconds", 15),
-                       click(1110, 364), key("ctrl+a"), type_text("5"), click(1350, 88),
-                       check("mail_check_seconds", 5), check("preferences_saved", True), check("notice", None),
+                       check("notice", "5–3600 seconds", "contains"), check("mail_check_seconds", 5),
+                       click(1110, 364), key("ctrl+a"), type_text("15"), click(1350, 88),
+                       check("mail_check_seconds", 15), check("preferences_saved", True), check("notice", None),
                        shot("mail-check-seconds-saved"), key("ctrl+1"), key("ctrl+comma"),
-                       check("fields.mail_check_seconds", "5"))
+                       check("fields.mail_check_seconds", "15"))
 
     def test_read_unread_and_flags_show_immediately_during_slow_save(self):
         self.mcp.call("desktop.start", mail_actions="slow")

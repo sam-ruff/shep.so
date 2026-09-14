@@ -438,7 +438,8 @@ pub struct App {
     busy: HashSet<String>,
     refresh: refresh::Animation,
     notice: Option<(String, bool, Instant)>,
-    sync_notice: Option<Instant>,
+    /// The account whose failed check raised the current notice, and when.
+    sync_notice: Option<(String, Instant)>,
     preference_notice: Option<Instant>,
     google_connected: bool,
     /// This build's sign-in client ID; `None` when the build has none.
@@ -1463,18 +1464,23 @@ impl App {
                         Err(_) => {}
                     }
                 }
-                Event::MailSyncFinished(result) => match result {
+                Event::MailSyncFinished(account, result) => match result {
                     Ok(()) => {
-                        if self.sync_notice.is_some_and(|at| {
-                            self.notice.as_ref().is_some_and(|notice| notice.2 == at)
-                        }) {
-                            self.notice = None;
+                        let recovered = self
+                            .sync_notice
+                            .as_ref()
+                            .filter(|(failed, _)| *failed == account)
+                            .map(|(_, at)| *at);
+                        if let Some(at) = recovered {
+                            if self.notice.as_ref().is_some_and(|notice| notice.2 == at) {
+                                self.notice = None;
+                            }
+                            self.sync_notice = None;
                         }
-                        self.sync_notice = None;
                     }
                     Err(error) => {
                         self.notice(error, true);
-                        self.sync_notice = self.notice.as_ref().map(|notice| notice.2);
+                        self.sync_notice = self.notice.as_ref().map(|notice| (account, notice.2));
                     }
                 },
                 Event::MailArrived(arrival) => self.notification_arrived(arrival),

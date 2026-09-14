@@ -218,7 +218,9 @@ pub enum Event {
         result: Result<Arc<MailDetail>, String>,
         prefetch: bool,
     },
-    MailSyncFinished(Result<(), String>),
+    /// One account's check result, keyed by account so a recovered account
+    /// clears only its own earlier error.
+    MailSyncFinished(String, Result<(), String>),
     MailArrived(Arc<crate::notifications::Arrival>),
     FlagsFinished(u64, Mail, Result<(), String>),
     MoveFinished(
@@ -854,53 +856,7 @@ impl Engine {
                 };
                 output.send(event).await?;
             }
-            Command::Sync => {
-                if self.demo {
-                    #[cfg(feature = "test-support")]
-                    {
-                        if std::env::args().any(|arg| arg == "--held-account-sync") {
-                            return self.preview_held_account_sync(output).await;
-                        }
-                        let (round, arrival) = crate::test_support::sync_mail(&self.store).await?;
-                        if let Some(arrival) = arrival {
-                            output.send(Event::MailArrived(Arc::new(arrival))).await?;
-                        }
-                        output.send(Event::PreviewSync(round)).await?;
-                    }
-                    #[cfg(not(feature = "test-support"))]
-                    tokio::time::sleep(Duration::from_millis(1500)).await;
-                    output.send(Event::Changed).await?;
-                    return Ok(());
-                }
-                let accounts = self.store.accounts_ready_to_sync().await?;
-                let results: Vec<_> = futures::stream::iter(accounts)
-                    .map(|a| {
-                        let engine = self.clone();
-                        let mut output = output.clone();
-                        async move {
-                            let name = a.name.clone();
-                            let result = engine
-                                .sync_account(a, output.clone())
-                                .await
-                                .with_context(|| format!("{name} sync failed"));
-                            // Flush even a short account check's final cache
-                            // changes without waiting for a slower account.
-                            output.send(Event::Changed).await?;
-                            result
-                        }
-                    })
-                    .buffer_unordered(3)
-                    .collect()
-                    .await;
-                let failures: Vec<_> = results
-                    .into_iter()
-                    .filter_map(|result| result.err().map(|error| format!("{error:#}")))
-                    .collect();
-                output.send(Event::PendingMovesReady).await?;
-                self.workspace(&mut output).await?;
-                output.send(Event::Changed).await?;
-                anyhow::ensure!(failures.is_empty(), "{}", failures.join("\n"));
-            }
+            Command::Sync => anyhow::bail!("Mail checks reached the wrong worker"),
             Command::RecoverPendingMoves => {
                 self.recover_completed_moves(output).await?;
             }
