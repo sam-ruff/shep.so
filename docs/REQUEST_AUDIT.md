@@ -1,5 +1,15 @@
 # Conversation request audit
 
+**14 September mail sync speed and reliable moves (R100/R101):** Sam reports
+the related-messages notice after archiving (fixed, `3dabf16`) and a failed
+move whose notice names a missing folder namespace on `sam@shep.so`. Sam's
+direction: create the destination when it does not exist, fall back to a local
+move when the server refuses and note that such moves need manual syncing
+between Shep clients, check mail every 5 seconds by default, sync each account
+independently and skip slow items, use server push, and stop user actions from
+interrupting sync. This supersedes the earlier "discuss before designing sync"
+note for these items only. The live IMAP probe and lane plan are in `TODO.md`.
+
 **13 September release CI and installers:** Sam requests CI releases so the
 installation scripts can reliably use published binaries. This explicitly
 supersedes disabled desktop quality/release CI. Linux and Windows are supported
@@ -378,6 +388,8 @@ hook test executions passing; see the newest completion entry. OAuth and the sha
 | R97 | Configurable option to include the previous email thread in replies (11 September 2026) | Open in TODO |
 | R98 | Small ? help icons with tooltips beside easily misunderstood settings only, not every option (11 September 2026) | Open in TODO |
 | R99 | Settings search should search all settings (11 September 2026) | Search-demo catalogue adds control captions, weighted typo matching, cached results and persisted-field coverage review. Exact deep-control reveal, exhaustive dynamic captions and client parity remain open in TODO; see [Preferences search](agents/SETTINGS_SEARCH.md) |
+| R100 | "Could not load related messages: Query returned no rows" keeps appearing after archiving and is not useful (14 September 2026) | Fixed and pushed as `3dabf16`: a removed or never-synced conversation anchor returns an empty conversation instead of a raw SQLite error; regression test added. Flutter/browser clients have no grouped conversation view, so nothing there can fail the same way; grouping parity itself is an open client gap |
+| R101 | Mail is slow to arrive and moves fail with "The server did not report its folder namespace"; create missing folders, trash locally when the server refuses, 5 second default check, per-account threading that skips slow items, server push, and actions that do not interrupt sync (14 September 2026) | Recorded as the highest-priority TODO section. Live probe of `sam@shep.so` (Stalwart) confirmed `LIST "<destination>" ""` returns nothing while `LIST "" ""` reports the root, no Archive folder exists, and Trash/Junk/Sent are `Deleted Items`/`Junk Mail`/`Sent Items` by SPECIAL-USE; IDLE, CONDSTORE, QRESYNC and CREATE-SPECIAL-USE are advertised. Implementation lanes started 14 September; nothing shipped yet |
 
 ## Client history (feat/mobile-web-clients)
 
