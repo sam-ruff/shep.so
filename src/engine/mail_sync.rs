@@ -1,4 +1,5 @@
 use super::*;
+use crate::providers::mail::push::WatchEnd;
 use std::collections::HashMap;
 use tokio::time::Instant as Deadline;
 
@@ -61,6 +62,7 @@ impl Engine {
     ) {
         let lister = self.clone();
         let checker = self.clone();
+        let watcher = self.clone();
         drive(
             self.mail_sync_settings.clone(),
             requests,
@@ -77,8 +79,36 @@ impl Engine {
                     engine.check_target(target, events).await
                 }
             },
+            move |target, sink, stop| {
+                let engine = watcher.clone();
+                async move { engine.watch_target(target, sink, stop).await }
+            },
         )
         .await;
+    }
+
+    /// Watches an IMAP account's Inbox on its own connection. It takes no
+    /// account lock and no provider slot because it does no cache work.
+    async fn watch_target(
+        &self,
+        target: Target,
+        sink: mail_push::Sink,
+        stop: mail_push::Stop,
+    ) -> anyhow::Result<WatchEnd> {
+        let Target::Account(account) = target else {
+            return Ok(WatchEnd::Unsupported);
+        };
+        if account.protocol != Protocol::Imap {
+            return Ok(WatchEnd::Unsupported);
+        }
+        let password = self.credentials.read(&account.id).await?;
+        providers::mail::push::watch_inbox(
+            &account,
+            &password,
+            |push| sink.push(push),
+            mail_push::stopped(stop),
+        )
+        .await
     }
 
     async fn sync_targets(&self) -> anyhow::Result<Vec<Target>> {
@@ -139,6 +169,8 @@ struct Slot {
     started: Option<Deadline>,
     /// The manual request count this target's latest check has covered.
     served: u64,
+    /// A server push asked for a check ahead of the interval.
+    pushed: bool,
 }
 
 /// Per-target scheduling state. Each target has its own cadence and a running
@@ -177,9 +209,10 @@ impl Schedule {
             }
             let manual = slot.served < self.requests;
             let due = background && slot.started.is_none_or(|started| started + interval <= now);
-            if !manual && !due {
+            if !manual && !due && !slot.pushed {
                 continue;
             }
+            slot.pushed = false;
             slot.running = true;
             slot.started = Some(now);
             slot.served = self.requests;
@@ -192,6 +225,16 @@ impl Schedule {
         if let Some(slot) = self.slots.get_mut(key) {
             slot.running = false;
         }
+    }
+
+    /// Makes a known target due out of band, such as after a server push. A
+    /// running check gets a follow-up so a change during its scan is not lost.
+    fn wake(&mut self, key: &str) -> bool {
+        let Some(slot) = self.slots.get_mut(key) else {
+            return false;
+        };
+        slot.pushed = true;
+        true
     }
 
     /// Every known target has started a check since the latest manual request.
@@ -221,24 +264,29 @@ impl Schedule {
 /// The production scheduling loop accepts object-scoped listing and checking
 /// implementations so timer/overlap/error tests can use virtual time without
 /// SQLite or sockets.
-async fn drive<T, L, LF, R, RF>(
+async fn drive<T, L, LF, R, RF, W, WF>(
     settings_source: Settings,
     mut requests: mpsc::Receiver<Command>,
     mut output: Output,
     background: bool,
     list: L,
     run: R,
+    watch: W,
 ) where
     T: SyncTarget,
     L: Fn() -> LF,
     LF: std::future::Future<Output = anyhow::Result<Vec<T>>>,
     R: Fn(T, Output) -> RF,
     RF: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    W: Fn(T, mail_push::Sink, mail_push::Stop) -> WF + Clone + Send + 'static,
+    WF: std::future::Future<Output = anyhow::Result<WatchEnd>> + Send + 'static,
 {
     let mut settings = settings_source.0.subscribe();
     let mut interval = Duration::from_secs((*settings.borrow_and_update()).clamp(5, 3600));
     let mut schedule = Schedule::default();
     let mut jobs = tokio::task::JoinSet::new();
+    let mut watchers = mail_push::Watchers::default();
+    let (changed, mut pushes) = mpsc::unbounded_channel::<String>();
     let mut owners: HashMap<tokio::task::Id, (String, bool)> = HashMap::new();
     let mut manual_busy = false;
     let mut manual_running = 0usize;
@@ -267,6 +315,9 @@ async fn drive<T, L, LF, R, RF>(
                                 .await;
                         }
                         let was_idle = background_running == 0;
+                        if background {
+                            watchers.reconcile(&targets, &watch, &changed);
+                        }
                         for (target, manual) in schedule.start(targets, now, interval, background) {
                             if manual {
                                 manual_running += 1;
@@ -314,6 +365,12 @@ async fn drive<T, L, LF, R, RF>(
         }
         tokio::select! {
             biased;
+            Some(key) = pushes.recv(), if !closed => {
+                if schedule.wake(&key) {
+                    pass = true;
+                }
+            }
+            _ = watchers.reap(), if !watchers.is_empty() => {}
             finished = jobs.join_next_with_id(), if !jobs.is_empty() => {
                 let Some(finished) = finished else { continue };
                 let (id, result) = match finished {
@@ -356,6 +413,7 @@ async fn drive<T, L, LF, R, RF>(
             }
         }
     }
+    watchers.shutdown().await;
 }
 
 #[cfg(test)]
@@ -429,12 +487,23 @@ mod tests {
         );
     }
 
+    /// What one watcher attempt does for a fixture. A fixture without steps
+    /// reports no IDLE support without any notice.
+    #[derive(Clone, Copy)]
+    enum WatchStep {
+        Unsupported,
+        Fail,
+        ConnectThenFail,
+        Connect,
+    }
+
     #[derive(Clone)]
     struct Fixture {
         key: &'static str,
         seconds: u64,
         fail_first: bool,
         hang_first: bool,
+        watch: Vec<WatchStep>,
     }
     impl Fixture {
         fn new(key: &'static str, seconds: u64) -> Self {
@@ -443,6 +512,7 @@ mod tests {
                 seconds,
                 fail_first: false,
                 hang_first: false,
+                watch: vec![],
             }
         }
         fn failing_first(mut self) -> Self {
@@ -451,6 +521,10 @@ mod tests {
         }
         fn hanging_first(mut self) -> Self {
             self.hang_first = true;
+            self
+        }
+        fn watching(mut self, steps: Vec<WatchStep>) -> Self {
+            self.watch = steps;
             self
         }
     }
@@ -467,6 +541,8 @@ mod tests {
         requests: mpsc::Sender<Command>,
         events: futures::channel::mpsc::Receiver<Event>,
         accounts: Arc<Mutex<Vec<Fixture>>>,
+        /// Simulated server pushes, keyed by fixture.
+        pushes: tokio::sync::broadcast::Sender<&'static str>,
         task: tokio::task::JoinHandle<()>,
         trace: Vec<String>,
     }
@@ -482,6 +558,10 @@ mod tests {
             let accounts = Arc::new(Mutex::new(fixtures));
             let listed = accounts.clone();
             let rounds: Arc<Mutex<HashMap<&'static str, usize>>> = Default::default();
+            let attempts: Arc<Mutex<HashMap<&'static str, usize>>> = Default::default();
+            let pushes = tokio::sync::broadcast::channel::<&'static str>(16).0;
+            let pusher = pushes.clone();
+            let watch_output = output.clone();
             let task = tokio::spawn(drive(
                 settings,
                 input,
@@ -513,14 +593,92 @@ mod tests {
                         Ok(())
                     }
                 },
+                move |fixture: Fixture, sink: mail_push::Sink, stop: mail_push::Stop| {
+                    let attempt = {
+                        let mut attempts = attempts.lock().expect("attempts");
+                        let attempt = attempts.entry(fixture.key).or_default();
+                        *attempt += 1;
+                        *attempt
+                    };
+                    let step = fixture.watch.get(attempt - 1).copied();
+                    let mut pushes = pusher.subscribe();
+                    let mut output = watch_output.clone();
+                    async move {
+                        use crate::providers::mail::push::Push;
+                        let key = fixture.key;
+                        let Some(step) = step else {
+                            return Ok(WatchEnd::Unsupported);
+                        };
+                        match step {
+                            WatchStep::Unsupported => {
+                                output
+                                    .send(Event::Notice(format!("{key} watcher unsupported")))
+                                    .await?;
+                                Ok(WatchEnd::Unsupported)
+                            }
+                            WatchStep::Fail => {
+                                output
+                                    .send(Event::Notice(format!("{key} watcher failed {attempt}")))
+                                    .await?;
+                                anyhow::bail!("Fixture watcher failed")
+                            }
+                            WatchStep::ConnectThenFail => {
+                                sink.push(Push::Connected);
+                                output
+                                    .send(Event::Notice(format!(
+                                        "{key} watcher connected {attempt}"
+                                    )))
+                                    .await?;
+                                anyhow::bail!("Fixture watcher dropped")
+                            }
+                            WatchStep::Connect => {
+                                sink.push(Push::Connected);
+                                output
+                                    .send(Event::Notice(format!(
+                                        "{key} watcher connected {attempt}"
+                                    )))
+                                    .await?;
+                                let mut stopped = std::pin::pin!(mail_push::stopped(stop));
+                                loop {
+                                    tokio::select! {
+                                        biased;
+                                        _ = &mut stopped => {
+                                            output
+                                                .send(Event::Notice(format!("{key} watcher stopped")))
+                                                .await?;
+                                            return Ok(WatchEnd::Stopped);
+                                        }
+                                        pushed = pushes.recv() => match pushed {
+                                            Ok(pushed) if pushed == key => {
+                                                sink.push(Push::Changed);
+                                                output
+                                                    .send(Event::Notice(format!("{key} pushed")))
+                                                    .await?;
+                                            }
+                                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                                (&mut stopped).await;
+                                                return Ok(WatchEnd::Stopped);
+                                            }
+                                            _ => {}
+                                        },
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
             ));
             Self {
                 requests,
                 events,
                 accounts,
+                pushes,
                 task,
                 trace: vec![],
             }
+        }
+        fn push(&self, key: &'static str) {
+            self.pushes.send(key).expect("a watcher is subscribed");
         }
         fn single(settings: Settings, background: bool, fail_first: bool) -> Self {
             let mut fixture = Fixture::new("a", 2);
@@ -552,8 +710,9 @@ mod tests {
         fn count(&self, label: &str) -> usize {
             self.trace.iter().filter(|e| e.as_str() == label).count()
         }
-        /// Closes the request channel and waits for the worker to stop.
-        async fn close(mut self) {
+        /// Closes the request channel, waits for the worker to stop and
+        /// returns the notices sent while it shut down.
+        async fn close(mut self) -> Vec<String> {
             let (unused, _) = mpsc::channel(1);
             drop(std::mem::replace(&mut self.requests, unused));
             let task = std::mem::replace(&mut self.task, tokio::spawn(async {}));
@@ -561,6 +720,13 @@ mod tests {
                 .await
                 .expect("worker stops after its requests close")
                 .unwrap();
+            let mut remaining = Vec::new();
+            while let Ok(event) = self.events.try_recv() {
+                if let Event::Notice(text) = event {
+                    remaining.push(text);
+                }
+            }
+            remaining
         }
     }
 
@@ -746,6 +912,179 @@ mod tests {
         harness.event("sync:true").await;
         harness.event("sync:false").await;
         assert!(harness.trace.iter().all(|event| !event.contains("started")));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_server_push_checks_only_that_account_at_once() {
+        let start = Deadline::now();
+        let mut harness = Harness::new(
+            Settings::default(),
+            true,
+            vec![
+                Fixture::new("a", 1).watching(vec![WatchStep::Connect]),
+                Fixture::new("b", 1).watching(vec![WatchStep::Connect]),
+            ],
+        );
+        harness.event("a watcher connected 1").await;
+        harness.event("background-sync:false").await;
+        assert_eq!(Deadline::now(), start + Duration::from_secs(1));
+        harness.push("a");
+        harness.event("a started 2").await;
+        assert_eq!(Deadline::now(), start + Duration::from_secs(1));
+        harness.event("b started 2").await;
+        assert_eq!(Deadline::now(), start + Duration::from_secs(5));
+        assert_eq!(harness.count("a started 2"), 1);
+        assert_eq!(harness.count("a pushed"), 1);
+        assert!(
+            !harness.trace.iter().any(|event| event.starts_with("sync:")),
+            "a push is not a manual refresh"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_push_during_a_running_check_starts_a_follow_up_when_it_ends() {
+        let start = Deadline::now();
+        let mut harness = Harness::new(
+            Settings::default(),
+            true,
+            vec![Fixture::new("a", 3).watching(vec![WatchStep::Connect])],
+        );
+        harness.event("a watcher connected 1").await;
+        harness.push("a");
+        harness.event("a pushed").await;
+        assert_eq!(Deadline::now(), start);
+        harness.event("a started 2").await;
+        assert_eq!(Deadline::now(), start + Duration::from_secs(3));
+        harness.event("a started 3").await;
+        assert_eq!(Deadline::now(), start + Duration::from_secs(8));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn watcher_backoff_grows_and_resets_after_a_connection() {
+        let start = Deadline::now();
+        let mut harness = Harness::new(
+            Settings::default(),
+            true,
+            vec![Fixture::new("a", 1).watching(vec![
+                WatchStep::Fail,
+                WatchStep::Fail,
+                WatchStep::Fail,
+                WatchStep::ConnectThenFail,
+                WatchStep::Fail,
+                WatchStep::Connect,
+            ])],
+        );
+        for (label, seconds) in [
+            ("a watcher failed 1", 0),
+            ("a watcher failed 2", 5),
+            ("a watcher failed 3", 15),
+            ("a watcher connected 4", 35),
+            ("a watcher failed 5", 40),
+            ("a watcher connected 6", 50),
+        ] {
+            harness.event(label).await;
+            assert_eq!(
+                Deadline::now(),
+                start + Duration::from_secs(seconds),
+                "{label}"
+            );
+        }
+        assert_eq!(
+            harness.count("a started 10"),
+            1,
+            "polling continued throughout"
+        );
+        assert_eq!(
+            harness.count("a error"),
+            0,
+            "watcher failures are not sync errors"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unsupported_server_stops_the_watcher_and_keeps_polling() {
+        let start = Deadline::now();
+        let mut harness = Harness::new(
+            Settings::default(),
+            true,
+            vec![
+                Fixture::new("a", 1).watching(vec![WatchStep::Unsupported, WatchStep::Unsupported]),
+            ],
+        );
+        harness.event("a watcher unsupported").await;
+        harness.event("a started 3").await;
+        assert_eq!(Deadline::now(), start + Duration::from_secs(10));
+        assert_eq!(
+            harness.count("a watcher unsupported"),
+            1,
+            "no retry after unsupported"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn removing_the_account_stops_its_watcher_and_shutdown_stops_the_rest() {
+        let mut harness = Harness::new(
+            Settings::default(),
+            true,
+            vec![
+                Fixture::new("a", 1).watching(vec![WatchStep::Connect]),
+                Fixture::new("b", 1).watching(vec![WatchStep::Connect]),
+            ],
+        );
+        harness.event("a watcher connected 1").await;
+        harness.event("b watcher connected 1").await;
+        harness.accounts.lock().unwrap().remove(0);
+        harness.event("a watcher stopped").await;
+        harness.event("b started 3").await;
+        assert_eq!(harness.count("b watcher stopped"), 0);
+        assert_eq!(harness.count("a watcher connected 2"), 0);
+        let remaining = harness.close().await;
+        assert!(
+            remaining.contains(&"b watcher stopped".to_owned()),
+            "{remaining:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_push_makes_a_known_target_due_and_a_running_check_gets_a_follow_up() {
+        let mut schedule = Schedule::default();
+        let now = Deadline::now();
+        let interval = Duration::from_secs(5);
+        let target = Fixture::new("a", 1);
+        assert!(!schedule.wake("a"), "unknown targets are ignored");
+        assert_eq!(
+            schedule
+                .start(vec![target.clone()], now, interval, true)
+                .len(),
+            1
+        );
+        assert!(schedule.wake("a"));
+        assert!(
+            schedule
+                .start(vec![target.clone()], now, interval, true)
+                .is_empty(),
+            "a running check is never overlapped"
+        );
+        schedule.finish("a");
+        let started = schedule.start(
+            vec![target.clone()],
+            now + Duration::from_secs(1),
+            interval,
+            true,
+        );
+        assert_eq!(
+            started.len(),
+            1,
+            "the push starts a follow-up ahead of the interval"
+        );
+        assert!(!started[0].1, "a push is not a manual request");
+        schedule.finish("a");
+        assert!(
+            schedule
+                .start(vec![target], now + Duration::from_secs(2), interval, true)
+                .is_empty(),
+            "the push is consumed by the follow-up"
+        );
     }
 
     #[test]
