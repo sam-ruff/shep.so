@@ -4,7 +4,29 @@ Active unfinished requests from the desktop, mobile/browser and website sessions
 
 Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is the single integration branch for the desktop, mobile and website sessions; desktop changes arrive through `main` rather than through ports. Request numbers R67 to R80 exist twice: the desktop session and the client session numbered independently after R66. Entries below say which side a colliding number belongs to; the audit states the collision once and does not renumber history.
 
-## Top priority — OAuth and shared profiles
+## Highest priority - mail sync speed and reliable moves
+
+Sam reports new mail is slow to arrive and moves failing on `sam@shep.so`
+(Stalwart at `mail.shep.so`). These items outrank everything below. Sam's
+14 September direction supersedes the "do not start a new synchronisation
+design" note in the cross-device discussion item for the parts listed here.
+Plan before implementing; nothing below has started.
+
+**14 September related-messages fix:** the "Could not load related messages:
+Query returned no rows" notice after archiving the open email is fixed and
+pushed as `3dabf16`, with a regression test. Completion records the evidence.
+
+- [ ] **14 September related-messages client parity:** check whether Flutter/browser conversation loading fails the same way when the open email is removed mid-load, and return an empty conversation there too.
+
+- [ ] **14 September missing destination creation:** moves fail with "The server did not report its folder namespace." When the destination is missing, `folder_actions/creation.rs` asks for the namespace with `LIST "<destination>" ""`; Confirmed live on 14 September: Stalwart answers `LIST "" ""` with `(\NoSelect) "/" ""` but returns nothing for `LIST "Archive" ""` or `LIST "Trash" ""`. Discover the root with `LIST "" ""` (or `NAMESPACE`, which Stalwart advertises), then create the folder and complete the move. The account has no Archive folder, and its special-use folders are `Deleted Items` (`\Trash`), `Junk Mail` (`\Junk`), `Sent Items` (`\Sent`) and `Drafts`: resolve Trash/Junk/Sent through SPECIAL-USE attributes before ever creating a literal `Trash`, and create Archive with `CREATE-SPECIAL-USE` `\Archive` where supported. Add a regression test against a fake connection that returns an empty reference listing.
+- [ ] **14 September local fallback for failed moves:** if the server move still cannot complete, apply it locally instead of leaving the message in place. Record it as a durable local-only move so later syncs neither restore the message to its old folder nor forget it, retry the server move on later syncs, and tell the user it only happened on this device. Limit the fallback to definite server refusals or unsupported operations, not transient network failures. Document that local-only moves do not reach other Shep clients until they are synced to the server manually; link this to the cross-device discussion.
+- [ ] **14 September five-second default check:** change the default `mail_check_seconds` from 15 to 5 (`model.rs` and the engine's `mail_sync::Settings` default). Existing saved preferences keep their value unless we decide to migrate untouched defaults.
+- [ ] **14 September per-account sync:** today one cycle syncs up to three accounts together and the next cycle waits for the slowest (`Command::Sync` in `engine.rs`, `drive` in `engine/mail_sync.rs`), so one slow account delays every other. Give each account its own independent schedule and worker, still bounded by the shared network limit, so accounts never wait on each other.
+- [ ] **14 September skip slow mail items:** within an account, a large or slow message must not hold back newer small ones. Fetch headers and small bodies first, defer or stage slow bodies in a separate lower-priority lane, and let new arrivals show as soon as their metadata lands. Keep the existing staged large-message path and the 480-second no-progress timeout semantics.
+- [ ] **14 September server push:** use IMAP IDLE (and NOTIFY where supported) so new mail arrives without waiting for a poll. Keep a dedicated connection per account watching Inbox, reconnect with backoff, re-issue IDLE before server timeouts (under 29 minutes), and keep interval polling as the fallback for servers without IDLE and for other folders. Stalwart confirms IDLE after login, plus CONDSTORE and QRESYNC, which should make each check a cheap changes-since query instead of a folder rescan. Consider the equivalents for Google/other providers.
+- [ ] **14 September actions without interrupting sync:** user actions (move, archive, delete, flag) currently cancel that account's running download through `account_work`, deferring the rest until the next check. Let sync continue; apply actions optimistically in the cache, send them on a separate connection or queue, and reconcile against sync results afterwards so a completed download never undoes a pending action.
+
+## Top priority - OAuth and shared profiles
 
 - [ ] **13 September release CI and installers:** enable and verify release CI so the install scripts reliably use published, versioned platform assets and checksums. Use only the authorised self-hosted runner pools, inspect actual platform capacity before enabling jobs, preserve installer failure/upgrade contracts, and verify the resulting release and install path. This request authorises enabling the previously disabled quality/release workflows; never fall back to GitHub-hosted runners.
 
