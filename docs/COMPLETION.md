@@ -1,5 +1,53 @@
 # Completion audit
 
+## Folder namespace discovery and special-use destinations, 14 September 2026
+
+Moves to Archive or Trash on `sam@shep.so` failed with "The server did not
+report its folder namespace" because destination creation asked Stalwart for
+the namespace with `LIST "<destination>" ""`, which returns nothing for a
+missing reference. Creation now asks `LIST "" ""` first, falls back to the
+destination reference, and only then reports a missing namespace. The logical
+`Archive`, `Trash` and `Junk` destinations resolve against the account's cached
+special-use catalog before anything is created: an exact folder wins, then the
+folder carrying `\Trash`, `\Junk` or `\Archive` (`Deleted Items`, `Junk Mail`),
+then the literal name, created with `CREATE ... (USE (\Role))` where
+CREATE-SPECIAL-USE is advertised. Cached rows, receipts and the move journal
+carry the physical folder; unified Trash and Spam views and the sidebar fold
+special-use folders in without duplicate entries.
+
+Lane commit `9a27be1`, merged as [`9039d70`](https://github.com/sam-ruff/shep.so/commit/9039d70)
+and pushed. Tests: scripted IMAP sessions for the Stalwart shape, capability
+gating, no-CREATE resolution and missing-namespace failure; mock discovery
+order; pure resolution and alias unit tests; engine move and undo, store
+query and sidebar tests. Nine native archive and move-recovery MCP flows pass.
+The lane's hook run passed on its second attempt: the first failed two
+`tests/search.rs` cases on SQLCipher key initialisation of a fresh temporary
+database while other suites ran on the same host, and both passed in
+isolation. Limitations: NAMESPACE is not issued because imap-proto cannot
+parse the reply; resolution reads the cached catalog, so a move before the
+first folder sync uses the literal name; `MoveFinished` still names the
+logical folder for toasts; not verified against the live account.
+
+## Small-first IMAP download lanes, 14 September 2026
+
+IMAP body downloads run in two lanes. Inline bodies are fetched smallest first
+(newest first among equal sizes) in the existing 10-message, 4 MiB batches.
+Bodies over 1 MiB (`SLOW_LANE_BYTES`) wait in a slow lane fetched one at a
+time after every folder's inline bodies and before the staged pass for mail
+over 25 MiB, so a large message no longer holds back newer small ones or other
+folders. `Reconcile` carries the complete listing, and deferred bodies are not
+cached, so nothing local is removed; `InboxSyncFinished` follows the last Inbox
+body in whichever lane carries it; a slow-lane failure keeps delivered messages
+and retries the rest on the next check.
+
+Lane commit `7afc164`, merged as [`fe9be95`](https://github.com/sam-ruff/shep.so/commit/fe9be95)
+and pushed. Tests: five `lanes` unit tests and a scripted session covering
+smallest-first order, slow bodies after other folders, failure keeping earlier
+messages, complete `Reconcile` and `InboxSyncFinished` ordering; 1,313 hook
+test executions. Limitations: ordering is within each 50-UID metadata chunk;
+a slow-lane body is one full fetch, so progress is per message; CONDSTORE
+flag refresh is not used; no live IMAP evidence.
+
 ## Related messages after archiving, 14 September 2026
 
 Archiving, moving or deleting the open email while its conversation was loading
