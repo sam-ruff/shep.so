@@ -296,6 +296,7 @@ struct Engine {
     connection_lifecycle: lifecycle_work::Lane,
     secret_remover: Arc<dyn removals::SecretRemover>,
     outbound: Arc<dyn providers::outgoing::Outbound>,
+    move_connections: Arc<dyn providers::mail::moves::MoveConnections>,
     // Shared for Google provider work, exclusive for login/disconnect/cleanup.
     // The field name is shared with the profile sync lane.
     google_connection_lock: lifecycle_work::Lane,
@@ -372,6 +373,9 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             connection_lifecycle: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover(credentials.clone())),
             outbound: Arc::new(providers::outgoing::Servers {
+                credentials: credentials.clone(),
+            }),
+            move_connections: Arc::new(providers::mail::moves::ImapMoveConnections {
                 credentials: credentials.clone(),
             }),
             google_connection_lock: Default::default(),
@@ -1517,6 +1521,9 @@ mod calendar_tests {
             connection_lifecycle: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover::default()),
             outbound: Arc::new(providers::outgoing::Servers::default()),
+            move_connections: Arc::new(providers::mail::moves::ImapMoveConnections {
+                credentials: Default::default(),
+            }),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore::default()),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer::default()),

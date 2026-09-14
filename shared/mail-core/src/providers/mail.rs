@@ -608,10 +608,12 @@ async fn move_imap_session<
     );
     let mailbox = session.select(&mail.folder).await?;
     let uid = validate_uid(mail, mailbox.uid_validity)?;
-    anyhow::ensure!(
-        session.capabilities().await?.has_str("MOVE"),
-        "This IMAP server does not support safe MOVE. Move this message with your server's webmail."
-    );
+    if !session.capabilities().await?.has_str("MOVE") {
+        return Err(crate::mail_actions::MoveRefused(
+            "This IMAP server does not support safe MOVE. Move this message with your server's webmail.".into(),
+        )
+        .into());
+    }
     let receipt = receipts::move_message(&mut session, &uid, folder).await?;
     // The tagged MOVE acknowledgment commits the action. A dropped connection
     // during logout must not retain the old source or invite a duplicate retry.

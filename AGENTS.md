@@ -1071,6 +1071,24 @@ do not close R73 based on fixture happy-path coverage.
 Native `move_recovery=true` uses only a protected fictional cache and a fixture
 Refresh acknowledgment; see the repository MCP skill and saved automated flow.
 
+A definite server refusal completes the move on this device. Classification is
+the pure `classify_move_failure` in `shared/mail-core`: only typed errors count
+(`MoveRefused` from a tagged NO/BAD MOVE without COPYUID or a missing MOVE
+capability, `UploadRejected`, `CreationRejected`); everything else, including a
+NO after a COPYUID, stays uncertain and keeps today's restore-with-error path.
+The runner turns a same-account refusal into `MoveStage::Local` (never a
+transfer); the row keeps `cache_id` so `Reconcile` skips it, `recovered_mail`
+projects it at the destination, and `mail_move_lookups` retries it at most three
+per pass and ten minutes apart. `Local` counts as unsubmitted: inspection must
+prove the source intact and no destination copy before another MOVE, a present
+copy resolves through the reviewed path, and `reject_mail_move` releases it on
+Undo. `MoveReceipt::local_only` is display-only; the journal stage is the truth.
+Engine move connections come from the injected `MoveConnections` factory, so
+tests script refusals without credentials. The native `mail_actions="refuse"`
+fixture models this; `"fail"` remains an unconfirmed result. Device-only moves
+do not reach other Shep clients until the server accepts them (see the
+cross-device discussion in TODO).
+
 
 ## Search across folders
 

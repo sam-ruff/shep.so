@@ -475,6 +475,7 @@ async fn completed_group_undo_receipts_follow_renamed_folders_and_delete_retires
             current: Some(current),
             fingerprint: None,
             connections: vec![],
+            local_only: false,
         }));
         store.run(move |c| {
             c.execute("INSERT INTO bulk_jobs(id,action,source,created) VALUES('history',?,'fixture',0)", [serde_json::to_string(&shep::bulk::Action::Move { account: None, folder: "Projects/Design".into() })?])?;

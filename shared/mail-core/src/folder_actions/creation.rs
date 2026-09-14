@@ -10,6 +10,17 @@ pub enum CreateOutcome {
     Uncertain(String),
 }
 
+/// The server answered the CREATE with a definite refusal, so no folder exists
+/// and repeating the same request cannot succeed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreationRejected(pub String);
+impl std::fmt::Display for CreationRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for CreationRejected {}
+
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub trait Connection: Send + Sync {
@@ -237,9 +248,8 @@ pub async fn ensure(
         CreateOutcome::Acknowledged => anyhow::bail!(
             "The server acknowledged creation but did not list a selectable destination. Refresh folders before retrying."
         ),
-        CreateOutcome::Rejected(message) | CreateOutcome::Uncertain(message) => {
-            anyhow::bail!(message)
-        }
+        CreateOutcome::Rejected(message) => Err(CreationRejected(message).into()),
+        CreateOutcome::Uncertain(message) => anyhow::bail!(message),
     }
 }
 
@@ -543,12 +553,20 @@ mod tests {
                 .times(1)
                 .in_sequence(&mut sequence)
                 .returning(|_, _| CreateOutcome::Rejected("denied".into()));
+            let listing_failed = observation.is_err();
             connection
                 .expect_inspect()
                 .times(1)
                 .in_sequence(&mut sequence)
                 .return_once(|_| observation);
-            assert!(ensure(&connection, "Archive", None).await.is_err());
+            let error = ensure(&connection, "Archive", None).await.unwrap_err();
+            // A clean listing after a refused CREATE is a definite rejection; a
+            // failed listing cannot prove what the server did.
+            assert_eq!(
+                error.downcast_ref::<CreationRejected>().is_some(),
+                !listing_failed,
+                "{error:#}"
+            );
         }
     }
 
