@@ -272,6 +272,14 @@ impl Store {
     pub async fn current_folder_catalog(&self, account: String) -> anyhow::Result<Vec<Mailbox>> {
         self.run(move |c| catalog(c, &account)).await
     }
+    /// The cached catalog, empty for an account that has not listed folders yet.
+    pub async fn cached_folder_catalog(&self, account: String) -> anyhow::Result<Vec<Mailbox>> {
+        self.run(move |c| {
+            let mut catalogs: HashMap<String, Vec<Mailbox>> = get(c, "folder_catalogs")?;
+            Ok(catalogs.remove(&account).unwrap_or_default())
+        })
+        .await
+    }
     pub async fn ensure_folder_idle(&self, account: String) -> anyhow::Result<()> {
         self.run(move |c| idle(c, &account)).await
     }

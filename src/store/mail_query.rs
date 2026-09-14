@@ -31,6 +31,60 @@ pub(super) struct Plan {
     source: &'static str,
 }
 
+/// Special-use folders that logical names such as `Trash` stand for, per
+/// account, so a view of `Trash` also lists `(\Trash) "Deleted Items"`.
+fn role_aliases(
+    c: &Connection,
+    selections: &[(Option<&str>, &str)],
+) -> anyhow::Result<Vec<FolderSelection>> {
+    let logical = selections
+        .iter()
+        .any(|(_, folder)| crate::folders::FolderRole::for_logical_name(folder).is_some());
+    if !logical {
+        return Ok(Vec::new());
+    }
+    let catalogs: std::collections::HashMap<String, Vec<crate::folders::Mailbox>> =
+        get(c, "folder_catalogs")?;
+    let mut aliases = Vec::new();
+    for (account, folder) in selections {
+        for (id, catalog) in &catalogs {
+            if account.is_some_and(|account| account != id) {
+                continue;
+            }
+            for name in crate::folders::role_aliases(catalog, folder) {
+                let alias = FolderSelection {
+                    account: Some(id.clone()),
+                    folder: name.to_owned(),
+                    sent_only: false,
+                };
+                if !aliases.contains(&alias) {
+                    aliases.push(alias);
+                }
+            }
+        }
+    }
+    aliases.sort_by(|a, b| (&a.account, &a.folder).cmp(&(&b.account, &b.folder)));
+    Ok(aliases)
+}
+
+fn with_role_aliases(
+    c: &Connection,
+    folders: &[FolderSelection],
+) -> anyhow::Result<Vec<FolderSelection>> {
+    let selections: Vec<_> = folders
+        .iter()
+        .filter(|f| !f.sent_only)
+        .map(|f| (f.account.as_deref(), f.folder.as_str()))
+        .collect();
+    let mut expanded = folders.to_vec();
+    for alias in role_aliases(c, &selections)? {
+        if !expanded.contains(&alias) {
+            expanded.push(alias);
+        }
+    }
+    Ok(expanded)
+}
+
 impl Plan {
     pub fn new(c: &Connection, query: &MailQuery) -> anyhow::Result<Self> {
         let scope = query.search_scope();
@@ -55,7 +109,7 @@ impl Plan {
                 ""
             } else {
                 // A single bound JSON value avoids SQLite parameter/expression limits.
-                values.push(serde_json::to_string(folders)?.into());
+                values.push(serde_json::to_string(&with_role_aliases(c, folders)?)?.into());
                 filters.push(format!("((account,folder) IN (SELECT account,folder FROM selected_folders WHERE account IS NOT NULL AND NOT sent_only) OR folder IN (SELECT folder FROM selected_folders WHERE account IS NULL AND NOT sent_only) OR ({sent} AND EXISTS(SELECT 1 FROM selected_folders s WHERE s.sent_only AND (s.account IS NULL OR s.account=messages.account))))"));
                 "WITH selected_folders AS (SELECT json_extract(value,'$.account') AS account,json_extract(value,'$.folder') AS folder,json_extract(value,'$.sent_only') AS sent_only FROM json_each(?)) "
             }
@@ -67,8 +121,16 @@ impl Plan {
             if query.sent_only {
                 filters.push(sent.into());
             } else if !query.folder.is_empty() {
-                filters.push("folder=?".into());
-                values.push(query.folder.clone().into());
+                let aliases =
+                    role_aliases(c, &[(query.account.as_deref(), query.folder.as_str())])?;
+                if aliases.is_empty() {
+                    filters.push("folder=?".into());
+                    values.push(query.folder.clone().into());
+                } else {
+                    filters.push("(folder=? OR (account,folder) IN (SELECT json_extract(value,'$.account'),json_extract(value,'$.folder') FROM json_each(?)))".into());
+                    values.push(query.folder.clone().into());
+                    values.push(serde_json::to_string(&aliases)?.into());
+                }
             }
             ""
         };
@@ -400,6 +462,113 @@ impl Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::folders::{FolderRole, Mailbox};
+
+    fn stored(account: &str, folder: &str, subject: &str) -> StoredMail {
+        parse_mail(
+            account,
+            subject,
+            folder,
+            format!("Subject: {subject}\r\n\r\nbody").into_bytes(),
+            false,
+            false,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn logical_folder_views_include_each_accounts_special_use_folder() {
+        let store = Store::memory().unwrap();
+        for (account, catalog) in [
+            (
+                "stalwart",
+                vec![
+                    Mailbox::flat("INBOX".into()),
+                    Mailbox {
+                        role: Some(FolderRole::Trash),
+                        ..Mailbox::flat("Deleted Items".into())
+                    },
+                    Mailbox {
+                        role: Some(FolderRole::Junk),
+                        ..Mailbox::flat("Junk Mail".into())
+                    },
+                ],
+            ),
+            (
+                "literal",
+                vec![
+                    Mailbox::flat("INBOX".into()),
+                    Mailbox::flat("Trash".into()),
+                    Mailbox::flat("Deleted Items".into()),
+                ],
+            ),
+        ] {
+            store
+                .save_folder_catalog(account.into(), catalog)
+                .await
+                .unwrap();
+        }
+        store
+            .upsert(vec![
+                stored("stalwart", "Deleted Items", "binned"),
+                stored("stalwart", "Junk Mail", "spam"),
+                stored("stalwart", "INBOX", "kept"),
+                stored("literal", "Trash", "literal-binned"),
+                stored("literal", "Deleted Items", "plain-folder"),
+            ])
+            .await
+            .unwrap();
+        let subjects = |page: crate::model::MailPage| {
+            let mut subjects: Vec<_> = page.rows.into_iter().map(|row| row.subject).collect();
+            subjects.sort();
+            subjects
+        };
+        let trash = store
+            .query(MailQuery {
+                folder: "Trash".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(subjects(trash), ["binned", "literal-binned"]);
+        let scoped = store
+            .query(MailQuery {
+                account: Some("stalwart".into()),
+                folder: "Junk".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(subjects(scoped), ["spam"]);
+        let combined = store
+            .query(MailQuery {
+                folders: Some(vec![
+                    FolderSelection {
+                        account: None,
+                        folder: "Trash".into(),
+                        sent_only: false,
+                    },
+                    FolderSelection {
+                        account: Some("stalwart".into()),
+                        folder: "INBOX".into(),
+                        sent_only: false,
+                    },
+                ]),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(combined.total, 3);
+        assert_eq!(subjects(combined), ["binned", "kept", "literal-binned"]);
+        let physical = store
+            .query(MailQuery {
+                folder: "Deleted Items".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(subjects(physical), ["binned", "plain-folder"]);
+    }
 
     #[tokio::test]
     async fn relevance_does_not_rescan_a_literal_fts_relation_per_candidate() {
