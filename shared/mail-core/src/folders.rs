@@ -72,6 +72,40 @@ fn decode_utf7(mut source: &str) -> Option<String> {
     Some(output)
 }
 
+/// RFC 6154 special-use designation of a mailbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FolderRole {
+    Archive,
+    Drafts,
+    Junk,
+    Sent,
+    Trash,
+}
+impl FolderRole {
+    /// The logical names the interface uses for its special folders.
+    pub fn for_logical_name(name: &str) -> Option<Self> {
+        [
+            ("Archive", Self::Archive),
+            ("Drafts", Self::Drafts),
+            ("Junk", Self::Junk),
+            ("Sent", Self::Sent),
+            ("Trash", Self::Trash),
+        ]
+        .into_iter()
+        .find(|(logical, _)| name.eq_ignore_ascii_case(logical))
+        .map(|(_, role)| role)
+    }
+    pub fn attribute(self) -> &'static str {
+        match self {
+            Self::Archive => "\\Archive",
+            Self::Drafts => "\\Drafts",
+            Self::Junk => "\\Junk",
+            Self::Sent => "\\Sent",
+            Self::Trash => "\\Trash",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mailbox {
     pub name: String,
@@ -83,6 +117,8 @@ pub struct Mailbox {
     pub no_inferiors: bool,
     #[serde(default)]
     pub non_existent: bool,
+    #[serde(default)]
+    pub role: Option<FolderRole>,
 }
 impl Mailbox {
     pub fn flat(name: String) -> Self {
@@ -93,7 +129,11 @@ impl Mailbox {
             encoding: NameEncoding::Utf8,
             no_inferiors: false,
             non_existent: false,
+            role: None,
         }
+    }
+    pub fn usable(&self) -> bool {
+        self.selectable && !self.non_existent
     }
     pub fn path(&self) -> &str {
         // Some servers advertise a nonselectable container with a trailing
@@ -114,6 +154,43 @@ impl Mailbox {
         }
         &self.name
     }
+}
+
+/// The wire name a move to `requested` should target. A folder of that exact
+/// name wins; otherwise a logical name such as `Trash` follows the catalog's
+/// special-use designation, so a server with `(\Trash) "Deleted Items"` never
+/// gains a second literal `Trash`. Unknown names pass through for creation.
+pub fn resolve_destination(catalog: &[Mailbox], requested: &str) -> String {
+    let usable = catalog.iter().filter(|mailbox| mailbox.usable());
+    let exact = usable.clone().any(|mailbox| {
+        mailbox.name == requested
+            || (requested.eq_ignore_ascii_case("INBOX")
+                && mailbox.name.eq_ignore_ascii_case("INBOX"))
+    });
+    if exact {
+        return requested.to_owned();
+    }
+    let Some(role) = FolderRole::for_logical_name(requested) else {
+        return requested.to_owned();
+    };
+    usable
+        .filter(|mailbox| mailbox.role == Some(role))
+        .map(|mailbox| mailbox.name.clone())
+        .next()
+        .unwrap_or_else(|| requested.to_owned())
+}
+
+/// Usable folders carrying `role` whose wire name differs from the logical one.
+pub fn role_aliases<'a>(
+    catalog: &'a [Mailbox],
+    logical: &'a str,
+) -> impl Iterator<Item = &'a str> + 'a {
+    let role = FolderRole::for_logical_name(logical);
+    catalog
+        .iter()
+        .filter(move |mailbox| mailbox.usable() && mailbox.role.is_some() && mailbox.role == role)
+        .map(|mailbox| mailbox.name.as_str())
+        .filter(move |name| *name != logical)
 }
 
 #[derive(Debug, Clone)]
@@ -178,6 +255,7 @@ impl Tree {
                             encoding: mailbox.encoding,
                             no_inferiors: false,
                             non_existent: true,
+                            role: None,
                         },
                         listed: false,
                         label,
@@ -238,7 +316,84 @@ mod tests {
             encoding: NameEncoding::Utf8,
             no_inferiors: false,
             non_existent: false,
+            role: None,
         }
+    }
+    fn special(name: &str, role: FolderRole) -> Mailbox {
+        Mailbox {
+            role: Some(role),
+            ..folder(name, Some('/'), true)
+        }
+    }
+    #[test]
+    fn logical_names_map_to_roles_case_insensitively() {
+        assert_eq!(
+            FolderRole::for_logical_name("trash"),
+            Some(FolderRole::Trash)
+        );
+        assert_eq!(FolderRole::for_logical_name("Junk"), Some(FolderRole::Junk));
+        assert_eq!(
+            FolderRole::for_logical_name("Archive"),
+            Some(FolderRole::Archive)
+        );
+        assert_eq!(FolderRole::for_logical_name("Spam"), None);
+        assert_eq!(FolderRole::for_logical_name("Projects/Trash"), None);
+        assert_eq!(FolderRole::Archive.attribute(), "\\Archive");
+    }
+    #[test]
+    fn destination_prefers_exact_name_then_special_use_then_literal() {
+        let catalog = [
+            folder("INBOX", Some('/'), true),
+            special("Deleted Items", FolderRole::Trash),
+            special("Junk Mail", FolderRole::Junk),
+            special("Sent Items", FolderRole::Sent),
+        ];
+        assert_eq!(resolve_destination(&catalog, "Trash"), "Deleted Items");
+        assert_eq!(resolve_destination(&catalog, "Junk"), "Junk Mail");
+        assert_eq!(resolve_destination(&catalog, "Sent"), "Sent Items");
+        assert_eq!(resolve_destination(&catalog, "Archive"), "Archive");
+        assert_eq!(resolve_destination(&catalog, "Projects"), "Projects");
+        assert_eq!(resolve_destination(&catalog, "inbox"), "inbox");
+        assert_eq!(
+            resolve_destination(&catalog, "Deleted Items"),
+            "Deleted Items"
+        );
+        let literal = [
+            special("Deleted Items", FolderRole::Trash),
+            folder("Trash", Some('/'), true),
+        ];
+        assert_eq!(resolve_destination(&literal, "Trash"), "Trash");
+        let unusable = [
+            folder("Trash", Some('/'), false),
+            Mailbox {
+                non_existent: true,
+                ..special("Old Trash", FolderRole::Trash)
+            },
+            special("Deleted Items", FolderRole::Trash),
+        ];
+        assert_eq!(resolve_destination(&unusable, "Trash"), "Deleted Items");
+        assert_eq!(resolve_destination(&[], "Trash"), "Trash");
+    }
+    #[test]
+    fn role_aliases_exclude_the_literal_name_and_other_roles() {
+        let catalog = [
+            special("Trash", FolderRole::Trash),
+            special("Deleted Items", FolderRole::Trash),
+            special("Junk Mail", FolderRole::Junk),
+            Mailbox {
+                selectable: false,
+                ..special("Bin", FolderRole::Trash)
+            },
+        ];
+        assert_eq!(
+            role_aliases(&catalog, "Trash").collect::<Vec<_>>(),
+            ["Deleted Items"]
+        );
+        assert_eq!(
+            role_aliases(&catalog, "Junk").collect::<Vec<_>>(),
+            ["Junk Mail"]
+        );
+        assert_eq!(role_aliases(&catalog, "Projects").count(), 0);
     }
     #[test]
     fn delimiter_nil_dots_unicode_and_missing_parents_keep_exact_names() {
@@ -313,6 +468,7 @@ mod tests {
             encoding: NameEncoding::ImapUtf7,
             no_inferiors: false,
             non_existent: false,
+            role: None,
         };
         let tree = Tree::new(std::slice::from_ref(&mailbox));
         assert_eq!(tree.node(&mailbox.name).unwrap().label, "日本語");

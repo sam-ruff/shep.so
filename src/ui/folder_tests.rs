@@ -28,6 +28,7 @@ async fn fixture() -> (App, Store, tokio::sync::mpsc::Receiver<Command>) {
                     encoding: NameEncoding::Utf8,
                     no_inferiors: false,
                     non_existent: false,
+                    role: None,
                 })
                 .collect(),
             )
@@ -85,6 +86,44 @@ async fn spam_shortcut_uses_existing_junk_folder_and_preserves_children() {
         .unwrap();
     app.workspace = Arc::new(store.workspace().await.unwrap());
     assert!(app.sidebar_items().iter().any(|item| item.label == "Junk"));
+}
+#[tokio::test]
+async fn special_use_folders_fold_into_unified_trash_and_spam_entries() {
+    let (mut app, store, _commands) = fixture().await;
+    store
+        .save_folder_catalog(
+            "a".into(),
+            vec![
+                Mailbox::flat("INBOX".into()),
+                Mailbox {
+                    role: Some(crate::folders::FolderRole::Trash),
+                    ..Mailbox::flat("Deleted Items".into())
+                },
+                Mailbox {
+                    role: Some(crate::folders::FolderRole::Junk),
+                    ..Mailbox::flat("Junk Mail".into())
+                },
+                Mailbox {
+                    role: Some(crate::folders::FolderRole::Drafts),
+                    ..Mailbox::flat("Drafts".into())
+                },
+                Mailbox::flat("Projects".into()),
+            ],
+        )
+        .await
+        .unwrap();
+    app.workspace = Arc::new(store.workspace().await.unwrap());
+    for unified in [true, false] {
+        app.preferences.unified_inbox = unified;
+        let items = app.sidebar_items();
+        let labels: Vec<_> = items.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(labels.contains(&"Deleted Items"), !unified, "{labels:?}");
+        assert_eq!(labels.contains(&"Junk Mail"), !unified, "{labels:?}");
+        assert!(labels.contains(&"Drafts"), "{labels:?}");
+        assert!(labels.contains(&"Projects"), "{labels:?}");
+        assert_eq!(labels.iter().filter(|label| **label == "Trash").count(), 1);
+        assert_eq!(labels.iter().filter(|label| **label == "Spam").count(), 1);
+    }
 }
 #[tokio::test]
 async fn duplicate_address_sidebar_names_preserve_account_navigation_and_collapse() {
@@ -279,6 +318,7 @@ async fn move_feedback_decodes_labels_without_changing_action_or_undo_identity()
                 encoding: NameEncoding::ImapUtf7,
                 no_inferiors: false,
                 non_existent: false,
+                role: None,
             }],
         )
         .await

@@ -1,5 +1,5 @@
 //! Non-destructive creation with a checked observation after every attempt.
-use crate::folders::{Mailbox, NameEncoding};
+use crate::folders::{FolderRole, Mailbox, NameEncoding};
 use anyhow::Context;
 use base64::Engine as _;
 
@@ -14,8 +14,32 @@ pub enum CreateOutcome {
 #[async_trait::async_trait]
 pub trait Connection: Send + Sync {
     async fn inspect(&self, path: String) -> anyhow::Result<Option<Mailbox>>;
-    async fn namespace(&self, reference: String) -> anyhow::Result<Mailbox>;
-    async fn create(&self, path: String) -> CreateOutcome;
+    /// The hierarchy root and delimiter for `reference` (`LIST "<reference>" ""`),
+    /// or `None` when the server lists nothing for it.
+    async fn namespace(&self, reference: String) -> anyhow::Result<Option<Mailbox>>;
+    /// The personal namespace prefix from NAMESPACE, when the server offers one.
+    async fn namespaces(&self) -> anyhow::Result<Option<Mailbox>>;
+    async fn create(&self, path: String, role: Option<FolderRole>) -> CreateOutcome;
+}
+
+/// RFC 3501 defines `LIST "" ""` as the request for the root and delimiter;
+/// some servers (Stalwart) list nothing for a reference that does not exist yet.
+pub async fn discover_namespace(
+    connection: &impl Connection,
+    reference: &str,
+) -> anyhow::Result<Mailbox> {
+    if let Some(root) = connection.namespace(String::new()).await? {
+        return Ok(root);
+    }
+    if !reference.is_empty()
+        && let Some(root) = connection.namespace(reference.into()).await?
+    {
+        return Ok(root);
+    }
+    if let Some(root) = connection.namespaces().await? {
+        return Ok(root);
+    }
+    anyhow::bail!("The server did not report its folder namespace.")
 }
 
 pub fn valid_path(path: &str) -> anyhow::Result<()> {
@@ -113,6 +137,7 @@ pub fn plan(root: &Mailbox, parent: Option<&Mailbox>, name: &str) -> anyhow::Res
         selectable: true,
         no_inferiors: false,
         non_existent: false,
+        role: None,
     })
 }
 
@@ -158,12 +183,17 @@ fn last_separator(path: &str, encoding: NameEncoding, delimiter: char) -> Option
     result
 }
 
-pub async fn ensure(connection: &impl Connection, path: &str) -> anyhow::Result<Mailbox> {
+/// `role` marks a missing destination with its special use at creation.
+pub async fn ensure(
+    connection: &impl Connection,
+    path: &str,
+    role: Option<FolderRole>,
+) -> anyhow::Result<Mailbox> {
     valid_path(path)?;
     if let Some(mailbox) = connection.inspect(path.into()).await? {
         return selectable(mailbox);
     }
-    let namespace = connection.namespace(path.into()).await?;
+    let namespace = discover_namespace(connection, path).await?;
     anyhow::ensure!(
         path.starts_with(&namespace.name),
         "The destination is outside the reported namespace."
@@ -195,7 +225,7 @@ pub async fn ensure(connection: &impl Connection, path: &str) -> anyhow::Result<
             );
         }
     }
-    let outcome = connection.create(path.into()).await;
+    let outcome = connection.create(path.into(), role).await;
     if let Some(mailbox) = connection
         .inspect(path.into())
         .await
@@ -226,6 +256,7 @@ mod tests {
             selectable: false,
             no_inferiors: false,
             non_existent: false,
+            role: None,
         }
     }
     fn target() -> Mailbox {
@@ -234,6 +265,14 @@ mod tests {
             selectable: true,
             ..root()
         }
+    }
+    fn expect_root(connection: &mut MockConnection, sequence: &mut mockall::Sequence) {
+        connection
+            .expect_namespace()
+            .with(eq(String::new()))
+            .times(1)
+            .in_sequence(sequence)
+            .returning(|_| Ok(Some(root())));
     }
 
     #[test]
@@ -304,7 +343,9 @@ mod tests {
             .times(1)
             .returning(|_| Ok(Some(target())));
         assert_eq!(
-            ensure(&connection, "Archive").await.expect("existing"),
+            ensure(&connection, "Archive", Some(FolderRole::Archive))
+                .await
+                .expect("existing"),
             target()
         );
     }
@@ -323,28 +364,149 @@ mod tests {
                 .times(1)
                 .in_sequence(&mut sequence)
                 .returning(|_| Ok(None));
-            connection
-                .expect_namespace()
-                .with(eq("Archive".to_owned()))
-                .times(1)
-                .in_sequence(&mut sequence)
-                .returning(|_| Ok(root()));
+            expect_root(&mut connection, &mut sequence);
             connection
                 .expect_create()
-                .with(eq("Archive".to_owned()))
+                .with(eq("Archive".to_owned()), eq(Some(FolderRole::Archive)))
                 .times(1)
                 .in_sequence(&mut sequence)
-                .return_once(|_| outcome);
+                .return_once(|_, _| outcome);
             connection
                 .expect_inspect()
                 .times(1)
                 .in_sequence(&mut sequence)
                 .returning(|_| Ok(Some(target())));
             assert_eq!(
-                ensure(&connection, "Archive").await.expect("confirmed"),
+                ensure(&connection, "Archive", Some(FolderRole::Archive))
+                    .await
+                    .expect("confirmed"),
                 target()
             );
         }
+    }
+
+    #[tokio::test]
+    async fn namespace_discovery_tries_root_then_reference_then_namespace_command() {
+        // [root listing, reference listing, NAMESPACE, discovered root]
+        let cases: Vec<[Option<Mailbox>; 4]> = vec![
+            [Some(root()), None, None, Some(root())],
+            [
+                None,
+                Some(Mailbox {
+                    name: "INBOX.".into(),
+                    delimiter: Some('.'),
+                    ..root()
+                }),
+                None,
+                Some(Mailbox {
+                    name: "INBOX.".into(),
+                    delimiter: Some('.'),
+                    ..root()
+                }),
+            ],
+            [
+                None,
+                None,
+                Some(Mailbox {
+                    delimiter: Some('/'),
+                    ..root()
+                }),
+                Some(root()),
+            ],
+            [None, None, None, None],
+        ];
+        for [by_root, by_reference, by_command, expected] in cases {
+            let mut connection = MockConnection::new();
+            let mut sequence = mockall::Sequence::new();
+            let root_listed = by_root.is_some();
+            let reference_listed = by_reference.is_some();
+            connection
+                .expect_namespace()
+                .with(eq(String::new()))
+                .times(1)
+                .in_sequence(&mut sequence)
+                .return_once(move |_| Ok(by_root));
+            if !root_listed {
+                connection
+                    .expect_namespace()
+                    .with(eq("Archive".to_owned()))
+                    .times(1)
+                    .in_sequence(&mut sequence)
+                    .return_once(move |_| Ok(by_reference));
+            }
+            if !root_listed && !reference_listed {
+                connection
+                    .expect_namespaces()
+                    .times(1)
+                    .in_sequence(&mut sequence)
+                    .return_once(move || Ok(by_command));
+            }
+            let discovered = discover_namespace(&connection, "Archive").await;
+            match expected {
+                Some(expected) => assert_eq!(discovered.expect("discovered"), expected),
+                None => assert!(
+                    discovered
+                        .expect_err("nothing reported")
+                        .to_string()
+                        .contains("did not report its folder namespace")
+                ),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_namespace_never_creates() {
+        let mut connection = MockConnection::new();
+        connection.expect_inspect().times(1).returning(|_| Ok(None));
+        connection
+            .expect_namespace()
+            .times(2)
+            .returning(|_| Ok(None));
+        connection
+            .expect_namespaces()
+            .times(1)
+            .returning(|| Ok(None));
+        connection.expect_create().times(0);
+        assert!(
+            ensure(&connection, "Archive", Some(FolderRole::Archive))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn plain_folders_are_created_without_a_special_use() {
+        let mut connection = MockConnection::new();
+        let mut sequence = mockall::Sequence::new();
+        connection
+            .expect_inspect()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(|_| Ok(None));
+        expect_root(&mut connection, &mut sequence);
+        connection
+            .expect_create()
+            .with(eq("Projects".to_owned()), eq(None))
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(|_, _| CreateOutcome::Acknowledged);
+        connection
+            .expect_inspect()
+            .times(1)
+            .in_sequence(&mut sequence)
+            .returning(|_| {
+                Ok(Some(Mailbox {
+                    name: "Projects".into(),
+                    ..target()
+                }))
+            });
+        assert_eq!(
+            ensure(&connection, "Projects", None)
+                .await
+                .expect("created")
+                .name,
+            "Projects"
+        );
     }
 
     #[tokio::test]
@@ -361,7 +523,7 @@ mod tests {
                 .expect_inspect()
                 .times(1)
                 .return_once(|_| observation);
-            assert!(ensure(&connection, "Archive").await.is_err());
+            assert!(ensure(&connection, "Archive", None).await.is_err());
         }
     }
 
@@ -375,22 +537,18 @@ mod tests {
                 .times(1)
                 .in_sequence(&mut sequence)
                 .returning(|_| Ok(None));
-            connection
-                .expect_namespace()
-                .times(1)
-                .in_sequence(&mut sequence)
-                .returning(|_| Ok(root()));
+            expect_root(&mut connection, &mut sequence);
             connection
                 .expect_create()
                 .times(1)
                 .in_sequence(&mut sequence)
-                .returning(|_| CreateOutcome::Rejected("denied".into()));
+                .returning(|_, _| CreateOutcome::Rejected("denied".into()));
             connection
                 .expect_inspect()
                 .times(1)
                 .in_sequence(&mut sequence)
                 .return_once(|_| observation);
-            assert!(ensure(&connection, "Archive").await.is_err());
+            assert!(ensure(&connection, "Archive", None).await.is_err());
         }
     }
 
@@ -412,14 +570,15 @@ mod tests {
                 .returning(|_| Ok(None));
             connection
                 .expect_namespace()
+                .with(eq(String::new()))
                 .times(1)
-                .returning(|_| Ok(root()));
+                .returning(|_| Ok(Some(root())));
             connection
                 .expect_inspect()
                 .with(eq("Projects".to_owned()))
                 .times(1)
                 .return_once(|_| Ok(parent));
-            assert!(ensure(&connection, "Projects/Archive").await.is_err());
+            assert!(ensure(&connection, "Projects/Archive", None).await.is_err());
         }
     }
 
