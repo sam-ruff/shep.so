@@ -157,11 +157,20 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             index_message(&tx, &anchor)?;
-            let (account, group): (String, String) = tx.query_row(
-                "SELECT account,group_id FROM conversation_members WHERE id=?",
-                [&anchor],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
+            // The anchor may have been archived, moved or deleted while this was queued.
+            let Some((account, group)) = tx
+                .query_row(
+                    "SELECT account,group_id FROM conversation_members WHERE id=?",
+                    [&anchor],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+                )
+                .optional()?
+            else {
+                return Ok(ConversationPage {
+                    anchor,
+                    ..Default::default()
+                });
+            };
             // Keep duplicate choice and chronological rank in the owned
             // encrypted scratch database, returning one metadata page to iced.
             let (total, position) =
