@@ -32,8 +32,11 @@ jobs:
       - uses: actions/checkout@v7
       - name: Install documentation tools
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends python3-venv
+          # unattended-upgrades holds the dpkg lock on the pool; only apt when venv is missing, and wait for the lock.
+          if ! python3 -c "import ensurepip" 2>/dev/null; then
+            sudo apt-get -o DPkg::Lock::Timeout=300 update -q
+            sudo apt-get -o DPkg::Lock::Timeout=300 install -y -q --no-install-recommends python3-venv
+          fi
           python3 -m venv artifacts/docs-tools
           artifacts/docs-tools/bin/python -m pip install -r requirements-docs.txt
       - name: Build documentation
