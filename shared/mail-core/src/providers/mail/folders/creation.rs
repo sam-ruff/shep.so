@@ -8,6 +8,7 @@ struct SessionConnection<
 > {
     session: Mutex<&'a mut async_imap::Session<T>>,
     encoding: NameEncoding,
+    create_special_use: bool,
     usable: std::sync::atomic::AtomicBool,
 }
 
@@ -118,19 +119,41 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
     async fn inspect(&self, path: String) -> anyhow::Result<Option<Mailbox>> {
         self.listing("", &path, false).await
     }
-    async fn namespace(&self, reference: String) -> anyhow::Result<Mailbox> {
-        self.listing(&reference, "", true)
-            .await?
-            .context("The server did not report its folder namespace.")
+    async fn namespace(&self, reference: String) -> anyhow::Result<Option<Mailbox>> {
+        self.listing(&reference, "", true).await
     }
-    async fn create(&self, path: String) -> CreateOutcome {
+    async fn namespaces(&self) -> anyhow::Result<Option<Mailbox>> {
+        // imap-proto cannot decode a NAMESPACE response, and an undecodable
+        // line ends the session, so this transport never issues the command.
+        Ok(None)
+    }
+    async fn create(&self, path: String, role: Option<FolderRole>) -> CreateOutcome {
         use async_imap::error::Error;
         use std::sync::atomic::Ordering;
         if !self.usable.load(Ordering::Acquire) {
             return CreateOutcome::Uncertain("Reconnect before creating the folder.".into());
         }
         let mut session = self.session.lock().await;
-        match tokio::time::timeout(Duration::from_secs(30), session.create(&path)).await {
+        let command = async {
+            match role.filter(|_| self.create_special_use) {
+                Some(role) => {
+                    let name = match receipts::quoted(&path) {
+                        Ok(name) => name,
+                        Err(_) => {
+                            return Err(Error::Validate(async_imap::error::ValidateError('\n')));
+                        }
+                    };
+                    session
+                        .run_command_and_check_ok(format!(
+                            "CREATE {name} (USE ({}))",
+                            role.attribute()
+                        ))
+                        .await
+                }
+                None => session.create(&path).await,
+            }
+        };
+        match tokio::time::timeout(Duration::from_secs(30), command).await {
             Ok(Ok(())) => CreateOutcome::Acknowledged,
             Ok(Err(Error::No(_) | Error::Bad(_) | Error::Validate(_))) => CreateOutcome::Rejected(
                 "The server refused folder creation. Check the folder name and your permissions."
@@ -147,14 +170,22 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
 fn connection<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug>(
     session: &mut async_imap::Session<T>,
     encoding: NameEncoding,
+    create_special_use: bool,
 ) -> SessionConnection<'_, T> {
     SessionConnection {
         session: Mutex::new(session),
         encoding,
+        create_special_use,
         usable: std::sync::atomic::AtomicBool::new(true),
     }
 }
 
+pub(super) fn create_special_use(capabilities: &Capabilities) -> bool {
+    capabilities.has_str("CREATE-SPECIAL-USE")
+}
+
+/// A missing move destination named like a logical special folder is created
+/// with that special use; resolution against the catalog runs before this.
 pub async fn ensure_exact<
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
 >(
@@ -165,7 +196,16 @@ pub async fn ensure_exact<
     let capabilities = tokio::time::timeout(Duration::from_secs(30), session.capabilities())
         .await
         .context("The server took too long to report its capabilities.")??;
-    creation::ensure(&connection(session, encoding(&capabilities)), wire_path).await
+    creation::ensure(
+        &connection(
+            session,
+            encoding(&capabilities),
+            create_special_use(&capabilities),
+        ),
+        wire_path,
+        FolderRole::for_logical_name(wire_path),
+    )
+    .await
 }
 
 pub async fn exists_exact<
@@ -178,7 +218,11 @@ pub async fn exists_exact<
     let capabilities = tokio::time::timeout(Duration::from_secs(30), session.capabilities())
         .await
         .context("The server took too long to report its capabilities.")??;
-    creation::exists(&connection(session, encoding(&capabilities)), wire_path).await
+    creation::exists(
+        &connection(session, encoding(&capabilities), false),
+        wire_path,
+    )
+    .await
 }
 
 impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug>
@@ -194,7 +238,12 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
     }
 
     pub async fn ensure_folder_exact(&mut self, wire_path: &str) -> anyhow::Result<Mailbox> {
-        creation::ensure(&connection(&mut self.session, self.encoding), wire_path).await
+        creation::ensure(
+            &connection(&mut self.session, self.encoding, self.create_special_use),
+            wire_path,
+            None,
+        )
+        .await
     }
 
     pub async fn ensure_planned_folder(&mut self, target: &Mailbox) -> anyhow::Result<Mailbox> {
@@ -218,7 +267,7 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
 
     pub async fn find_folder_exact(&mut self, wire_path: &str) -> anyhow::Result<Option<Mailbox>> {
         creation::valid_path(wire_path)?;
-        let result = connection(&mut self.session, self.encoding)
+        let result = connection(&mut self.session, self.encoding, false)
             .inspect(wire_path.into())
             .await?;
         if let Some(mailbox) = &result {
@@ -236,8 +285,8 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
         name: &str,
     ) -> anyhow::Result<Mailbox> {
         creation::valid_path(name)?;
-        let connection = connection(&mut self.session, self.encoding);
-        let root = connection.namespace(parent.unwrap_or("").into()).await?;
+        let connection = connection(&mut self.session, self.encoding, false);
+        let root = creation::discover_namespace(&connection, parent.unwrap_or("")).await?;
         let parent = match parent {
             Some(path) => {
                 creation::valid_path(path)?;
@@ -340,6 +389,7 @@ mod tests {
             let mut folders = ImapFolders {
                 session,
                 encoding: NameEncoding::ImapUtf7,
+                create_special_use: false,
             };
             action(&mut folders).await;
         };
@@ -356,7 +406,7 @@ mod tests {
                 ),
                 ("LIST \"\" \"Archive\"", "$TAG OK absent\r\n"),
                 (
-                    "LIST \"Archive\" \"\"",
+                    "LIST \"\" \"\"",
                     "* LIST (\\Noselect) \"/\" \"\"\r\n$TAG OK namespace\r\n",
                 ),
                 ("CREATE \"Archive\"", "$TAG OK created\r\n"),
@@ -385,7 +435,7 @@ mod tests {
             vec![
                 ("LIST \"\" \"Archive\"", "$TAG OK absent\r\n"),
                 (
-                    "LIST \"Archive\" \"\"",
+                    "LIST \"\" \"\"",
                     "* LIST (\\Noselect) \".\" \"\"\r\n$TAG OK namespace\r\n",
                 ),
                 ("CREATE \"Archive\"", "$TAG NO already exists\r\n"),
@@ -395,9 +445,9 @@ mod tests {
                 ),
             ],
             async |folders| {
-                let adapter = connection(&mut folders.session, folders.encoding);
+                let adapter = connection(&mut folders.session, folders.encoding, false);
                 assert_eq!(
-                    creation::ensure(&adapter, "Archive")
+                    creation::ensure(&adapter, "Archive", None)
                         .await
                         .expect("observed")
                         .name,
@@ -409,9 +459,166 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unicode_child_preserves_wire_parent_and_server_delimiter() {
+    async fn stalwart_empty_reference_listing_creates_archive_with_its_special_use() {
         script(
             vec![
+                (
+                    "CAPABILITY",
+                    "* CAPABILITY IMAP4rev1 NAMESPACE SPECIAL-USE CREATE-SPECIAL-USE LIST-EXTENDED MOVE UIDPLUS\r\n$TAG OK done\r\n",
+                ),
+                ("LIST \"\" \"Archive\"", "$TAG OK absent\r\n"),
+                (
+                    "LIST \"\" \"\"",
+                    "* LIST (\\NoSelect) \"/\" \"\"\r\n$TAG OK namespace\r\n",
+                ),
+                (
+                    "CREATE \"Archive\" (USE (\\Archive))",
+                    "$TAG OK created\r\n",
+                ),
+                (
+                    "LIST \"\" \"Archive\"",
+                    "* LIST (\\Archive) \"/\" \"Archive\"\r\n$TAG OK complete\r\n",
+                ),
+            ],
+            async |folders| {
+                let created = ensure_exact(&mut folders.session, "Archive")
+                    .await
+                    .expect("created");
+                assert_eq!(created.name, "Archive");
+                assert_eq!(created.role, Some(FolderRole::Archive));
+                assert!(created.selectable);
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn special_use_creation_needs_the_capability_and_a_logical_name() {
+        for (capabilities, path, create) in [
+            (
+                "* CAPABILITY IMAP4rev1 SPECIAL-USE\r\n$TAG OK done\r\n",
+                "Trash",
+                "CREATE \"Trash\"",
+            ),
+            (
+                "* CAPABILITY IMAP4rev1 SPECIAL-USE CREATE-SPECIAL-USE\r\n$TAG OK done\r\n",
+                "Projects",
+                "CREATE \"Projects\"",
+            ),
+            (
+                "* CAPABILITY IMAP4rev1 SPECIAL-USE CREATE-SPECIAL-USE\r\n$TAG OK done\r\n",
+                "Trash",
+                "CREATE \"Trash\" (USE (\\Trash))",
+            ),
+        ] {
+            let inspect = format!("LIST \"\" \"{path}\"");
+            let listed = format!("* LIST () \"/\" \"{path}\"\r\n$TAG OK complete\r\n");
+            script(
+                vec![
+                    ("CAPABILITY", capabilities),
+                    (&inspect, "$TAG OK absent\r\n"),
+                    (
+                        "LIST \"\" \"\"",
+                        "* LIST (\\Noselect) \"/\" \"\"\r\n$TAG OK namespace\r\n",
+                    ),
+                    (create, "$TAG OK created\r\n"),
+                    (&inspect, &listed),
+                ],
+                async |folders| {
+                    assert_eq!(
+                        ensure_exact(&mut folders.session, path)
+                            .await
+                            .expect("created")
+                            .name,
+                        path
+                    );
+                },
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_root_and_reference_listings_fail_before_create() {
+        script(
+            vec![
+                ("LIST \"\" \"Archive\"", "$TAG OK absent\r\n"),
+                ("LIST \"\" \"\"", "$TAG OK nothing\r\n"),
+                ("LIST \"Archive\" \"\"", "$TAG OK nothing\r\n"),
+            ],
+            async |folders| {
+                let adapter = connection(&mut folders.session, folders.encoding, true);
+                let error = creation::ensure(&adapter, "Archive", Some(FolderRole::Archive))
+                    .await
+                    .expect_err("no namespace");
+                assert!(
+                    error
+                        .to_string()
+                        .contains("did not report its folder namespace")
+                );
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn trash_resolves_to_the_special_use_folder_and_issues_no_create() {
+        script(
+            vec![
+                (
+                    "LIST \"\" \"*\"",
+                    "* LIST (\\Trash) \"/\" \"Deleted Items\"\r\n* LIST (\\Drafts) \"/\" \"Drafts\"\r\n* LIST () \"/\" \"INBOX\"\r\n* LIST (\\Junk) \"/\" \"Junk Mail\"\r\n* LIST (\\Sent) \"/\" \"Sent Items\"\r\n$TAG OK complete\r\n",
+                ),
+                (
+                    "CAPABILITY",
+                    "* CAPABILITY IMAP4rev1 SPECIAL-USE CREATE-SPECIAL-USE\r\n$TAG OK done\r\n",
+                ),
+                (
+                    "LIST \"\" \"Deleted Items\"",
+                    "* LIST (\\Trash) \"/\" \"Deleted Items\"\r\n$TAG OK present\r\n",
+                ),
+            ],
+            async |folders| {
+                let catalog = folders.catalog().await.expect("catalog");
+                assert_eq!(
+                    catalog
+                        .iter()
+                        .map(|mailbox| (mailbox.name.as_str(), mailbox.role))
+                        .collect::<Vec<_>>(),
+                    [
+                        ("Deleted Items", Some(FolderRole::Trash)),
+                        ("Drafts", Some(FolderRole::Drafts)),
+                        ("INBOX", None),
+                        ("Junk Mail", Some(FolderRole::Junk)),
+                        ("Sent Items", Some(FolderRole::Sent)),
+                    ]
+                );
+                let destination = crate::folders::resolve_destination(&catalog, "Trash");
+                assert_eq!(destination, "Deleted Items");
+                assert_eq!(
+                    crate::folders::resolve_destination(&catalog, "Junk"),
+                    "Junk Mail"
+                );
+                assert_eq!(
+                    crate::folders::resolve_destination(&catalog, "Archive"),
+                    "Archive"
+                );
+                let target = ensure_exact(&mut folders.session, &destination)
+                    .await
+                    .expect("existing");
+                assert_eq!(target.name, "Deleted Items");
+                assert_eq!(target.role, Some(FolderRole::Trash));
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn unicode_child_preserves_wire_parent_and_server_delimiter() {
+        // The reference listing is the fallback when the root lists nothing.
+        script(
+            vec![
+                ("LIST \"\" \"\"", "$TAG OK nothing\r\n"),
                 (
                     "LIST \"INBOX.Teams\" \"\"",
                     "* LIST (\\Noselect) \".\" \"INBOX.\"\r\n$TAG OK namespace\r\n",
@@ -424,6 +631,7 @@ mod tests {
                     "LIST \"\" \"INBOX.Teams.&ZeVnLIqe- &- work\"",
                     "$TAG OK absent\r\n",
                 ),
+                ("LIST \"\" \"\"", "$TAG OK nothing\r\n"),
                 (
                     "LIST \"INBOX.Teams.&ZeVnLIqe- &- work\" \"\"",
                     "* LIST (\\Noselect) \".\" \"INBOX.\"\r\n$TAG OK namespace\r\n",
@@ -490,7 +698,7 @@ mod tests {
             "EOF",
         ] {
             script(vec![("LIST \"\" \"Archive\"", response)], async |folders| {
-                let adapter = connection(&mut folders.session, folders.encoding);
+                let adapter = connection(&mut folders.session, folders.encoding, false);
                 assert!(creation::exists(&adapter, "Archive").await.is_err());
             })
             .await;
@@ -512,7 +720,7 @@ mod tests {
             script(
                 vec![("LIST \"\" \"Archive%\"", response)],
                 async |folders| {
-                    let adapter = connection(&mut folders.session, folders.encoding);
+                    let adapter = connection(&mut folders.session, folders.encoding, false);
                     let result = creation::exists(&adapter, "Archive%").await;
                     if rejected {
                         assert!(result.is_err());
@@ -531,14 +739,14 @@ mod tests {
             vec![
                 ("LIST \"\" \"Archive\"", "$TAG OK absent\r\n"),
                 (
-                    "LIST \"Archive\" \"\"",
+                    "LIST \"\" \"\"",
                     "* LIST (\\Noselect) \"/\" \"\"\r\n$TAG OK namespace\r\n",
                 ),
                 ("CREATE \"Archive\"", "EOF"),
             ],
             async |folders| {
-                let adapter = connection(&mut folders.session, folders.encoding);
-                assert!(creation::ensure(&adapter, "Archive").await.is_err());
+                let adapter = connection(&mut folders.session, folders.encoding, false);
+                assert!(creation::ensure(&adapter, "Archive", None).await.is_err());
             },
         )
         .await;

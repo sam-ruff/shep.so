@@ -45,6 +45,15 @@ messages are still unknown, so the next check fetches them again.
 
 Contacts has a separate Preferences tab. Image policy and per-message/sender/domain exceptions remain under Privacy. Explicit Save buttons show a dismissible **Changes saved** toast after persistence succeeds.
 
+Archive, Trash and Junk are logical names. A move first looks for a folder of
+that exact name and otherwise uses the folder the server marks with the matching
+special-use attribute, such as `Deleted Items` for Trash, so such a server never
+gains a second literal folder; the sidebar's Trash and Spam entries list those
+same folders. A destination that truly does not exist is created after Shep asks
+for the root and hierarchy separator with `LIST "" ""`, falling back to a listing
+of the destination's own reference, and servers advertising CREATE-SPECIAL-USE
+receive the matching attribute at creation.
+
 Archive and Move create a missing destination before moving mail. If an earlier
 move was interrupted, Shep checks the original and destination to finish it
 automatically where possible. **Retry move** is available directly in the reader;

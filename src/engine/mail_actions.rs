@@ -36,6 +36,16 @@ impl Engine {
         }
         record
     }
+    /// The wire folder a logical destination such as `Trash` stands for in
+    /// `account`, so moves and their cached rows use the physical name.
+    pub(super) async fn resolve_destination(
+        &self,
+        account: &str,
+        folder: &str,
+    ) -> anyhow::Result<String> {
+        let catalog = self.store.cached_folder_catalog(account.to_owned()).await?;
+        Ok(crate::folders::resolve_destination(&catalog, folder))
+    }
     async fn authorize_mail_mutation(
         &self,
         id: &str,
@@ -113,6 +123,7 @@ impl Engine {
             source.protocol == Protocol::Imap && destination.protocol == Protocol::Imap,
             "Moving between accounts requires two IMAP accounts. POP3 keeps server originals."
         );
+        let folder = self.resolve_destination(&destination.id, &folder).await?;
         if !self.demo {
             let receipt = self
                 .durable_move(&source, Some(&destination), mail, &folder, &mut output)
@@ -159,6 +170,7 @@ impl Engine {
             "The message moved since it was selected. Refresh its folder."
         );
         let mail = &current;
+        let folder = &self.resolve_destination(&mail.account_id, folder).await?;
         if mail.is_local_copy() {
             let receipt = MoveReceipt::local(mail, folder);
             self.store
@@ -780,6 +792,69 @@ mod tests {
         assert_eq!(
             engine.store.mail_metadata(moved.id).await.unwrap().folder,
             "Archive"
+        );
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn logical_trash_moves_land_in_the_special_use_folder_and_undo_restores_inbox() {
+        use crate::folders::{FolderRole, Mailbox};
+        let engine = crate::engine::calendar_tests::engine();
+        crate::test_support::seed_demo(&engine.store).await.unwrap();
+        let original = engine.store.query(MailQuery::default()).await.unwrap().rows[0].clone();
+        engine
+            .store
+            .save_folder_catalog(
+                original.account_id.clone(),
+                vec![
+                    Mailbox::flat("INBOX".into()),
+                    Mailbox {
+                        role: Some(FolderRole::Trash),
+                        ..Mailbox::flat("Deleted Items".into())
+                    },
+                ],
+            )
+            .await
+            .unwrap();
+        let (output, _events) = futures::channel::mpsc::channel(32);
+        let (_, receipt) = engine
+            .change_folder(&original, "Trash", output.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(receipt.folder, "Deleted Items");
+        let moved = receipt.current.clone().unwrap();
+        assert_eq!(moved.folder, "Deleted Items");
+        assert_eq!(
+            engine
+                .store
+                .mail_metadata(moved.id.clone())
+                .await
+                .unwrap()
+                .folder,
+            "Deleted Items"
+        );
+        let trash = engine
+            .store
+            .query(MailQuery {
+                folder: "Trash".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(trash.rows.iter().any(|row| row.id == moved.id));
+        let (_, restored) = engine
+            .undo_move(original.clone(), &receipt, output.clone(), None)
+            .await
+            .unwrap();
+        let restored = restored.current.unwrap();
+        assert_eq!(restored.folder, original.folder);
+        let (_, archived) = engine
+            .change_folder(&restored, "Archive", output, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            archived.folder, "Archive",
+            "no special-use folder keeps the literal name"
         );
     }
 

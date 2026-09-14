@@ -220,11 +220,18 @@ impl App {
                 .unwrap_or(&fallback);
             for (depth, node) in tree.visible(self.preferences.expanded_folders.get(&account.id)) {
                 let folder = &node.mailbox.name;
+                // Special-use folders such as (\Trash) "Deleted Items" belong
+                // to the unified entries, like their literal counterparts.
+                let unified_role = node
+                    .mailbox
+                    .role
+                    .is_some_and(|role| role != crate::folders::FolderRole::Drafts);
                 if self.preferences.unified_inbox
-                    && matches!(
-                        folder.as_str(),
-                        "INBOX" | "Sent" | "Archive" | "Trash" | "Junk"
-                    )
+                    && (unified_role
+                        || matches!(
+                            folder.as_str(),
+                            "INBOX" | "Sent" | "Archive" | "Trash" | "Junk"
+                        ))
                     && node.children.is_empty()
                 {
                     continue;

@@ -198,7 +198,11 @@ impl Engine {
                     )
                     .await
                     .map(|(_, r)| Receipt::Move(Box::new(r)))
-                } else if original.folder == *folder {
+                } else if original.folder
+                    == self
+                        .resolve_destination(&original.account_id, folder)
+                        .await?
+                {
                     Ok(Receipt::Unchanged)
                 } else {
                     self.change_folder(original, folder, output, Some(item))
