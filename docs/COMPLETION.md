@@ -1,5 +1,27 @@
 # Completion audit
 
+## Taskbar badge equals the unread count, 15 September 2026
+
+The dock badge drifted from the unread Inbox total after a read or unread
+acknowledgement for a message the current page neither observed nor listed
+(reading from the conversation view, a row that had scrolled off, or a flag
+change while another folder was open). `counts::confirm_flags` reconciled from
+the post-write state, so before equalled after, the base count never moved and
+the pre-write total stayed published until the next requery, which a full
+query lane can drop until the next sync. The projection now reconciles from
+the previously confirmed state and the badge publishes only
+`counts::badge_total`, the projected counts summed once per connected account.
+
+Lane commit `93c1656`, merged as `e4dcf5b`. Tests: five new `counts.rs`
+regressions (unlisted read and unread acknowledgements; arrival, read,
+non-Inbox and disconnected negatives; stale generations and cross-folder Inbox
+changes; archive plus Undo of unlisted mail; per-account dedupe), the full
+suite through the hook, and the four native private-bus badge scenarios.
+Limitations: protocol-level evidence only, no dock render on GNOME, KDE,
+Windows or macOS; a server flag listing fetched before a local STORE reaches
+the server can still flip a just-read message back to unread until the next
+check, which belongs to the sync lanes.
+
 ## Five-second default check and per-account sync, 15 September 2026
 
 `mail_check_seconds` defaults to 5 everywhere it is stated (model, scheduler
