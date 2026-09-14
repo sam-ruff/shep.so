@@ -1,5 +1,29 @@
 # Completion audit
 
+## IMAP IDLE server push, 15 September 2026
+
+Each listed IMAP account keeps a dedicated IDLE connection on Inbox
+(`providers/mail/push.rs`, `engine/mail_push.rs`), outside the account lock
+and the provider semaphore. An untagged EXISTS, EXPUNGE or FETCH marks only
+that account due through `Schedule::wake`, so its normal check runs at once
+and a running check gets one follow-up. IDLE is re-issued every 25 minutes;
+stop sends DONE and LOGOUT; a server without IDLE ends the watcher without
+retry; lost connections reconnect with 5 second to 5 minute backoff, reset on
+connect. Watchers start with the scheduler and stop on account removal and
+worker shutdown. Interval polling is unchanged for every account and folder.
+
+Lane commit `dd19a2f`, merged as `294be90`. Tests: six scripted-session tests
+(IDLE after SELECT, EXISTS signal, DONE and LOGOUT on stop, 25 minute
+re-issue under virtual time, unsupported server, dropped connection, POP3) and
+six virtual-time engine tests (push checks only that account, push during a
+running check, backoff growth and reset, unsupported keeps polling, removal
+and shutdown stop watchers); 1,343 hook executions. No native scenario
+applies because the fixtures never contact a server. Limitations: no
+CONDSTORE, QRESYNC or NOTIFY, so a pushed check still rescans folders; a
+watcher keeps the account settings it started with until the account is
+removed and re-added; a flag change from another client also triggers a
+check; not verified against the live Stalwart server.
+
 ## Taskbar badge equals the unread count, 15 September 2026
 
 The dock badge drifted from the unread Inbox total after a read or unread
