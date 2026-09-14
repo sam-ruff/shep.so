@@ -1,5 +1,28 @@
 # Completion audit
 
+## Five-second default check and per-account sync, 15 September 2026
+
+`mail_check_seconds` defaults to 5 everywhere it is stated (model, scheduler
+settings, Preferences placeholder, docs); saved preferences are not migrated.
+`engine/mail_sync.rs` now schedules every ready account independently: each
+pass lists accounts and spawns a separate 600 second bounded check per idle,
+due account through the shared provider semaphore, skipping accounts still
+running, so a slow account never delays another. Manual refresh coalesces per
+account and stays busy until every account has served the click. Each account
+flushes its cache, requests pending move recovery and republishes the
+workspace when it finishes; `MailSyncFinished` carries the account key so a
+recovery clears only that account's error.
+
+Lane commit `c9e4a97`, merged as `0431962`. Tests: 13 virtual-time scheduler
+tests (slow and fast accounts, a failing account, per-account timeout,
+accounts added and removed, manual coalescing across accounts) within 1,312
+hook executions; 16 native sync scenarios pass on the harness display
+(background arrival with queued clicks, failure retry, notifications through
+restart, held-sync close and flag flows, tray quit during held sync).
+Limitations: no live IMAP evidence; the account listing runs on every pass;
+workspace republish and pending-move recovery now fire per account rather
+than per cycle; the demo failure notice reads "Preview sync failed: ...".
+
 ## Folder namespace discovery and special-use destinations, 14 September 2026
 
 Moves to Archive or Trash on `sam@shep.so` failed with "The server did not
