@@ -1370,7 +1370,7 @@ impl App {
                         ]
                         .spacing(5),
                         space().width(Length::Fill),
-                        input("15", self.field("mail_check_seconds"), |v| Message::Field(
+                        input("5", self.field("mail_check_seconds"), |v| Message::Field(
                             "mail_check_seconds",
                             v
                         ))

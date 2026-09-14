@@ -35,19 +35,36 @@ fn search_uses_relevance_without_overwriting_browse_sort_and_rejects_stale_pages
 #[test]
 fn recovered_mail_sync_clears_its_error_but_preserves_other_action_errors() {
     let (mut app, _) = App::new();
-    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Err(
-        "Mail server unavailable. Try Refresh again.".into(),
-    ))));
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
+        "work".into(),
+        Err("Mail server unavailable. Try Refresh again.".into()),
+    )));
     assert!(app.notice.as_ref().unwrap().1);
-    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Ok(()))));
+    // Another account's success leaves the failing account's notice alone.
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
+        "personal".into(),
+        Ok(()),
+    )));
+    assert!(app.notice.as_ref().unwrap().1);
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
+        "work".into(),
+        Ok(()),
+    )));
     assert!(app.notice.is_none());
-    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Err(
-        "Mail server unavailable.".into(),
-    ))));
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
+        "work".into(),
+        Err("Mail server unavailable.".into()),
+    )));
     // Give the unrelated notice a distinct, deterministic identity.
-    app.sync_notice = Some(Instant::now() - std::time::Duration::from_secs(1));
+    app.sync_notice = Some((
+        "work".into(),
+        Instant::now() - std::time::Duration::from_secs(1),
+    ));
     app.notice("Archive failed. The message was restored.", true);
-    let _ = app.handle(Message::Backend(Event::MailSyncFinished(Ok(()))));
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
+        "work".into(),
+        Ok(()),
+    )));
     assert_eq!(
         app.notice.as_ref().unwrap().0,
         "Archive failed. The message was restored."
