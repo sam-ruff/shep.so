@@ -4,6 +4,7 @@ mod counts;
 mod navigation;
 mod projection;
 mod undo;
+pub(super) use counts::badge_total;
 
 #[derive(Default)]
 pub(super) struct Actions {
@@ -563,6 +564,7 @@ impl App {
             unread: (entry.edits.0 > entry.sent_edits.0).then_some(entry.desired.unread),
             starred: (entry.edits.1 > entry.sent_edits.1).then_some(entry.desired.starred),
         };
+        let previous = entry.confirmed.clone();
         if result.is_ok() {
             entry.confirmed = entry.sent.clone();
         }
@@ -589,7 +591,7 @@ impl App {
         }
         let mut base = (*self.mail_actions.base_page).clone();
         if result.is_ok() {
-            counts::confirm_flags(&mut base, &confirmed);
+            counts::confirm_flags(&mut base, &previous, &confirmed);
         }
         if let Some(mail) = base.rows.iter_mut().find(|m| m.id == sent.id) {
             if mail.unread != confirmed.unread {

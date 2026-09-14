@@ -714,8 +714,14 @@ same SQLite read transaction as page rows and global counts. Never retrieve raw
 mail for this. `ui/mail_actions/counts.rs` projects intent independently of visible
 rows, distinguishes a missing observed identity from an unobserved one, and
 reconciles acknowledgements without double-counting a completed cache write.
-Invalidate older page/prefetch generations when an intent starts. Preserve tests
-for filtered pages, read rollback, Inbox moves, cross-account rekeying and Undo.
+An acknowledgement for an identity that is neither observed nor listed (a read
+from the conversation view or a row no longer on the page) reconciles from the
+previously confirmed state, because that snapshot predates the intent; using
+the newly confirmed state leaves the pre-write count published until a requery.
+The published value is always `counts::badge_total` over the projected counts,
+never an incremental counter. Invalidate older page/prefetch generations when
+an intent starts. Preserve tests for filtered pages, read rollback, Inbox moves,
+cross-account rekeying and Undo.
 Ambiguous provider receipts and durable pending-action recovery remain R50/R60.
 
 The MCP `desktop.start(desktop_badges=true)` option starts an owned private

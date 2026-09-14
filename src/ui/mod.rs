@@ -992,18 +992,11 @@ impl App {
         }
     }
     fn unread_badge_count(&self) -> u64 {
-        if !self.preferences.unread_badge {
-            return 0;
-        }
-        self.workspace.accounts.iter().fold(0u64, |count, account| {
-            count.saturating_add(
-                self.page
-                    .inbox_unread
-                    .get(&account.id)
-                    .copied()
-                    .unwrap_or(0) as u64,
-            )
-        })
+        mail_actions::badge_total(
+            &self.workspace.accounts,
+            &self.page.inbox_unread,
+            self.preferences.unread_badge,
+        )
     }
     fn update_desktop_badge(&self) {
         if let Some(sender) = &self.desktop_badge {
