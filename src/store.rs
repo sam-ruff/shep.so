@@ -47,7 +47,7 @@ pub struct Store(
     Option<Arc<crate::cache_cipher::ownership::Guard>>,
 );
 
-pub(crate) const DATABASE_VERSION: u32 = 4;
+pub(crate) const DATABASE_VERSION: u32 = 5;
 /// Plain-text characters the reader loads per page of a long message.
 pub const READER_BODY_PAGE: usize = 32_000;
 
@@ -244,6 +244,12 @@ impl Store {
         }
         if version < 4 {
             conn.pragma_update(None, "user_version", DATABASE_VERSION)?;
+        }
+        if version < 5 {
+            let tx = conn.transaction()?;
+            migrate_check_interval(&tx)?;
+            tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
+            tx.commit()?;
         }
         Ok(conn)
     }
@@ -1027,6 +1033,18 @@ pub(crate) fn import_archive_schema(c: &Connection) -> anyhow::Result<()> {
         PRIMARY KEY(import_id,kind,identity));",
     )?;
     Ok(())
+}
+
+/// Saved settings still on the previous 15 second default follow the new
+/// default once; a value the user chose, including a later 15, is kept.
+fn migrate_check_interval(c: &Connection) -> anyhow::Result<()> {
+    const PREVIOUS_DEFAULT: u64 = 15;
+    let mut preferences: Preferences = get(c, "preferences")?;
+    if preferences.mail_check_seconds != PREVIOUS_DEFAULT {
+        return Ok(());
+    }
+    preferences.mail_check_seconds = Preferences::default().mail_check_seconds;
+    put(c, "preferences", &preferences)
 }
 
 fn get<T: DeserializeOwned + Default>(c: &Connection, key: &str) -> anyhow::Result<T> {

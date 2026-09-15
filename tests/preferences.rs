@@ -156,6 +156,46 @@ async fn reconnecting_the_same_drive_account_preserves_history_but_other_account
 }
 
 #[tokio::test]
+async fn reopening_moves_the_old_default_check_interval_to_five_seconds_once() {
+    let directory = tempfile::tempdir().unwrap();
+    for (saved, expected) in [(15, 5), (20, 20)] {
+        let path = directory.path().join(format!("{saved}.sqlite"));
+        let store = Store::open(&path).unwrap();
+        store
+            .save_preferences(Preferences {
+                mail_check_seconds: saved,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        // Rewind to the version that shipped the 15 second default.
+        store
+            .run(|c| {
+                c.pragma_update(None, "user_version", 4)?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        let workspace = store.workspace().await.unwrap();
+        assert_eq!(workspace.preferences.mail_check_seconds, expected);
+        // A deliberate 15 on a migrated database is kept.
+        store
+            .save_preferences(Preferences {
+                mail_check_seconds: 15,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        let workspace = store.workspace().await.unwrap();
+        assert_eq!(workspace.preferences.mail_check_seconds, 15);
+    }
+}
+
+#[tokio::test]
 async fn preferences_revision_survives_reopen_and_failed_validation_is_atomic() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("prefs.sqlite");
