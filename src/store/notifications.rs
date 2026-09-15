@@ -102,8 +102,20 @@ impl Store {
     /// upsert(), which remembers identity but never produces a notification.
     /// Claims are at most once: restarting never replays an old sound/popup.
     pub async fn sync_message(&self, mail: StoredMail) -> anyhow::Result<Option<Arrival>> {
+        self.sync_message_since(mail, None).await
+    }
+    /// As `sync_message`, dropping a body the user moved away after the
+    /// check that fetched it began.
+    pub async fn sync_message_since(
+        &self,
+        mail: StoredMail,
+        epoch: Option<SyncEpoch>,
+    ) -> anyhow::Result<Option<Arrival>> {
         self.run(move |c| {
             let tx = c.transaction()?;
+            if arrival_moved_away(&tx, &mail.summary.id, epoch)? {
+                return Ok(None);
+            }
             let m = &mail.summary;
             let ready: bool = tx.query_row(
                 "SELECT ready FROM notification_mailboxes WHERE account=?",

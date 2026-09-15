@@ -80,6 +80,24 @@ pub(super) fn relocate(c: &Connection, source: &Mail, destination: &Mail) -> any
         conversations::index_message(c, &destination.id)?;
         outgoing::reconcile(c, destination)?;
         c.execute("DELETE FROM messages WHERE id=?", [&source.id])?;
+        // Relocation follows the server acknowledgement. A running check that
+        // listed either folder earlier must neither restore the source nor
+        // remove the destination copy.
+        let now = chrono::Utc::now().timestamp();
+        write_ledger::record_acknowledged(
+            c,
+            &source.account_id,
+            &source.id,
+            WriteKind::MovedAway,
+            now,
+        )?;
+        write_ledger::record_acknowledged(
+            c,
+            &destination.account_id,
+            &destination.id,
+            WriteKind::MovedIn,
+            now,
+        )?;
     }
     Ok(())
 }

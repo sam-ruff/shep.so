@@ -60,7 +60,7 @@ impl Engine {
         accounts.dedup();
         let mut guards = Vec::new();
         for id in accounts {
-            guards.push(self.account_access(id).await);
+            guards.push(self.account_exclusive(id).await);
         }
         let mut calendars: Vec<_> = snapshot.calendars.iter().map(|c| c.id.as_str()).collect();
         calendars.sort_unstable();

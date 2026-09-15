@@ -43,6 +43,35 @@ after its last body in whichever lane carries it. If the slow lane fails part
 way, the messages already received stay saved and the remaining deferred
 messages are still unknown, so the next check fetches them again.
 
+Mail actions never wait for, or interrupt, a running check of the same
+account. Archive, move, delete, flag and read changes go out on their own
+connection while the download continues, and the two are reconciled afterwards
+with a write ledger so a check that listed a folder before the action cannot
+undo it. The ledger holds only message ids and kinds, lives in the session
+scratch database and keeps at most 256 entries per account, oldest dropped
+first. The rules:
+
+- A check takes a ledger epoch before its first SELECT, so every listing it
+  applies was taken at or after that epoch. A write is recorded when the
+  server has acknowledged it and its cache effect commits: a flag write in
+  `patch_flags`, a move as the source id moved away plus the destination id
+  moved in when the cache relocates.
+- A write outranks a check's items when it was acknowledged after the epoch
+  (or is still unacknowledged). A stale `Flags` item then keeps the local
+  flags of that id, a stale `Reconcile` listing keeps a moved-in row it does
+  not mention, and a stale body arrival for a moved-away id is dropped. The
+  move journal already protects a source row while its move is in flight.
+- A write acknowledged before a check's epoch is not protected: that check
+  observed the server after the change, so a change made on another client
+  wins from then on. Finishing a check clears the account's entries
+  acknowledged before it began, so with checks every few seconds an entry
+  lives for about one cycle. Entries acknowledged more than 600 s ago, the
+  cycle bound, are pruned when any check begins because no running check can
+  still be applying an older listing.
+- A flag entry protects both the read and flagged state of its id for that
+  cycle, even when only one changed. Items applied without an epoch (fixtures,
+  restores) trust the listing completely.
+
 Contacts has a separate Preferences tab. Image policy and per-message/sender/domain exceptions remain under Privacy. Explicit Save buttons show a dismissible **Changes saved** toast after persistence succeeds.
 
 Archive, Trash and Junk are logical names. A move first looks for a folder of
