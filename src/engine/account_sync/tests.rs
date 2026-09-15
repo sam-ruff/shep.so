@@ -150,7 +150,7 @@ async fn interrupted_cache_write(finish: Finish) {
     }
     let writer_engine = engine.clone();
     let writer = tokio::spawn(async move {
-        let _guard = writer_engine.account_access("fixture").await;
+        let _guard = writer_engine.account_exclusive("fixture").await;
         writer_engine
             .store
             .run(|db| {
@@ -165,7 +165,7 @@ async fn interrupted_cache_write(finish: Finish) {
     if let Some(dropped) = dropped {
         tokio::time::timeout(Duration::from_secs(10), dropped)
             .await
-            .expect("interactive write did not interrupt stalled read-only provider")
+            .expect("exclusive work did not interrupt stalled read-only provider")
             .unwrap();
     }
     assert!(
@@ -205,8 +205,135 @@ async fn interrupted_cache_write(finish: Finish) {
 }
 
 #[tokio::test]
-async fn stalled_sync_yields_to_account_write_after_cache_commit_is_observed() {
+async fn stalled_sync_yields_to_exclusive_account_work_after_cache_commit_is_observed() {
     interrupted_cache_write(Finish::Writer).await;
+}
+
+#[tokio::test]
+async fn mail_action_completes_beside_a_held_readonly_sync() {
+    let engine = super::super::calendar_tests::engine();
+    let accounts = engine.account_work.clone();
+    let (provider_dropped, mut dropped) = oneshot::channel();
+    let (started, start) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        accounts
+            .sync("fixture", |stop| async move {
+                download(
+                    stop,
+                    |tx| async move {
+                        let _active = ProviderActive(Some(provider_dropped));
+                        tx.send(MailSyncItem::Flags(vec![])).await?;
+                        started.send(()).unwrap();
+                        std::future::pending::<anyhow::Result<Vec<String>>>().await
+                    },
+                    |mut rx| async move {
+                        while rx.recv().await.is_some() {}
+                        Ok(())
+                    },
+                )
+                .await?;
+                Ok(())
+            })
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(10), start)
+        .await
+        .unwrap()
+        .unwrap();
+    let write = tokio::time::timeout(Duration::from_secs(10), engine.account_access("fixture"))
+        .await
+        .expect("a mail action must not wait for the download");
+    drop(write);
+    assert!(
+        matches!(dropped.try_recv(), Err(oneshot::error::TryRecvError::Empty)),
+        "the download must continue past the action"
+    );
+    task.abort();
+    tokio::time::timeout(Duration::from_secs(10), dropped)
+        .await
+        .expect("shutdown still stops the provider")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_listing_taken_before_a_local_flag_write_does_not_undo_it() -> anyhow::Result<()> {
+    let engine = super::super::calendar_tests::engine();
+    let store = engine.store.clone();
+    let mail = parse_mail(
+        "fixture",
+        "1.7",
+        "INBOX",
+        b"Subject: Flags\r\n\r\nBody".to_vec(),
+        true,
+        false,
+    )?;
+    let summary = mail.summary.clone();
+    store.upsert(vec![mail]).await?;
+    let (listed, listing) = oneshot::channel();
+    let (written, write) = oneshot::channel::<()>();
+    let epoch = store.sync_epoch().await?;
+    let accounts = engine.account_work.clone();
+    let cache = store.clone();
+    let id = summary.id.clone();
+    let sync = tokio::spawn(async move {
+        accounts
+            .sync("fixture", move |stop| async move {
+                download(
+                    stop,
+                    |tx| async move {
+                        // The scripted FETCH FLAGS is taken before the local
+                        // write and delivered after it.
+                        let stale = vec![(id, true, false)];
+                        listed.send(()).unwrap();
+                        write.await?;
+                        tx.send(MailSyncItem::Flags(stale)).await?;
+                        Ok(vec!["INBOX".into()])
+                    },
+                    |mut rx| async move {
+                        while let Some(item) = rx.recv().await {
+                            cache.apply_sync_since(item, Some(epoch)).await?;
+                        }
+                        Ok(())
+                    },
+                )
+                .await?;
+                Ok(())
+            })
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(10), listing).await??;
+    let access = tokio::time::timeout(Duration::from_secs(10), engine.account_access("fixture"))
+        .await
+        .expect("the flag write must not wait for the download");
+    store
+        .patch_flags(
+            summary.clone(),
+            crate::mail_actions::Flags {
+                unread: None,
+                starred: Some(true),
+            },
+        )
+        .await?;
+    drop(access);
+    written.send(()).unwrap();
+    sync.await??;
+    store.sync_finished("fixture".into(), epoch).await?;
+    assert!(
+        store.mail_metadata(summary.id.clone()).await?.starred,
+        "the stale listing must not undo the flag"
+    );
+    let later = store.sync_epoch().await?;
+    store
+        .apply_sync_since(
+            MailSyncItem::Flags(vec![(summary.id.clone(), true, false)]),
+            Some(later),
+        )
+        .await?;
+    assert!(
+        !store.mail_metadata(summary.id).await?.starred,
+        "a check started after the acknowledgement observes the server"
+    );
+    Ok(())
 }
 
 #[tokio::test]

@@ -1,5 +1,10 @@
 //! One channel-driven coordinator owns scheduling state. Account operations
 //! hold completion senders, never a shared mutex or mutable scheduling map.
+//!
+//! A read-only sync and a mail write for the same account run side by side:
+//! each has its own connection and the write ledger reconciles their cache
+//! effects afterwards. Only exclusive lifecycle work (account settings,
+//! removal, restore, folder structure) interrupts a running sync and waits.
 use super::*;
 use futures::{FutureExt, future::BoxFuture, stream::FuturesUnordered};
 use std::{
@@ -23,21 +28,42 @@ pub(super) struct Access {
     _finished: oneshot::Sender<()>,
 }
 
+enum Kind {
+    /// A mail action on its own connection; runs beside a sync.
+    Write,
+    /// Needs the account to itself; interrupts a read-only sync and waits.
+    Exclusive,
+    /// A read-only download; never starts while another one runs.
+    Sync(oneshot::Sender<()>),
+}
+impl Kind {
+    fn is_sync(&self) -> bool {
+        matches!(self, Kind::Sync(_))
+    }
+    fn is_exclusive(&self) -> bool {
+        matches!(self, Kind::Exclusive)
+    }
+}
+
 struct Request {
     account: String,
-    interrupt: Option<oneshot::Sender<()>>,
+    kind: Kind,
     grant: oneshot::Sender<bool>,
     finished: oneshot::Receiver<()>,
 }
 struct Pending {
     ticket: u64,
     account: String,
-    interrupt: Option<oneshot::Sender<()>>,
+    kind: Kind,
     grant: oneshot::Sender<bool>,
 }
-struct Active {
+struct ActiveSync {
     ticket: u64,
     interrupt: Option<oneshot::Sender<()>>,
+}
+struct ActiveMutation {
+    ticket: u64,
+    exclusive: bool,
 }
 
 pub(super) struct Stop {
@@ -54,13 +80,13 @@ impl Stop {
 }
 
 impl Accounts {
-    async fn acquire(&self, id: &str, interrupt: Option<oneshot::Sender<()>>) -> Option<Access> {
+    async fn acquire(&self, id: &str, kind: Kind) -> Option<Access> {
         let (finished, receipt) = oneshot::channel();
         let (grant, granted) = oneshot::channel();
         self.0
             .send(Request {
                 account: id.into(),
-                interrupt,
+                kind,
                 grant,
                 finished: receipt,
             })
@@ -78,10 +104,20 @@ impl Accounts {
         }
     }
 
+    /// A mail action. Granted as soon as no other write holds the account,
+    /// even while a read-only sync is downloading.
     pub(super) async fn write(&self, id: &str) -> Access {
-        self.acquire(id, None)
+        self.acquire(id, Kind::Write)
             .await
             .expect("writes are never skipped")
+    }
+
+    /// Lifecycle work that must not overlap a download. A running read-only
+    /// sync is asked to stop and this waits until its cache commits settle.
+    pub(super) async fn exclusive(&self, id: &str) -> Access {
+        self.acquire(id, Kind::Exclusive)
+            .await
+            .expect("exclusive requests are never skipped")
     }
 
     pub(super) async fn sync<F, Fut>(&self, id: &str, work: F) -> anyhow::Result<()>
@@ -99,7 +135,7 @@ impl Accounts {
             let access = tokio::select! {
                 biased;
                 _ = &mut closed => return Ok(()),
-                access = accounts.acquire(&id, Some(interrupt)) => access,
+                access = accounts.acquire(&id, Kind::Sync(interrupt)) => access,
             };
             let Some(_access) = access else { return Ok(()) };
             work(Stop {
@@ -115,38 +151,73 @@ impl Accounts {
 }
 
 async fn coordinate(mut requests: mpsc::Receiver<Request>) {
-    let mut active: HashMap<String, Active> = HashMap::new();
+    let mut syncs: HashMap<String, ActiveSync> = HashMap::new();
+    let mut mutations: HashMap<String, ActiveMutation> = HashMap::new();
     let mut pending: VecDeque<Pending> = VecDeque::new();
     let mut finished: FuturesUnordered<BoxFuture<'static, (u64, String)>> = FuturesUnordered::new();
     let mut next = 0u64;
     let mut closed = false;
     loop {
-        // Grant independent accounts immediately. Queued writes keep FIFO order;
-        // speculative sync yields if any write for its account is waiting.
+        // Writes and exclusive requests keep FIFO order per account. A sync is
+        // granted beside a write, refused while another sync runs and yields
+        // to exclusive work instead of starting a download it would interrupt.
+        let mut blocked: Vec<String> = Vec::new();
         let mut i = 0;
         while i < pending.len() {
             let request = &pending[i];
+            let account = &request.account;
+            let exclusive_waiting = mutations
+                .get(account)
+                .is_some_and(|active| active.exclusive)
+                || pending
+                    .iter()
+                    .any(|other| other.account == *account && other.kind.is_exclusive());
             let skip = request.grant.is_closed()
-                || request.interrupt.is_some()
-                    && pending
-                        .iter()
-                        .any(|other| other.account == request.account && other.interrupt.is_none());
+                || request.kind.is_sync() && (syncs.contains_key(account) || exclusive_waiting);
             if skip {
                 let request = pending.remove(i).unwrap();
                 let _ = request.grant.send(false);
-            } else if !active.contains_key(&request.account) {
-                let request = pending.remove(i).unwrap();
-                if request.grant.send(true).is_ok() {
-                    active.insert(
+                continue;
+            }
+            let ready = match &request.kind {
+                Kind::Sync(_) => true,
+                Kind::Write => !mutations.contains_key(account) && !blocked.contains(account),
+                Kind::Exclusive => {
+                    !mutations.contains_key(account)
+                        && !blocked.contains(account)
+                        && !syncs.contains_key(account)
+                }
+            };
+            if !ready {
+                if !request.kind.is_sync() {
+                    blocked.push(account.clone());
+                }
+                i += 1;
+                continue;
+            }
+            let request = pending.remove(i).unwrap();
+            if request.grant.send(true).is_err() {
+                continue;
+            }
+            match request.kind {
+                Kind::Sync(interrupt) => {
+                    syncs.insert(
                         request.account,
-                        Active {
+                        ActiveSync {
                             ticket: request.ticket,
-                            interrupt: request.interrupt,
+                            interrupt: Some(interrupt),
                         },
                     );
                 }
-            } else {
-                i += 1;
+                kind => {
+                    mutations.insert(
+                        request.account,
+                        ActiveMutation {
+                            ticket: request.ticket,
+                            exclusive: kind.is_exclusive(),
+                        },
+                    );
+                }
             }
         }
         if closed && finished.is_empty() {
@@ -155,18 +226,17 @@ async fn coordinate(mut requests: mpsc::Receiver<Request>) {
         tokio::select! {
             biased;
             Some((ticket, account)) = finished.next(), if !finished.is_empty() => {
-                if active.get(&account).is_some_and(|entry| entry.ticket == ticket) {
-                    active.remove(&account);
+                if syncs.get(&account).is_some_and(|entry| entry.ticket == ticket) {
+                    syncs.remove(&account);
+                }
+                if mutations.get(&account).is_some_and(|entry| entry.ticket == ticket) {
+                    mutations.remove(&account);
                 }
                 pending.retain(|request| request.ticket != ticket);
             }
             request = requests.recv(), if !closed && pending.len() < 32 => {
                 let Some(request) = request else { closed = true; continue };
                 if request.grant.is_closed() { continue; }
-                if request.interrupt.is_some() && active.contains_key(&request.account) {
-                    let _ = request.grant.send(false);
-                    continue;
-                }
                 next = next.checked_add(1).expect("account ticket space exhausted");
                 let ticket = next;
                 let account = request.account.clone();
@@ -174,13 +244,13 @@ async fn coordinate(mut requests: mpsc::Receiver<Request>) {
                     let _ = request.finished.await;
                     (ticket, account)
                 }.boxed());
-                if request.interrupt.is_none()
-                    && let Some(sync) = active.get_mut(&request.account)
+                if request.kind.is_exclusive()
+                    && let Some(sync) = syncs.get_mut(&request.account)
                     && let Some(interrupt) = sync.interrupt.take()
                 {
                     let _ = interrupt.send(());
                 }
-                pending.push_back(Pending { ticket, account: request.account, interrupt: request.interrupt, grant: request.grant });
+                pending.push_back(Pending { ticket, account: request.account, kind: request.kind, grant: request.grant });
             }
         }
     }
@@ -192,27 +262,152 @@ mod tests {
     use futures::poll;
     use std::task::Poll;
 
+    /// A sync whose provider stays held until `release` fires, reporting
+    /// whether the coordinator asked it to stop. Returns once it holds the
+    /// account.
+    async fn held_sync(
+        accounts: &Accounts,
+        release: oneshot::Receiver<()>,
+    ) -> (
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+        oneshot::Receiver<bool>,
+    ) {
+        let (report, interrupted) = oneshot::channel();
+        let (started, start) = oneshot::channel();
+        let accounts = accounts.clone();
+        let task = tokio::spawn(async move {
+            accounts
+                .sync("fixture", |mut stop| async move {
+                    started.send(()).unwrap();
+                    let stopped = tokio::select! {
+                        _ = stop.cancelled() => true,
+                        _ = release => false,
+                    };
+                    report.send(stopped).unwrap();
+                    Ok(())
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(10), start)
+            .await
+            .unwrap()
+            .unwrap();
+        (task, interrupted)
+    }
+
     #[tokio::test]
-    async fn queued_sync_cannot_get_ahead_of_a_waiting_write() {
+    async fn write_is_granted_while_a_sync_holds_the_provider() {
         let accounts = Accounts::default();
+        let (release, held) = oneshot::channel();
+        let (sync, interrupted) = held_sync(&accounts, held).await;
+        let write = tokio::time::timeout(Duration::from_secs(10), accounts.write("fixture"))
+            .await
+            .expect("a write must not wait for the download");
+        drop(write);
+        release.send(()).unwrap();
+        assert!(
+            !interrupted.await.unwrap(),
+            "a write must not interrupt sync"
+        );
+        sync.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn writes_keep_fifo_order_beside_a_live_sync() {
+        let accounts = Accounts::default();
+        let (release, held) = oneshot::channel();
+        let (sync, _interrupted) = held_sync(&accounts, held).await;
         let first = accounts.write("fixture").await;
+        let mut second = Box::pin(accounts.write("fixture"));
+        assert!(poll!(&mut second).is_pending());
+        tokio::task::yield_now().await;
+        let mut third = Box::pin(accounts.write("fixture"));
+        assert!(poll!(&mut third).is_pending());
+        drop(first);
+        let second = tokio::time::timeout(Duration::from_secs(10), second)
+            .await
+            .unwrap();
+        assert!(poll!(&mut third).is_pending());
+        drop(second);
+        tokio::time::timeout(Duration::from_secs(10), third)
+            .await
+            .unwrap();
+        release.send(()).unwrap();
+        sync.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_second_sync_is_refused_while_one_runs_even_beside_a_write() {
+        let accounts = Accounts::default();
+        let (release, held) = oneshot::channel();
+        let (sync, _interrupted) = held_sync(&accounts, held).await;
+        let _write = accounts.write("fixture").await;
+        accounts
+            .sync("fixture", |_| async {
+                panic!("a second download must not start")
+            })
+            .await
+            .unwrap();
+        release.send(()).unwrap();
+        sync.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn sync_starts_beside_an_active_write() {
+        let accounts = Accounts::default();
+        let _write = accounts.write("fixture").await;
+        let (started, start) = oneshot::channel();
+        accounts
+            .sync("fixture", |_| async move {
+                started.send(()).unwrap();
+                Ok(())
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), start)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn exclusive_interrupts_the_sync_and_waits_for_it_to_settle() {
+        let accounts = Accounts::default();
+        let (_release, held) = oneshot::channel();
+        let (sync, interrupted) = held_sync(&accounts, held).await;
+        let exclusive =
+            tokio::time::timeout(Duration::from_secs(10), accounts.exclusive("fixture"))
+                .await
+                .unwrap();
+        assert!(
+            interrupted.await.unwrap(),
+            "exclusive work must stop the download"
+        );
+        sync.await.unwrap().unwrap();
+        drop(exclusive);
+    }
+
+    #[tokio::test]
+    async fn queued_sync_cannot_get_ahead_of_a_waiting_exclusive_request() {
+        let accounts = Accounts::default();
+        let first = accounts.exclusive("fixture").await;
         let mut sync = Box::pin(accounts.sync("fixture", |_| async {
             panic!("queued sync must yield before contacting the provider")
         }));
         assert!(poll!(&mut sync).is_pending());
         // Run the owned task until it has joined the lock queue.
         tokio::task::yield_now().await;
-        let mut write = Box::pin(accounts.write("fixture"));
-        assert!(poll!(&mut write).is_pending());
+        let mut exclusive = Box::pin(accounts.exclusive("fixture"));
+        assert!(poll!(&mut exclusive).is_pending());
         drop(first);
         sync.await.unwrap();
-        let _writer = write.await;
+        let _next = exclusive.await;
     }
 
     #[tokio::test]
     async fn cancelling_a_queued_writer_does_not_disable_future_sync() {
         let accounts = Accounts::default();
-        let first = accounts.write("fixture").await;
+        let first = accounts.exclusive("fixture").await;
         let mut writer = Box::pin(accounts.write("fixture"));
         assert!(poll!(&mut writer).is_pending());
         drop(writer);
@@ -235,7 +430,7 @@ mod tests {
         (
             Request {
                 account: id.into(),
-                interrupt: None,
+                kind: Kind::Write,
                 grant,
                 finished,
             },

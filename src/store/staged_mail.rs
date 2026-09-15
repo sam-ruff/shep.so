@@ -4,13 +4,25 @@ use rusqlite::OptionalExtension;
 use shep_mail_core::providers::mail::staging::Message;
 
 impl Store {
-    pub async fn sync_staged_message(&self, mut mail: Message) -> anyhow::Result<Option<Arrival>> {
+    pub async fn sync_staged_message(&self, mail: Message) -> anyhow::Result<Option<Arrival>> {
+        self.sync_staged_message_since(mail, None).await
+    }
+    /// As `sync_staged_message`, dropping a body the user moved away after
+    /// the check that fetched it began.
+    pub async fn sync_staged_message_since(
+        &self,
+        mut mail: Message,
+        epoch: Option<SyncEpoch>,
+    ) -> anyhow::Result<Option<Arrival>> {
         anyhow::ensure!(
             self.connection_key().is_none(),
             "Encrypted profiles require encrypted large-message staging."
         );
         self.run(move |c| {
             let tx = c.transaction()?;
+            if arrival_moved_away(&tx, &mail.summary.id, epoch)? {
+                return Ok(None);
+            }
             connections::allow(&tx, ConnectionKind::Account, &mail.summary.account_id)?;
             folder_actions::idle(&tx, &mail.summary.account_id)?;
             let (mut identity, logical) = notifications::identity(&mail.header_prefix);

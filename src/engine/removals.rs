@@ -16,7 +16,7 @@ impl SecretRemover for OsSecretRemover {
 impl Engine {
     pub(super) async fn connection_access(&self, target: &ConnectionRef) -> account_work::Access {
         match target.kind {
-            ConnectionKind::Account => self.account_access(&target.id).await,
+            ConnectionKind::Account => self.account_exclusive(&target.id).await,
             ConnectionKind::Calendar => self.calendar_access(&target.id).await,
         }
     }

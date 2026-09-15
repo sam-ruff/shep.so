@@ -205,7 +205,7 @@ impl Engine {
                     Request::ResolveAccount { review, choice, .. } => {
                         let affected = review.affected_account(&choice).to_owned();
                         let _account = control
-                            .read(async { Ok(self.account_access(&affected).await) })
+                            .read(async { Ok(self.account_exclusive(&affected).await) })
                             .await?;
                         control.check()?;
                         sync::account_reviews::accept(
@@ -452,14 +452,14 @@ impl Engine {
             control.check()?;
             let tested = async {
                 sync::vault::stage(&ctx, &import).await?;
-                let _account = self.account_access(&import.local).await;
+                let _account = self.account_exclusive(&import.local).await;
                 control.read(sync::vault::test(&ctx, &import)).await
             }
             .await;
             let result = match tested {
                 Ok(()) => {
                     let _lifecycle = self.connection_lifecycle.write().await;
-                    let _account = self.account_access(&import.local).await;
+                    let _account = self.account_exclusive(&import.local).await;
                     let activated = sync::vault::activate(&ctx, &import).await;
                     report.imported += usize::from(activated.is_ok());
                     activated
