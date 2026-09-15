@@ -56,8 +56,24 @@ impl Engine {
     async fn download_account(
         &self,
         account: Account,
+        output: Output,
+        stop: account_work::Stop,
+    ) -> anyhow::Result<()> {
+        // Taken before the first SELECT: every listing this check applies is
+        // at or after it, so the ledger can rank later local writes above them.
+        let epoch = self.store.sync_epoch().await?;
+        let id = account.id.clone();
+        let result = self.download_since(account, output, stop, epoch).await;
+        self.store.sync_finished(id, epoch).await?;
+        result
+    }
+
+    async fn download_since(
+        &self,
+        account: Account,
         mut output: Output,
         mut stop: account_work::Stop,
+        epoch: crate::store::SyncEpoch,
     ) -> anyhow::Result<()> {
         let setup = async {
             self.store.ensure_folder_idle(account.id.clone()).await?;
@@ -78,16 +94,18 @@ impl Engine {
                 let folders_changed = matches!(&mail, MailSyncItem::Folders(..));
                 match mail {
                     MailSyncItem::Message(mail) => {
-                        if let Some(arrival) = store.sync_message(mail).await? {
+                        if let Some(arrival) = store.sync_message_since(mail, Some(epoch)).await? {
                             output.send(Event::MailArrived(Arc::new(arrival))).await?;
                         }
                     }
                     MailSyncItem::StagedMessage(mail) => {
-                        if let Some(arrival) = store.sync_staged_message(mail).await? {
+                        if let Some(arrival) =
+                            store.sync_staged_message_since(mail, Some(epoch)).await?
+                        {
                             output.send(Event::MailArrived(Arc::new(arrival))).await?;
                         }
                     }
-                    mail => store.apply_sync(mail).await?,
+                    mail => store.apply_sync_since(mail, Some(epoch)).await?,
                 }
                 if folders_changed {
                     output
@@ -117,8 +135,9 @@ impl Engine {
         )
         .await?
         else {
-            // A waiting write interrupted the read-only download. Already
-            // received items were committed; a later check resumes discovery.
+            // Exclusive account work or shutdown interrupted the read-only
+            // download. Already received items were committed; a later check
+            // resumes discovery.
             return Ok(());
         };
         self.store

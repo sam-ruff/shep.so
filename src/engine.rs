@@ -458,10 +458,16 @@ impl Engine {
     }
 
     async fn calendar_access(&self, id: &str) -> account_work::Access {
-        self.calendar_work.write(id).await
+        self.calendar_work.exclusive(id).await
     }
+    /// A mail action on its own connection. Runs beside a live download; the
+    /// write ledger reconciles the two afterwards.
     async fn account_access(&self, id: &str) -> account_work::Access {
         self.account_work.write(id).await
+    }
+    /// Account lifecycle work that must not overlap a download.
+    async fn account_exclusive(&self, id: &str) -> account_work::Access {
+        self.account_work.exclusive(id).await
     }
 
     async fn workspace(&self, output: &mut Output) -> anyhow::Result<()> {
@@ -776,7 +782,7 @@ impl Engine {
                 let result = async {
                     account.validate()?;
                     anyhow::ensure!(!self.demo, "Connection tests require a real account. Test workspaces do not connect to mail servers.");
-                    let _guard = self.account_access(&account.id).await;
+                    let _guard = self.account_exclusive(&account.id).await;
                     let secret = self.setup_password(&account, &password, &smtp_password, target).await?;
                     match target { ConnectionTarget::Incoming => providers::mail::test_incoming(&account, &secret).await, ConnectionTarget::Smtp => providers::mail::test_smtp(&account, &secret).await }
                 }.await;
@@ -794,7 +800,7 @@ impl Engine {
                 );
                 account.validate()?;
                 let _lifecycle = self.connection_lifecycle.write().await;
-                let _guard = self.account_access(&account.id).await;
+                let _guard = self.account_exclusive(&account.id).await;
                 self.store.ensure_folder_idle(account.id.clone()).await?;
                 self.store
                     .check_connection(crate::store::ConnectionRef {

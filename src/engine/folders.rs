@@ -321,7 +321,7 @@ impl Engine {
         }
         let permissions = async {
             let slot = self.provider_slots.acquire().await;
-            let account = self.account_access(&job.review.account).await;
+            let account = self.account_exclusive(&job.review.account).await;
             (slot, account)
         };
         let stop = self.bulk_control.stopping.requested();
