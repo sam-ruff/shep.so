@@ -11,7 +11,9 @@ mod move_journal;
 mod notifications;
 mod read_moves;
 mod staged_mail;
+mod write_ledger;
 use crate::model::*;
+pub use write_ledger::{Entry as WriteEntry, SyncEpoch, WriteKind};
 mod connections;
 mod conversations;
 pub use connections::{ConnectionKind, ConnectionRef, CredentialCleanup, RemovalPreview};
@@ -211,6 +213,7 @@ impl Store {
         read_moves::schema(&conn)?;
         folder_actions::schema(&conn)?;
         folder_creation::schema(&conn)?;
+        write_ledger::schema(&conn)?;
         if version < 2 {
             let tx = conn.transaction()?;
             let events = tx
@@ -597,12 +600,16 @@ impl Store {
         mail: Mail,
         changes: crate::mail_actions::Flags,
     ) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().timestamp();
         self.run(move |c| {
             let tx = c.transaction()?;
             folder_actions::idle(&tx, &mail.account_id)?;
             let changed = tx.execute("UPDATE messages SET unread=COALESCE(?, unread),starred=COALESCE(?, starred) WHERE id=? AND account=? AND folder=?",
                 params![changes.unread, changes.starred, mail.id, mail.account_id, mail.folder])?;
             anyhow::ensure!(changed == 1, "This message moved or was removed. Refresh the folder and try again.");
+            // The server acknowledged before this commit; a listing taken
+            // earlier by a running check must not restore the old flags.
+            write_ledger::record_acknowledged(&tx, &mail.account_id, &mail.id, WriteKind::Flags, now)?;
             tx.commit()?;
             Ok(())
         }).await
@@ -738,7 +745,18 @@ impl Store {
         })
         .await
     }
+    /// Applies a sync item as a complete truth about the server; use
+    /// `apply_sync_since` for items from a check that may predate local writes.
     pub async fn apply_sync(&self, item: MailSyncItem) -> anyhow::Result<()> {
+        self.apply_sync_since(item, None).await
+    }
+    /// Applies a sync item from a check that began at `epoch`, keeping any
+    /// local write the write ledger ranks above that check's listings.
+    pub async fn apply_sync_since(
+        &self,
+        item: MailSyncItem,
+        epoch: Option<SyncEpoch>,
+    ) -> anyhow::Result<()> {
         match item {
             MailSyncItem::InboxSyncStarted { account, epoch } => {
                 self.begin_notification_sync(account, epoch).await
@@ -746,13 +764,29 @@ impl Store {
             MailSyncItem::InboxSyncFinished { account, epoch } => {
                 self.finish_notification_sync(account, epoch).await
             }
-            MailSyncItem::Message(mail) => self.upsert(vec![mail]).await,
-            MailSyncItem::StagedMessage(mail) => self.sync_staged_message(mail).await.map(|_| ()),
+            MailSyncItem::Message(mail) => {
+                self.run(move |c| {
+                    let tx = c.transaction()?;
+                    if !arrival_moved_away(&tx, &mail.summary.id, epoch)? {
+                        upsert_message(&tx, &mail)?;
+                    }
+                    tx.commit()?;
+                    Ok(())
+                })
+                .await
+            }
+            MailSyncItem::StagedMessage(mail) => self
+                .sync_staged_message_since(mail, epoch)
+                .await
+                .map(|_| ()),
             MailSyncItem::Flags(flags) => {
                 self.run(move |c| {
                     let tx = c.transaction()?;
                     for (id, unread, starred) in flags {
                         folder_actions::mail_idle(&tx, &id)?;
+                        if flags_written_locally(&tx, &id, epoch)? {
+                            continue;
+                        }
                         tx.execute(
                             "UPDATE messages SET unread=?,starred=? WHERE id=?",
                             params![unread, starred, id],
@@ -780,7 +814,7 @@ impl Store {
                         if live && restored {
                             // A complete server listing confirmed this identity.
                             tx.execute("DELETE FROM restored_messages WHERE id=?", [id])?;
-                        } else if !live && !restored {
+                        } else if !live && !restored && !row_moved_in(&tx, &id, epoch)? {
                             // A backup may be the only remaining copy of deleted
                             // server mail. A sync must not erase that recovery.
                             tx.execute("DELETE FROM messages WHERE id=?", [id])?;
@@ -1039,6 +1073,33 @@ pub(super) fn calendar_changed(c: &Connection) -> anyhow::Result<()> {
             .checked_add(1)
             .context("Calendar revision overflow")?,
     )
+}
+
+/// A check with no epoch is trusted completely, as in fixtures and restores.
+fn flags_written_locally(
+    c: &Connection,
+    id: &str,
+    epoch: Option<SyncEpoch>,
+) -> anyhow::Result<bool> {
+    let Some(epoch) = epoch else { return Ok(false) };
+    Ok(write_ledger::keeps_local_flags(
+        &write_ledger::entries_for(c, id)?,
+        epoch,
+    ))
+}
+fn arrival_moved_away(c: &Connection, id: &str, epoch: Option<SyncEpoch>) -> anyhow::Result<bool> {
+    let Some(epoch) = epoch else { return Ok(false) };
+    Ok(write_ledger::drops_arrival(
+        &write_ledger::entries_for(c, id)?,
+        epoch,
+    ))
+}
+fn row_moved_in(c: &Connection, id: &str, epoch: Option<SyncEpoch>) -> anyhow::Result<bool> {
+    let Some(epoch) = epoch else { return Ok(false) };
+    Ok(write_ledger::keeps_row(
+        &write_ledger::entries_for(c, id)?,
+        epoch,
+    ))
 }
 
 fn upsert_message(c: &Connection, message: &StoredMail) -> anyhow::Result<()> {

@@ -85,7 +85,7 @@ impl Engine {
     }
 
     async fn perform_create_folder(&self, request: Request) -> anyhow::Result<Mailbox> {
-        let _account_lock = self.account_access(&request.account).await;
+        let _account_lock = self.account_exclusive(&request.account).await;
         let account = self.account(&request.account).await?;
         anyhow::ensure!(
             crate::mail_actions::connection_key(&account) == request.connection,

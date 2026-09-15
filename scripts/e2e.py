@@ -938,7 +938,7 @@ class NativeFlows(unittest.TestCase):
                        check("mail_selection.pending",False),key("Delete"),check("dialog","BulkReview"),
                        key("Return"),check("dialog",None),check("bulk.jobs.0.running",1))
 
-    def test_close_interrupts_readonly_sync_and_commits_read_on_leave(self):
+    def test_close_during_held_readonly_sync_commits_read_on_leave(self):
         started = self.mcp.call("desktop.start", persistent=True, held_account_sync=True)
         print(f"Close during held sync: {started['artifacts']}", flush=True)
         self.mcp.batch(check("account_sync_waiting", True), click(350,230),
@@ -950,24 +950,27 @@ class NativeFlows(unittest.TestCase):
         with sqlite3.connect(database.as_uri()+"?mode=ro", uri=True) as cache:
             self.assertEqual(cache.execute("SELECT unread FROM messages WHERE id=?", (message,)).fetchone(), (0,))
 
-    def test_flag_interrupts_readonly_sync_without_waiting_for_download_timeout(self):
+    def test_flag_completes_beside_held_readonly_sync_without_interrupting_it(self):
         started = self.mcp.call("desktop.start", held_account_sync=True)
-        print(f"Interactive flag during held sync: {started['artifacts']}", flush=True)
+        print(f"Interactive flag beside held sync: {started['artifacts']}", flush=True)
+        # The held provider keeps its download; the flag lands on its own.
         self.mcp.batch(check("account_sync_waiting", True), check("mail_rows.0.starred",True),
                        click(570,215), check("mail_rows.0.starred",False), check("mail_pending",0),
-                       check("account_sync_waiting",False), shot("flag-after-interrupting-readonly-sync"))
+                       check("account_sync_waiting",True), wait(500), check("account_sync_waiting",True),
+                       check("mail_rows.0.starred",False), shot("flag-beside-held-readonly-sync"))
 
-    def test_failed_flag_after_interrupting_sync_restores_state_and_accepts_retry(self):
+    def test_failed_flag_beside_held_sync_restores_state_and_accepts_retry(self):
         started = self.mcp.call("desktop.start", held_account_sync=True, mail_actions="fail")
-        print(f"Failed flag after interrupting sync: {started['artifacts']}", flush=True)
+        print(f"Failed flag beside held sync: {started['artifacts']}", flush=True)
         self.mcp.batch(check("account_sync_waiting", True), check("mail_rows.0.starred",True),
                        click(570,215), check("mail_rows.0.starred",False), check("mail_pending",1),
-                       check("account_sync_waiting",False), check("mail_pending",0),
+                       check("mail_pending",0), check("account_sync_waiting",True),
                        check("mail_rows.0.starred",True), check("notice","Fixture","contains"),
-                       shot("interrupted-sync-write-failure"), click(570,215),
+                       shot("held-sync-write-failure"), click(570,215),
                        check("mail_rows.0.starred",False), check("mail_pending",1),
                        check("mail_pending",0), check("mail_rows.0.starred",True),
-                       check("notice","Fixture","contains"), shot("interrupted-sync-retry-failure"))
+                       check("account_sync_waiting",True), check("notice","Fixture","contains"),
+                       shot("held-sync-retry-failure"))
 
     def open_color_preferences(self, compact=False):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
