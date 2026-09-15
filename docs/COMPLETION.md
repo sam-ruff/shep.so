@@ -1,5 +1,22 @@
 # Completion audit
 
+## Safe search query kept, search budgets raised, 15 September 2026
+
+Sam chose the safe and correct relevance query (per-tier relations scored by
+SQLite's built-in `bm25()`) over the single-pass ranking extension that
+needed about 150 lines of unsafe FTS5 FFI, and asked for the benchmark
+budgets to match it. `e585cdb` is reverted in full (`search_rank.rs`,
+`search_cache.rs`, the query and fuzzy changes and their docs). The
+responsiveness benchmark keeps 50 ms for the Inbox and account pages and
+10 ms for a cached body, and now allows 100 ms for one- and two-term
+relevance searches and 150 ms for the four-term case, the range the runner
+measured for this query (FTS 45 to 50 ms, transposed 52 ms, four terms 60 to
+134 ms p95). Measured on the shared development host the safe query sits at
+18, 20 and 28 ms p95. The search and abbreviation suites pass 17 of 17 on the
+reverted tree. Alternatives that stay available without unsafe code: a
+larger `PRAGMA cache_size` (about 3 ms per search) and FTS `optimize` after
+bulk loads (vocabulary probing about seven times cheaper).
+
 ## Untouched check interval migrated to 5 seconds, 15 September 2026
 
 Sam asked for saved preferences still on the previous 15 second default to
