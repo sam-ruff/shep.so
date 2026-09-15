@@ -21,6 +21,8 @@ mod outgoing;
 mod profile_sync;
 mod restore;
 mod scratch;
+mod search_cache;
+mod search_rank;
 mod selection;
 pub(crate) mod worker;
 use anyhow::Context;
@@ -153,6 +155,7 @@ impl Store {
     }
     fn initialize_connection(mut conn: Connection) -> anyhow::Result<Connection> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        search_rank::register(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         anyhow::ensure!(
             version <= DATABASE_VERSION,
@@ -201,6 +204,7 @@ impl Store {
         connections::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
+        search_cache::schema(&conn)?;
         folder_projection::schema(&conn)?;
         bulk::schema(&conn)?;
         move_journal::schema(&conn)?;
@@ -526,7 +530,9 @@ impl Store {
             }
             let page = MailPage { move_pending_total:move_journal::pending(c)?, relocated, move_recovery, move_placeholders, rows, total, unread, folder_count, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? };
             drop(statement);
-            if projection.is_some() {
+            // Reads roll back unless a projection or freshly measured search
+            // statistics need the scratch writes kept.
+            if projection.is_some() || plan.fills_search_cache() {
                 read_moves::prepare(c, &[])?;
                 transaction.commit()?;
             }

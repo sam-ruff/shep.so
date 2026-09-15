@@ -347,91 +347,130 @@ fn retain_possible_variants(
     variants.retain(|variant| !variant.starts_with(prefix) || present.contains(variant.as_str()));
 }
 
+/// One query token with its FTS5 alternatives: the literal or prefix form
+/// first, then vocabulary corrections nearest in edit distance.
+pub struct MailTerm {
+    pub token: String,
+    pub alternatives: Vec<String>,
+}
+
+/// Query tokens with the alternatives `expand` returns for each, so a caller
+/// can serve expansions from a cache.
+pub fn mail_terms(
+    connection: &rusqlite::Connection,
+    input: &str,
+    mut expand: impl FnMut(&rusqlite::Connection, &str) -> anyhow::Result<Vec<String>>,
+) -> anyhow::Result<Vec<MailTerm>> {
+    search_tokens(input)
+        .into_iter()
+        .map(|token| {
+            let alternatives = expand(connection, &token)?;
+            Ok(MailTerm {
+                token,
+                alternatives,
+            })
+        })
+        .collect()
+}
+
+/// Every term must match one of its alternatives.
+pub fn mail_query_text(terms: &[MailTerm]) -> String {
+    terms
+        .iter()
+        .map(|term| format!("({})", term.alternatives.join(" OR ")))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
 pub fn mail_query(connection: &rusqlite::Connection, input: &str) -> anyhow::Result<String> {
-    let tokens = search_tokens(input);
-    let mut groups = Vec::new();
-    for token in tokens {
-        let mut alternatives = vec![format!(
-            "\"{}\"{}",
-            token,
-            if prefix_needed(connection, &token)? {
-                "*"
-            } else {
-                ""
-            }
-        )];
-        if token.is_ascii()
-            && token.chars().all(char::is_alphabetic)
-            && (4..=24).contains(&token.len())
-        {
-            let mut variants = HashSet::new();
-            for index in 0..=token.len() {
-                for letter in 'a'..='z' {
-                    let mut inserted = token.clone();
-                    inserted.insert(index, letter);
-                    variants.insert(inserted);
-                    if index < token.len() {
-                        let mut changed = token.clone();
-                        changed.replace_range(index..index + 1, &letter.to_string());
-                        variants.insert(changed);
-                    }
-                }
-                if index < token.len() {
-                    let mut deleted = token.clone();
-                    deleted.remove(index);
-                    variants.insert(deleted);
-                }
-                if index + 1 < token.len() {
-                    let mut bytes = token.as_bytes().to_vec();
-                    bytes.swap(index, index + 1);
-                    variants.insert(String::from_utf8(bytes)?);
-                }
-            }
-            // The exact token already has its own literal/prefix alternative.
-            variants.remove(&token);
-            let prefix = &token[..2];
-            let nearby_limit = if token.len() >= 6 { 256 } else { 1 };
-            let nearby = nearby_terms(connection, &token, prefix, nearby_limit)?;
-            retain_possible_variants(&mut variants, prefix, &nearby, nearby_limit);
-            let values: Vec<_> = variants.into_iter().collect();
-            let mut statement = connection.prepare_cached(
-                "SELECT term FROM mail_vocab WHERE term IN (SELECT value FROM json_each(?)) ORDER BY doc DESC,term LIMIT 32",
-            )?;
-            let mut terms = Vec::new();
-            for term in
-                statement.query_map([serde_json::to_string(&values)?], |r| r.get::<_, String>(0))?
-            {
-                let term = term?;
-                if term != token {
-                    terms.push(term);
-                }
-            }
-            let comparator = osa::BatchComparator::new(token.chars());
-            if token.len() >= 6 {
-                for word in nearby {
-                    if comparator
-                        .distance_with_args(word.chars(), &osa::Args::default().score_cutoff(2))
-                        .is_some()
-                    {
-                        terms.push(word);
-                    }
-                }
-            }
-            terms.sort_by_cached_key(|term| {
-                (
-                    comparator.distance(term.chars()),
-                    term.len().abs_diff(token.len()),
-                    term.clone(),
-                )
-            });
-            terms.dedup();
-            for term in terms.into_iter().filter(|term| term != &token).take(12) {
-                alternatives.push(format!("\"{term}\""));
+    Ok(mail_query_text(&mail_terms(
+        connection,
+        input,
+        expand_token,
+    )?))
+}
+
+/// FTS5 alternatives for one normalised token: its literal or prefix form,
+/// then bounded vocabulary corrections.
+pub fn expand_token(connection: &rusqlite::Connection, token: &str) -> anyhow::Result<Vec<String>> {
+    let mut alternatives = vec![format!(
+        "\"{}\"{}",
+        token,
+        if prefix_needed(connection, token)? {
+            "*"
+        } else {
+            ""
+        }
+    )];
+    if !token.is_ascii()
+        || !token.chars().all(char::is_alphabetic)
+        || !(4..=24).contains(&token.len())
+    {
+        return Ok(alternatives);
+    }
+    let mut variants = HashSet::new();
+    for index in 0..=token.len() {
+        for letter in 'a'..='z' {
+            let mut inserted = token.to_owned();
+            inserted.insert(index, letter);
+            variants.insert(inserted);
+            if index < token.len() {
+                let mut changed = token.to_owned();
+                changed.replace_range(index..index + 1, &letter.to_string());
+                variants.insert(changed);
             }
         }
-        groups.push(format!("({})", alternatives.join(" OR ")));
+        if index < token.len() {
+            let mut deleted = token.to_owned();
+            deleted.remove(index);
+            variants.insert(deleted);
+        }
+        if index + 1 < token.len() {
+            let mut bytes = token.as_bytes().to_vec();
+            bytes.swap(index, index + 1);
+            variants.insert(String::from_utf8(bytes)?);
+        }
     }
-    Ok(groups.join(" AND "))
+    // The exact token already has its own literal/prefix alternative.
+    variants.remove(token);
+    let prefix = &token[..2];
+    let nearby_limit = if token.len() >= 6 { 256 } else { 1 };
+    let nearby = nearby_terms(connection, token, prefix, nearby_limit)?;
+    retain_possible_variants(&mut variants, prefix, &nearby, nearby_limit);
+    let values: Vec<_> = variants.into_iter().collect();
+    let mut statement = connection.prepare_cached(
+        "SELECT term FROM mail_vocab WHERE term IN (SELECT value FROM json_each(?)) ORDER BY doc DESC,term LIMIT 32",
+    )?;
+    let mut terms = Vec::new();
+    for term in statement.query_map([serde_json::to_string(&values)?], |r| r.get::<_, String>(0))? {
+        let term = term?;
+        if term != token {
+            terms.push(term);
+        }
+    }
+    let comparator = osa::BatchComparator::new(token.chars());
+    if token.len() >= 6 {
+        for word in nearby {
+            if comparator
+                .distance_with_args(word.chars(), &osa::Args::default().score_cutoff(2))
+                .is_some()
+            {
+                terms.push(word);
+            }
+        }
+    }
+    terms.sort_by_cached_key(|term| {
+        (
+            comparator.distance(term.chars()),
+            term.len().abs_diff(token.len()),
+            term.clone(),
+        )
+    });
+    terms.dedup();
+    for term in terms.into_iter().filter(|term| term != token).take(12) {
+        alternatives.push(format!("\"{term}\""));
+    }
+    Ok(alternatives)
 }
 
 #[cfg(test)]
