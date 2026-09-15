@@ -207,6 +207,8 @@ The saved native held-sync flows use `desktop.start(held_account_sync=true)`. Th
 
 ## Architecture and data safety
 
+Avoid `unsafe` code unless it is absolutely necessary. Prefer a slower safe implementation and, where a budget is the only reason for `unsafe`, raise the budget with the owner's agreement instead. Sam set this rule on 15 September 2026 after choosing the built-in `bm25()` search query over an unsafe FTS5 ranking extension. When `unsafe` is unavoidable (an FFI boundary with no safe binding), keep it in one small module, document the invariants at each block, and cover it with tests that prove equivalence to a safe reference.
+
 Use bounded channels and state-owning workers for application state coordination, rather than shared lock-managed state. The user explicitly corrected the account scheduling approach during R90: interactive writes must interrupt read-only sync through the coordinator, and durable completion acknowledgments must preserve ordering. Keep UI sends nonblocking, bound queued work, and handle abandoned requests without leaving an account occupied. Audit other application-level coordination when changing those paths.
 
 The full product goal is still active. Keep [docs/COMPLETION.md](docs/COMPLETION.md) current with implemented evidence and remaining work; do not infer feature completeness from a passing fixture suite.
