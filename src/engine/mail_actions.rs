@@ -179,8 +179,10 @@ impl Engine {
             return Ok((None, receipt));
         }
         #[cfg(feature = "test-support")]
-        if self.demo {
-            crate::test_support::mail_action_delay().await?;
+        if self.demo
+            && let Err(error) = crate::test_support::mail_action_delay().await
+        {
+            return self.preview_local_fallback(mail, folder, error).await;
         }
         if self.demo {
             let fingerprint = self.store.message_fingerprint(mail.id.clone()).await?;
@@ -217,6 +219,32 @@ impl Engine {
         Ok((None, receipt))
     }
 
+    /// The isolated fixture refuses like a real server would: the row moves on
+    /// this device only through the same journal stage production uses.
+    #[cfg(feature = "test-support")]
+    async fn preview_local_fallback(
+        &self,
+        mail: &Mail,
+        folder: &str,
+        error: anyhow::Error,
+    ) -> anyhow::Result<(Option<Account>, MoveReceipt)> {
+        use crate::mail_actions::{MoveFailure, classify_move_failure, journal::MoveRecord};
+        if classify_move_failure(&error) != MoveFailure::Refused {
+            return Err(error);
+        }
+        let account = self.account(&mail.account_id).await?;
+        let fingerprint = self.store.message_fingerprint(mail.id.clone()).await?;
+        let mut receipt = MoveReceipt::server(mail, &account.id, folder, None, fingerprint);
+        receipt.connections = vec![(account.id.clone(), connection_key(&account))];
+        let record = self
+            .store
+            .begin_local_mail_move(MoveRecord::new(mail.clone(), receipt), format!("{error:#}"))
+            .await?;
+        let mut receipt = record.receipt;
+        receipt.local_only = true;
+        Ok((None, receipt))
+    }
+
     pub(super) async fn recover_completed_moves(&self, mut output: Output) -> anyhow::Result<()> {
         use crate::mail_actions::{journal::MoveStage, runner};
         let now = chrono::Utc::now().timestamp();
@@ -239,7 +267,10 @@ impl Engine {
                 continue;
             };
             if saved.token != record.token
-                || !matches!(saved.stage, MoveStage::Started | MoveStage::Committed)
+                || !matches!(
+                    saved.stage,
+                    MoveStage::Started | MoveStage::Committed | MoveStage::Local
+                )
                 || saved.attempted != record.attempted
             {
                 continue;
@@ -258,30 +289,30 @@ impl Engine {
                     self.store.ensure_folder_idle(id.clone()).await?;
                 }
                 let source = self.account(&record.original.account_id).await?;
-                let secret = self.credentials.read(&source.id).await?;
                 let destination = if source.id != record.receipt.account {
-                    let account = self.account(&record.receipt.account).await?;
-                    let secret = self.credentials.read(&account.id).await?;
-                    Some((account, secret))
+                    Some(self.account(&record.receipt.account).await?)
                 } else {
                     None
                 };
-                let mut connection =
-                    providers::mail::moves::ImapMoveConnection::new(source, secret, destination);
+                let mut connection = self.move_connections.open(source, destination).await?;
                 let recovered =
-                    runner::recover(&self.store, &mut connection, record.clone()).await?;
+                    runner::recover(&self.store, connection.as_mut(), record.clone()).await?;
                 Ok::<_, anyhow::Error>(self.refresh_recovered_folders(recovered).await)
             }
             .await;
             match result {
                 Ok(record) => {
-                    if let Some(error) = &record.error {
+                    // A device-only move that is refused again stays quiet; the
+                    // row already shows its state and the next pass retries.
+                    if let Some(error) = &record.error
+                        && record.stage != MoveStage::Local
+                    {
                         output.send(Event::Error(error.clone())).await?;
                     }
                     output.send(Event::MoveRecovered(Arc::new(record))).await?;
                     self.workspace(&mut output).await?;
                 }
-                Err(_) if record.stage == MoveStage::Started => {}
+                Err(_) if record.stage.unsubmitted() => {}
                 Err(error) => output
                     .send(Event::Error(format!(
                         "The cached message is retained. Move recovery needs attention: {error:#}"
@@ -302,15 +333,12 @@ impl Engine {
         output: &mut Output,
     ) -> anyhow::Result<MoveReceipt> {
         use crate::mail_actions::{journal::MoveRecord, runner};
-        use providers::mail::moves::ImapMoveConnection;
         let target = destination.unwrap_or(source);
-        let source_secret = self.credentials.read(&source.id).await?;
-        let destination_connection = match destination {
-            Some(account) => Some((account.clone(), self.credentials.read(&account.id).await?)),
-            None => None,
-        };
-        let mut connection =
-            ImapMoveConnection::new(source.clone(), source_secret, destination_connection);
+        let mut connection = self
+            .move_connections
+            .open(source.clone(), destination.cloned())
+            .await?;
+        let connection = connection.as_mut();
         let mut current_mail = mail.clone();
         let mut previous_recovery = None;
         let mut existing = self.store.mail_move_for_source(mail.id.clone()).await?;
@@ -321,13 +349,9 @@ impl Engine {
                 record.receipt.account == source.id,
                 "The earlier cross-account transfer needs its destination checked before moving this message elsewhere."
             );
-            let mut previous = ImapMoveConnection::new(
-                source.clone(),
-                self.credentials.read(&source.id).await?,
-                None,
-            );
+            let mut previous = self.move_connections.open(source.clone(), None).await?;
             current_mail =
-                runner::retarget_source(&self.store, &mut previous, record.clone()).await?;
+                runner::retarget_source(&self.store, previous.as_mut(), record.clone()).await?;
             if current_mail.id != record.original.id {
                 previous_recovery = Some(self.store.mail_move(record.token.clone()).await?);
             }
@@ -340,7 +364,7 @@ impl Engine {
                 record.receipt.account == target.id && record.receipt.folder == folder,
                 "A move is pending for this message. Review its original destination before moving elsewhere."
             );
-            runner::recover(&self.store, &mut connection, record).await?
+            runner::recover(&self.store, connection, record).await?
         } else {
             let fingerprint = self.store.message_fingerprint(mail.id.clone()).await?;
             let mut receipt = MoveReceipt::server(mail, &target.id, folder, None, fingerprint);
@@ -355,14 +379,20 @@ impl Engine {
                 self.store.get(&format!("transfer:{}", mail.id)).await?;
             if legacy.is_some() {
                 let record = self.store.adopt_legacy_mail_move(record).await?;
-                runner::recover(&self.store, &mut connection, record).await?
+                runner::recover(&self.store, connection, record).await?
             } else {
-                runner::start(&self.store, &mut connection, record).await?
+                runner::start(&self.store, connection, record).await?
             }
         };
         Ok(record)
         }.await;
         let record = Self::finish_retarget_result(result, previous_recovery, output).await?;
+        if record.stage == crate::mail_actions::journal::MoveStage::Local {
+            // The refusal reason travels in the receipt notice, not as an error.
+            let mut receipt = record.receipt;
+            receipt.local_only = true;
+            return Ok(receipt);
+        }
         if let Some(error) = record.error {
             // A closed view cannot negate an already durable acknowledgment.
             let _ = output.send(Event::Error(error)).await;
@@ -385,6 +415,9 @@ impl Engine {
                 tokio::time::sleep(Duration::from_millis(1800)).await;
                 anyhow::bail!("Fixture server rejected Undo. Retry is available.");
             }
+        }
+        if let Some(restored) = self.undo_local_move(&original, receipt, group).await? {
+            return Ok((None, restored));
         }
         if receipt.fingerprint.is_none() {
             anyhow::ensure!(
@@ -505,6 +538,41 @@ impl Engine {
             .await
             .map(|(account, receipt)| (Some(account), receipt))
         }
+    }
+
+    /// A device-only move never reached the server, so Undo releases its record
+    /// and the untouched row shows in its source folder again.
+    async fn undo_local_move(
+        &self,
+        original: &Mail,
+        receipt: &MoveReceipt,
+        group: Option<&crate::bulk::Item>,
+    ) -> anyhow::Result<Option<MoveReceipt>> {
+        use crate::mail_actions::journal::MoveStage;
+        let Some(token) = &receipt.recovery else {
+            return Ok(None);
+        };
+        let Some(record) = self
+            .store
+            .mail_move_for_source(original.id.clone())
+            .await?
+            .filter(|record| record.token == *token && record.stage == MoveStage::Local)
+        else {
+            return Ok(None);
+        };
+        let _guard = tokio::time::timeout(
+            Duration::from_secs(600),
+            self.account_access(&record.original.account_id),
+        )
+        .await
+        .context("The account is still busy. Retry Undo.")?;
+        record.validate_receipt(receipt)?;
+        self.authorize_mail_mutation(&record.original.id, group)
+            .await?;
+        self.store.reject_mail_move(record.clone()).await?;
+        let current = self.store.mail_metadata(record.original.id).await?;
+        let restored = MoveReceipt::local(&current, &current.folder);
+        Ok(Some(restored))
     }
 
     pub(super) async fn change_flags(
@@ -856,6 +924,225 @@ mod tests {
             archived.folder, "Archive",
             "no special-use folder keeps the literal name"
         );
+    }
+
+    /// Scripts the provider behind the engine's move-connection seam. No
+    /// credentials are read and nothing leaves the process.
+    #[cfg(feature = "test-support")]
+    struct ScriptedMoves {
+        reply: std::sync::Mutex<ScriptedReply>,
+    }
+    #[cfg(feature = "test-support")]
+    #[derive(Clone, Copy)]
+    enum ScriptedReply {
+        Refuse,
+        Unconfirmed,
+        Accept,
+    }
+    #[cfg(feature = "test-support")]
+    #[async_trait::async_trait]
+    impl providers::mail::moves::MoveConnections for ScriptedMoves {
+        async fn open(
+            &self,
+            source: Account,
+            destination: Option<Account>,
+        ) -> anyhow::Result<Box<dyn crate::mail_actions::runner::Connection>> {
+            use crate::mail_actions::runner::{Inspection, MockConnection, SubmissionError};
+            assert!(destination.is_none(), "same-account moves only");
+            let reply = *self.reply.lock().unwrap();
+            let identities = vec![(source.id.clone(), connection_key(&source))];
+            let mut connection = MockConnection::new();
+            connection
+                .expect_identities()
+                .returning(move || identities.clone());
+            connection
+                .expect_inspect()
+                .returning(|_| Ok(Inspection::SourceIntactNoDestinationCopy));
+            connection.expect_prepare().returning(|_| Ok(()));
+            connection
+                .expect_submit()
+                .returning(move |_, _| match reply {
+                    ScriptedReply::Refuse => Err(SubmissionError::NotApplied(
+                        "NO [CANNOT] read-only mailbox".into(),
+                    )),
+                    ScriptedReply::Unconfirmed => {
+                        Err(SubmissionError::Unconfirmed("connection lost".into()))
+                    }
+                    ScriptedReply::Accept => Ok(Some("91.38".into())),
+                });
+            Ok(Box::new(connection))
+        }
+    }
+    #[cfg(feature = "test-support")]
+    async fn scripted_engine(reply: ScriptedReply) -> (Engine, Arc<ScriptedMoves>, Mail) {
+        let mut engine = crate::engine::calendar_tests::engine();
+        crate::test_support::seed_demo(&engine.store).await.unwrap();
+        let scripted = Arc::new(ScriptedMoves {
+            reply: std::sync::Mutex::new(reply),
+        });
+        engine.move_connections = scripted.clone();
+        engine.demo = false;
+        let original = engine.store.query(MailQuery::default()).await.unwrap().rows[0].clone();
+        (engine, scripted, original)
+    }
+    #[cfg(feature = "test-support")]
+    async fn in_folder(store: &Store, folder: &str) -> MailPage {
+        store
+            .query(MailQuery {
+                folder: folder.into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn refused_server_move_completes_on_this_device_and_a_later_check_finishes_it() {
+        use crate::mail_actions::journal::MoveStage;
+        let (mut engine, scripted, original) = scripted_engine(ScriptedReply::Refuse).await;
+        let (output, mut events) = futures::channel::mpsc::channel(32);
+        let (_, receipt) = engine
+            .change_folder(&original, "Archive", output.clone(), None)
+            .await
+            .unwrap();
+        assert!(receipt.local_only);
+        assert!(receipt.current.is_none());
+        assert_eq!(receipt.folder, "Archive");
+        assert!(
+            events.try_recv().is_err(),
+            "a refusal that completed locally is not an error event"
+        );
+        let store = engine.store.clone();
+        assert!(
+            !in_folder(&store, "INBOX")
+                .await
+                .rows
+                .iter()
+                .any(|m| m.id == original.id)
+        );
+        let archive = in_folder(&store, "Archive").await;
+        let row = archive.rows.iter().find(|m| m.id == original.id).unwrap();
+        assert!(row.remote_id.is_empty());
+        assert_eq!(archive.move_recovery[&original.id].stage, MoveStage::Local);
+        store
+            .apply_sync(MailSyncItem::Reconcile {
+                account: original.account_id.clone(),
+                folder: "INBOX".into(),
+                live_ids: [original.id.clone()].into_iter().collect(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            !in_folder(&store, "INBOX")
+                .await
+                .rows
+                .iter()
+                .any(|m| m.id == original.id)
+        );
+        assert!(
+            in_folder(&store, "Archive")
+                .await
+                .rows
+                .iter()
+                .any(|m| m.id == original.id)
+        );
+
+        // The next check retries the server move; once accepted the row gains
+        // its real destination identity and the record clears.
+        *scripted.reply.lock().unwrap() = ScriptedReply::Accept;
+        engine.demo = true;
+        engine.recover_completed_moves(output).await.unwrap();
+        let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Event::MoveRecovered(record) = events.next().await.unwrap() {
+                    break record;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(recovered.stage, MoveStage::Located);
+        let current = recovered.receipt.current.clone().unwrap();
+        assert_eq!(
+            (current.folder.as_str(), current.remote_id.as_str()),
+            ("Archive", "91.38")
+        );
+        assert!(store.detail(current.id.clone()).await.is_ok());
+        assert!(
+            store
+                .pending_mail_moves(None, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let archive = in_folder(&store, "Archive").await;
+        assert!(
+            archive
+                .rows
+                .iter()
+                .any(|m| m.id == current.id && m.remote_id == "91.38")
+        );
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn transient_failure_keeps_the_row_in_place_and_undo_releases_a_device_only_move() {
+        let (engine, scripted, original) = scripted_engine(ScriptedReply::Unconfirmed).await;
+        let (output, _events) = futures::channel::mpsc::channel(32);
+        let error = engine
+            .change_folder(&original, "Archive", output.clone(), None)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("unconfirmed"), "{error:#}");
+        let store = engine.store.clone();
+        let record = store
+            .mail_move_for_source(original.id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            record.stage,
+            crate::mail_actions::journal::MoveStage::Started
+        );
+        assert!(
+            !in_folder(&store, "Archive")
+                .await
+                .rows
+                .iter()
+                .any(|m| m.id == original.id),
+            "an unconfirmed move is never shown at its destination"
+        );
+        assert!(record.error.as_deref().unwrap().contains("unconfirmed"));
+
+        let (engine, _, original) = scripted_engine(ScriptedReply::Refuse).await;
+        *scripted.reply.lock().unwrap() = ScriptedReply::Refuse;
+        let (_, receipt) = engine
+            .change_folder(&original, "Trash", output.clone(), None)
+            .await
+            .unwrap();
+        assert!(receipt.local_only);
+        let (refresh, restored) = engine
+            .undo_move(original.clone(), &receipt, output, None)
+            .await
+            .unwrap();
+        assert!(refresh.is_none(), "no server round trip");
+        let current = restored.current.unwrap();
+        assert_eq!(current.id, original.id);
+        assert_eq!(current.folder, original.folder);
+        assert_eq!(current.remote_id, original.remote_id);
+        let store = engine.store.clone();
+        assert!(
+            store
+                .mail_move_for_source(original.id.clone())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let inbox = in_folder(&store, "INBOX").await;
+        let row = inbox.rows.iter().find(|m| m.id == original.id).unwrap();
+        assert_eq!(row.remote_id, original.remote_id);
+        assert!(!inbox.move_placeholders.contains(&original.id));
     }
 
     #[tokio::test]

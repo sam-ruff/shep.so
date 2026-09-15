@@ -14,6 +14,13 @@ fn mode() -> Option<String> {
         }
     })
 }
+/// The refusing mail-action fixture: a retried device-only move now succeeds.
+fn refuse_fixture() -> bool {
+    std::env::args().any(|arg| arg == "--mail-actions=refuse")
+}
+fn resubmits() -> bool {
+    mode().as_deref() == Some("missing-destination") || refuse_fixture()
+}
 pub async fn seed(store: &Store) -> anyhow::Result<()> {
     if mode().is_none() {
         return Ok(());
@@ -106,7 +113,7 @@ pub async fn recover_move(
     action: RecoveryAction,
 ) -> anyhow::Result<MoveRecord> {
     anyhow::ensure!(
-        mode().is_some(),
+        mode().is_some() || refuse_fixture(),
         "This preview has no move-recovery fixture."
     );
     let accounts: Vec<Account> = store.get("accounts").await?;
@@ -140,17 +147,14 @@ impl runner::Connection for FixtureConnection {
         self.identities.clone()
     }
     async fn inspect(&mut self, _: &MoveRecord) -> anyhow::Result<runner::Inspection> {
-        Ok(if mode().as_deref() == Some("missing-destination") {
+        Ok(if resubmits() {
             runner::Inspection::SourceIntactNoDestinationCopy
         } else {
             runner::Inspection::DestinationPresent
         })
     }
     async fn prepare(&mut self, _: &MoveRecord) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            mode().as_deref() == Some("missing-destination"),
-            "Recovery must not submit a new move"
-        );
+        anyhow::ensure!(resubmits(), "Recovery must not submit a new move");
         Ok(())
     }
     async fn submit(
@@ -158,7 +162,7 @@ impl runner::Connection for FixtureConnection {
         record: &MoveRecord,
         _: Option<Vec<u8>>,
     ) -> Result<Option<String>, runner::SubmissionError> {
-        if mode().as_deref() != Some("missing-destination") {
+        if !resubmits() {
             return Err(runner::SubmissionError::NotApplied(
                 "Recovery must not submit a new move".into(),
             ));
@@ -166,7 +170,7 @@ impl runner::Connection for FixtureConnection {
         let operation = async {
             let saved = self.store.mail_move(record.token.clone()).await?;
             anyhow::ensure!(
-                saved.stage == MoveStage::Started,
+                saved.stage.unsubmitted(),
                 "Save the move before submitting it"
             );
             let count: u64 = self.store.get("fixture_move_submission").await?;

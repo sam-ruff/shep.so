@@ -553,6 +553,9 @@ mod tests {
             connection_lifecycle: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover::default()),
             outbound: Arc::new(providers::outgoing::Servers::default()),
+            move_connections: Arc::new(providers::mail::moves::ImapMoveConnections {
+                credentials: Default::default(),
+            }),
             google_connection_lock: Default::default(),
             passphrases: Arc::new(backup::OsPassphraseStore::default()),
             restore_credentials: Arc::new(backup::restore::OsCredentialRestorer::default()),

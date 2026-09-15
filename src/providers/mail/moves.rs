@@ -2,7 +2,7 @@
 //! capability/UID checks finish before the journal permits a mutating command.
 use super::*;
 use crate::mail_actions::{
-    MoveReceipt, connection_key,
+    MoveFailure, MoveReceipt, MoveRefused, classify_move_failure, connection_key,
     journal::MoveRecord,
     runner::{Connection, Inspection, SubmissionError},
 };
@@ -11,6 +11,40 @@ use anyhow::Context;
 use async_trait::async_trait;
 use secrecy::SecretString;
 use std::time::Duration;
+
+/// Opens move connections for the engine. The production implementation reads
+/// credentials and speaks IMAP; tests script the connection instead.
+#[async_trait]
+pub trait MoveConnections: Send + Sync {
+    async fn open(
+        &self,
+        source: Account,
+        destination: Option<Account>,
+    ) -> anyhow::Result<Box<dyn Connection>>;
+}
+
+pub struct ImapMoveConnections {
+    pub credentials: crate::credentials::Credentials,
+}
+#[async_trait]
+impl MoveConnections for ImapMoveConnections {
+    async fn open(
+        &self,
+        source: Account,
+        destination: Option<Account>,
+    ) -> anyhow::Result<Box<dyn Connection>> {
+        let source_secret = self.credentials.read(&source.id).await?;
+        let destination = match destination {
+            Some(account) => Some((account.clone(), self.credentials.read(&account.id).await?)),
+            None => None,
+        };
+        Ok(Box::new(ImapMoveConnection::new(
+            source,
+            source_secret,
+            destination,
+        )))
+    }
+}
 
 pub struct ImapMoveConnection {
     source: Account,
@@ -76,10 +110,13 @@ impl Connection for ImapMoveConnection {
             } else {
                 "MOVE"
             };
-            anyhow::ensure!(
-                source.capabilities().await?.has_str(capability),
-                "The source server needs {capability} to move this message safely."
-            );
+            if !source.capabilities().await?.has_str(capability) {
+                // A missing capability is a definite, repeatable refusal.
+                return Err(MoveRefused(format!(
+                    "The source server needs {capability} to move this message safely."
+                ))
+                .into());
+            }
             let destination = match &self.destination {
                 Some((account, secret)) => {
                     let mut destination = imap(account, secret).await?;
@@ -182,7 +219,7 @@ impl Connection for ImapMoveConnection {
         };
         match tokio::time::timeout(Duration::from_secs(60), operation).await {
             Ok(Ok(uid)) => Ok(uid),
-            Ok(Err(error)) if error.downcast_ref::<receipts::UploadRejected>().is_some() => {
+            Ok(Err(error)) if classify_move_failure(&error) == MoveFailure::Refused => {
                 Err(SubmissionError::NotApplied(format!("{error:#}")))
             }
             Ok(Err(error)) => Err(SubmissionError::Unconfirmed(format!("{error:#}"))),

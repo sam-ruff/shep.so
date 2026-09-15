@@ -644,6 +644,13 @@ pub async fn mail_action_delay() -> anyhow::Result<()> {
         std::env::args().find_map(|arg| arg.strip_prefix("--mail-actions=").map(str::to_owned));
     if let Some(mode) = mode {
         tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        // "fail" models an unconfirmed result; "refuse" a definite server NO.
+        if mode == "refuse" {
+            return Err(crate::mail_actions::MoveRefused(
+                "Fixture server refused this change.".into(),
+            )
+            .into());
+        }
         anyhow::ensure!(mode != "fail", "Fixture server rejected this change.");
     }
     Ok(())
