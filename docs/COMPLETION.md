@@ -1,5 +1,39 @@
 # Completion audit
 
+## Device-only completion of refused moves, 15 September 2026
+
+A definite server refusal (a tagged NO or BAD on MOVE with no COPYUID, a
+refused destination creation, or a missing MOVE capability) now completes the
+move on this device instead of leaving the message in place. The move journal
+records `MoveStage::Local` with the server identity retained; the protected
+projection shows the row at the destination, `Reconcile` neither restores nor
+removes it, server flag changes still apply, and each check retries at most
+three such records ten minutes apart. Success gives the row its real
+destination identity; another refusal keeps it device-only with the newest
+reason; Undo releases it locally. Transient, partial (any COPYUID seen) and
+cross-account cases keep the previous behaviour. The notice reads "Moved on
+this device only. The mail server refused the move, so Shep will retry it
+during later checks. Until then, other devices still show the message in
+Inbox." Rows carry a muted "This device only" marker; the reader offers Retry
+and Review. Classification lives in the shared `classify_move_failure`; engine
+move connections are constructor-injected through `MoveConnections`.
+
+Lane commit `c6228d8`, merged as `b70712b`. Tests: mail-core classifier,
+receipt refusal-versus-partial loopback and typed creation rejection; runner
+refused and uncertain preflight, refused submission with refused, unconfirmed
+and successful retries, partial-move copy and Undo release; store
+`tests/local_moves.rs` (projection, Reconcile with and without the id, flag
+refresh, restart, retry schedule, guards); engine scripted connections; UI
+refusal versus transient failure; 858 lib tests through the hook. Native:
+the new `mail_actions="refuse"` flow plus the failed-archive, drag-failure
+and seven move-recovery flows pass (10 of 10) with reviewed screenshots.
+User docs in `docs/mail.md` state that other devices and Shep apps keep the
+old folder until the server accepts the move. Limitations: flag changes on a
+device-only row wait for the server move; a source deleted on another client
+keeps the row device-only until manual review; cross-account transfers never
+fall back locally; Flutter and browser have no equivalent; live Stalwart
+responses unverified.
+
 ## IMAP IDLE server push, 15 September 2026
 
 Each listed IMAP account keeps a dedicated IDLE connection on Inbox
