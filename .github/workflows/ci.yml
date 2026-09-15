@@ -114,12 +114,24 @@ jobs:
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
-          foreach ($exe in Get-ChildItem "target\$env:RELEASE_TARGET\debug\deps\*.exe") {
-            "== $($exe.Name)"
-            $deps = & $dumpbin.FullName /nologo /dependents $exe.FullName | Where-Object { $_ -match '^\s+\S+\.dll$' } | ForEach-Object { $_.Trim() }
-            foreach ($dll in $deps) {
-              $found = (Get-Command $dll -ErrorAction SilentlyContinue).Source
-              "$dll -> $found"
+          foreach ($exe in Get-ChildItem "target\$env:RELEASE_TARGET\debug\deps\shep-*.exe") {
+            Write-Output "== $($exe.Name)"
+            $dll = $null
+            $imports = @{}
+            foreach ($line in (& $dumpbin.FullName /nologo /imports $exe.FullName)) {
+              if ($line -match '^\s+(\S+\.dll)\s*$') { $dll = $Matches[1]; $imports[$dll] = @(); continue }
+              if ($dll -and $line -match '^\s+[0-9A-F]+\s+([A-Za-z_][A-Za-z0-9_@]*)\s*$') { $imports[$dll] += $Matches[1] }
+            }
+            foreach ($name in $imports.Keys) {
+              $path = (Get-Command $name -ErrorAction SilentlyContinue).Source
+              if (-not $path) { $path = Join-Path $env:SystemRoot "System32\$name" }
+              # API set names forward into kernelbase; compare against the real exporter.
+              if ($name -like 'api-ms-win-*') { $path = Join-Path $env:SystemRoot 'System32\kernelbase.dll' }
+              if (-not (Test-Path $path)) { Write-Output "$name -> MISSING"; continue }
+              $exports = & $dumpbin.FullName /nologo /exports $path | ForEach-Object { if ($_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)') { $Matches[1] } }
+              $absent = $imports[$name] | Where-Object { $exports -notcontains $_ }
+              Write-Output "$name -> $path ($($imports[$name].Count) imports, $($absent.Count) absent)"
+              foreach ($fn in $absent) { Write-Output "   absent: $fn" }
             }
           }
         env:
