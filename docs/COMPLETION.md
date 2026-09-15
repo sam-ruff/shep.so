@@ -1,5 +1,61 @@
 # Completion audit
 
+## Mail actions beside a live download, 15 September 2026
+
+Move, archive, delete, flag and read changes no longer interrupt or wait for
+the account's running check. `engine/account_work.rs` grants a write beside a
+sync, keeps writes FIFO per account, refuses a second download while one
+runs, and reserves the interrupt path for exclusive lifecycle work (account
+save and test, removal, restore, profile import, folder creation and jobs,
+calendar writes), shutdown and the cycle timeout. `store/write_ledger.rs`
+records acknowledged flag writes and cache relocations (ids and kinds only,
+scratch database, 256 per account); each check takes an epoch before its
+first SELECT, and items from that check keep local flags, keep a moved-in row
+and drop a moved-away body when the write was acknowledged after the epoch.
+Finishing a check clears the entries it observed, so an action on another
+client wins from the next check; entries older than the 600 second cycle
+bound are pruned.
+
+Lane commit `877c414`, merged as `5dad5cb`. Tests: coordinator (write beside
+held sync without interrupting the provider, FIFO writes, second sync
+refused, exclusive interrupts), ledger, store reconciliation and
+scripted-provider engine tests; 1,346 hook executions. Native: held-sync
+close, flag, failed flag and tray quit, the four badge flows and the flag
+flows pass on the harness display. Eight native move flows fail on a sidebar
+`Projects` row that disappears after the first move; the lane reproduced this
+with a binary predating its change, and it is tracked separately in TODO.
+Limitations: exclusive lifecycle work still interrupts a download (a
+deliberate deviation from "shutdown and timeout only"); the flag ledger entry
+is recorded at acknowledgement time; the grace window equals the cycle bound;
+the post-move folder refresh relies on the next scheduled or pushed check
+when a check is already running; no live-server verification.
+
+## Single-pass relevance search ranking, 15 September 2026
+
+The responsiveness benchmark failed on the CI runner because FTS5's `bm25()`
+walks the whole index once per phrase to fetch document frequencies, and the
+typo expansion probed the vocabulary per term. `store/search_rank.rs`
+registers two FTS5 auxiliary functions that compute tiered BM25 from the
+cursor's instance lists in one MATCH pass (exact phrase, all exact terms,
+expanded alternatives), equal to the built-in `bm25()` per phrase or group.
+`store/search_cache.rs` keeps per-phrase document counts and typo expansions
+per index snapshot in scratch, keyed on `total_changes()` and
+`data_version`, and a read that filled the cache commits its transaction.
+
+Lane commit `92aeea3`, merged as `e585cdb`. Bench on the shared development
+host, best of three alternating runs: FTS search p95 17.7 to 12.8 ms,
+transposed 19.7 to 13.1 ms, four terms 27.8 to 16.2 ms; page queries
+unchanged. Tests: six `search_rank` unit tests (float-exact equality with
+`bm25()`, overlapping repeats, unknown counts, malformed specs), two
+`search_cache` tests (reuse, invalidation on write, rollback safety), a plan
+regression asserting one FTS scan with no automatic index or per-tier
+relation, the two search integration suites, 1,345 hook executions.
+Limitations: about 150 lines of `unsafe` FFI against the bundled SQLite 3.51
+FTS5 API; the page statement still materialises the ranked keys and uses a
+bounded sorter (measured faster than the indexed alternative); the runner has
+not yet confirmed the numbers; a larger `cache_size` and FTS `optimize` after
+bulk loads were measured as further wins and left for a separate decision.
+
 ## Device-only completion of refused moves, 15 September 2026
 
 A definite server refusal (a tagged NO or BAD on MOVE with no COPYUID, a
