@@ -38,15 +38,30 @@ Preferences abbreviations match individual indexed words; folder abbreviations
 can span path segments, as in `pjarch` for `Projects/Archive`.
 
 Mail uses SQLite FTS5 and field-weighted BM25 within each tier. Subject, body and
-sender weights are 2.0, 1.0 and 0.3. Phrase and literal relations are computed
-once, with a shared relation for single-term queries. The list and frozen bulk
-selection use identical tier, score, timestamp and identity ordering; pages
-remain limited to 50 metadata rows.
+sender weights are 2.0, 1.0 and 0.3. One MATCH expression carries the exact
+terms and, when they differ, the expanded alternatives as
+`(exact terms) OR (expanded terms)`, so a single FTS cursor visits each
+candidate once. Two auxiliary functions registered on the cache connection,
+`shep_search_tier` and `shep_search_score`, read the instance lists FTS5 already
+holds for the row. The exact terms occurring adjacently, in order and in one
+column are the whole phrase and form the top tier, scored as BM25 of that
+phrase; otherwise the tier is the first group whose phrases all occur and the
+score is BM25 over that group's phrases alone. Each result equals what the
+built-in `bm25()` returns for the same phrase or group queried on its own. The
+built-in function rescans the whole index once per phrase to learn how many
+rows contain it, which grows with the number of query terms; instead each
+phrase's row count is measured once per index snapshot and passed in with the
+query. The list and frozen bulk selection use identical tier, score, timestamp
+and identity ordering; pages remain limited to 50 metadata rows.
 
 Search totals and unread counts are computed alongside the ranked keys inside
 SQLite, then at most 50 metadata rows are read. An empty page still retrieves
-the complete counts. Queries containing only proven exact terms share their
-literal ranking instead of computing it again; phrase priority remains intact.
+the complete counts. Phrase row counts and each token's typo expansion live in
+the connection's scratch database for one snapshot of the index, keyed on the
+connection's total change count and the `data_version` that other connections
+advance; any write starts an empty snapshot, so repeated or incrementally typed
+queries reuse both while nothing has changed and never rank against stale
+statistics.
 Unicode exact-body matches retain their priority even when SQLite's tokeniser
 and the query normaliser differ for combined accents.
 For ASCII alphabetic words, the current vocabulary is checked inside the query
@@ -77,8 +92,10 @@ and [SQLite FTS5](https://www.sqlite.org/fts5.html).
 Automated ranking and capture coverage lives in `tests/search_abbreviations.rs`,
 alongside the shared search and selection suites. Native demonstrations and
 performance receipts are recorded in the completion log after review. On the
-shared 100,000-message fixture, cached search p95 is 19.87 ms for ordinary text,
-22.83 ms for a transposition and 31.25 ms for four terms. Warm complete
+shared 100,000-message fixture, cached search p95 is 12.82 ms for ordinary text,
+13.07 ms for a transposition and 16.22 ms for four terms (best of three runs on
+a shared development host, down from 17.74, 19.68 and 27.84 ms with the
+built-in ranking). Warm complete
 Preferences ranking is 0.023–0.045 ms p95; these measurements exclude native
 input/drawing and live providers. Browser
 and mobile do not acquire this experimental matcher by switching desktop branches;
