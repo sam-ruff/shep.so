@@ -62,6 +62,30 @@ you can keep navigating while it runs. An unresolved result keeps the cached
 message readable, with further options available when the server cannot establish
 which copy to use.
 
+## Moves the server refuses
+
+When the server definitely refuses a move (a tagged NO or BAD on the MOVE with
+no COPYUID, a refused destination creation, or a server without the MOVE
+capability) Shep still applies it on this device. The cached row keeps its
+server identity and is shown at the destination through the same protected
+projection as an unfinished move; the journal records it in the `Local` stage.
+Sync leaves it alone: the source listing does not restore it, the destination
+listing does not delete it, and server flag changes still reach it. Each
+background check retries the server move for at most three records, at least
+ten minutes apart; success gives the row its real destination identity and
+clears the record, another refusal leaves it device-only, and an unconfirmed
+result follows the ordinary journal rules. Undo restores the row locally and
+clears the record without a server call.
+
+Only definite refusals within one account qualify. Connection loss, timeouts,
+authentication failures, an uncertain folder creation and a NO after a COPYUID
+(a possible partial move) keep the message in place with an error, as before,
+and cross-account transfers are never completed locally. A device-only move
+does not reach other Shep clients until the server accepts it; until the
+cross-device mail-state discussion settles a shared design, syncing it manually
+means retrying from the reader or waiting for the automatic retry, and other
+clients keep showing the message in its old folder.
+
 Selecting an unread inbox row (or navigating to it with arrows) and then leaving it marks it read immediately. Startup selection and neighbor preloading do not. Explicit read/unread controls clear that pending reading state, so a later navigation cannot reverse a deliberate mark-unread. Failed writes restore the indicator without selecting the previous message. Archive/move waits for the read write before moving the source UID, while the list removal remains immediate.
 
 Action toasts are generated when the UI accepts the move intent, including when it waits behind a pending read/flag. Tokens correlate failures with counted entries; acknowledgments do not recreate dismissed or expired toasts. Archive/Trash aggregate across unified accounts, while other moves group by exact account/folder. Cross-account transfers now use typed completion IDs and pending overlays, wait for confirmed source flags and retain the existing upload journal. Generic provider timeouts must not discard typed completion or cancel SQLite cleanup. Undo restores rows immediately, waits for acknowledged server identities and retains a retry control on reversal failure. Its provider receipts and exact-copy recovery are documented in the repository AGENTS.md. Broader filtered destination projection and durable recovery for individual actions remain tracked work; selected-group jobs have their own persistent journal.

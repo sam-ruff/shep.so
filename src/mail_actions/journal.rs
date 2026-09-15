@@ -10,6 +10,10 @@ pub enum MoveStage {
     Committed,
     Located,
     Kept,
+    /// The server refused the move, so the cached row is shown at its
+    /// destination on this device only while the original server identity is
+    /// retained for later retries. Nothing was applied on the server.
+    Local,
 }
 impl MoveStage {
     pub fn key(self) -> &'static str {
@@ -19,15 +23,20 @@ impl MoveStage {
             Self::Committed => "committed",
             Self::Located => "located",
             Self::Kept => "kept",
+            Self::Local => "local",
         }
     }
     pub fn allows(self, next: Self) -> bool {
         matches!(
             (self, next),
-            (Self::Started, Self::Copied | Self::Committed)
+            (Self::Started | Self::Local, Self::Copied | Self::Committed)
                 | (Self::Copied, Self::Copied | Self::Committed)
                 | (Self::Committed, Self::Located)
         )
+    }
+    /// No server operation has been submitted, or the last one was refused.
+    pub fn unsubmitted(self) -> bool {
+        matches!(self, Self::Started | Self::Local)
     }
 }
 

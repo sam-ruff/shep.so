@@ -9,6 +9,9 @@ use rusqlite::OptionalExtension;
 
 pub(super) mod relocation;
 
+/// A refused server move is retried this often at most.
+pub const LOCAL_RETRY_SECONDS: i64 = 600;
+
 pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     c.execute_batch("CREATE TABLE IF NOT EXISTS mail_moves(
         token TEXT PRIMARY KEY, source_id TEXT NOT NULL UNIQUE,
@@ -29,10 +32,10 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
         WHERE NOT EXISTS(SELECT 1 FROM mail_moves j WHERE j.cache_id=m.id);
         CREATE VIEW IF NOT EXISTS recovered_mail AS
         SELECT m.rowid AS rowid,m.id,m.account,m.folder,m.sender,m.subject,m.body,m.timestamp,m.unread,m.starred,m.data,m.raw,0 AS pending_move
-        FROM messages m WHERE NOT EXISTS(SELECT 1 FROM mail_moves j WHERE j.cache_id=m.id AND j.stage='committed')
+        FROM messages m WHERE NOT EXISTS(SELECT 1 FROM mail_moves j WHERE j.cache_id=m.id AND j.stage IN ('committed','local'))
         UNION ALL
         SELECT m.rowid AS rowid,m.id,j.destination_account,json_extract(j.data,'$.receipt.folder'),m.sender,m.subject,m.body,m.timestamp,m.unread,m.starred,m.data,m.raw,1 AS pending_move
-        FROM mail_moves j JOIN messages m ON m.id=j.cache_id WHERE j.stage='committed';
+        FROM mail_moves j JOIN messages m ON m.id=j.cache_id WHERE j.stage IN ('committed','local');
         CREATE VIEW IF NOT EXISTS recovered_bulk AS SELECT m.rowid AS rowid,m.id,
         COALESCE(e.account,m.account) AS account,COALESCE(e.folder,m.folder) AS folder,
         m.sender,m.subject,m.body,m.timestamp,COALESCE(e.unread,m.unread) AS unread,
@@ -42,7 +45,7 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
 }
 pub(super) fn has_projection(c: &Connection) -> anyhow::Result<bool> {
     Ok(c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM mail_moves WHERE stage='committed')",
+        "SELECT EXISTS(SELECT 1 FROM mail_moves WHERE stage IN ('committed','local'))",
         [],
         |r| r.get(0),
     )?)
@@ -64,7 +67,7 @@ pub(super) fn for_cache(c: &Connection, id: &str) -> anyhow::Result<Option<MoveR
 }
 pub(super) fn project_detail(c: &Connection, mail: &mut Mail) -> anyhow::Result<()> {
     if let Some(record) = for_cache(c, &mail.id)? {
-        if record.stage == MoveStage::Committed {
+        if matches!(record.stage, MoveStage::Committed | MoveStage::Local) {
             mail.account_id = record.receipt.account;
             mail.folder = record.receipt.folder;
         }
@@ -198,6 +201,23 @@ fn prepare(c: &Connection, record: &MoveRecord) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The server refused the move without applying anything. The row keeps its
+/// server identity and stays protected; the projection shows it at the
+/// destination until a later retry succeeds or Undo releases the record.
+fn to_local(c: &Connection, expected: MoveRecord, reason: String) -> anyhow::Result<MoveRecord> {
+    anyhow::ensure!(
+        expected.stage.unsubmitted()
+            && expected.receipt.current.is_none()
+            && expected.original.account_id == expected.receipt.account,
+        "Only an unapplied move within one account can complete on this device."
+    );
+    let mut next = expected.clone();
+    next.stage = MoveStage::Local;
+    next.error = Some(reason);
+    replace(c, &expected, &next)?;
+    Ok(next)
+}
+
 fn keep_local(c: &Connection, expected: MoveRecord) -> anyhow::Result<MoveRecord> {
     let mut mail = expected.original.clone();
     let (unread, starred) = c.query_row(
@@ -296,10 +316,12 @@ impl Store {
         })
         .await
     }
+    /// At most three records per pass. Unconfirmed moves are checked again a
+    /// minute apart; a refused move is retried on the server every ten minutes.
     pub async fn mail_move_lookups(&self, now: i64) -> anyhow::Result<Vec<MoveRecord>> {
         self.run(move |c| {
-            c.prepare("SELECT data FROM mail_moves WHERE stage IN ('started','committed') AND COALESCE(json_extract(data,'$.attempted'),0)<=? ORDER BY COALESCE(json_extract(data,'$.attempted'),0),token LIMIT 3")?
-                .query_map([now.saturating_sub(60)],|r|r.get::<_,String>(0))?
+            c.prepare("SELECT data FROM mail_moves WHERE (stage IN ('started','committed') AND COALESCE(json_extract(data,'$.attempted'),0)<=?1) OR (stage='local' AND COALESCE(json_extract(data,'$.attempted'),0)<=?2) ORDER BY COALESCE(json_extract(data,'$.attempted'),0),token LIMIT 3")?
+                .query_map(params![now.saturating_sub(60), now.saturating_sub(LOCAL_RETRY_SECONDS)],|r|r.get::<_,String>(0))?
                 .map(|r|Ok(serde_json::from_str(&r?)?)).collect()
         }).await
     }
@@ -311,8 +333,11 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             anyhow::ensure!(
-                matches!(expected.stage, MoveStage::Started | MoveStage::Committed),
-                "Only pending or confirmed moves can be checked automatically."
+                matches!(
+                    expected.stage,
+                    MoveStage::Started | MoveStage::Committed | MoveStage::Local
+                ),
+                "Only pending, confirmed or device-only moves can be checked automatically."
             );
             let mut next = expected.clone();
             next.attempted = now;
@@ -361,6 +386,36 @@ impl Store {
                 "The cached original changed. The recovered copy was not substituted."
             );
             let next = located(&tx, expected, resolved.summary)?;
+            tx.commit()?;
+            Ok(next)
+        })
+        .await
+    }
+    /// Record a move the server refused before any journal row existed, so the
+    /// row moves on this device only and the server move is retried later.
+    pub async fn begin_local_mail_move(
+        &self,
+        record: MoveRecord,
+        reason: String,
+    ) -> anyhow::Result<MoveRecord> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            prepare(&tx, &record)?;
+            let next = to_local(&tx, record, reason)?;
+            tx.commit()?;
+            Ok(next)
+        })
+        .await
+    }
+    /// A prepared move whose submission was definitely refused.
+    pub async fn local_mail_move(
+        &self,
+        expected: MoveRecord,
+        reason: String,
+    ) -> anyhow::Result<MoveRecord> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let next = to_local(&tx, expected, reason)?;
             tx.commit()?;
             Ok(next)
         })
@@ -457,13 +512,14 @@ impl Store {
         })
         .await
     }
-    /// Only a definite rejection of the first command permits releasing a new
-    /// record. An APPEND acknowledgment must survive subsequent cleanup failure.
+    /// Only a definite rejection of the first command, or a device-only move
+    /// being undone, permits releasing a record. An APPEND acknowledgment must
+    /// survive subsequent cleanup failure.
     pub async fn reject_mail_move(&self, expected: MoveRecord) -> anyhow::Result<()> {
         self.run(move |c| {
             let tx = c.transaction()?;
             anyhow::ensure!(
-                expected.stage == MoveStage::Started,
+                expected.stage.unsubmitted(),
                 "A committed copy cannot be classified as rejected."
             );
             let n = tx.execute(

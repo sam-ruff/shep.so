@@ -73,23 +73,19 @@ impl Engine {
             anyhow::bail!("Move recovery needs a connected account.");
         }
         let source = self.account(&record.original.account_id).await?;
-        let source_secret = self.credentials.read(&source.id).await?;
         let destination = if source.id != record.receipt.account {
-            let account = self.account(&record.receipt.account).await?;
-            let secret = self.credentials.read(&account.id).await?;
-            Some((account, secret))
+            Some(self.account(&record.receipt.account).await?)
         } else {
             None
         };
-        let mut connection =
-            providers::mail::moves::ImapMoveConnection::new(source, source_secret, destination);
+        let mut connection = self.move_connections.open(source, destination).await?;
         if action == RecoveryAction::Retry {
-            let recovered = runner::recover(&self.store, &mut connection, record).await?;
+            let recovered = runner::recover(&self.store, connection.as_mut(), record).await?;
             return Ok(self.refresh_recovered_folders(recovered).await);
         }
         let recovered = runner::recover_reviewed(
             &self.store,
-            &mut connection,
+            connection.as_mut(),
             record,
             action == RecoveryAction::UseExistingCopy,
         )

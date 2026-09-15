@@ -2675,6 +2675,26 @@ class NativeFlows(unittest.TestCase):
                        check("folder", "Archive"), check("total", 0),
                        click(84, 278), check("folder", "INBOX"), check("total", 120))
 
+    def test_refused_archive_completes_on_this_device_and_retry_finishes_it(self):
+        # "refuse" is a definite server NO; the row moves locally, is marked, and a
+        # retry through the reader's recovery controls finishes the server move.
+        self.mcp.call("desktop.start", mail_actions="refuse")
+        self.mcp.batch(key("BackSpace"), check("total", 119), check("mail_pending", 1),
+                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 119),
+                       check("notice", "this device only", "contains"), check("move_recovery.total", 1),
+                       shot("archive-refused-device-only"),
+                       click(84, 398), check("folder", "Archive"), check("total", 1),
+                       check("mail_rows.0.subject", "A little more room to think"),
+                       check("mail_rows.0.local_only", True), shot("archive-refused-marker"),
+                       click(402, mail_row_y(0)), check("selected", "A little more room to think"),
+                       check("reader_text_ready", True), click(1340, 192), check("dialog", "MoveRecovery"),
+                       check("move_recovery.stage", "Local"), wait(100), shot("archive-refused-review"),
+                       key("Return"), check("move_recovery.pending", 1),
+                       {**check("move_recovery.pending", 0), "timeout_ms": 5000}, check("dialog", None),
+                       check("notice", "Move completed.", "contains"), check("move_recovery.total", 0),
+                       check("mail_rows.0.local_only", False), shot("archive-refused-retried"),
+                       click(84, 278), check("folder", "INBOX"), check("total", 119))
+
     def test_action_toasts_count_immediately_and_dismiss_before_saving(self):
         self.mcp.call("desktop.start", mail_actions="slow")
         self.mcp.batch(click(652,100), check("total",119), check("mail_pending",1),

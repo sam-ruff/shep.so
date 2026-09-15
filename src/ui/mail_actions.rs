@@ -44,6 +44,18 @@ struct PendingFlags {
     sent_edits: (u64, u64),
 }
 
+/// Plain words for a move the server refused and Shep completed locally.
+fn local_only_notice(source_folder: &str) -> String {
+    let source = if source_folder.eq_ignore_ascii_case("INBOX") {
+        "Inbox"
+    } else {
+        source_folder
+    };
+    format!(
+        "Moved on this device only. The mail server refused the move, so Shep will retry it during later checks. Until then, other devices still show the message in {source}."
+    )
+}
+
 impl Actions {
     pub fn moving(&self, id: &str) -> bool {
         self.move_target(id).is_some()
@@ -83,14 +95,21 @@ impl App {
             return None;
         }
         let record = self.page.move_recovery.get(id)?;
-        (record.stage == crate::mail_actions::journal::MoveStage::Started)
-            .then_some(&record.original)
+        record.stage.unsubmitted().then_some(&record.original)
+    }
+
+    /// The server refused this row's move; it sits at the destination on this
+    /// device only until a later retry succeeds.
+    pub(super) fn local_only_move(&self, id: &str) -> bool {
+        self.page
+            .move_recovery
+            .get(id)
+            .is_some_and(|record| record.stage == crate::mail_actions::journal::MoveStage::Local)
     }
 
     fn move_is_blocked(&self, id: &str) -> bool {
         if self.page.move_recovery.get(id).is_some_and(|record| {
-            record.stage == crate::mail_actions::journal::MoveStage::Started
-                && !self.move_recovery.pending.contains_key(&record.token)
+            record.stage.unsubmitted() && !self.move_recovery.pending.contains_key(&record.token)
         }) {
             return self.bulk_action_owns_mail(id);
         }
@@ -476,6 +495,10 @@ impl App {
                     &receipt,
                 );
                 self.mail_actions.flags.remove(&mail.id);
+                if receipt.local_only {
+                    let source = entry.recovered.as_ref().unwrap_or(&entry.mail);
+                    self.notice(local_only_notice(&source.folder), true);
+                }
             }
             Err(error) => {
                 if entry.recovered.is_none() {
@@ -759,6 +782,62 @@ mod tests {
         assert_eq!(app.mail_actions.pending(), 0);
         assert!(app.notice.as_ref().unwrap().0.contains("remains in Inbox"));
     }
+    #[tokio::test]
+    async fn refused_move_completes_on_this_device_and_says_so_in_plain_words() {
+        use crate::mail_actions::{Fingerprint, journal::MoveStage};
+        let (mut app, mut commands, original) = fixture().await;
+        let _ = app.handle(Message::Move("Archive".into()));
+        let Command::Move(request, mail, folder) = commands.try_recv().unwrap() else {
+            panic!("Expected move");
+        };
+        let mut receipt = MoveReceipt::server(
+            &mail,
+            &mail.account_id,
+            &folder,
+            None,
+            Fingerprint::of(b"x"),
+        );
+        receipt.recovery = Some("device-only-token".into());
+        receipt.local_only = true;
+        let _ = app.move_receipt(request, mail, folder, Ok(Arc::new(receipt)));
+        assert_eq!(
+            app.page.total, 0,
+            "the row leaves Inbox instead of being restored"
+        );
+        assert_eq!(app.mail_actions.pending(), 0);
+        let (notice, error, _) = app.notice.clone().unwrap();
+        assert!(notice.contains("this device only"), "{notice}");
+        assert!(
+            notice.contains("retry") && notice.contains("Inbox"),
+            "{notice}"
+        );
+        assert!(error, "the warning must survive the follow-up refresh");
+        assert!(
+            !notice.contains('\u{2014}') && notice.is_ascii(),
+            "{notice}"
+        );
+        assert!(app.local_only_move(&original.summary.id));
+        assert_eq!(
+            app.page.move_recovery[&original.summary.id].stage,
+            MoveStage::Local
+        );
+        assert!(
+            app.action_toasts.current.is_some(),
+            "Undo stays available for a device-only move"
+        );
+        // A later page carrying the stored device-only record keeps the marker.
+        let mut page = (*app.mail_actions.base_page).clone();
+        app.query.folder = "Archive".into();
+        let mut row = original.summary.clone();
+        row.folder = "Archive".into();
+        row.remote_id.clear();
+        page.rows = vec![row];
+        page.total = 1;
+        app.set_mail_page(Arc::new(page));
+        assert!(app.local_only_move(&original.summary.id));
+        assert_eq!(app.page.rows[0].folder, "Archive");
+    }
+
     #[tokio::test]
     async fn toast_is_immediate_failure_only_changes_its_own_count_and_dismissal_sticks() {
         let (mut app, mut commands, original) = fixture().await;

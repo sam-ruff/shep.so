@@ -70,6 +70,8 @@ where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
 {
     let mut receipt = None;
+    // Any COPYUID, even on a NO, proves the copy half of a MOVE may have run.
+    let mut copied = false;
     loop {
         let reply = session.read_response().await?.context(
             "The server disconnected before confirming the operation. Refresh before retrying.",
@@ -90,6 +92,7 @@ where
             Response::Data { status, code, .. } => (status, code),
             _ => continue,
         };
+        copied |= matches!(code, Some(ResponseCode::CopyUid(..)));
         if *status == Status::Ok
             && let Some(mapping) = code.as_ref().and_then(|code| kind.identity(code))
         {
@@ -106,8 +109,18 @@ where
             "The server disconnected before confirming the operation. Refresh before retrying."
         );
         if matches!(reply.parsed(), Response::Done { .. }) {
-            if matches!(kind, Kind::Append) && matches!(status, Status::No | Status::Bad) {
-                return Err(UploadRejected.into());
+            if matches!(status, Status::No | Status::Bad) {
+                return Err(match kind {
+                    Kind::Append => UploadRejected.into(),
+                    // A NO after a COPYUID can be a partial move (RFC 6851 3.3).
+                    Kind::Move(_) if !copied => crate::mail_actions::MoveRefused(
+                        "The server refused to move this message.".into(),
+                    )
+                    .into(),
+                    Kind::Move(_) => anyhow::anyhow!(
+                        "The server did not confirm this operation. Refresh before retrying."
+                    ),
+                });
             }
             anyhow::ensure!(
                 *status == Status::Ok,
@@ -259,6 +272,49 @@ mod tests {
             if accepted {
                 assert_eq!(result.unwrap().as_deref(), expected);
             }
+            task.await.unwrap();
+        }
+    }
+    #[tokio::test]
+    async fn move_refusal_is_typed_only_without_any_copyuid() {
+        use crate::mail_actions::{MoveFailure, classify_move_failure};
+        for (reply, refused) in [
+            ("{tag} NO [CANNOT] read-only mailbox\r\n", true),
+            ("{tag} BAD unknown command\r\n", true),
+            (
+                "* OK [COPYUID 91 7 38] moved\r\n{tag} NO expunge failed\r\n",
+                false,
+            ),
+            ("{tag} NO [COPYUID 91 7 38] partial\r\n", false),
+            ("* BYE going down\r\n", false),
+            ("", false),
+        ] {
+            let (client, server) = tokio::io::duplex(4096);
+            let task = tokio::spawn(async move {
+                let mut socket = BufReader::new(server);
+                login(&mut socket).await;
+                let (tag, _) = line(&mut socket).await;
+                socket
+                    .get_mut()
+                    .write_all(reply.replace("{tag}", &tag).as_bytes())
+                    .await
+                    .unwrap();
+            });
+            let mut session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .unwrap();
+            let error = move_message(&mut session, "7", "Keep").await.unwrap_err();
+            let expected = if refused {
+                MoveFailure::Refused
+            } else {
+                MoveFailure::Uncertain
+            };
+            assert_eq!(
+                classify_move_failure(&error),
+                expected,
+                "{reply}: {error:#}"
+            );
             task.await.unwrap();
         }
     }

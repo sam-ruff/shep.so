@@ -4163,6 +4163,8 @@ impl App {
         for (index, mail) in self.page.rows.iter().enumerate() {
             data["mail_rows"][index]["group_pending"] =
                 serde_json::json!(self.bulk_owns_mail(&mail.id));
+            data["mail_rows"][index]["local_only"] =
+                serde_json::json!(self.local_only_move(&mail.id));
         }
         data["conversation_rows"] = serde_json::json!(self.conversation.page.rows);
         data["conversation_offset"] = serde_json::json!(self.conversation.page.offset);

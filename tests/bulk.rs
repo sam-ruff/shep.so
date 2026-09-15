@@ -444,6 +444,7 @@ async fn a_failed_inverse_stage_cannot_erase_the_acknowledged_forward_receipt() 
         current: Some(current.clone()),
         fingerprint: None,
         connections: vec![],
+        local_only: false,
     };
     let result = store
         .finish_bulk_item(item, Ok(Receipt::Move(Box::new(receipt))))

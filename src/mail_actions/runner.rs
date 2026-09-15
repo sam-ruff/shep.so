@@ -6,10 +6,32 @@ use anyhow::Context;
 
 #[derive(Debug)]
 pub enum SubmissionError {
-    /// Proven no mutation: pre-submission failure, or an atomic APPEND rejection.
-    /// A MOVE NO can describe partial success (RFC 6851 §3.3), so is Unconfirmed.
+    /// Proven no mutation: pre-submission failure, an atomic APPEND rejection,
+    /// or a tagged MOVE refusal that carried no COPYUID. A MOVE NO after a
+    /// COPYUID can describe partial success (RFC 6851 §3.3), so is Unconfirmed.
     NotApplied(String),
     Unconfirmed(String),
+}
+
+/// A definite refusal of a move within one account completes on this device
+/// and is retried later. Anything else keeps the original error.
+async fn complete_locally(
+    store: &Store,
+    record: MoveRecord,
+    error: anyhow::Error,
+    prepared: bool,
+) -> anyhow::Result<MoveRecord> {
+    use crate::mail_actions::{MoveFailure, classify_move_failure};
+    let transfer = record.original.account_id != record.receipt.account;
+    if transfer || classify_move_failure(&error) != MoveFailure::Refused {
+        return Err(error);
+    }
+    let reason = format!("{error:#}");
+    if prepared {
+        store.local_mail_move(record, reason).await
+    } else {
+        store.begin_local_mail_move(record, reason).await
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +95,9 @@ pub async fn start(
         "This move was already started."
     );
     identity(connection, &record)?;
-    connection.prepare(&record).await?;
+    if let Err(error) = connection.prepare(&record).await {
+        return complete_locally(store, record, error, false).await;
+    }
     let transfer = record.original.account_id != record.receipt.account;
     let raw = if transfer {
         let raw = store.raw_message(record.original.id.clone()).await?;
@@ -102,6 +126,10 @@ async fn submit_prepared(
     let transfer = record.original.account_id != record.receipt.account;
     let remote = match connection.submit(&record, raw).await {
         Ok(remote) => remote,
+        Err(SubmissionError::NotApplied(error)) if !transfer => {
+            let refused = crate::mail_actions::MoveRefused(error);
+            return complete_locally(store, record, refused.into(), true).await;
+        }
         Err(SubmissionError::NotApplied(error)) => {
             store.reject_mail_move(record).await.context("The server did not apply this move, but its recovery record could not be released.")?;
             anyhow::bail!("{error}");
@@ -173,7 +201,7 @@ pub async fn recover(
 ) -> anyhow::Result<MoveRecord> {
     identity(connection, &record)?;
     current(store, &record).await?;
-    if record.stage != MoveStage::Started {
+    if !record.stage.unsubmitted() {
         return recover_reviewed(store, connection, record, false).await;
     }
     let inspection = match connection.inspect(&record).await {
@@ -194,6 +222,10 @@ pub async fn recover(
                 "An unconfirmed cross-account upload cannot be repeated."
             );
             if let Err(error) = connection.prepare(&record).await {
+                use crate::mail_actions::{MoveFailure, classify_move_failure};
+                if classify_move_failure(&error) == MoveFailure::Refused {
+                    return complete_locally(store, record, error, true).await;
+                }
                 return failed(
                     store,
                     record,
@@ -229,7 +261,7 @@ pub async fn release_unapplied(
 ) -> anyhow::Result<bool> {
     identity(connection, record)?;
     current(store, record).await?;
-    if record.stage != MoveStage::Started
+    if !record.stage.unsubmitted()
         || record.original.account_id != record.receipt.account
         || connection.inspect(record).await? != Inspection::SourceIntactNoDestinationCopy
     {
@@ -273,7 +305,7 @@ pub async fn recover_reviewed(
         "The move recovery changed. Refresh before trying again."
     );
     match record.stage {
-        MoveStage::Started if !use_existing_copy => anyhow::bail!(
+        MoveStage::Started | MoveStage::Local if !use_existing_copy => anyhow::bail!(
             "This operation was interrupted before its result was saved. Check its source and destination before resolving it; it will not be repeated automatically."
         ),
         MoveStage::Located | MoveStage::Kept => return Ok(record),
@@ -301,7 +333,7 @@ pub async fn recover_reviewed(
     if let Err(error) = record.validate_receipt(&resolved_receipt) {
         return failed(store, record, format!("The destination lookup returned an invalid identity. The source was retained. {error:#}")).await;
     }
-    let record = if record.stage == MoveStage::Started {
+    let record = if record.stage.unsubmitted() {
         store
             .checkpoint_mail_move(record, MoveStage::Copied, resolved_receipt)
             .await?
@@ -444,7 +476,10 @@ mod tests {
                 });
                 let result = start(&store, &mut connection, next).await;
                 if rejected {
-                    assert!(result.is_err());
+                    // A definite same-account refusal completes on this device.
+                    let local = result.expect("device-only move");
+                    assert_eq!(local.stage, MoveStage::Local);
+                    assert!(local.receipt.current.is_none());
                     assert_eq!(
                         store
                             .raw_message(original.summary.id.clone())
@@ -452,12 +487,13 @@ mod tests {
                             .expect("source retained"),
                         original.raw
                     );
-                    assert!(
+                    assert_eq!(
                         store
                             .mail_move_for_source(original.summary.id.clone())
                             .await
-                            .expect("released rejection")
-                            .is_none()
+                            .expect("retained refusal")
+                            .map(|record| record.stage),
+                        Some(MoveStage::Local)
                     );
                 } else {
                     let moved = result.expect("new move");
@@ -545,5 +581,267 @@ mod tests {
                 original.raw
             );
         }
+    }
+
+    async fn refusal_fixture(
+        store: &Store,
+        transfer: bool,
+    ) -> (crate::model::StoredMail, MoveRecord) {
+        let original = crate::model::parse_mail(
+            "work",
+            "42.7",
+            "INBOX",
+            b"Subject: Refused\r\n\r\nStays on the server".to_vec(),
+            true,
+            false,
+        )
+        .unwrap();
+        store.upsert(vec![original.clone()]).await.unwrap();
+        let destination = if transfer { "personal" } else { "work" };
+        let mut receipt = MoveReceipt::server(
+            &original.summary,
+            destination,
+            "Archive",
+            None,
+            crate::mail_actions::Fingerprint::of(&original.raw),
+        );
+        receipt.connections = vec![("work".into(), "mock".into())];
+        if transfer {
+            receipt.connections.push(("personal".into(), "mock".into()));
+        }
+        let record = MoveRecord::new(original.summary.clone(), receipt);
+        (original, record)
+    }
+    fn identities(transfer: bool) -> Vec<(String, String)> {
+        let mut identities = vec![("work".to_string(), "mock".to_string())];
+        if transfer {
+            identities.push(("personal".into(), "mock".into()));
+        }
+        identities
+    }
+
+    #[tokio::test]
+    async fn refused_preflight_completes_locally_only_within_one_account() {
+        for transfer in [false, true] {
+            let store = Store::memory().unwrap();
+            let (original, record) = refusal_fixture(&store, transfer).await;
+            let mut connection = MockConnection::new();
+            connection
+                .expect_identities()
+                .returning(move || identities(transfer));
+            connection.expect_prepare().times(1).returning(|_| {
+                Err(crate::mail_actions::MoveRefused("The server needs MOVE".into()).into())
+            });
+            connection.expect_submit().times(0);
+            let result = start(&store, &mut connection, record).await;
+            let saved = store
+                .mail_move_for_source(original.summary.id.clone())
+                .await
+                .unwrap();
+            if transfer {
+                assert!(result.is_err(), "transfers keep the row in place");
+                assert!(saved.is_none());
+            } else {
+                let local = result.unwrap();
+                assert_eq!(local.stage, MoveStage::Local);
+                assert!(local.error.as_deref().unwrap().contains("needs MOVE"));
+                assert_eq!(saved.unwrap().stage, MoveStage::Local);
+            }
+            assert_eq!(
+                store.raw_message(original.summary.id).await.unwrap(),
+                original.raw
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn uncertain_preflight_never_completes_locally() {
+        let store = Store::memory().unwrap();
+        let (original, record) = refusal_fixture(&store, false).await;
+        let mut connection = MockConnection::new();
+        connection
+            .expect_identities()
+            .returning(|| identities(false));
+        connection.expect_prepare().times(1).returning(|_| {
+            anyhow::bail!("Connecting timed out. No move was submitted; try again.")
+        });
+        connection.expect_submit().times(0);
+        assert!(start(&store, &mut connection, record).await.is_err());
+        assert!(
+            store
+                .mail_move_for_source(original.summary.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn refused_submission_completes_locally_and_a_later_retry_finishes_it() {
+        let store = Store::memory().unwrap();
+        let (original, record) = refusal_fixture(&store, false).await;
+        let mut connection = MockConnection::new();
+        connection
+            .expect_identities()
+            .returning(|| identities(false));
+        connection.expect_prepare().times(1).returning(|_| Ok(()));
+        connection
+            .expect_submit()
+            .times(1)
+            .returning(|_, _| Err(SubmissionError::NotApplied("NO [CANNOT] read-only".into())));
+        let local = start(&store, &mut connection, record).await.unwrap();
+        assert_eq!(local.stage, MoveStage::Local);
+        assert!(local.receipt.current.is_none());
+
+        // Refused again: the record stays device-only with the newest reason.
+        let mut connection = MockConnection::new();
+        connection
+            .expect_identities()
+            .returning(|| identities(false));
+        connection
+            .expect_inspect()
+            .times(1)
+            .returning(|_| Ok(Inspection::SourceIntactNoDestinationCopy));
+        connection.expect_prepare().times(1).returning(|_| Ok(()));
+        connection
+            .expect_submit()
+            .times(1)
+            .returning(|_, _| Err(SubmissionError::NotApplied("NO still refused".into())));
+        let again = recover(&store, &mut connection, local).await.unwrap();
+        assert_eq!(again.stage, MoveStage::Local);
+        assert!(again.error.as_deref().unwrap().contains("still refused"));
+
+        // Unconfirmed: the existing journal rule keeps the record and its error.
+        let mut connection = MockConnection::new();
+        connection
+            .expect_identities()
+            .returning(|| identities(false));
+        connection
+            .expect_inspect()
+            .times(1)
+            .returning(|_| Ok(Inspection::SourceIntactNoDestinationCopy));
+        connection.expect_prepare().times(1).returning(|_| Ok(()));
+        connection
+            .expect_submit()
+            .times(1)
+            .returning(|_, _| Err(SubmissionError::Unconfirmed("connection lost".into())));
+        assert!(recover(&store, &mut connection, again).await.is_err());
+        let unconfirmed = store
+            .mail_move_for_source(original.summary.id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(unconfirmed.stage, MoveStage::Local);
+        assert!(
+            unconfirmed
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("unconfirmed")
+        );
+
+        // Success: the row gains its real destination identity and the record clears.
+        let mut connection = MockConnection::new();
+        connection
+            .expect_identities()
+            .returning(|| identities(false));
+        connection
+            .expect_inspect()
+            .times(1)
+            .returning(|_| Ok(Inspection::SourceIntactNoDestinationCopy));
+        connection.expect_prepare().times(1).returning(|_| Ok(()));
+        connection
+            .expect_submit()
+            .times(1)
+            .returning(|_, _| Ok(Some("91.38".into())));
+        let located = recover(&store, &mut connection, unconfirmed).await.unwrap();
+        assert_eq!(located.stage, MoveStage::Located);
+        let current = located.receipt.current.unwrap();
+        assert_eq!(
+            (current.folder.as_str(), current.remote_id.as_str()),
+            ("Archive", "91.38")
+        );
+        assert_eq!(store.raw_message(current.id).await.unwrap(), original.raw);
+        assert!(store.raw_message(original.summary.id).await.is_err());
+        assert!(
+            store
+                .pending_mail_moves(None, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn device_only_move_uses_an_existing_destination_copy_after_a_partial_move() {
+        let store = Store::memory().unwrap();
+        let (original, record) = refusal_fixture(&store, false).await;
+        store.prepare_mail_move(record.clone()).await.unwrap();
+        let local = store
+            .local_mail_move(record, "NO after COPYUID".into())
+            .await
+            .unwrap();
+        let raw = original.raw.clone();
+        let mut connection = MockConnection::new();
+        connection
+            .expect_identities()
+            .returning(|| identities(false));
+        connection
+            .expect_inspect()
+            .times(1)
+            .returning(|_| Ok(Inspection::DestinationPresent));
+        connection.expect_prepare().times(0);
+        connection.expect_submit().times(0);
+        connection
+            .expect_locate()
+            .times(1)
+            .returning(move |receipt| {
+                crate::model::parse_mail(
+                    &receipt.account,
+                    "91.40",
+                    &receipt.folder,
+                    raw.clone(),
+                    true,
+                    false,
+                )
+            });
+        connection
+            .expect_finish_source()
+            .times(1)
+            .returning(|_| Ok(()));
+        let located = recover(&store, &mut connection, local).await.unwrap();
+        assert_eq!(located.stage, MoveStage::Located);
+        assert_eq!(located.receipt.current.unwrap().remote_id, "91.40");
+    }
+
+    #[tokio::test]
+    async fn undo_releases_a_device_only_move_without_a_server_call() {
+        let store = Store::memory().unwrap();
+        let (original, record) = refusal_fixture(&store, false).await;
+        let local = store
+            .begin_local_mail_move(record, "refused".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .detail(original.summary.id.clone())
+                .await
+                .unwrap()
+                .summary
+                .folder,
+            "Archive",
+            "the reader follows the device-only destination"
+        );
+        store.reject_mail_move(local).await.unwrap();
+        assert!(
+            store
+                .mail_move_for_source(original.summary.id.clone())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let restored = store.mail_metadata(original.summary.id).await.unwrap();
+        assert_eq!(restored.folder, "INBOX");
+        assert_eq!(restored.remote_id, "42.7");
     }
 }

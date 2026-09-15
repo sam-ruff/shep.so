@@ -119,6 +119,9 @@ impl App {
         if self.mail_actions.restoring(&mail.id) {
             metadata = metadata.push(muted("Restoring…").size(10));
         }
+        if self.local_only_move(&mail.id) {
+            metadata = metadata.push(muted("This device only").size(10));
+        }
         if self.query.searches_all_folders() {
             let folder = self
                 .workspace

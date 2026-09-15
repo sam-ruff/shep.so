@@ -3,6 +3,7 @@ mod bulk;
 mod folder_actions;
 mod folder_creation;
 pub use folder_creation::PendingCreation;
+pub use move_journal::LOCAL_RETRY_SECONDS;
 mod folder_projection;
 mod mail_actions;
 mod mail_query;
