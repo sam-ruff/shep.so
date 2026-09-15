@@ -1,5 +1,15 @@
 # Completion audit
 
+## Untouched check interval migrated to 5 seconds, 15 September 2026
+
+Sam asked for saved preferences still on the previous 15 second default to
+follow the new 5 second default. Database version 5 runs the change once at
+open: a saved interval of exactly 15 becomes 5, any other value is kept, and
+because the version is recorded a 15 chosen afterwards stays. The interval is
+not a shared-profile setting, so nothing propagates between devices.
+`tests/preferences.rs` covers the old default, a custom value and a
+deliberate 15 after migration; the preferences suite passes 14 of 14.
+
 ## Mail actions beside a live download, 15 September 2026
 
 Move, archive, delete, flag and read changes no longer interrupt or wait for
