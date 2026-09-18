@@ -32,6 +32,20 @@ _tray_fixture = importlib.util.module_from_spec(_tray_spec)
 _tray_spec.loader.exec_module(_tray_fixture)
 
 
+LIVE_VARIABLES = ("SHEP_LIVE_IMAP_HOST", "SHEP_LIVE_IMAP_PORT", "SHEP_LIVE_IMAP_USER",
+                  "SHEP_LIVE_IMAP_PASSWORD", "SHEP_LIVE_SMTP_HOST", "SHEP_LIVE_SMTP_PORT")
+
+
+def live_variables_missing(environ):
+    """The live launch variables that are unset or blank; the password value is never inspected further."""
+    return [name for name in LIVE_VARIABLES if not environ.get(name, "").strip()]
+
+
+def live_launch_args(binary, state_path):
+    """A live launch takes the production path: no --demo and no fixture flags, only observation."""
+    return [str(binary), "--live-imap", "--test-state", str(state_path)]
+
+
 def google_sign_in_env(client):
     """A fictional sign-in client, or an empty override that simulates a build without one.
 
@@ -208,8 +222,17 @@ class Desktop:
             time.sleep(.02)
         self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
 
-    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False):
+    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False, live_imap=False):
         self.stop()
+        if type(live_imap) is not bool:
+            raise ValueError("Live IMAP launch must be a boolean.")
+        if live_imap:
+            missing = live_variables_missing(os.environ)
+            if missing:
+                raise RuntimeError("Live IMAP launch needs " + ", ".join(missing) + " in the environment.")
+            if tray is not None or print_browser is not None or profile_sync is not None:
+                raise ValueError("A live IMAP launch takes no tray, print or profile fixtures.")
+            persistent = True
         if google_client not in ("fixture", "none"):
             raise ValueError("Unknown Google sign-in client fixture.")
         if type(google_legacy_client) is not bool:
@@ -349,6 +372,13 @@ class Desktop:
                 # Debug logs give the password scans real log output to check.
                 self.launch_args.append("--profile-passwords=" + profile_passwords)
                 self.env["RUST_LOG"] = "debug"
+        if live_imap:
+            fixture_flags = [arg for arg in self.launch_args[1:] if arg.startswith("--")
+                             and arg not in ("--demo", "--test-state", "--persist-demo")]
+            if fixture_flags:
+                raise ValueError("A live IMAP launch takes no fixture options: " + ", ".join(fixture_flags))
+            # The production data root lands under the owned XDG_DATA_HOME set above.
+            self.launch_args = live_launch_args(binary, self.directory / "state.json")
         return self.launch_app()
 
     def launch_app(self):
@@ -909,8 +939,8 @@ class Desktop:
 
 
 TOOLS = [
-    {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or cloud writes.",
-     "inputSchema": {"type": "object", "properties": {"profile_passwords":{"type":"string","enum":["ready","reject"]}, "backup_run":{"type":"string","enum":["ready","recover","warning","held"]}, "tray":{"type":"string","enum":["available","missing"]}, "profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once","missing-destination","kept-rediscovered"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once","native"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "bulk_history": {"type": "boolean", "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "large_incoming": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail", "refuse"]}, "search_mail": {"type": "boolean", "default": False}, "long_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "google_client": {"type": "string", "enum": ["fixture", "none"], "default": "fixture"}, "google_legacy_client": {"type": "boolean", "default": False}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+    {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or cloud writes. live_imap=true instead runs the production sync path against the disposable account named by the SHEP_LIVE_* environment variables, with a fresh data root and a memory-only keychain.",
+     "inputSchema": {"type": "object", "properties": {"live_imap":{"type":"boolean","default":False}, "profile_passwords":{"type":"string","enum":["ready","reject"]}, "backup_run":{"type":"string","enum":["ready","recover","warning","held"]}, "tray":{"type":"string","enum":["available","missing"]}, "profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once","missing-destination","kept-rediscovered"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once","native"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "bulk_history": {"type": "boolean", "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "large_incoming": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail", "refuse"]}, "search_mail": {"type": "boolean", "default": False}, "long_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "google_client": {"type": "string", "enum": ["fixture", "none"], "default": "fixture"}, "google_legacy_client": {"type": "boolean", "default": False}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
     {"name": "desktop.close", "description": "Close only the owned fixture app, keeping its Xvfb display and persistent fixture cache available for restart. Normally sends WM_DELETE_WINDOW; crash=true kills only the owned process for recovery tests.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.restart", "description": "Restart only the owned persistent fixture app on its existing Xvfb display. Normally sends a native window-close request; crash=true kills that owned process to exercise journal recovery. Retains the fixture SQLite cache and never changes app state directly.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including held left-button mouse_down/mouse_up, short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
