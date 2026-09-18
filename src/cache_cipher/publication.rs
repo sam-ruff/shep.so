@@ -345,7 +345,12 @@ impl Publication<'_> {
         // An index file without its log carries no data once the header no
         // longer selects WAL; SQLite normally unlinks it on the last close.
         remove_if_present(&sidecar(main, "-shm"))?;
-        fs::File::open(main)?.sync_all()?;
+        // Windows flushes only through a writable handle; fsync accepts either.
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(main)?
+            .sync_all()?;
         sync_directory(&self.layout.directory)
     }
 
