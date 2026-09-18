@@ -88,7 +88,11 @@ stop the candidate from deleting itself; rename the plaintext to
 `<cache>.plaintext-recovery`; rename the candidate to the cache name (same
 folder, directory fsync after each rename); reopen the published file with the
 key and confirm an authenticated schema read plus the journalled versions;
-delete the plaintext recovery file; delete the journal. Never rename a main
+delete the plaintext recovery file; delete the journal. The checkpoint's final
+flush of the main file opens it read-write on every platform, because Windows
+only flushes through a writable handle and fails a read-only one with "Access
+is denied"; a read-only handle would fail every Windows publication before the
+journal step. Never rename a main
 database beside old WAL/SHM files.
 
 The plaintext is disposed of by ordinary deletion only after the keyed reopen
