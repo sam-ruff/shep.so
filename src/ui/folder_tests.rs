@@ -87,6 +87,48 @@ async fn spam_shortcut_uses_existing_junk_folder_and_preserves_children() {
     app.workspace = Arc::new(store.workspace().await.unwrap());
     assert!(app.sidebar_items().iter().any(|item| item.label == "Junk"));
 }
+/// Native scenarios click fixed sidebar rows, so a unified entry added or
+/// removed above the account trees moves every folder row beneath it.
+#[tokio::test]
+async fn unified_sidebar_keeps_the_saved_native_row_order_across_workspace_republish() {
+    let (mut app, store, _commands) = fixture().await;
+    store
+        .save_folder_catalog(
+            "a".into(),
+            ["INBOX", "Archive", "Projects", "Sent", "Trash", "Junk"]
+                .map(|name| Mailbox::flat(name.into()))
+                .to_vec(),
+        )
+        .await
+        .unwrap();
+    app.workspace = Arc::new(store.workspace().await.unwrap());
+    app.preferences.unified_inbox = true;
+    let labels = |app: &App| {
+        app.sidebar_items()
+            .iter()
+            .map(|item| item.label.clone())
+            .collect::<Vec<_>>()
+    };
+    let before = labels(&app);
+    assert_eq!(
+        before[..8],
+        [
+            "Inbox",
+            "Flagged",
+            "Sent",
+            "Archive",
+            "Trash",
+            "Spam",
+            "a@example.test",
+            "Projects"
+        ],
+        "{before:?}"
+    );
+    let _ = app.handle(Message::Backend(Event::Workspace(Arc::new(
+        store.workspace().await.unwrap(),
+    ))));
+    assert_eq!(labels(&app), before);
+}
 #[tokio::test]
 async fn special_use_folders_fold_into_unified_trash_and_spam_entries() {
     let (mut app, store, _commands) = fixture().await;
