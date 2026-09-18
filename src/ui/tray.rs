@@ -278,6 +278,25 @@ impl App {
         task
     }
 
+    /// A newer build asked this process to quit for it: acknowledge, then
+    /// leave the same way the tray's Quit does.
+    pub(super) fn restart_for_update(&mut self, generation: u64) -> Task<Message> {
+        #[cfg(feature = "test-support")]
+        if self.hold_restart_requests {
+            return Task::none();
+        }
+        if self.tray.exiting {
+            return Task::none();
+        }
+        let Some(signal) = &self.activation else {
+            return Task::none();
+        };
+        signal.acknowledge(generation);
+        tracing::info!("Quitting so the newly installed Shep can take over");
+        let window = self.tray.window.unwrap_or_else(iced::window::Id::unique);
+        self.quit_main(window)
+    }
+
     pub(super) fn new_error_since(&self, previous: Option<Instant>) -> bool {
         self.notice
             .as_ref()
@@ -346,6 +365,61 @@ mod tests {
         assert!(app.tray.window.is_some());
         let _ = app.activate(generation);
         assert!(signal.try_close());
+    }
+
+    #[test]
+    fn restart_request_acknowledges_then_quits_like_the_tray_and_leaves_journaled_work() {
+        let (mut app, _) = App::new();
+        let signal = crate::activation::Signal::default();
+        app.activation = Some(signal.clone());
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        app.bulk.stopped = true;
+        let generation = signal.request_restart().expect("restart admitted");
+        let _ = app.update(Message::RestartForUpdate(generation));
+        assert!(app.tray.exiting, "an idle owner leaves at once");
+        assert_eq!(signal.request_restart(), None, "closed to later launches");
+
+        let (mut app, _) = App::new();
+        let signal = crate::activation::Signal::default();
+        app.activation = Some(signal.clone());
+        app.tray.window = None;
+        app.tray.hidden = true;
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        app.bulk.stopped = true;
+        app.busy.insert("send:one".into());
+        let generation = signal.request_restart().expect("restart admitted");
+        let _ = app.update(Message::RestartForUpdate(generation));
+        assert!(!app.tray.exiting, "an unjournaled send still finishes");
+        assert!(app.pending_close.is_some());
+        assert!(app.tray.temporary, "hidden Quit announces the wait");
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "send:one".into(),
+            false,
+        )));
+        assert!(app.tray.exiting);
+    }
+
+    #[test]
+    fn restart_request_is_ignored_once_exiting_or_without_an_owner_signal() {
+        let (mut app, _) = App::new();
+        let signal = crate::activation::Signal::default();
+        app.activation = Some(signal.clone());
+        let _ = app.finish_exit();
+        assert_eq!(signal.request_restart(), None);
+        let _ = app.update(Message::RestartForUpdate(1));
+        assert!(app.tray.exiting);
+        assert!(app.tray.window.is_none());
+
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        let _ = app.update(Message::RestartForUpdate(1));
+        assert!(!app.tray.exiting, "no owner signal means nothing to answer");
+        assert_eq!(app.tray.window, Some(window));
     }
 
     #[test]

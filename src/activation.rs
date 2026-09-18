@@ -1,35 +1,50 @@
 //! One native application owner per canonical workspace root.
+mod identity;
 mod ipc;
 mod signal;
 
 use anyhow::Context;
 use fs2::FileExt;
+use identity::{Identity, Relation, relation};
 use ipc::{Reply, Transport};
 use serde::{Deserialize, Serialize};
-pub use signal::Signal;
 pub(crate) use signal::subscription;
+pub use signal::{Request, Signal};
 use std::{
     fs::{File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::Path,
-    time::{Duration, Instant},
+    time::Duration,
 };
+// Tokio's clock so the wait bounds can be tested under paused time.
+use tokio::time::Instant;
 use uuid::Uuid;
 
 const ENDPOINT_PREFIX: &str = "shep-activate-v1-";
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(8);
+/// How long a newer build keeps asking an older owner to quit for it.
+const RESTART_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long an owner that agreed to quit may take to release the lock.
+const RESTART_EXIT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Shown when an older owner keeps running; no em dash, no emoji.
+pub const STALE_OWNER_NOTICE: &str =
+    "Shep is already running an older version. Quit it from the tray and open Shep again.";
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Record {
     endpoint: String,
     secret: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity: Option<Identity>,
 }
 
 impl Record {
-    fn new() -> Self {
+    fn new(identity: Option<Identity>) -> Self {
         Self {
             endpoint: format!("{ENDPOINT_PREFIX}{}", Uuid::new_v4()),
             secret: Uuid::new_v4(),
+            identity,
         }
     }
 
@@ -45,6 +60,8 @@ pub enum Launch {
     Primary(Owner),
     Activated,
     Independent,
+    /// An older build owns the workspace and did not quit for this one.
+    Stale,
 }
 
 pub struct Owner {
@@ -84,24 +101,53 @@ pub fn start() -> anyhow::Result<Launch> {
     let Some(root) = root else {
         return Ok(Launch::Independent);
     };
+    let identity = launch_identity(demo);
+    if identity.is_none() {
+        tracing::warn!("The executable could not be identified; launches hand over as before");
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(acquire(&root, &ipc::Local))
+    runtime.block_on(acquire(&root, &ipc::Local, identity))
 }
 
-async fn acquire(root: &Path, transport: &impl Transport) -> anyhow::Result<Launch> {
+/// Test fixtures spoof the executable through `SHEP_TEST_BINARY_IDENTITY`:
+/// an inode number, or `none` for an owner built before identities.
+fn launch_identity(demo: bool) -> Option<Identity> {
+    let identity = Identity::current();
+    #[cfg(feature = "test-support")]
+    if demo && let Ok(spoof) = std::env::var("SHEP_TEST_BINARY_IDENTITY") {
+        if spoof == "none" {
+            return None;
+        }
+        return match spoof.parse() {
+            Ok(inode) => identity.map(|identity| identity.spoofed(inode)),
+            Err(_) => identity,
+        };
+    }
+    #[cfg(not(feature = "test-support"))]
+    let _ = demo;
+    identity
+}
+
+async fn acquire(
+    root: &Path,
+    transport: &impl Transport,
+    identity: Option<Identity>,
+) -> anyhow::Result<Launch> {
     std::fs::create_dir_all(root).context("Could not create the Shep workspace directory")?;
     let root = root.canonicalize()?;
     let file = open_private(&root.join(".launch.lock"))?;
     let mut publication = open_private(&root.join(".launch.endpoint"))?;
-    let deadline = Instant::now() + LAUNCH_TIMEOUT;
+    let started = Instant::now();
+    let deadline = started + LAUNCH_TIMEOUT;
+    let mut restarting: Option<Instant> = None;
     loop {
         match file.try_lock_exclusive() {
             Ok(()) => {
                 cleanup_endpoint(&mut publication)?;
                 let signal = Signal::default();
-                let record = Record::new();
+                let record = Record::new(identity);
                 let mut owner = Owner {
                     server: None,
                     file,
@@ -118,15 +164,39 @@ async fn acquire(root: &Path, transport: &impl Transport) -> anyhow::Result<Laun
             Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {}
             Err(error) => return Err(error.into()),
         }
-        if let Some(record) = read_record(&mut publication)?
-            && matches!(transport.request(record).await, Ok(Reply::Accepted))
-        {
-            return Ok(Launch::Activated);
+        if let Some(record) = read_record(&mut publication)? {
+            match relation(identity.as_ref(), record.identity.as_ref()) {
+                Relation::Same => {
+                    if matches!(transport.request(record).await, Ok(Reply::Accepted)) {
+                        return Ok(Launch::Activated);
+                    }
+                }
+                // An owner from before identities cannot restart itself.
+                Relation::Older => return Ok(Launch::Stale),
+                Relation::Different if restarting.is_none() => {
+                    match transport.restart(record).await {
+                        Ok(Reply::Restarting | Reply::Closing) => restarting = Some(Instant::now()),
+                        Ok(Reply::Accepted) | Err(_) => {
+                            if started.elapsed() >= RESTART_REQUEST_TIMEOUT {
+                                return Ok(Launch::Stale);
+                            }
+                        }
+                    }
+                }
+                Relation::Different => {}
+            }
         }
-        anyhow::ensure!(
-            Instant::now() < deadline,
-            "The running Shep could not be activated. Try opening it again after it finishes closing."
-        );
+        match restarting {
+            Some(acknowledged) => {
+                if acknowledged.elapsed() >= RESTART_EXIT_TIMEOUT {
+                    return Ok(Launch::Stale);
+                }
+            }
+            None => anyhow::ensure!(
+                Instant::now() < deadline,
+                "The running Shep could not be activated. Try opening it again after it finishes closing."
+            ),
+        }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
@@ -202,10 +272,152 @@ mod tests {
     async fn owner(root: &Path) -> Owner {
         let mut transport = MockTransport::new();
         transport.expect_request().times(0);
-        match acquire(root, &transport).await.expect("own fixture root") {
+        transport.expect_restart().times(0);
+        match acquire(root, &transport, Identity::current())
+            .await
+            .expect("own fixture root")
+        {
             Launch::Primary(owner) => owner,
             _ => panic!("fixture root should have a new owner"),
         }
+    }
+
+    fn other_binary() -> Option<Identity> {
+        Identity::of(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("Cargo.toml")
+                .as_path(),
+        )
+    }
+
+    fn acknowledging(reply: Reply) -> MockTransport {
+        let mut transport = MockTransport::new();
+        transport.expect_request().times(0);
+        transport
+            .expect_restart()
+            .times(1)
+            .returning(move |_| Ok(reply));
+        transport
+    }
+
+    #[tokio::test]
+    async fn newer_build_asks_owner_to_quit_and_then_becomes_primary() {
+        let root = tempfile::tempdir().expect("fixture directory");
+        let mut primary = Some(owner(root.path()).await);
+        let mut transport = MockTransport::new();
+        transport.expect_request().times(0);
+        transport.expect_restart().times(1).returning(move |_| {
+            primary.take();
+            Ok(Reply::Restarting)
+        });
+        let next = acquire(root.path(), &transport, other_binary()).await;
+        assert!(matches!(next.expect("next owner"), Launch::Primary(_)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn owner_that_never_answers_a_restart_leaves_a_notice() {
+        let root = tempfile::tempdir().expect("fixture directory");
+        let _primary = owner(root.path()).await;
+        let mut transport = MockTransport::new();
+        transport.expect_request().times(0);
+        transport
+            .expect_restart()
+            .returning(|_| Err(anyhow::anyhow!("no acknowledgment")));
+        let started = Instant::now();
+        let launch = acquire(root.path(), &transport, other_binary()).await;
+        assert!(matches!(launch.expect("bounded wait"), Launch::Stale));
+        assert!(started.elapsed() >= RESTART_REQUEST_TIMEOUT);
+        assert!(started.elapsed() < LAUNCH_TIMEOUT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn acknowledged_owner_that_keeps_running_leaves_a_notice_after_its_bound() {
+        let root = tempfile::tempdir().expect("fixture directory");
+        let _primary = owner(root.path()).await;
+        let transport = acknowledging(Reply::Restarting);
+        let started = Instant::now();
+        let launch = acquire(root.path(), &transport, other_binary()).await;
+        assert!(matches!(launch.expect("bounded wait"), Launch::Stale));
+        assert!(started.elapsed() >= RESTART_EXIT_TIMEOUT);
+    }
+
+    #[tokio::test]
+    async fn closing_owner_answers_a_restart_and_releases_to_the_newer_build() {
+        let root = tempfile::tempdir().expect("fixture directory");
+        let primary = owner(root.path()).await;
+        assert!(primary.signal.try_close());
+        let mut primary = Some(primary);
+        let mut transport = MockTransport::new();
+        transport.expect_request().times(0);
+        transport.expect_restart().times(1).returning(move |_| {
+            primary.take();
+            Ok(Reply::Closing)
+        });
+        let next = acquire(root.path(), &transport, other_binary()).await;
+        assert!(matches!(next.expect("next owner"), Launch::Primary(_)));
+    }
+
+    #[tokio::test]
+    async fn owner_published_before_identities_is_stale_without_a_request() {
+        let root = tempfile::tempdir().expect("fixture directory");
+        let mut primary = owner(root.path()).await;
+        let mut record = read_record(&mut primary.publication)
+            .expect("record")
+            .expect("published");
+        record.identity = None;
+        primary.publication.set_len(0).expect("clear");
+        primary
+            .publication
+            .seek(SeekFrom::Start(0))
+            .expect("rewind");
+        serde_json::to_writer(&primary.publication, &record).expect("older publication");
+        let mut transport = MockTransport::new();
+        transport.expect_request().times(0);
+        transport.expect_restart().times(0);
+        let launch = acquire(root.path(), &transport, Identity::current()).await;
+        assert!(matches!(launch.expect("stale owner"), Launch::Stale));
+        // A launcher that cannot identify itself keeps the plain handover.
+        let mut transport = MockTransport::new();
+        transport.expect_restart().times(0);
+        transport
+            .expect_request()
+            .times(1)
+            .returning(|_| Ok(Reply::Accepted));
+        let launch = acquire(root.path(), &transport, None).await;
+        assert!(matches!(launch.expect("handover"), Launch::Activated));
+    }
+
+    #[tokio::test]
+    async fn local_socket_restart_reaches_ui_and_closing_owner_declines() {
+        use iced::futures::StreamExt;
+        let root = tempfile::tempdir().expect("fixture directory");
+        let mut primary = owner(root.path()).await;
+        let record = read_record(&mut primary.publication)
+            .expect("record")
+            .expect("published");
+        assert!(record.identity.is_some(), "the owner publishes its binary");
+        let signal = primary.signal();
+        let subscription_signal = Some(signal.clone());
+        let mut events = Box::pin(subscription(&subscription_signal));
+        let request = Local.restart(record.clone());
+        let handling = async {
+            let request = tokio::time::timeout(Duration::from_secs(2), events.next())
+                .await
+                .expect("restart arrives")
+                .expect("request");
+            let Request::Restart(generation) = request else {
+                panic!("a restart must not arrive as Open: {request:?}");
+            };
+            assert!(!signal.try_close());
+            signal.acknowledge(generation);
+        };
+        let (reply, ()) = tokio::join!(request, handling);
+        assert_eq!(reply.expect("acknowledged"), Reply::Restarting);
+        assert!(signal.try_close());
+        assert_eq!(
+            Local.restart(record).await.expect("closing response"),
+            Reply::Closing
+        );
     }
 
     #[tokio::test]
@@ -243,7 +455,9 @@ mod tests {
             .in_sequence(&mut sequence)
             .returning(|_| Ok(Reply::Accepted));
         assert!(matches!(
-            acquire(root.path(), &transport).await.expect("activate"),
+            acquire(root.path(), &transport, Identity::current())
+                .await
+                .expect("activate"),
             Launch::Activated
         ));
     }
@@ -260,7 +474,9 @@ mod tests {
             Ok(Reply::Closing)
         });
         assert!(matches!(
-            acquire(root.path(), &transport).await.expect("next owner"),
+            acquire(root.path(), &transport, Identity::current())
+                .await
+                .expect("next owner"),
             Launch::Primary(_)
         ));
     }
@@ -281,10 +497,13 @@ mod tests {
         let mut events = Box::pin(subscription(&subscription_signal));
         let request = Local.request(record.clone());
         let handling = async {
-            let generation = tokio::time::timeout(Duration::from_secs(2), events.next())
+            let request = tokio::time::timeout(Duration::from_secs(2), events.next())
                 .await
                 .expect("activation arrives")
-                .expect("generation");
+                .expect("request");
+            let Request::Open(generation) = request else {
+                panic!("an Open must not arrive as a restart: {request:?}");
+            };
             assert!(!signal.try_close());
             signal.acknowledge(generation);
         };
@@ -362,7 +581,8 @@ mod tests {
         let binding = Some(signal.clone());
         let mut events = Box::pin(subscription(&binding));
         let handling = async {
-            let generation = events.next().await.expect("open generation");
+            let request = events.next().await.expect("open generation");
+            let (Request::Open(generation) | Request::Restart(generation)) = request;
             signal.acknowledge(generation);
         };
         let (reply, ()) = tokio::time::timeout(Duration::from_secs(2), async {
@@ -436,11 +656,17 @@ mod tests {
             .times(1)
             .returning(|_| Ok(Reply::Accepted));
         assert!(matches!(
-            acquire(&alias, &transport).await.expect("activate alias"),
+            acquire(&alias, &transport, Identity::current())
+                .await
+                .expect("activate alias"),
             Launch::Activated
         ));
         let other = tempfile::tempdir().expect("fixture directory");
         symlink(root.join(".launch.lock"), other.path().join(".launch.lock")).expect("lock alias");
-        assert!(acquire(other.path(), &transport).await.is_err());
+        assert!(
+            acquire(other.path(), &transport, Identity::current())
+                .await
+                .is_err()
+        );
     }
 }

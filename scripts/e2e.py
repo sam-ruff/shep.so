@@ -1105,6 +1105,79 @@ class NativeFlows(unittest.TestCase):
         self.assertNotEqual(started["pid"], restarted["pid"])
         self.mcp.batch(check("tray.enabled", True), check("tray.available", True))
 
+    def hide_to_tray(self):
+        self.mcp.batch(check("tray.available", True))
+        self.open_tray_preferences()
+        self.mcp.batch(click(288, 342), check("tray.saved_enabled", True), key("ctrl+1"), check("tab", "Mail"),
+                       {"type": "close_request"}, check("tray.visible", False), check("close_pending", False))
+
+    def test_activation_native_same_build_launch_restores_hidden_owner(self):
+        started = self.mcp.call("desktop.start", tray="available", persistent=True)
+        print(f"Same-build launch evidence: {started['artifacts']}", flush=True)
+        self.hide_to_tray()
+        second = self.mcp.call("desktop.launch_second")
+        self.assertEqual(second["outcome"], "exited", second)
+        self.assertEqual(second["returncode"], 0)
+        self.assertTrue(second["owner_running"])
+        self.mcp.batch(check("tray.visible", True), check("tray.exiting", False), {"type": "focus_app"},
+                       check("total", 120), shot("same-build-launch-restored-owner"))
+        self.assertEqual(self.mcp.call("desktop.state")["pid"], started["pid"])
+
+    def test_activation_native_newer_build_restarts_hidden_owner_and_takes_over(self):
+        started = self.mcp.call("desktop.start", tray="available", persistent=True)
+        print(f"Newer build over hidden owner evidence: {started['artifacts']}", flush=True)
+        self.hide_to_tray()
+        self.mcp.batch(shot("stale-owner-hidden-before-launch"))
+        second = self.mcp.call("desktop.launch_second", identity="2")
+        self.assertEqual(second["outcome"], "took_over", second)
+        self.assertEqual(second["previous_process"], {"pid": started["pid"], "returncode": 0})
+        self.assertNotEqual(second["pid"], started["pid"])
+        self.mcp.batch(check("ready", True), check("tray.visible", True), check("tray.available", True),
+                       check("total", 120), shot("stale-owner-replaced-by-newer-build"))
+        self.assertEqual(self.mcp.call("desktop.state")["pid"], second["pid"])
+        # The replacement serves later launches of its own build as before.
+        again = self.mcp.call("desktop.launch_second", identity="2")
+        self.assertEqual(again["outcome"], "exited", again)
+        self.assertEqual(again["returncode"], 0)
+        self.mcp.batch(check("tray.visible", True), check("tray.exiting", False))
+
+    def test_activation_native_newer_build_restarts_visible_owner(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        print(f"Newer build over visible owner evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(click(400, mail_row_y(0)), check("selected", None, "ne"), shot("visible-owner-before-launch"))
+        second = self.mcp.call("desktop.launch_second", identity="3")
+        self.assertEqual(second["outcome"], "took_over", second)
+        self.assertEqual(second["previous_process"]["returncode"], 0)
+        self.mcp.batch(check("ready", True), check("total", 120), shot("visible-owner-replaced"))
+
+    def test_activation_native_owner_ignoring_restart_shows_plain_notice(self):
+        started = self.mcp.call("desktop.start", activation="hold-restart")
+        print(f"Ignored restart notice evidence: {started['artifacts']}", flush=True)
+        before = time.monotonic()
+        second = self.mcp.call("desktop.launch_second", identity="2")
+        self.assertEqual(second["outcome"], "notice", second)
+        self.assertTrue(second["owner_running"])
+        self.assertLess(time.monotonic() - before, 12, "the notice follows a short bound")
+        self.assertTrue(Path(second["screenshot"]).is_file())
+        closed = self.mcp.call("desktop.close_second")
+        self.assertEqual(closed["returncode"], 0)
+        self.assertTrue(closed["owner_running"])
+        self.mcp.batch(check("ready", True), check("tray.exiting", False), check("close_pending", False),
+                       check("total", 120), shot("owner-kept-after-ignored-restart"))
+        self.assertEqual(self.mcp.call("desktop.state")["pid"], started["pid"])
+
+    def test_activation_native_owner_from_before_identities_shows_notice_at_once(self):
+        started = self.mcp.call("desktop.start", activation="legacy")
+        print(f"Pre-identity owner notice evidence: {started['artifacts']}", flush=True)
+        before = time.monotonic()
+        second = self.mcp.call("desktop.launch_second")
+        self.assertEqual(second["outcome"], "notice", second)
+        self.assertLess(time.monotonic() - before, 5, "no restart request is worth waiting for")
+        closed = self.mcp.call("desktop.close_second")
+        self.assertEqual(closed["returncode"], 0)
+        self.assertTrue(closed["owner_running"])
+        self.mcp.batch(check("ready", True), check("tray.exiting", False))
+
     def test_tray_native_compact_dark_layout_and_background_arrival(self):
         self.mcp.call("desktop.start", tray="available", width=900, height=640, background_sync=True)
         self.mcp.batch(check("tray.available", True), key("ctrl+comma"), check("tab", "Preferences"),

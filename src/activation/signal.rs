@@ -16,8 +16,17 @@ pub struct Signal(Arc<Inner>);
 struct Inner {
     requested: AtomicU64,
     acknowledged: AtomicU64,
+    /// Highest generation that asked this process to quit for an update.
+    restart: AtomicU64,
     requests: watch::Sender<u64>,
     acknowledgments: watch::Sender<u64>,
+}
+
+/// What a launcher asked of the running owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    Open(u64),
+    Restart(u64),
 }
 
 impl Default for Signal {
@@ -25,6 +34,7 @@ impl Default for Signal {
         Self(Arc::new(Inner {
             requested: AtomicU64::new(0),
             acknowledged: AtomicU64::new(0),
+            restart: AtomicU64::new(0),
             requests: watch::channel(0).0,
             acknowledgments: watch::channel(0).0,
         }))
@@ -39,6 +49,15 @@ impl Hash for Signal {
 
 impl Signal {
     pub(crate) fn request(&self) -> Option<u64> {
+        self.admit(false)
+    }
+
+    /// A newer build asks this process to quit so it can take over.
+    pub(crate) fn request_restart(&self) -> Option<u64> {
+        self.admit(true)
+    }
+
+    fn admit(&self, restart: bool) -> Option<u64> {
         let previous = self
             .0
             .requested
@@ -47,6 +66,11 @@ impl Signal {
             })
             .ok()?;
         let generation = previous + 1;
+        // The marker lands before the wake-up so a subscriber never reads a
+        // restart generation as a plain Open.
+        if restart {
+            self.0.restart.fetch_max(generation, Ordering::SeqCst);
+        }
         self.0
             .requests
             .send_modify(|current| *current = (*current).max(generation));
@@ -82,7 +106,7 @@ impl Signal {
 
 pub(crate) fn subscription(
     signal: &Option<Signal>,
-) -> impl iced::futures::Stream<Item = u64> + use<> {
+) -> impl iced::futures::Stream<Item = Request> + use<> {
     let signal = signal.clone();
     iced::stream::channel(1, async move |mut output| {
         use iced::futures::SinkExt;
@@ -90,8 +114,8 @@ pub(crate) fn subscription(
             let mut requests = signal.0.requests.subscribe();
             loop {
                 let generation = *requests.borrow_and_update();
-                if generation > signal.0.acknowledged.load(Ordering::SeqCst)
-                    && output.send(generation).await.is_err()
+                if let Some(request) = signal.pending(generation)
+                    && output.send(request).await.is_err()
                 {
                     return;
                 }
@@ -102,6 +126,18 @@ pub(crate) fn subscription(
         }
         std::future::pending::<()>().await;
     })
+}
+
+impl Signal {
+    /// An unacknowledged restart outranks an Open observed in the same wake-up.
+    fn pending(&self, generation: u64) -> Option<Request> {
+        let acknowledged = self.0.acknowledged.load(Ordering::SeqCst);
+        let restart = self.0.restart.load(Ordering::SeqCst);
+        if restart > acknowledged {
+            return Some(Request::Restart(generation.max(restart)));
+        }
+        (generation > acknowledged).then_some(Request::Open(generation))
+    }
 }
 
 #[cfg(test)]
@@ -125,5 +161,29 @@ mod tests {
         let signal = Signal::default();
         assert!(signal.try_close());
         assert_eq!(signal.request(), None);
+    }
+
+    #[test]
+    fn restart_outranks_open_in_either_order_until_acknowledged() {
+        let signal = Signal::default();
+        let open = signal.request().expect("open accepted");
+        assert_eq!(signal.pending(open), Some(Request::Open(open)));
+        let restart = signal.request_restart().expect("restart accepted");
+        assert_eq!(signal.pending(open), Some(Request::Restart(restart)));
+        assert_eq!(signal.pending(restart), Some(Request::Restart(restart)));
+        assert!(!signal.try_close(), "an unacknowledged restart holds close");
+        signal.acknowledge(restart);
+        assert_eq!(signal.pending(restart), None);
+        assert!(signal.try_close());
+        assert_eq!(signal.request_restart(), None);
+
+        let signal = Signal::default();
+        let restart = signal.request_restart().expect("restart accepted");
+        let later = signal.request().expect("open accepted");
+        assert_eq!(signal.pending(later), Some(Request::Restart(later)));
+        signal.acknowledge(later);
+        assert_eq!(signal.pending(later), None);
+        assert!(restart < later);
+        assert!(signal.try_close());
     }
 }
