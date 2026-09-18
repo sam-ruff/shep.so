@@ -1,5 +1,36 @@
 # Completion audit
 
+## Live e2e mailbox and live rapid flows, 18 September 2026
+
+A disposable `e2e@shep.so` mailbox on the shep.so Stalwart server (declared
+in the infrastructure repository, commit `e091493`; applied changed=4, repeat
+changed=0; login and IDLE confirmed) now backs a test-support-only live
+launch: `desktop.start(live_imap=True)` runs `target/test-ui/shep
+--live-imap` without `--demo`, so the production engine (5 second checks,
+IDLE watcher, folder discovery, real MOVE and flag commands) works against a
+`live-data` root beside the owned state file, a memory-only keychain and one
+IMAP account from `SHEP_LIVE_IMAP_HOST/PORT/USER/PASSWORD` and
+`SHEP_LIVE_SMTP_HOST/PORT`. `scripts/live_mailbox.py` wipes the mailbox,
+removes folders earlier runs created, APPENDs 120 deterministic Inbox
+messages plus 4 in `Deleted Items`, and delivers one more on demand. Five
+`test_live_*` scenarios repeat the rapid archive and trash with Undo, the
+Move dialog into a sidebar-created folder, bulk with mid-batch Undo, restart
+mid-sequence and IDLE arrival flows, asserting `store_truth.agrees`,
+`drawn_rows.consistent`, `mail_pending == 0`, server folder totals and the
+badge against server UNSEEN after each step; they skip without the variables
+so the default suite stays offline.
+
+Run on 18 September: 5 passed in 171 s. The first archive created `Archive`
+on the server, deletes landed in `Deleted Items`, an appended message showed
+at the top of the list 1 to 2 seconds later through IDLE with the badge
+following server UNSEEN, and no desync, wrong folder or badge drift appeared.
+Fixture `test_rapid_*` still 8 of 8. Lane commits `a665ea5`, `21c8d2a`,
+`abbd950`, merged as `7061394`; 1,392 hook executions; 163 Python tests.
+Limitations: one mailbox, so no cross-account or drag live variant; a real
+server cannot hold acknowledgements like the `slow` fixture; the owned bus
+has no notification service, so the arrival scenario mutes popups first;
+timings came from a shared host and are indicative, not budgets.
+
 ## Rapid move and Undo flows against store truth, 18 September 2026
 
 Sam reported that with real mail, moving messages, undoing and continuing to
