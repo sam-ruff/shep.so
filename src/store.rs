@@ -23,8 +23,6 @@ mod outgoing;
 mod profile_sync;
 mod restore;
 mod scratch;
-mod search_cache;
-mod search_rank;
 mod selection;
 pub(crate) mod worker;
 use anyhow::Context;
@@ -47,7 +45,7 @@ pub struct Store(
     Option<Arc<crate::cache_cipher::ownership::Guard>>,
 );
 
-pub(crate) const DATABASE_VERSION: u32 = 4;
+pub(crate) const DATABASE_VERSION: u32 = 5;
 /// Plain-text characters the reader loads per page of a long message.
 pub const READER_BODY_PAGE: usize = 32_000;
 
@@ -157,7 +155,6 @@ impl Store {
     }
     fn initialize_connection(mut conn: Connection) -> anyhow::Result<Connection> {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        search_rank::register(&conn)?;
         let version: u32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         anyhow::ensure!(
             version <= DATABASE_VERSION,
@@ -206,7 +203,6 @@ impl Store {
         connections::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
-        search_cache::schema(&conn)?;
         folder_projection::schema(&conn)?;
         bulk::schema(&conn)?;
         move_journal::schema(&conn)?;
@@ -244,6 +240,12 @@ impl Store {
         }
         if version < 4 {
             conn.pragma_update(None, "user_version", DATABASE_VERSION)?;
+        }
+        if version < 5 {
+            let tx = conn.transaction()?;
+            migrate_check_interval(&tx)?;
+            tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
+            tx.commit()?;
         }
         Ok(conn)
     }
@@ -533,9 +535,7 @@ impl Store {
             }
             let page = MailPage { move_pending_total:move_journal::pending(c)?, relocated, move_recovery, move_placeholders, rows, total, unread, folder_count, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? };
             drop(statement);
-            // Reads roll back unless a projection or freshly measured search
-            // statistics need the scratch writes kept.
-            if projection.is_some() || plan.fills_search_cache() {
+            if projection.is_some() {
                 read_moves::prepare(c, &[])?;
                 transaction.commit()?;
             }
@@ -1027,6 +1027,18 @@ pub(crate) fn import_archive_schema(c: &Connection) -> anyhow::Result<()> {
         PRIMARY KEY(import_id,kind,identity));",
     )?;
     Ok(())
+}
+
+/// Saved settings still on the previous 15 second default follow the new
+/// default once; a value the user chose, including a later 15, is kept.
+fn migrate_check_interval(c: &Connection) -> anyhow::Result<()> {
+    const PREVIOUS_DEFAULT: u64 = 15;
+    let mut preferences: Preferences = get(c, "preferences")?;
+    if preferences.mail_check_seconds != PREVIOUS_DEFAULT {
+        return Ok(());
+    }
+    preferences.mail_check_seconds = Preferences::default().mail_check_seconds;
+    put(c, "preferences", &preferences)
 }
 
 fn get<T: DeserializeOwned + Default>(c: &Connection, key: &str) -> anyhow::Result<T> {

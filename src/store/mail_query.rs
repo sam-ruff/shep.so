@@ -3,21 +3,22 @@ use super::*;
 use rusqlite::types::Value;
 
 const EXACT_BODY_PRIORITY: &str = "CASE WHEN octet_length(messages.body)<=? THEN CASE WHEN trim(messages.body,char(9)||char(10)||char(13)||' ')=? COLLATE NOCASE THEN 0 ELSE 1 END ELSE 1 END";
-const MATCH_TIER: &str = "shep_search_tier(mail_search.mail_search,?)";
-const MATCH_SCORE: &str = "shep_search_score(mail_search.mail_search,?,0.3,2.0,1.0)";
+const MATCH_TIER: &str = "CASE WHEN phrase_matches.rowid IS NOT NULL THEN 0 WHEN exact_matches.rowid IS NOT NULL THEN 1 ELSE 2 END";
+const MATCH_SCORE: &str =
+    "COALESCE(phrase_matches.rank,exact_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0))";
+const MATCH_JOINS: &str = " LEFT JOIN exact_matches ON exact_matches.rowid=messages.rowid LEFT JOIN phrase_matches ON phrase_matches.rowid=messages.rowid";
 
 type PageRow = (String, bool, bool, String, String, bool);
 type CountedPage = (Vec<PageRow>, usize, usize);
 
 const RANK_ORDER: &str = "priority,tier,score,timestamp DESC,id";
 
-/// Relevance ranking for one FTS pass: the phrase, exact and expanded groups
-/// share a single MATCH expression and `spec` tells the ranking functions
-/// where each group's phrases sit and how many rows each phrase matches.
 struct Ranking {
-    expression: String,
-    spec: String,
-    tiered: bool,
+    prefix: String,
+    value_index: usize,
+    joins: &'static str,
+    tier: &'static str,
+    score: &'static str,
 }
 
 pub(super) struct Plan {
@@ -26,9 +27,8 @@ pub(super) struct Plan {
     condition: String,
     values: Vec<Value>,
     query: MailQuery,
-    ranking: Option<Ranking>,
+    search: String,
     source: &'static str,
-    cache_written: bool,
 }
 
 /// Special-use folders that logical names such as `Trash` stand for, per
@@ -150,21 +150,10 @@ impl Plan {
         if query.starred_only {
             filters.push("starred=1".into());
         }
-        let mut snapshot = search_cache::Snapshot::open(c)?;
-        let terms = crate::fuzzy::mail_terms(c, &query.search, |c, token| {
-            snapshot.expansion(c, token, crate::fuzzy::expand_token)
-        })?;
-        let search = crate::fuzzy::mail_query_text(&terms);
+        let search = crate::fuzzy::mail_query(c, &query.search)?;
         if search.is_empty() && !query.search.trim().is_empty() {
             filters.push("0=1".into());
         }
-        let ranking = if query.sort == MailSort::Relevance && !search.is_empty() {
-            Some(Self::ranking(c, &mut snapshot, &terms)?)
-        } else {
-            None
-        };
-        let cache_written = snapshot.written();
-        snapshot.seal(c)?;
         let mut source = read_moves::source(c)?;
         if !query.project_moves.is_empty() {
             source = match source {
@@ -177,7 +166,7 @@ impl Plan {
         let mut from = format!("{source} AS messages");
         if !search.is_empty() {
             filters.push("mail_search.mail_search MATCH ?".into());
-            values.push(search.into());
+            values.push(search.clone().into());
             from.push_str(" JOIN mail_search ON mail_search.rowid=messages.rowid");
         }
         Ok(Self {
@@ -186,63 +175,8 @@ impl Plan {
             condition: filters.join(" AND "),
             values,
             query: query.clone(),
-            ranking,
+            search,
             source,
-            cache_written,
-        })
-    }
-
-    /// Statistics were measured for this plan; the enclosing transaction must
-    /// commit for later queries to reuse them.
-    pub fn fills_search_cache(&self) -> bool {
-        self.cache_written
-    }
-
-    /// Groups in FTS5 phrase order: every exact term, then the expanded
-    /// alternatives unless they repeat the exact terms. The ranking functions
-    /// read the exact terms occurring adjacently as the whole phrase, so the
-    /// phrase tier costs no extra FTS cursor.
-    fn ranking(
-        c: &Connection,
-        snapshot: &mut search_cache::Snapshot,
-        terms: &[crate::fuzzy::MailTerm],
-    ) -> anyhow::Result<Ranking> {
-        let tokens: Vec<&str> = terms.iter().map(|term| term.token.as_str()).collect();
-        let literal: Vec<String> = tokens.iter().map(|token| format!("\"{token}\"")).collect();
-        let expanded: Vec<String> = terms
-            .iter()
-            .flat_map(|term| term.alternatives.iter().cloned())
-            .collect();
-        let phrase = if tokens.len() > 1 {
-            Some(snapshot.phrase_docs(c, &format!("\"{}\"", tokens.join(" ")))?)
-        } else {
-            None
-        };
-        let mut groups: Vec<(String, Vec<String>)> = vec![(literal.join(" AND "), literal.clone())];
-        if expanded != literal {
-            groups.push((crate::fuzzy::mail_query_text(terms), expanded));
-        }
-        let mut ends = Vec::with_capacity(groups.len());
-        let mut docs = Vec::new();
-        for (_, phrases) in &groups {
-            for phrase in phrases {
-                docs.push(snapshot.phrase_docs(c, phrase)?);
-            }
-            ends.push(docs.len());
-        }
-        let expression = if groups.len() == 1 {
-            groups.swap_remove(0).0
-        } else {
-            groups
-                .iter()
-                .map(|(group, _)| format!("({group})"))
-                .collect::<Vec<_>>()
-                .join(" OR ")
-        };
-        Ok(Ranking {
-            expression,
-            tiered: phrase.is_some() || ends.len() > 1,
-            spec: search_rank::spec(phrase, &ends, &docs),
         })
     }
 
@@ -274,9 +208,50 @@ impl Plan {
         c: &Connection,
         columns: &str,
     ) -> anyhow::Result<Option<CountedPage>> {
-        let Some((sql, values)) = self.counted_page_query(columns) else {
+        if self.query.sort != MailSort::Relevance || self.search.is_empty() {
+            return Ok(None);
+        }
+        let Ok(offset) = i64::try_from(self.query.offset) else {
             return Ok(None);
         };
+        let mut values = self.values.clone();
+        let ranking = self.relevance_relations(&mut values);
+        values.splice(
+            ranking.value_index..ranking.value_index,
+            [
+                (self.query.search.trim().len().saturating_add(8) as i64).into(),
+                self.query.search.trim().to_owned().into(),
+            ],
+        );
+        values.push((PAGE_SIZE as i64).into());
+        values.push(offset.into());
+        let prefix = if ranking.prefix.is_empty() {
+            "WITH ".to_owned()
+        } else {
+            format!("{}, ", ranking.prefix.trim_end())
+        };
+        let Ranking {
+            joins, tier, score, ..
+        } = ranking;
+        // Rank inside the FTS cursor before window aggregation. Only keys are
+        // materialised; message metadata is read after the bounded page.
+        let sql = format!(
+            "{prefix}ranked_matches AS MATERIALIZED (
+                SELECT messages.rowid AS rowid,messages.unread AS unread,
+                    {EXACT_BODY_PRIORITY} AS priority,{tier} AS tier,
+                    {score} AS score,timestamp,messages.id AS id
+                FROM {}{joins} WHERE {}
+            ), counted_matches AS (
+                SELECT rowid,priority,tier,score,timestamp,id,
+                    COUNT(*) OVER() AS total,COALESCE(SUM(unread) OVER(),0) AS unread_total
+                FROM ranked_matches
+                ORDER BY {RANK_ORDER} LIMIT ? OFFSET ?
+            )
+            SELECT {columns},page.total,page.unread_total
+            FROM {} AS messages JOIN counted_matches AS page ON page.rowid=messages.rowid
+            ORDER BY page.priority,page.tier,page.score,page.timestamp DESC,page.id",
+            self.from, self.condition, self.source
+        );
         let mut statement = c.prepare(&sql)?;
         let mut cursor = statement.query(rusqlite::params_from_iter(&values))?;
         let mut rows = Vec::with_capacity(PAGE_SIZE);
@@ -296,42 +271,6 @@ impl Plan {
             ));
         }
         Ok(counts.map(|(total, unread)| (rows, total, unread)))
-    }
-
-    /// The ranked page and its totals in one statement; `None` when the sort
-    /// or search does not rank.
-    pub(super) fn counted_page_query(&self, columns: &str) -> Option<(String, Vec<Value>)> {
-        let ranking = self.ranking.as_ref()?;
-        let offset = i64::try_from(self.query.offset).ok()?;
-        let mut values = self.ranked_values(ranking, true);
-        values.push((PAGE_SIZE as i64).into());
-        values.push(offset.into());
-        let prefix = if self.prefix.is_empty() {
-            "WITH ".to_owned()
-        } else {
-            format!("{}, ", self.prefix.trim_end())
-        };
-        let tier = Self::tier(ranking);
-        // Rank inside the FTS cursor before window aggregation. Only keys are
-        // materialised; message metadata is read after the bounded page.
-        let sql = format!(
-            "{prefix}ranked_matches AS MATERIALIZED (
-                SELECT messages.rowid AS rowid,messages.unread AS unread,
-                    {EXACT_BODY_PRIORITY} AS priority,{tier} AS tier,
-                    {MATCH_SCORE} AS score,timestamp,messages.id AS id
-                FROM {} WHERE {}
-            ), counted_matches AS (
-                SELECT rowid,priority,tier,score,timestamp,id,
-                    COUNT(*) OVER() AS total,COALESCE(SUM(unread) OVER(),0) AS unread_total
-                FROM ranked_matches
-                ORDER BY {RANK_ORDER} LIMIT ? OFFSET ?
-            )
-            SELECT {columns},page.total,page.unread_total
-            FROM {} AS messages JOIN counted_matches AS page ON page.rowid=messages.rowid
-            ORDER BY page.priority,page.tier,page.score,page.timestamp DESC,page.id",
-            self.from, self.condition, self.source
-        );
-        Some((sql, values))
     }
 
     pub fn page(
@@ -391,15 +330,25 @@ impl Plan {
     /// Keep these keys identical to `ordered`; query/selection equivalence tests
     /// cover every sort, literal/fuzzy search, folder scope and ranking tie.
     pub fn selection_order(&self) -> (String, Vec<Value>) {
-        let (values, priority, missing, score) = match &self.ranking {
-            Some(ranking) => (
-                self.ranked_values(ranking, true),
-                EXACT_BODY_PRIORITY,
-                Self::tier(ranking),
-                MATCH_SCORE,
-            ),
-            None => (self.values.clone(), "0", "0", "0"),
-        };
+        let mut values = self.values.clone();
+        let mut from = self.from.clone();
+        let mut prefix = self.prefix.to_owned();
+        let (priority, missing, score) =
+            if self.query.sort == MailSort::Relevance && !self.search.is_empty() {
+                let ranking = self.relevance_relations(&mut values);
+                prefix = ranking.prefix;
+                from.push_str(ranking.joins);
+                values.splice(
+                    ranking.value_index..ranking.value_index,
+                    [
+                        (self.query.search.trim().len().saturating_add(8) as i64).into(),
+                        self.query.search.trim().to_owned().into(),
+                    ],
+                );
+                (EXACT_BODY_PRIORITY, ranking.tier, ranking.score)
+            } else {
+                ("0", "0", "0")
+            };
         let label = match self.query.sort {
             MailSort::Sender => "messages.sender",
             MailSort::Subject => "messages.subject",
@@ -408,75 +357,102 @@ impl Plan {
         (
             format!(
                 "{}INSERT INTO scratch.mail_selection_order(id,priority,missing,score,label,time)
-            SELECT messages.id,{priority},{missing},{score},{label},timestamp FROM {} WHERE {}",
-                self.prefix, self.from, self.condition
+            SELECT messages.id,{priority},{missing},{score},{label},timestamp FROM {from} WHERE {}",
+                prefix, self.condition
             ),
             values,
         )
     }
 
-    fn tier(ranking: &Ranking) -> &'static str {
-        if ranking.tiered { MATCH_TIER } else { "0" }
-    }
-
-    /// Bindings for a ranking statement: the combined MATCH expression replaces
-    /// the expanded one, and the priority/spec bindings sit before the scope
-    /// bindings when the ranking columns precede WHERE, after them otherwise.
-    fn ranked_values(&self, ranking: &Ranking, rank_first: bool) -> Vec<Value> {
-        let mut scope = self.values.clone();
-        if let Some(last) = scope.last_mut() {
-            *last = ranking.expression.clone().into();
+    fn relevance_relations(&self, values: &mut Vec<Value>) -> Ranking {
+        let literal = crate::fuzzy::literal_query(&self.query.search);
+        let phrase = crate::fuzzy::phrase_query(&self.query.search);
+        let literal_grouped = literal
+            .split(" AND ")
+            .map(|term| format!("({term})"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let index = usize::from(!self.prefix.is_empty());
+        if self.search == literal_grouped {
+            if literal == phrase {
+                return Ranking {
+                    prefix: self.prefix.to_owned(),
+                    value_index: index,
+                    joins: "",
+                    tier: "0",
+                    score: "bm25(mail_search.mail_search,0.3,2.0,1.0)",
+                };
+            }
+            let relation = "phrase_matches AS MATERIALIZED (SELECT rowid,rank FROM mail_search(?, 'bm25(0.3, 2.0, 1.0)')) ";
+            values.insert(index, phrase.into());
+            return Ranking {
+                prefix: if self.prefix.is_empty() {
+                    format!("WITH {relation}")
+                } else {
+                    format!("{}, {relation}", self.prefix.trim_end())
+                },
+                value_index: index + 1,
+                joins: " LEFT JOIN phrase_matches ON phrase_matches.rowid=messages.rowid",
+                tier: "CASE WHEN phrase_matches.rowid IS NULL THEN 1 ELSE 0 END",
+                score: "COALESCE(phrase_matches.rank,bm25(mail_search.mail_search,0.3,2.0,1.0))",
+            };
         }
-        let query = self.query.search.trim();
-        // octet_length checks stored size without loading long bodies.
-        // Whole-body equality makes a short exact reply rank first.
-        let mut rank: Vec<Value> = vec![
-            (query.len().saturating_add(8) as i64).into(),
-            query.to_owned().into(),
-            ranking.spec.clone().into(),
-        ];
-        if ranking.tiered {
-            rank.push(ranking.spec.clone().into());
-        }
-        let prefixed = usize::from(!self.prefix.is_empty());
-        let tail = scope.split_off(prefixed);
-        if rank_first {
-            scope.extend(rank);
-            scope.extend(tail);
+        let mut bindings = vec![literal.clone().into()];
+        // Materialise each FTS relation once, avoiding a full ranked scan per
+        // candidate. A single term shares its literal relation with the phrase.
+        let phrase_relation = if literal == phrase {
+            "phrase_matches AS (SELECT rowid,rank FROM exact_matches)"
         } else {
-            scope.extend(tail);
-            scope.extend(rank);
+            bindings.push(phrase.into());
+            "phrase_matches AS MATERIALIZED (SELECT rowid,rank FROM mail_search(?, 'bm25(0.3, 2.0, 1.0)'))"
+        };
+        let relations = format!(
+            "exact_matches AS MATERIALIZED (SELECT rowid,rank FROM mail_search(?, 'bm25(0.3, 2.0, 1.0)')), {phrase_relation} "
+        );
+        let prefix = if self.prefix.is_empty() {
+            format!("WITH {relations}")
+        } else {
+            format!("{}, {relations}", self.prefix.trim_end())
+        };
+        let select_index = index + bindings.len();
+        values.splice(index..index, bindings);
+        Ranking {
+            prefix,
+            value_index: select_index,
+            joins: MATCH_JOINS,
+            tier: MATCH_TIER,
+            score: MATCH_SCORE,
         }
-        scope
     }
 
     /// `columns` is a static projection supplied by our store methods, not input.
     pub fn ordered(&self, columns: &str) -> (String, Vec<Value>) {
-        let (values, order) = match (&self.ranking, self.query.sort) {
-            (Some(ranking), _) => (
-                self.ranked_values(ranking, false),
+        let mut values = self.values.clone();
+        let mut from = self.from.to_owned();
+        let mut prefix = self.prefix.to_owned();
+        let order = match self.query.sort {
+            MailSort::Relevance if !self.search.is_empty() => {
+                let ranking = self.relevance_relations(&mut values);
+                prefix = ranking.prefix;
+                from.push_str(ranking.joins);
+                // octet_length checks stored size without loading long bodies.
+                // Whole-body equality makes a short exact reply rank first.
+                values.push((self.query.search.trim().len().saturating_add(8) as i64).into());
+                values.push(self.query.search.trim().to_owned().into());
                 format!(
-                    "{EXACT_BODY_PRIORITY},{},{MATCH_SCORE},timestamp DESC,id",
-                    Self::tier(ranking)
-                ),
-            ),
-            (None, MailSort::Relevance | MailSort::Newest) => {
-                (self.values.clone(), "timestamp DESC,id".into())
+                    "{EXACT_BODY_PRIORITY},{},{},timestamp DESC,id",
+                    ranking.tier, ranking.score
+                )
             }
-            (None, MailSort::Oldest) => (self.values.clone(), "timestamp ASC,id".into()),
-            (None, MailSort::Sender) => (
-                self.values.clone(),
-                "messages.sender COLLATE NOCASE,timestamp DESC,id".into(),
-            ),
-            (None, MailSort::Subject) => (
-                self.values.clone(),
-                "messages.subject COLLATE NOCASE,timestamp DESC,id".into(),
-            ),
+            MailSort::Relevance | MailSort::Newest => "timestamp DESC,id".into(),
+            MailSort::Oldest => "timestamp ASC,id".into(),
+            MailSort::Sender => "messages.sender COLLATE NOCASE,timestamp DESC,id".into(),
+            MailSort::Subject => "messages.subject COLLATE NOCASE,timestamp DESC,id".into(),
         };
         (
             format!(
-                "{}SELECT {columns} FROM {} WHERE {} ORDER BY {order}",
-                self.prefix, self.from, self.condition
+                "{}SELECT {columns} FROM {from} WHERE {} ORDER BY {order}",
+                prefix, self.condition
             ),
             values,
         )
@@ -594,165 +570,65 @@ mod tests {
         assert_eq!(subjects(physical), ["binned", "plain-folder"]);
     }
 
-    fn plan_steps(c: &Connection, sql: &str, values: &[Value]) -> anyhow::Result<Vec<String>> {
-        Ok(c.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?
-            .query_map(rusqlite::params_from_iter(values), |r| {
-                r.get::<_, String>(3)
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
-    fn fixture_store() -> Store {
-        let store = Store::memory().unwrap();
-        let mails = [
-            "Architecture plans for milestone 17",
-            "Architecture planning for milestone 170",
-            "Milestones",
-        ]
-        .into_iter()
-        .enumerate()
-        .map(|(index, body)| {
-            parse_mail(
-                "fixture",
-                &index.to_string(),
-                "INBOX",
-                format!("Subject: Notes\r\n\r\n{body}").into_bytes(),
-                false,
-                false,
-            )
-            .unwrap()
-        })
-        .collect();
-        futures::executor::block_on(store.upsert(mails)).unwrap();
-        store
-    }
-
     #[tokio::test]
-    async fn relevance_ranks_multi_term_searches_in_one_fts_pass() {
-        let store = fixture_store();
+    async fn relevance_does_not_rescan_a_literal_fts_relation_per_candidate() {
+        let store = Store::memory().unwrap();
         store
-            .run(|c| {
-                for search in [
-                    "milestone 17",
-                    "milestnoe 17",
-                    "architecture plans milestone 17",
-                ] {
-                    for folders in [
-                        None,
-                        Some(vec![FolderSelection {
-                            account: Some("fixture".into()),
-                            folder: "INBOX".into(),
-                            sent_only: false,
-                        }]),
-                    ] {
-                        let query = MailQuery {
-                            search: search.into(),
-                            sort: MailSort::Relevance,
-                            folders,
-                            ..Default::default()
-                        };
-                        let plan = Plan::new(c, &query)?;
-                        let (page, page_values) = plan
-                            .counted_page_query("messages.id")
-                            .expect("relevance search pages inside SQLite");
-                        let (ordered, ordered_values) = plan.ordered("messages.id");
-                        let (selection, selection_values) = plan.selection_order();
-                        for (label, sql, values) in [
-                            ("page", page, page_values),
-                            ("ordered", format!("{ordered} LIMIT 50"), ordered_values),
-                            ("selection", selection, selection_values),
-                        ] {
-                            let steps = plan_steps(c, &sql, &values)?;
-                            let joined = steps.join("\n");
-                            // One FTS cursor ranks every candidate. A relation
-                            // per tier would rescan the index and join through
-                            // automatic indexes; guard that across upgrades.
-                            let fts: Vec<_> = steps
-                                .iter()
-                                .filter(|step| step.contains("mail_search"))
-                                .collect();
-                            assert_eq!(fts.len(), 1, "{search} {label}: {joined}");
-                            assert!(
-                                fts[0].starts_with("SCAN mail_search VIRTUAL TABLE"),
-                                "{search} {label}: {joined}"
-                            );
-                            for forbidden in ["AUTOMATIC", "LEFT-JOIN"] {
-                                assert!(!joined.contains(forbidden), "{search} {label}: {joined}");
-                            }
-                            // Only the page statement materialises anything: the
-                            // bounded set of ranked keys for the window counts.
-                            let materialised = steps
-                                .iter()
-                                .filter(|step| step.contains("MATERIALIZE"))
-                                .count();
-                            assert_eq!(
-                                materialised,
-                                usize::from(label == "page"),
-                                "{search} {label}: {joined}"
-                            );
-                            if label == "selection" {
-                                assert!(!joined.contains("TEMP B-TREE"), "{search}: {joined}");
-                            }
-                            c.prepare(&sql)?
-                                .query_map(rusqlite::params_from_iter(&values), |_| Ok(()))?
-                                .count();
-                        }
-                        c.execute("DELETE FROM scratch.mail_selection_order", [])?;
-                    }
-                }
-                Ok(())
-            })
+            .upsert(vec![
+                parse_mail(
+                    "fixture",
+                    "1",
+                    "INBOX",
+                    b"Subject: Milestones\r\n\r\n17".to_vec(),
+                    false,
+                    false,
+                )
+                .unwrap(),
+            ])
             .await
             .unwrap();
-    }
-
-    #[tokio::test]
-    async fn ranking_spec_lists_phrase_exact_and_expanded_groups_once() {
-        let store = fixture_store();
         store
             .run(|c| {
-                let spec = |search: &str| -> anyhow::Result<(String, String, bool)> {
-                    let plan = Plan::new(
-                        c,
-                        &MailQuery {
-                            search: search.into(),
-                            sort: MailSort::Relevance,
-                            ..Default::default()
-                        },
-                    )?;
-                    let ranking = plan.ranking.expect("relevance search ranks");
-                    Ok((ranking.expression, ranking.spec, ranking.tiered))
-                };
-                assert_eq!(
-                    spec("architecture 17")?,
-                    (
-                        "\"architecture\" AND \"17\"".into(),
-                        "0|2|2,1".into(),
-                        true
-                    ),
-                    "exact terms carry the phrase tier without a second group"
-                );
-                assert_eq!(
-                    spec("17")?,
-                    ("\"17\"".into(), "-|1|1".into(), false),
-                    "a single exact term ranks in one group"
-                );
-                assert_eq!(
-                    spec("milestone")?,
-                    (
-                        "(\"milestone\") OR ((\"milestone\"* OR \"milestones\"))".into(),
-                        "-|1,3|2,3,1".into(),
-                        true
-                    ),
-                    "a longer vocabulary term keeps the prefix in the expanded group"
-                );
-                let (expression, spec, tiered) = spec("milestnoe 17")?;
-                assert_eq!(
-                    expression,
-                    "(\"milestnoe\" AND \"17\") OR ((\"milestnoe\" OR \"milestone\" OR \"milestones\") AND (\"17\"))"
-                );
-                assert_eq!(spec, "0|2,6|0,1,0,2,1,1");
-                assert!(tiered);
+                for folders in [
+                    None,
+                    Some(vec![FolderSelection {
+                        account: Some("fixture".into()),
+                        folder: "INBOX".into(),
+                        sent_only: false,
+                    }]),
+                ] {
+                    let query = MailQuery {
+                        search: "milestone 17".into(),
+                        sort: MailSort::Relevance,
+                        folders,
+                        ..Default::default()
+                    };
+                    let plan = Plan::new(c, &query)?;
+                    let (sql, values) = plan.ordered("messages.id");
+                    let steps = c
+                        .prepare(&format!("EXPLAIN QUERY PLAN {sql} LIMIT 50"))?
+                        .query_map(rusqlite::params_from_iter(&values), |r| {
+                            r.get::<_, String>(3)
+                        })?
+                        .collect::<rusqlite::Result<Vec<_>>>()?;
+                    // A virtual-table LEFT JOIN re-runs FTS filtering/ranking for
+                    // every outer row. Guard that expensive plan across upgrades;
+                    // search/selection tests separately verify exact ordered values.
+                    assert!(
+                        !steps
+                            .iter()
+                            .any(|s| s.contains("VIRTUAL TABLE") && s.contains("LEFT-JOIN")),
+                        "{steps:?}"
+                    );
+                    for relation in ["exact_matches", "phrase_matches"] {
+                        assert!(
+                            steps
+                                .iter()
+                                .any(|s| s.contains(relation) && s.contains("INDEX")),
+                            "{relation}: {steps:?}"
+                        );
+                    }
+                }
                 Ok(())
             })
             .await

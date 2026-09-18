@@ -128,7 +128,8 @@ jobs:
               # API set names forward into kernelbase; compare against the real exporter.
               if ($name -like 'api-ms-win-*') { $path = Join-Path $env:SystemRoot 'System32\kernelbase.dll' }
               if (-not (Test-Path $path)) { Write-Output "$name -> MISSING"; continue }
-              $exports = & $dumpbin.FullName /nologo /exports $path | ForEach-Object { if ($_ -match '^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)') { $Matches[1] } }
+              # Forwarded exports have no RVA column, so the RVA is optional.
+              $exports = & $dumpbin.FullName /nologo /exports $path | ForEach-Object { if ($_ -match '^\s+\d+\s+[0-9A-F]+\s+(?:[0-9A-F]{8}\s+)?(\S+)') { $Matches[1] } }
               $absent = $imports[$name] | Where-Object { $exports -notcontains $_ }
               Write-Output "$name -> $path ($($imports[$name].Count) imports, $($absent.Count) absent)"
               foreach ($fn in $absent) { Write-Output "   absent: $fn" }

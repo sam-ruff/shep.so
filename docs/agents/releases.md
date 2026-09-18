@@ -2,8 +2,11 @@
 
 Desktop releases publish Linux x86_64 and Windows x86_64 archives from one
 successful main revision. Linux builds use Ubuntu 24.04; older glibc distributions
-need a source build. Windows archives are unsigned. Apple packaging and the
-coordinated mobile/browser release gate remain unfinished.
+need a source build. Windows archives are unsigned. Every Windows binary
+embeds `assets/windows/shep.manifest` through `build.rs`, which declares the
+Common Controls v6 dependency the taskbar badge needs; without it the process
+cannot start. Apple packaging and the coordinated mobile/browser release gate
+remain unfinished.
 
 ```mermaid
 flowchart LR
