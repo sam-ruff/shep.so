@@ -38,7 +38,8 @@ export type SettingKey =
   | "left_swipe"
   | "right_swipe"
   | "sender_pictures"
-  | "tooltips";
+  | "tooltips"
+  | "foreign_move_folders";
 export type Action =
   | { kind: "account_connection"; account: PortableConnection }
   | { kind: "account_name"; id: string; name: string }

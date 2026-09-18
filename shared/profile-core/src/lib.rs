@@ -152,6 +152,7 @@ pub enum SettingKey {
     RightSwipe,
     SenderPictures,
     Tooltips,
+    ForeignMoveFolders,
 }
 
 impl SettingKey {

@@ -407,6 +407,38 @@
       "error": null
     },
     {
+      "name": "desktop-foreign-move-folders",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "foreign_move_folders",
+              "value": true
+            }
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "invalid-foreign-move-folders",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "foreign_move_folders",
+              "value": "yes"
+            }
+          ]
+        }
+      ],
+      "error": "Upgrade"
+    },
+    {
       "name": "invalid-mobile-swipe",
       "patches": [
         {
