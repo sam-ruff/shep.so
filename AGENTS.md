@@ -252,8 +252,10 @@ spilled rollback, cleanup and orphan-restart regressions.
 Shared ancestry uses transaction-cleared indexed main-database scratch with a
 bounded frontier. Finish legacy publication/recovery, remaining sorter/temp
 paths, profile catalog/portable transfer routing and native key recovery before
-activating encryption for personal data. See
-[the encryption boundary](docs/agents/CACHE_ENCRYPTION.md).
+activating encryption for personal data. Publication's checkpoint flushes the
+main file through a read-write handle: Windows refuses to flush a read-only
+one, and a `#[cfg(windows)]` split is not needed because fsync accepts either.
+See [the encryption boundary](docs/agents/CACHE_ENCRYPTION.md).
 
 The software renderer is patched through `vendor/iced_tiny_skia` (released iced 0.14.0, MIT). Cached dropdown text must intersect its own viewport with the damaged layer, and raw text must reset a shared clip mask after preceding text. Shadows must honor damage/layer clipping and include their full bounds in invalidation, including when only the shadow intersects the changed area. Otherwise moving or scrolled controls leave stray pixels that only a full repaint clears. Keep `tests/software_rendering.rs`, the filtered-preferences and scrolled mail-drag native regressions when updating iced; remove the patch only after these pass upstream. The release archive includes the vendor license and patch provenance. Do not edit the Cargo registry cache or replace partial redraws with continuous full-window redraws to hide defects.
 
@@ -1231,7 +1233,9 @@ publication. Cancellation before commit must preserve the previous file; a
 post-commit warning must still report a saved copy. Protect active cache, WAL/SHM,
 backup-journal and operation-lock paths, including aliases. On Unix, compare
 metadata/inodes without opening and closing an ordinary descriptor to a live
-SQLite file, which can release process advisory locks.
+SQLite file, which can release process advisory locks. The saved outcome reports
+the destination as the user chose it; the canonical form (a `\\?\` path with
+on-disk casing on Windows) is only for the protection checks.
 
 `engine/database_transfers.rs` owns one active job through a capacity-one command
 channel, independent of provider capacity and mail reads/saves. Progress uses a
@@ -1639,6 +1643,10 @@ Native account connection edits have their own durable profile field generation,
 separate from name changes. Keep incoming/SMTP/security/auth/sent-copy reversions
 through pulls and restart. Rename/no-op saves must not create connection intent.
 Do not turn these generations into permission to retarget saved credentials.
+
+The loopback FTP/FTPS fixture signs with an RSA key generated once per test
+process; Schannel cannot import rcgen's ECDSA default, so keep the fixture
+identity RSA when touching it.
 
 SFTP session/channel setup has explicit deadlines in addition to transport
 inactivity and per-request SFTP timeouts. Keep the real held-channel regression: it
