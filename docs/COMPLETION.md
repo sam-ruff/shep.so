@@ -1,5 +1,28 @@
 # Completion audit
 
+## Native sidebar coordinates after the Spam entry, 18 September 2026
+
+Eight native move flows had failed since `12e6e2d` (13 September) added the
+permanent unified Spam entry and the Junk fixture folder: every sidebar row
+beneath Trash moved down one row and the centred Move dialog, one row
+taller, moved its rows up, so saved clicks hit an account header (collapsing
+it) or the gap between dialog rows. The sidebar, catalogue and projection
+code were correct throughout; `sidebar_labels` is identical before and after
+a move. Lane commit `52e36b8`, merged as `885ac43`, re-points 23 scenarios,
+adds `unified_sidebar_keeps_the_saved_native_row_order_across_workspace_republish`
+to guard the next insertion above the account trees, and makes
+`scripts/e2e.py --functional-only` honour unittest `-k` patterns. The
+deletion-failure scenario now expects the move-failure wording, which a
+failed delete has produced since `b614b8d`.
+
+Evidence: the eight flows 0 of 8 before and 8 of 8 after; the full
+functional suite 321 of 333 before the remaining layout fixes and those 11
+green afterwards; on the merged tree the move, folder, drag, bulk and sidebar
+selections 98 of 99 with the wording mismatch the only failure, now fixed in
+the scenario. Hooks passed on both lane commits. Limitations: coordinates
+stay fixed pixels by repository convention; the compact-window forward flow
+clicks a partly clipped draft row.
+
 ## Windows binaries start again: Common Controls manifest, 18 September 2026
 
 Every Windows binary, the release `shep.exe` and each test binary, failed at

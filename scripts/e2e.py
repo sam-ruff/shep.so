@@ -2596,7 +2596,7 @@ class NativeFlows(unittest.TestCase):
         scroll = self.mcp.call("desktop.state")["inbox_scroll"]
         self.mcp.batch({**check("mail_pending", 0), "timeout_ms": 5000},
                        check("selected_id", rows[22]["id"]), check("total", 120),
-                       check("inbox_scroll", scroll), check("notice", "restored", "contains"),
+                       check("inbox_scroll", scroll), check("notice", "remains in Inbox", "contains"),
                        shot("delete-failure-keeps-new-reader"))
 
     def test_deletion_selection_follows_filtered_order_then_clears_empty_reader(self):
