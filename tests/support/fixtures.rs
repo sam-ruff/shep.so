@@ -688,6 +688,39 @@ pub async fn sync_mail(
 ) -> anyhow::Result<(u64, Option<crate::notifications::Arrival>)> {
     let background = std::env::args().any(|arg| arg == "--background-sync");
     let fail_once = std::env::args().any(|arg| arg == "--sync-failure-once");
+    sync_mail_with(store, background, fail_once).await
+}
+
+const BACKGROUND_ARRIVAL_UID: &str = "1.9000";
+
+fn background_arrival() -> anyhow::Result<StoredMail> {
+    parse_mail("preview-work", BACKGROUND_ARRIVAL_UID, "INBOX",
+        b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)
+}
+
+/// The fixture server holds one new Inbox message. It reaches the cache once
+/// through the ledger-aware production path; later checks never re-add a UID
+/// the user has read or moved, as a server listing would not.
+async fn deliver_background_arrival(
+    store: &Store,
+) -> anyhow::Result<Option<crate::notifications::Arrival>> {
+    if store.get::<bool>("preview-arrival-delivered").await? {
+        return Ok(None);
+    }
+    let epoch = store.sync_epoch().await?;
+    let arrival = store
+        .sync_message_since(background_arrival()?, Some(epoch))
+        .await?;
+    store.sync_finished("preview-work".into(), epoch).await?;
+    store.put("preview-arrival-delivered", true).await?;
+    Ok(arrival)
+}
+
+pub async fn sync_mail_with(
+    store: &Store,
+    background: bool,
+    fail_once: bool,
+) -> anyhow::Result<(u64, Option<crate::notifications::Arrival>)> {
     let round = store.get::<u64>("preview-sync-round").await? + 1;
     store.put("preview-sync-round", round).await?;
     tokio::time::sleep(std::time::Duration::from_millis(if background {
@@ -702,8 +735,7 @@ pub async fn sync_mail(
     );
     move_recovery::refresh(store).await?;
     let arrival = if background {
-        store.sync_message(parse_mail("preview-work", "1.9000", "INBOX",
-            b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)?).await?
+        deliver_background_arrival(store).await?
     } else {
         None
     };
@@ -874,4 +906,79 @@ pub fn sftp_fingerprint(host: &str) -> anyhow::Result<String> {
         "SHA256:{}",
         base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes)
     ))
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+
+    async fn inbox_rows(store: &Store) -> Vec<(String, bool)> {
+        let page = store
+            .query(MailQuery {
+                folder: "INBOX".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        page.rows
+            .iter()
+            .map(|mail| (mail.id.clone(), mail.unread))
+            .collect()
+    }
+
+    async fn armed_store() -> Store {
+        let store = Store::memory().unwrap();
+        store
+            .begin_notification_sync("preview-work".into(), "imap:1".into())
+            .await
+            .unwrap();
+        store
+            .finish_notification_sync("preview-work".into(), "imap:1".into())
+            .await
+            .unwrap();
+        store
+    }
+
+    #[tokio::test]
+    async fn background_arrival_is_listed_once_keeps_local_flags_and_never_returns_after_a_move() {
+        let store = armed_store().await;
+        let (round, arrival) = sync_mail_with(&store, true, false).await.unwrap();
+        assert_eq!(round, 1);
+        let arrival = arrival.expect("the first check delivers the fixture arrival");
+        assert_eq!(arrival.subject, "New mail from the background");
+        let rows = inbox_rows(&store).await;
+        assert_eq!(rows.len(), 1);
+        let id = rows[0].0.clone();
+        // A read acknowledged after the listing began survives the repeat.
+        let mail = store.detail(id.clone()).await.unwrap().summary;
+        store
+            .patch_flags(
+                mail.clone(),
+                crate::mail_actions::Flags {
+                    unread: Some(false),
+                    starred: None,
+                },
+            )
+            .await
+            .unwrap();
+        let (_, repeat) = sync_mail_with(&store, true, false).await.unwrap();
+        assert!(repeat.is_none(), "a later check is not a new arrival");
+        assert_eq!(inbox_rows(&store).await, vec![(id.clone(), false)]);
+        // Once a move relocated the identity, a check cannot bring it back.
+        store.remove(id.clone()).await.unwrap();
+        let (_, after_move) = sync_mail_with(&store, true, false).await.unwrap();
+        assert!(after_move.is_none());
+        assert!(inbox_rows(&store).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn manual_checks_deliver_nothing_and_the_first_failing_check_reports_once() {
+        let store = armed_store().await;
+        let failed = sync_mail_with(&store, false, true).await;
+        assert!(failed.is_err());
+        let (round, arrival) = sync_mail_with(&store, false, true).await.unwrap();
+        assert_eq!(round, 2);
+        assert!(arrival.is_none());
+        assert!(inbox_rows(&store).await.is_empty());
+    }
 }
