@@ -224,7 +224,7 @@ function Invoke-ShepInstall {
     try {
         $metadata = Join-Path $stage 'release.json'
         try { Receive-ShepDownload $endpoint $metadata }
-        catch { throw 'No release could be downloaded. Check https://github.com/sam-ruff/shep.so/releases and try again.' }
+        catch { throw ('No release could be downloaded. Check https://github.com/sam-ruff/shep.so/releases and try again. (' + $_.Exception.Message + ')') }
         $release = Select-ShepRelease (Get-Content -Raw -LiteralPath $metadata | ConvertFrom-Json) $environment.Architecture $Version
         $archive = Join-Path $stage 'release.tar.gz'; $checksums = Join-Path $stage 'SHA256SUMS'
         Write-Host "Downloading Shep $($release.Version) for Windows..."

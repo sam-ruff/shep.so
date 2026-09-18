@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev libdbus-1-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
     libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libgl1-mesa-dev \
     libvulkan1 mesa-vulkan-drivers libgl1-mesa-dri libegl1 \
-    python3 python3-pil python3-gi gir1.2-gtk-3.0 \
+    python3 python3-pil python3-gi python3-dbus gir1.2-gtk-3.0 \
     xvfb xauth x11-utils xdotool zenity xclip dbus dbus-x11 dbus-user-session systemd \
     gnome-shell ubuntu-session gnome-settings-daemon \
     gnome-shell-extension-ubuntu-dock gnome-shell-extension-appindicator \
