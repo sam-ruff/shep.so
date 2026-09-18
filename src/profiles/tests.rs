@@ -117,10 +117,10 @@ async fn legacy_cache_and_credentials_are_preserved_until_an_explicit_switch() {
     let (revision, current) = catalog.active().await.unwrap();
     assert_eq!(current.id, Id::Legacy);
     assert_eq!(current.id.scope(), Scope::Legacy);
-    assert_eq!(
-        catalog.path(current.id),
-        directory.path().join("shep.sqlite")
-    );
+    // The catalog root is canonical, which on Windows adds the `\\?\` prefix
+    // and the on-disk casing of the temporary folder.
+    let root = directory.path().canonicalize().unwrap();
+    assert_eq!(catalog.path(current.id), root.join("shep.sqlite"));
     let id = installed(&catalog, "Imported work").await;
     assert_eq!(catalog.active().await.unwrap().1.id, Id::Legacy);
     assert!(catalog.activate(Id::Imported(id), revision).await.is_err());
@@ -134,9 +134,7 @@ async fn legacy_cache_and_credentials_are_preserved_until_an_explicit_switch() {
     assert_eq!(Id::Imported(id).scope(), Scope::Profile(id));
     assert_eq!(
         catalog.path(Id::Imported(id)),
-        directory
-            .path()
-            .join("profiles")
+        root.join("profiles")
             .join(id.to_string())
             .join("shep.sqlite")
     );

@@ -1,5 +1,28 @@
 # Completion audit
 
+## Windows test failures classified and fixed, 18 September 2026
+
+The first Windows test run (`dac5dfb`, 850 passed, 26 failed) was worked
+from the CI panics, since those tests cannot run on this Linux host. FTP and
+FTPS wire tests (ten) failed because native-tls on Windows imports PKCS#8
+identities through the CryptoAPI RSA provider and rejected the loopback
+fixture's ECDSA key ("ASN1 bad tag value met"); the fixture now signs with a
+once-per-process RSA key (`26b1f8f`). Every cache-cipher publication and
+bootstrap test (fourteen) failed because the checkpoint flushed the main
+database through a read-only handle, which Windows refuses ("Access is
+denied"); the flush now uses a read-write handle on every platform
+(`4d6b4f6`). The database export reported the canonical `\\?\` path instead
+of the destination the user chose, and the profiles catalog test compared a
+raw temporary path against the canonical root; both now compare like with
+like, and the export reports the chosen path (`3a92df3`, a small behaviour
+change recorded in `AGENTS.md`). Merged as `1dcaf98`. Linux hook suite
+1,392 executions green three times; `cargo check` and Clippy clean for the
+`x86_64-pc-windows-gnu` target. Limitations: nothing was executed on
+Windows, so the next self-hosted Windows job is the confirmation; each test
+failed at its first Windows-specific point, so later differences in the
+same tests were masked; the `rsa` dev-dependency is the pre-release version
+already in the tree through russh and should move with it.
+
 ## Live e2e mailbox and live rapid flows, 18 September 2026
 
 A disposable `e2e@shep.so` mailbox on the shep.so Stalwart server (declared
