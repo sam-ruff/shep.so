@@ -779,6 +779,27 @@ class FolderHarnessTests(unittest.TestCase):
         start=next(t for t in harness.TOOLS if t["name"]=="desktop.start")
         self.assertEqual(start["inputSchema"]["properties"]["folder_actions"]["enum"],["slow","fail","uncertain"])
 
+    def test_live_launch_needs_every_variable_and_takes_no_fixture_options(self):
+        desktop = harness.Desktop()
+        live = {name: "value" for name in harness.LIVE_VARIABLES}
+        with patch.object(harness.subprocess, "Popen") as launch:
+            with patch.dict(os.environ, {**live, "SHEP_LIVE_IMAP_PASSWORD": " "}):
+                with self.assertRaisesRegex(RuntimeError, "SHEP_LIVE_IMAP_PASSWORD"):
+                    desktop.start(live_imap=True)
+            with patch.dict(os.environ, live):
+                for options in ({"tray": "missing"}, {"print_browser": "pdf"}, {"profile_sync": "empty"}):
+                    with self.assertRaisesRegex(ValueError, "no tray, print or profile"):
+                        desktop.start(live_imap=True, **options)
+                with self.assertRaisesRegex(ValueError, "must be a boolean"):
+                    desktop.start(live_imap="yes")
+            launch.assert_not_called()
+        self.assertEqual(harness.live_variables_missing({"SHEP_LIVE_IMAP_HOST": "mail.example"}),
+                         [name for name in harness.LIVE_VARIABLES if name != "SHEP_LIVE_IMAP_HOST"])
+        self.assertEqual(harness.live_launch_args("/bin/shep", "/run/state.json"),
+                         ["/bin/shep", "--live-imap", "--test-state", "/run/state.json"])
+        start = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(start["inputSchema"]["properties"]["live_imap"], {"type": "boolean", "default": False})
+
 
 if __name__ == "__main__":
     unittest.main()
