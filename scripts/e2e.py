@@ -3,7 +3,9 @@
 import base64
 import argparse
 import fnmatch
+import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +16,9 @@ import sqlite3
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
+_live_spec = importlib.util.spec_from_file_location("live_mailbox", ROOT / "scripts/live_mailbox.py")
+live_mailbox = importlib.util.module_from_spec(_live_spec)
+_live_spec.loader.exec_module(live_mailbox)
 
 
 class McpClient:
@@ -6355,8 +6360,8 @@ class NativeFlows(unittest.TestCase):
         self.restart_and_verify(total, "rapid-single-after-restart")
         self.assert_folder_contents(moved, total)
 
-    def rapid_move_dialog_sequence(self, slow=False, shots=()):
-        """Move rows to Projects through the dialog, Undo groups mid-sequence, then move the same and neighbouring rows again."""
+    def rapid_move_dialog_sequence(self, slow=False, shots=(), destination="Projects"):
+        """Move rows to a folder through the dialog, Undo groups mid-sequence, then move the same and neighbouring rows again."""
         total = self.mcp.call("desktop.state")["total"]
         moved = []
         plan = [("move", 1), ("move", 1), ("undo", None), ("move", 0), ("move", 2), ("move", 2),
@@ -6367,7 +6372,7 @@ class NativeFlows(unittest.TestCase):
                 target = before["mail_rows"][row]
                 self.mcp.batch(click(400, mail_row_y(row, before)), check("selected_id", target["id"]),
                                key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
-                               type_text("Projects"), check("move_enter_destination", "Projects"), key("Return"),
+                               type_text(destination), check("move_enter_destination", destination), key("Return"),
                                check("dialog", None), check("total", total - 1), check("action_toast.undo", True),
                                *self.page_refilled(total - 1))
                 total -= 1
@@ -6566,6 +6571,180 @@ class NativeFlows(unittest.TestCase):
         self.assert_folder_contents(moved, total)
         self.restart_and_verify(total, "rapid-drag-after-restart")
         self.assert_folder_contents(moved, total)
+
+    # Live variant of the rapid family against the disposable e2e mailbox.
+    # Skipped unless the SHEP_LIVE_* variables are set; never a personal mailbox.
+    LIVE_SYNC_TIMEOUT = 120
+    LIVE_SETTLE_TIMEOUT = 30
+    LIVE_ARRIVAL_TIMEOUT = 5
+
+    def live_start(self, name):
+        settings = live_mailbox.settings_from_environment(os.environ)
+        if settings is None:
+            self.skipTest("Set the SHEP_LIVE_* variables to run against the disposable e2e mailbox")
+        started = time.monotonic()
+        self.addCleanup(lambda: print(f"\nLive timing {name}: {time.monotonic() - started:.1f}s", flush=True))
+        self.live = live_mailbox.Mailbox(settings)
+        self.addCleanup(self.live.close)
+        # The shared mailbox is left wiped, never with a run's Archive or user folders.
+        self.addCleanup(self.live.wipe)
+        seeded = self.live.reset()
+        self.assertEqual(seeded["INBOX"]["total"], live_mailbox.INBOX_COUNT)
+        self.assertEqual(seeded[live_mailbox.DELETED_FOLDER]["total"], live_mailbox.DELETED_COUNT)
+        self.assertFalse(self.live.has_folder("Archive"), "each run starts without an Archive folder")
+        print(f"\nLive seed {name}: {time.monotonic() - started:.1f}s", flush=True)
+        result = self.mcp.call("desktop.start", live_imap=True, desktop_badges=True)
+        print(f"Live evidence {name}: {result['artifacts']}", flush=True)
+        state = self.wait_state(lambda s: s["total"] == live_mailbox.INBOX_COUNT and s["mail_pending"] == 0
+                                and s["store_truth"]["agrees"], timeout=self.LIVE_SYNC_TIMEOUT)
+        self.assertEqual(state["total"], live_mailbox.INBOX_COUNT, f"first sync did not finish: {json.dumps(state['store_truth'])[:600]}")
+        self.assertIsNone(state["notice"])
+        print(f"Live first sync {name}: {time.monotonic() - started:.1f}s", flush=True)
+        newest = state["mail_rows"][0]
+        self.mcp.batch(click(400, mail_row_y(0, state)), check("selected_id", newest["id"]), *self.settled(), shot(f"live-{name}-synced"))
+        return self.assert_live_matches(total=live_mailbox.INBOX_COUNT, folder="INBOX")
+
+    def live_sidebar_click(self, label):
+        """Click a sidebar row by its current label: rows sit 39 px apart below Inbox at y=278, with a 20 px gap before the account header."""
+        labels = self.mcp.call("desktop.state")["sidebar_labels"]
+        index = next(i for i, value in enumerate(labels) if value == label or value.startswith(label + " ("))
+        account = labels.index(self.live.settings.user)
+        return click(85, 278 + 39 * index + (20 if index >= account else 0))
+
+    def assert_live_matches(self, total=None, folder=None):
+        """Store truth, drawn rows, the badge and the server's folder totals all agree."""
+        self.wait_state(lambda s: s["mail_pending"] == 0 and s["store_truth"]["agrees"] and s["drawn_rows"]["consistent"],
+                        timeout=self.LIVE_SETTLE_TIMEOUT)
+        state = self.assert_store_matches(total=total, folder=folder)
+        server = self.live.all_counts()
+        held = {}
+        for entry in state["store_truth"]["truth"]["folders"]:
+            held[entry["folder"]] = held.get(entry["folder"], 0) + entry["total"]
+        for name, counts in server.items():
+            self.assertEqual(held.get(name, 0), counts["total"], f"{name}: store holds {held.get(name, 0)}, server {counts}")
+        for name in held:
+            self.assertIn(name, server, f"the store lists {name}, which the server does not have")
+        badge = self.wait_state(lambda s: (s.get("desktop_badge") or {}).get("count") == server["INBOX"]["unread"],
+                                timeout=self.LIVE_SETTLE_TIMEOUT).get("desktop_badge") or {}
+        self.assertEqual(badge.get("count"), server["INBOX"]["unread"], f"badge {badge} vs server unread {server['INBOX']}")
+        return state
+
+    def assert_live_folder(self, label, subjects, inbox_total, server_name=None):
+        """The sidebar folder, the store and the server folder hold exactly these subjects."""
+        expected = sorted(subjects)
+        server_name = server_name or label
+        self.mcp.batch(self.live_sidebar_click(label), check("folder", label), check("total", len(expected)), *self.settled())
+        state = self.assert_live_matches(total=len(expected), folder=label)
+        self.assertEqual(sorted(mail["subject"] for mail in state["mail_rows"]), expected)
+        held = sorted(self.live.subjects(server_name)) if self.live.has_folder(server_name) else []
+        self.assertEqual(held, expected, f"server folder {server_name} differs from the list")
+        self.mcp.batch(self.SIDEBAR_INBOX, check("folder", "INBOX"), check("total", inbox_total), *self.settled())
+        return self.assert_live_matches(total=inbox_total, folder="INBOX")
+
+    def assert_live_special_folders(self, moved, inbox_total):
+        """Archive holds the archived subjects; Deleted Items the trashed ones plus the seeded four."""
+        archived = [subject for subject, destination in moved if destination == "Archive"]
+        trashed = [subject for subject, destination in moved if destination == "Trash"]
+        seeded = [message.subject for message in live_mailbox.deleted_messages()]
+        self.assert_live_folder("Archive", archived, inbox_total)
+        return self.assert_live_folder("Trash", trashed + seeded, inbox_total, live_mailbox.DELETED_FOLDER)
+
+    def test_live_archive_and_trash_alternate_with_undo_every_third_action(self):
+        state = self.live_start("single")
+        first = state["mail_rows"][0]
+        self.mcp.batch(key("Delete"), check("total", 119), check("action_toast.label", "Archived 1 message"), *self.settled())
+        self.assert_live_matches(total=119, folder="INBOX")
+        self.assertTrue(self.live.has_folder("Archive"), "the first archive creates Archive on the server")
+        self.assertEqual(self.live.subjects("Archive"), [first["subject"]])
+        second = self.mcp.call("desktop.state")["mail_rows"][0]
+        self.mcp.batch(key("ctrl+d"), check("total", 118), check("action_toast.label", "Deleted 1 message"), *self.settled())
+        self.assert_live_matches(total=118, folder="INBOX")
+        self.assertIn(second["subject"], self.live.subjects(live_mailbox.DELETED_FOLDER), "delete lands in Deleted Items")
+        total, moved = self.rapid_single_actions(12, shots=(2, 7, 11))
+        moved = [(first["subject"], "Archive"), (second["subject"], "Trash")] + moved
+        self.assertEqual(total, 120 - len(moved))
+        self.assert_live_special_folders(moved, total)
+        self.restart_and_verify(total, "live-single-after-restart")
+        self.assert_live_special_folders(moved, total)
+
+    def test_live_move_dialog_to_a_sidebar_created_folder_with_undo(self):
+        self.live_start("move")
+        self.open_new_folder_with_keyboard()
+        self.mcp.batch(check("folder_creation.account", "live-e2e"), type_text("Receipts"), key("Return"),
+                       check("dialog", None), {**check("folder_creation.busy", False), "timeout_ms": 5000},
+                       {**check("sidebar_labels", "Receipts", "contains"), "timeout_ms": 5000},
+                       check("folder_creation.saved", []), shot("live-move-folder-created"))
+        self.assertTrue(self.live.has_folder("Receipts"), "the sidebar creates the folder on the server")
+        # The "Folder created." confirmation is a success notice that clears itself after 7 s.
+        self.assertIsNone(self.wait_state(lambda s: s["notice"] is None, timeout=12)["notice"])
+        self.mcp.batch(self.SIDEBAR_INBOX, check("folder", "INBOX"), check("total", 120), *self.settled())
+        self.assert_live_matches(total=120, folder="INBOX")
+        total, moved = self.rapid_move_dialog_sequence(shots=(2, 6, 11), destination="Receipts")
+        subjects = [mail["subject"] for mail in moved]
+        self.assert_live_folder("Receipts", subjects, total)
+        self.restart_and_verify(total, "live-move-after-restart")
+        self.assert_live_folder("Receipts", subjects, total)
+
+    def test_live_bulk_archive_and_trash_with_undo_mid_batch(self):
+        self.live_start("bulk")
+        total = self.rapid_bulk_sequence()
+        self.assert_live_matches(total=total, folder="INBOX")
+        self.assert_live_special_folders([], total)
+        self.restart_and_verify(total, "live-bulk-after-restart")
+        self.assert_live_special_folders([], total)
+
+    def test_live_restart_while_moves_are_in_flight(self):
+        state = self.live_start("restart")
+        rows = state["mail_rows"]
+        self.mcp.batch(key("Delete"), check("total", 119), check("selected_id", rows[1]["id"]),
+                       key("ctrl+d"), check("total", 118), check("selected_id", rows[2]["id"]),
+                       key("Delete"), check("total", 117), shot("live-restart-pending"),
+                       {"type": "restart"}, check("ready", True), check("page_loaded", True),
+                       check("total", 117), *self.settled(), shot("live-restart-landed"))
+        moved = [(rows[0]["subject"], "Archive"), (rows[1]["subject"], "Trash"), (rows[2]["subject"], "Archive")]
+        state = self.assert_live_matches(total=117, folder="INBOX")
+        subjects = [mail["subject"] for mail in state["mail_rows"]]
+        for subject, _ in moved:
+            self.assertNotIn(subject, subjects)
+        self.assert_live_special_folders(moved, 117)
+
+    def test_live_idle_arrival_updates_the_list_and_badge_within_five_seconds(self):
+        self.live_start("idle")
+        # The owned bus has no desktop notification service, so switch popups
+        # and sound off through Preferences before real mail arrives.
+        self.open_notification_preferences()
+        self.mcp.batch(click(288, 374), check("notifications.settings.popups", False),
+                       click(288, 413), check("notifications.settings.sound", False),
+                       {**check("preferences_saved", True), "timeout_ms": 5000},
+                       key("ctrl+1"), check("tab", "Mail"), wait(120), *self.settled())
+        self.assert_live_matches(total=120, folder="INBOX")
+        before = self.live.counts("INBOX")
+        subject = self.live.deliver(1000)
+        delivered = time.monotonic()
+        state = self.wait_state(lambda s: s["mail_rows"] and s["mail_rows"][0]["subject"] == subject,
+                                timeout=self.LIVE_ARRIVAL_TIMEOUT)
+        elapsed = time.monotonic() - delivered
+        print(f"\nLive arrival visible after {elapsed:.2f}s", flush=True)
+        self.assertEqual(state["mail_rows"][0]["subject"], subject, f"the appended message did not arrive within {self.LIVE_ARRIVAL_TIMEOUT}s")
+        self.assertLess(elapsed, self.LIVE_ARRIVAL_TIMEOUT)
+        self.mcp.batch(*self.settled(), shot("live-idle-arrived"))
+        state = self.assert_live_matches(total=121, folder="INBOX")
+        self.assertEqual(self.live.counts("INBOX"), {"total": before["total"] + 1, "unread": before["unread"] + 1})
+        self.assertTrue(state["mail_rows"][0]["unread"])
+        # Reading it on the real server drops the unread count and the badge.
+        self.mcp.batch(click(400, mail_row_y(0, state)), check("selected", subject), check("read_candidate", subject),
+                       click(400, mail_row_y(1, state)), check("mail_rows.0.unread", False), *self.settled())
+        self.assert_live_matches(total=121, folder="INBOX")
+        self.assertEqual(self.live.counts("INBOX")["unread"], before["unread"])
+        # A second arrival while acting, then archive and Undo the arrival.
+        second = self.live.deliver(1001)
+        self.mcp.batch(click(400, mail_row_y(0, state)), key("Delete"), check("total", 121, "lte"), check("action_toast.label", "Archived 1 message"))
+        state = self.wait_state(lambda s: s["mail_rows"] and s["mail_rows"][0]["subject"] == second, timeout=self.LIVE_ARRIVAL_TIMEOUT)
+        self.assertEqual(state["mail_rows"][0]["subject"], second)
+        self.mcp.batch(*self.settled(), self.UNDO, check("action_toast.label", "Restored 1 message"), *self.settled(), shot("live-idle-second-arrival"))
+        state = self.assert_live_matches(total=122, folder="INBOX")
+        self.assertEqual([mail["subject"] for mail in state["mail_rows"][:2]], [second, subject])
+        self.assertEqual(self.live.subjects("Archive") if self.live.has_folder("Archive") else [], [])
 
 
 def matches_patterns(name, arguments):

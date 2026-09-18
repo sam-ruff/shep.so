@@ -4,6 +4,7 @@ mod bulk_history;
 #[path = "html_mail.rs"]
 mod html_mail;
 mod large_incoming;
+pub mod live;
 mod move_recovery;
 pub mod passwords;
 mod reading_mail;

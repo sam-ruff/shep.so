@@ -369,6 +369,36 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         } else {
             credentials
         };
+        // A live launch keeps the production engine (demo stays false) and
+        // only swaps the keychain for a memory-only one holding the account.
+        #[cfg(feature = "test-support")]
+        let credentials = if demo {
+            credentials
+        } else {
+            let scope = profiles
+                .as_ref()
+                .map(|p| p.current.scope())
+                .unwrap_or_default();
+            let live = async {
+                match crate::test_support::live::settings()? {
+                    None => Ok(None),
+                    Some(settings) => {
+                        settings.seed(&store).await?;
+                        settings.credentials(scope).await.map(Some)
+                    }
+                }
+            };
+            match live.await {
+                Ok(Some(credentials)) => credentials,
+                Ok(None) => credentials,
+                Err(error) => {
+                    let _ = output
+                        .send(Event::Error(format!("Live launch failed: {error:#}")))
+                        .await;
+                    return;
+                }
+            }
+        };
         let engine = Engine {
             profiles,
             credentials: credentials.clone(),
