@@ -48,7 +48,9 @@ Reproduced on clean runs of `3dabf16`, `9039d70` and `a3654ed`; documentation CI
 
 ## Highest priority - stale running instance after an install
 
-- [ ] **18 September launch handed over to a five-day-old process:** Sam kept seeing the fixed namespace error and "The work queue is full" on 18 September because the running Shep (started 13 September, `/proc/<pid>/exe` pointing at the deleted pre-install binary) had been reused by the activation handover when he launched after installing at 11:11. Make the handover notice a stale owner: when the launching binary differs from the owner's executable (deleted or a different inode or hash), the new launch must not hand over silently; either ask the running instance to quit and restart itself, or show a plain notice that the installed update needs Quit and reopen. `scripts/install-linux.sh` should also say so when a Shep process is running. Add a native activation scenario for the stale-owner case.
+**18 September delivered:** a launch from a newer binary now restarts the running owner through the local socket and takes over, or shows a plain quit-and-reopen notice when the owner cannot answer (`b07484e`); the installer prints the same advice. Sam's current process predates the identity, so this one time he must quit it from the tray himself; from this build on the handover is automatic.
+
+- [ ] **18 September settings-search native regression:** `test_profile_sync_native_invalid_local_state_keeps_close_and_navigation_available` fails on `main` because the settings search for "shared profile" now returns two results (`Profiles and sync`, `Profiles`) after the 11 September catalogue change, while the 9 September scenario expects one. Decide whether the catalogue or the scenario is right and fix the other; do not weaken the scenario.
 
 ## Highest priority - extended move and undo e2e flows
 

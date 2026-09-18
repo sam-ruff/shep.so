@@ -1,5 +1,40 @@
 # Completion audit
 
+## Stale running instance after an install, 18 September 2026
+
+Sam kept seeing errors fixed days earlier because the running Shep dated
+from 13 September: today's install replaced the binary, and the next launch
+handed over to the old process. The launch owner now publishes its
+executable identity (a digest of the path plus device, inode, size and
+modification time, read through `/proc/self/exe`) beside its endpoint. A
+launch from a different binary sends a restart request over the existing
+local socket; the owner acknowledges and quits exactly as the tray's Quit
+does (saving, journalled work left, bounded exit), and the new launch takes
+the lock and opens on the new build, so the user sees one window on the
+new version. If the owner does not answer within 3 seconds, holds the lock
+20 seconds after agreeing, or published no identity (a build older than this
+one, such as the process Sam had running), the new process shows a plain
+notice: "Shep is already running an older version. Quit it from the tray and
+open Shep again." The owner is never signalled or killed; an identical
+binary keeps the previous handover unchanged. `scripts/install-linux.sh`
+prints a one-line quit-and-reopen message when a Shep still runs the
+replaced binary.
+
+Lane commits `03c3daf` and merge `e9300b0`, merged as `b07484e`. Tests: 13
+Rust tests (identity same, replaced and deleted; signal ordering; mock and
+real-socket protocol with restart; ignored request and exit-bound notices;
+pre-identity owner), two Python tests (harness validation, installer message
+against a fake `/proc`), five native `test_activation_native_*` scenarios
+through new `desktop.launch_second` and `desktop.close_second` harness
+tools, with reviewed screenshots of the notice window and the replacement
+window on the new pid; 14 tray and the GNOME launcher natives pass; 1,405
+hook executions; 165 Python tests. Limitations: the first launch after
+installing this build over a pre-identity owner shows the notice rather
+than restarting it; the identity is device and inode based on Linux, so a
+copy of the same build counts as different; Windows and macOS identity
+paths compile but were not executed; the harness now needs the state
+file's pid, so it no longer drives binaries older than this commit.
+
 ## Windows test failures classified and fixed, 18 September 2026
 
 The first Windows test run (`dac5dfb`, 850 passed, 26 failed) was worked
