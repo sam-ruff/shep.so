@@ -182,6 +182,8 @@ impl CommandSender {
             | Command::BulkResume(_) => &self.selections,
             Command::BulkRun(_) => &self.bulk,
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,
+            #[cfg(feature = "test-support")]
+            Command::StoreTruth(..) => &self.reads,
             Command::Query(..)
             | Command::BackupHistory(..)
             | Command::Profiles(..)
