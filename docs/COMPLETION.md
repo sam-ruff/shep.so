@@ -1,5 +1,23 @@
 # Completion audit
 
+## Windows binaries start again: Common Controls manifest, 18 September 2026
+
+Every Windows binary, the release `shep.exe` and each test binary, failed at
+process start with `STATUS_ENTRYPOINT_NOT_FOUND`. The failure-only import
+diagnostic added to CI (`44d4a42`, corrected for forwarded exports in
+`95c86bc`) named the single absent import: `comctl32.dll!GetWindowSubclass`,
+used by the taskbar badge adapter in `src/desktop_badge/windows.rs`. Those
+subclassing functions are exported by name only from Common Controls v6,
+which a process receives only when its manifest declares that dependency,
+and nothing embedded a manifest. `build.rs` now compiles
+`assets/windows/shep.rc`, which embeds `assets/windows/shep.manifest`
+declaring `Microsoft.Windows.Common-Controls` 6.0.0.0, into every target
+through `embed-resource`; the crt-static `RUSTFLAGS` in CI and
+`scripts/release.py` are unchanged. Evidence so far: `cargo check --target
+x86_64-pc-windows-gnu` compiles the resource with `windres` on Linux and the
+compiled resource contains the dependency. The MSVC test run and an
+installed Windows release remain to be confirmed.
+
 ## Safe search query kept, search budgets raised, 15 September 2026
 
 Sam chose the safe and correct relevance query (per-tier relations scored by
