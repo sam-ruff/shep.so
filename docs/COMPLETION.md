@@ -71,8 +71,10 @@ declaring `Microsoft.Windows.Common-Controls` 6.0.0.0, into every target
 through `embed-resource`; the crt-static `RUSTFLAGS` in CI and
 `scripts/release.py` are unchanged. Evidence so far: `cargo check --target
 x86_64-pc-windows-gnu` compiles the resource with `windres` on Linux and the
-compiled resource contains the dependency. The MSVC test run and an
-installed Windows release remain to be confirmed.
+compiled resource contains the dependency. Confirmed on the `dac5dfb` run:
+the MSVC test binaries start and run, 850 tests pass and 26 fail on
+Windows-specific file, socket and ownership semantics (tracked in TODO). An
+installed Windows release remains to be confirmed.
 
 ## Safe search query kept, search budgets raised, 15 September 2026
 
