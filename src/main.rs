@@ -7,6 +7,10 @@ fn main() -> anyhow::Result<()> {
         shep::activation::Launch::Primary(owner) => Some(owner.signal()),
         shep::activation::Launch::Activated => return Ok(()),
         shep::activation::Launch::Independent => None,
+        shep::activation::Launch::Stale => {
+            tracing::warn!("{}", shep::activation::STALE_OWNER_NOTICE);
+            return Ok(shep::ui::update_notice::run()?);
+        }
     };
     shep::ui::run(signal)?;
     drop(launch);

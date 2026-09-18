@@ -70,7 +70,36 @@ def pin_gnome(remove=False):
     subprocess.run(["gsettings", "set", "org.gnome.shell", "favorite-apps", repr(favorites)], check=True)
 
 
-def install(binary, prefix, data, uninstall=False, pin=False):
+def running_previous_instances(destination, process_root=Path("/proc")):
+    """Processes still executing a binary at this path other than the installed file; never signalled."""
+    try:
+        installed = os.stat(destination)
+        processes = list(process_root.iterdir())
+    except OSError:
+        return []
+    matches = []
+    for process in processes:
+        if not process.name.isdigit():
+            continue
+        try:
+            executable = os.readlink(process / "exe")
+        except OSError:
+            continue
+        if executable == f"{destination} (deleted)":
+            matches.append(int(process.name))
+            continue
+        if executable != str(destination):
+            continue
+        try:
+            running = os.stat(process / "exe")
+        except OSError:
+            continue
+        if (running.st_dev, running.st_ino) != (installed.st_dev, installed.st_ino):
+            matches.append(int(process.name))
+    return sorted(matches)
+
+
+def install(binary, prefix, data, uninstall=False, pin=False, process_root=Path("/proc")):
     prefix, data = prefix.resolve(), data.resolve()
     destination = prefix / "bin" / "shep"
     desktop = data / "applications" / f"{APP_ID}.desktop"
@@ -103,6 +132,10 @@ def install(binary, prefix, data, uninstall=False, pin=False):
         if pin:
             pin_gnome()
         print("Open Shep from your applications menu, then choose Add to Favorites / Pin to panel.")
+        running = running_previous_instances(destination, process_root)
+        if running:
+            pids = ", ".join(str(pid) for pid in running)
+            print(f"Shep is still running the previous version (pid {pids}). Quit it from the tray and open Shep again to use the update.")
     if shutil.which("update-desktop-database"):
         subprocess.run(["update-desktop-database", str(desktop.parent)], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

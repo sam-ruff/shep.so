@@ -274,6 +274,30 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(desktop.mouse_held)
         self.assertEqual(desktop.command.call_args_list[-1].args, ("xdotool", "mouseup", "1"))
 
+    def test_activation_fixture_and_second_launch_are_validated_before_any_process(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            with self.assertRaisesRegex(ValueError, "activation fixture"):
+                desktop.start(activation="ignore")
+            with self.assertRaisesRegex(RuntimeError, "Start an owned fixture"):
+                desktop.launch_second()
+            with self.assertRaisesRegex(RuntimeError, "No second copy"):
+                desktop.close_second()
+            desktop.app, desktop.launch_args = Mock(), ["owned-fixture"]
+            desktop.app.poll.return_value = None
+            try:
+                for identity in (2, "", "abc", "1" * 19, "-1"):
+                    with self.assertRaisesRegex(ValueError, "decimal inode"):
+                        desktop.launch_second(identity=identity)
+            finally:
+                desktop.app = None
+            launch.assert_not_called()
+        start = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(start["inputSchema"]["properties"]["activation"]["enum"], ["hold-restart", "legacy"])
+        second = next(t for t in harness.TOOLS if t["name"] == "desktop.launch_second")
+        self.assertEqual(second["inputSchema"]["properties"]["identity"]["pattern"], "^[0-9]{1,18}$")
+        self.assertTrue(any(t["name"] == "desktop.close_second" for t in harness.TOOLS))
+
     def test_persistent_fixture_and_crash_mode_require_booleans(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

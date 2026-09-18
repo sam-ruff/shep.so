@@ -815,6 +815,25 @@ its explicit `crash=true` option kills only the owned app. Restart is batchable.
 Keep the graceful-close/crash native tests and harness ownership/timeout tests.
 See [xdotool's close/quit distinction](https://github.com/jordansissel/xdotool/blob/main/xdotool.pod).
 
+Launch ownership (`src/activation.rs`) publishes the owner's executable identity
+beside its endpoint: a digest of the path plus device, inode, size and
+modification time (bounded, content-free; read through `/proc/self/exe` on
+Linux so a replaced binary still identifies as the old file). A launch whose own
+identity differs sends the owner a restart request over the same socket instead
+of the plain Open; the owner acknowledges and leaves exactly as the tray's Quit
+does, and the launch takes the lock and shows the window on the new build. An
+owner that does not answer within three seconds, or keeps the lock twenty
+seconds after agreeing, or published no identity at all (a build from before
+this protocol), gets the `update_notice` window instead: "Shep is already
+running an older version. Quit it from the tray and open Shep again." Nothing
+ever signals the owner process. The same identity keeps today's handover; a
+launch that cannot identify itself also hands over and logs a warning.
+`SHEP_TEST_BINARY_IDENTITY` (an inode, or `none`) spoofs the identity only in
+`test-support` demo launches, and `--hold-restart-requests` makes a fixture owner
+ignore the request; `desktop.launch_second` and `desktop.close_second` drive the
+saved `test_activation_native_*` scenarios and `scripts/install-linux.sh` reports
+a Shep still running the replaced binary without touching it.
+
 Continue must clear a group's persisted pause before waking the coalesced worker.
 It must not replay completed receipts or bypass the worker's execution lease.
 History fixture seeds are setup data, never an action interface; pagination,
