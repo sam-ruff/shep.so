@@ -305,6 +305,8 @@ pub struct Preferences {
     pub expanded_folders: std::collections::HashMap<String, std::collections::HashSet<String>>,
     pub collapsed_drafts: bool,
     pub cross_account_moves: bool,
+    /// Offer other IMAP accounts' folders in the Move chooser while typing.
+    pub foreign_move_folders: bool,
     pub reader_font_size: u16,
     pub interface_scale: u16,
     pub tooltips: bool,
@@ -360,6 +362,7 @@ impl Default for Preferences {
             expanded_folders: Default::default(),
             collapsed_drafts: false,
             cross_account_moves: false,
+            foreign_move_folders: false,
             reader_font_size: 14,
             interface_scale: 100,
             tooltips: true,

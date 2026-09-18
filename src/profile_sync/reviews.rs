@@ -50,6 +50,7 @@ impl Review {
             SettingKey::GroupConversations => "Conversation grouping",
             SettingKey::DesktopBadges => "Unread badges",
             SettingKey::Tooltips => "Tooltips",
+            SettingKey::ForeignMoveFolders => "Other accounts' folders when moving",
             _ => "Shared preference",
         }
     }

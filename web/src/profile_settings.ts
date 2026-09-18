@@ -90,6 +90,7 @@ export function describeSetting(key: SettingKey, value: unknown): string {
     right_swipe: "Right swipe",
     sender_pictures: "Sender pictures",
     tooltips: "Tooltips",
+    foreign_move_folders: "Other accounts' folders when moving",
   };
   const shown =
     value === undefined
