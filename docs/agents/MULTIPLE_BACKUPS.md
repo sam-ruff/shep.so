@@ -194,7 +194,10 @@ passphrase/decryption/merge path. Retention verifies the archive and exact owned
 folder contents before deletion, preserving folders with unrelated files.
 
 Protocol tests use an object-scoped loopback peer with a bounded file-state owner
-and generated fixture certificates. Native preview continues to reject FTP
+and generated fixture certificates. The fixture certificate uses an RSA key
+generated once per test process, because native-tls on Windows (Schannel)
+imports PKCS#8 identities through the CryptoAPI RSA provider and rejects an
+ECDSA key with "ASN1 bad tag value met". Native preview continues to reject FTP
 connections and cloud writes. Live FTP/FTPS servers, real OS-keychain sessions and
 Windows/macOS execution remain separate from these checks. Combined runs and
 optional formats are described below; richer persistent history remains R32 work.
