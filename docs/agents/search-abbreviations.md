@@ -37,6 +37,17 @@ catalogue words and their field weights.
 Preferences abbreviations match individual indexed words; folder abbreviations
 can span path segments, as in `pjarch` for `Projects/Archive`.
 
+When Move also searches other accounts' folders, each foreign row adds 15 to
+its label score. That is more than the exact-leaf step of 10, so a folder in
+the current account whose leaf equals the query still comes first, and less
+than the prefix band starting at 20, so an exact or prefix match in another
+account precedes any substring, abbreviation or typo match at home. With
+`arch` against a local `Archive` and `Archives`, a foreign `Archive` and a local
+`Projects/Archive`, the order is local `Archive` (23), `Archives` (24), foreign
+`Archive` (38), `Projects/Archive` (48); with `archive` it is local `Archive`
+(0), `Projects/Archive` (10), foreign `Archive` (15), `Archives` (21). Foreign
+rows only appear while the search box has text.
+
 Mail uses SQLite FTS5 and field-weighted BM25 within each tier. Subject, body and
 sender weights are 2.0, 1.0 and 0.3. Phrase and literal relations are computed
 once, with a shared relation for single-term queries. The list and frozen bulk

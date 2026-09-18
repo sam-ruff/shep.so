@@ -30,6 +30,8 @@ pub(super) enum Intent {
     Move {
         account: Option<String>,
         folder: String,
+        /// Chosen from another account's rows, so even one message is reviewed.
+        foreign: bool,
     },
     Read,
     Star,
@@ -146,6 +148,10 @@ impl App {
         self.dialog = Some(Dialog::BulkReview);
         self.focused_input = None;
         self.pending_focus = None;
+    }
+    #[cfg(test)]
+    pub(super) fn bulk_action(&self) -> Option<&BulkAction> {
+        self.bulk.action.as_ref()
     }
     pub(super) fn cancel_bulk_review(&mut self) {
         if let Some(review) = self.bulk.review.take() {
@@ -407,10 +413,11 @@ impl App {
                             self.bulk.retiring = Some(review.id);
                             return;
                         };
+                        let foreign = matches!(intent, Intent::Move { foreign: true, .. });
                         self.bulk.action = Some(match intent {
-                            Intent::Move { account, folder } => {
-                                BulkAction::Move { account, folder }
-                            }
+                            Intent::Move {
+                                account, folder, ..
+                            } => BulkAction::Move { account, folder },
                             Intent::Read => BulkAction::Flags(Flags {
                                 unread: Some(review.unread == 0),
                                 starred: None,
@@ -421,7 +428,7 @@ impl App {
                             }),
                         });
                         self.bulk.review = Some(review.clone());
-                        if review.selected == 1 {
+                        if review.selected == 1 && !foreign {
                             let _ = self.handle_bulk(Message::Confirm);
                         }
                     }
@@ -966,6 +973,18 @@ impl App {
             .size(12)
         ]
         .spacing(16);
+        if let Some(Intent::Move {
+            account: Some(account),
+            foreign: true,
+            ..
+        }) = &self.bulk.intent
+        {
+            body = body.push(
+                row![muted("into").size(12), self.account_badge(account)]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            );
+        }
         if review.selected > review.available {
             body = body.push(
                 text(format!(

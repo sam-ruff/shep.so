@@ -387,6 +387,24 @@ pub fn badge<'a>(label: impl Into<std::borrow::Cow<'a, str>>) -> Element<'a, Mes
         })
         .into()
 }
+/// A badge short enough to sit inside a list row without changing its height.
+pub fn badge_inline<'a>(label: impl Into<std::borrow::Cow<'a, str>>) -> Element<'a, Message> {
+    container(text(label.into()).size(10).font(BOLD))
+        .padding([2, 8])
+        .style(|t| {
+            let p = colors(t);
+            container::Style {
+                background: Some(p.tint.into()),
+                text_color: Some(p.accent),
+                border: Border {
+                    radius: 5.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .into()
+}
 pub fn nav<'a>(
     name: &str,
     label: &'a str,

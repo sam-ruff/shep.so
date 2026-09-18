@@ -2416,6 +2416,7 @@ impl App {
                 },
                 "Choose a destination folder.",
             ),
+            Dialog::MoveConfirm => ("Move to another account?", ""),
             Dialog::DiscardDraft => ("Discard draft?", ""),
             Dialog::Event => ("Calendar event", "Times use this device's timezone."),
             Dialog::Export => (
@@ -2472,15 +2473,33 @@ impl App {
                     let chosen = choices.iter().find(|c| c.0 == id).cloned();
                     body = body.push(column![text("Destination account").size(12), pick_list(choices, chosen, |c:Choice| Message::Field("move_account", c.0)).text_size(12).padding(11).style(select_input).menu_style(select_menu).width(Length::Fill)].spacing(8));
                 }
-                let folders = self.ranked_move_folders();
+                let candidates = self.ranked_move_candidates();
                 body=body.push(input("Find a folder…",self.field("folder_search"),|v|Message::Field("folder_search",v)).id("folder-search").on_submit(Message::MoveFirst));
-                if folders.is_empty() {
-                    body=body.push(muted(if self.field("folder_search").is_empty() { "No shared destination folders. Refresh mail to load each account’s folders." } else { "No matching folders." }).size(12));
+                if candidates.is_empty() {
+                    body=body.push(muted(if self.field("folder_search").is_empty() { "No shared destination folders. Refresh mail to load each account’s folders." } else if self.foreign_moves_enabled() { "No matching folders in any account." } else { "No matching folders." }).size(12));
                 }
-                for (index, folder) in folders.iter().enumerate() {
+                for (index, candidate) in candidates.into_iter().enumerate() {
                     let target = index == 0;
                     let trailing: Element<'_, Message> = if target { muted("Enter ↵").size(11).into() } else { icon("chevron", 14.) };
-                    body = body.push(button(row![icon("folder",18.), text(self.move_folder_label(folder).into_owned()).size(13), space().width(Length::Fill), trailing].spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(if target { selected } else { outline }).on_press(Message::Move(folder.clone())));
+                    let mut content = row![icon("folder",18.), text(candidate.label).size(13)];
+                    if candidate.foreign {
+                        let account = move_candidates::account_display(&self.workspace.accounts, &candidate.account).unwrap_or(&candidate.account).to_owned();
+                        content = content.push(badge_inline(account));
+                    }
+                    let message = if candidate.foreign { Message::MoveForeign(candidate.account, candidate.folder) } else { Message::Move(candidate.folder) };
+                    body = body.push(button(content.push(space().width(Length::Fill)).push(trailing).spacing(12).align_y(Alignment::Center)).padding(13).width(Length::Fill).style(if target { selected } else { outline }).on_press(message));
+                }
+            }
+            Dialog::MoveConfirm => {
+                if let Some(confirm) = &self.move_confirm {
+                    body = body.push(text(format!("Move to {}?", confirm.label)).size(20).font(BOLD))
+                        .push(self.account_badge(&confirm.account))
+                        .push(muted("Enter moves it, Escape returns to the folder list.").size(12))
+                        .push(row![
+                            action("Cancel", Message::CancelMoveConfirm),
+                            space().width(Length::Fill),
+                            button(text("Move").size(13)).padding([12,18]).style(primary).on_press(Message::ConfirmMove)
+                        ].spacing(12).align_y(Alignment::Center));
                 }
             }
             Dialog::DiscardDraft => body = body.push(self.discard_draft_form()),
