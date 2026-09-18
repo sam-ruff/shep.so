@@ -65,7 +65,9 @@ jobs:
             target: x86_64-pc-windows-msvc
             python: python
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    # Linux runs unit tests, the benchmark build and the full native suite in sequence; the
+    # suite alone passed 36 minutes on 18 September 2026 when the 120 minute cap cancelled it.
+    timeout-minutes: 240
     env:
       CARGO_BUILD_TARGET: ${{ matrix.target }}
       CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
