@@ -2,6 +2,7 @@
 """Deterministic, non-AI equivalents of the native MCP interaction scenarios."""
 import base64
 import argparse
+import fnmatch
 import json
 from pathlib import Path
 import subprocess
@@ -843,23 +844,23 @@ class NativeFlows(unittest.TestCase):
                        check("total",120),check("mail_selection.count",2),check("mail_pending",0))
 
     def test_drag_cross_account_preference_rejection_and_enabled_transfer(self):
-        self.hold_mail_over(402,mail_row_y(0),95,636)
+        self.hold_mail_over(402,mail_row_y(0),95,673)
         self.mcp.batch(check("mail_drag.account","preview-personal"),check("mail_drag.valid",False),
                        check("mail_drag.reason","Preferences","contains"),shot("drag-cross-account-disabled"),
                        {"type":"mouse_up"},check("total",120),check("mail_pending",0),check("notice","Preferences","contains"),
                        key("ctrl+comma"),check("tab","Preferences"),wait(80),click(286,773),
                        check("cross_account_moves",True),key("ctrl+1"),check("tab","Mail"),wait(80))
-        self.hold_mail_over(402,mail_row_y(0),95,636)
+        self.hold_mail_over(402,mail_row_y(0),95,673)
         self.mcp.batch(check("mail_drag.valid",True),shot("drag-cross-account-enabled"),{"type":"mouse_up"},
-                       check("total",119),check("mail_pending",0),click(95,636),check("folder","Projects"),
+                       check("total",119),check("mail_pending",0),click(95,673),check("folder","Projects"),
                        check("selected","A little more room to think"),check("mail_rows.0.account_id","preview-personal"),
                        shot("drag-cross-account-destination"))
 
     def test_drag_hover_expands_accounts_and_unified_inbox(self):
-        self.mcp.batch(click(85,497),check("collapsed_accounts","preview-work","contains"),wait(80))
-        self.hold_mail_over(402,mail_row_y(0),85,497)
+        self.mcp.batch(click(85,536),check("collapsed_accounts","preview-work","contains"),wait(80))
+        self.hold_mail_over(402,mail_row_y(0),85,536)
         self.mcp.batch(check("collapsed_accounts",[]),shot("drag-account-expanded"),
-                       {"type":"hover","x":85,"y":536},check("mail_drag.target","Projects"),
+                       {"type":"hover","x":85,"y":575},check("mail_drag.target","Projects"),
                        check("mail_drag.account","preview-work"),check("mail_drag.valid",True),
                        {"type":"mouse_up"},check("total",119),check("mail_pending",0),
                        click(85,576),check("folder","Projects"),check("selected","A little more room to think"))
@@ -882,12 +883,12 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start",pop3_account=True)
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(286,773),
                        check("cross_account_moves",True),key("ctrl+1"),check("tab","Mail"),wait(80))
-        self.hold_mail_over(402,mail_row_y(0),95,636)
+        self.hold_mail_over(402,mail_row_y(0),95,673)
         self.mcp.batch(check("mail_drag.valid",False),check("mail_drag.reason","IMAP","contains"),
                        shot("drag-pop3-cross-account-rejected"),{"type":"mouse_up"},check("total",120),check("mail_pending",0))
-        self.hold_mail_over(402,mail_row_y(2),95,636)
+        self.hold_mail_over(402,mail_row_y(2),95,673)
         self.mcp.batch(check("mail_drag.valid",True),shot("drag-pop3-local-folder"),{"type":"mouse_up"},
-                       check("total",119),check("mail_pending",0),click(95,636),check("folder","Projects"),
+                       check("total",119),check("mail_pending",0),click(95,673),check("folder","Projects"),
                        check("selected","Coffee next Thursday?"),shot("drag-pop3-local-moved"))
 
     def test_drag_compact_dark_and_large_interface_scale(self):
@@ -910,7 +911,7 @@ class NativeFlows(unittest.TestCase):
         print(f"Scrolled drag rendering evidence: {directory}", flush=True)
         self.hold_mail_over(370,mail_row_y(0),110,520)
         self.mcp.batch({"type":"scroll","amount":4},wait(120),shot("drag-scrolled-folder-list"),
-                       {"type":"hover","x":85,"y":438},check("mail_drag.target","家族のカレンダーと旅行の計画と写真"),
+                       {"type":"hover","x":85,"y":397},check("mail_drag.target","家族のカレンダーと旅行の計画と写真"),
                        check("mail_drag.valid",True),shot("drag-unicode-folder-hover"))
         # A previous label sat above the Preferences footer. Its shadow must be
         # erased when the pointer moves, without needing a full-window repaint.
@@ -918,7 +919,7 @@ class NativeFlows(unittest.TestCase):
                                           "-crop","48x8+130+587","+repage","-colorspace","Gray","-depth","8","gray:-"])
         self.assertLessEqual(max(pixels)-min(pixels),16,"Moving the drag label left a shadow trail")
         self.mcp.batch({"type":"mouse_up"},
-                       check("total",119),check("mail_pending",0),click(85,438),
+                       check("total",119),check("mail_pending",0),click(85,397),
                        check("folder","家族のカレンダーと旅行の計画と写真"),check("total",2),shot("drag-unicode-folder-moved"))
 
     def test_drag_selection_across_pages_moves_the_entire_reviewed_group(self):
@@ -1907,7 +1908,7 @@ class NativeFlows(unittest.TestCase):
                        check("editor", "Can you send the updated prototype?", "contains"),
                        check("focused_input", "to"), type_text("reviewer@example.test"), wait(250),
                        shot("forward-composer-files"), key("Escape"), check("dialog", None), check("draft_count", 1),
-                       click(98,517), check("composer.visible", True), check("compose_fields.to", "reviewer@example.test"),
+                       click(98,555), check("composer.visible", True), check("compose_fields.to", "reviewer@example.test"),
                        check("draft_forward", True), check("draft_forward_html", True), check("draft_attachments.3.name", "review-checklist.txt"),
                        shot("forward-reopened"))
 
@@ -1933,7 +1934,7 @@ class NativeFlows(unittest.TestCase):
                        check("compose_fields.subject", "Fwd: A little more room to think"), key("Escape"), check("dialog", None),
                        key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690,366), check("dark", True),
                        key("ctrl+1"), check("tab", "Mail"), {"type":"resize", "width":900, "height":640}, wait(150),
-                       click(98,517), check("composer.visible", True), check("draft_forward", True),
+                       click(98,545), check("composer.visible", True), check("draft_forward", True),
                        check("compose_fields.to", ""), shot("forward-dark-compact"))
 
     def test_close_during_forward_failure_keeps_retry_available(self):
@@ -2041,7 +2042,7 @@ class NativeFlows(unittest.TestCase):
     def test_find_wide_message_reveals_match_in_dark_compact_reader(self):
         self.mcp.call("desktop.start", html_mail=True)
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(690,366), check("dark", True),
-                       key("ctrl+1"), check("tab", "Mail"), click(100,536), check("folder", "Projects"),
+                       key("ctrl+1"), check("tab", "Mail"), click(100,575), check("folder", "Projects"),
                        check("selected", "Wide HTML report"), check("html_ready", True),
                        click(828,100), check("find_open", True), check("focused_input", "find-message"),
                        type_text("Right report column"), check("find_count", 1), shot("find-wide-dark"),
@@ -2283,7 +2284,7 @@ class NativeFlows(unittest.TestCase):
                        check("focused_input", "folder-search"), type_text("cafe"),
                        check("move_enter_destination", "Café"), shot("move-accent-match-highlight"),
                        key("Return"), check("dialog", None), check("mail_pending", 0),
-                       click(100, 617), check("folder", "Café"), check("total", 5),
+                       click(100, 653), check("folder", "Café"), check("total", 5),
                        key("ctrl+k"), check("focused_input", "search"), key("ctrl+a"), key("BackSpace"),
                        check("query", ""), check("total", 1), check("selected", "Quick note"), key("Escape"),
                        check("focused_input", None),
@@ -2735,8 +2736,8 @@ class NativeFlows(unittest.TestCase):
                        click(286,773),check("cross_account_moves",True),
                        key("ctrl+1"),check("tab","Mail"),wait(80),
                        key("m"),check("dialog","Move"),wait(80),
-                       click(710,327),wait(80),click(710,403),check("fields.move_account","preview-personal"),
-                       click(670,385),type_text("Archive"),key("Return"),check("dialog",None),
+                       click(710,294),wait(80),click(710,370),check("fields.move_account","preview-personal"),
+                       click(670,353),type_text("Archive"),key("Return"),check("dialog",None),
                        check("total",119),check("mail_pending",1),check("action_toast.label","Archived 1 message"),
                        shot("cross-account-toast-pending"),
                        {**check("mail_pending",0),"timeout_ms":5000},check("total",120),check("action_toast",None),
@@ -2808,8 +2809,8 @@ class NativeFlows(unittest.TestCase):
                        click(286, 773), check("cross_account_moves", True),
                        key("ctrl+1"), check("tab", "Mail"), wait(80),
                        key("m"), check("dialog", "Move"), wait(80),
-                       click(710, 327), wait(80), click(710, 403), check("fields.move_account", "preview-personal"),
-                       click(670, 385), type_text("Archive"), key("Return"), check("dialog", None),
+                       click(710, 294), wait(80), click(710, 370), check("fields.move_account", "preview-personal"),
+                       click(670, 353), type_text("Archive"), key("Return"), check("dialog", None),
                        check("total", 119), check("action_toast.label", "Archived 1 message"),
                        click(1340, 874), check("total", 120), check("mail_pending", 1),
                        key("ctrl+comma"), check("tab", "Preferences"), wait(80),
@@ -4190,7 +4191,7 @@ class NativeFlows(unittest.TestCase):
                        key("Return"), check("dialog","BulkReview"), check("bulk.review_count",2),
                        shot("bulk-move-review"), key("Return"), check("dialog",None),
                        check("total",118), check("action_toast.label","Moved 2 messages to Projects"),
-                       check("bulk.jobs.0.remaining",0), click(80,535), check("folder","Projects"),
+                       check("bulk.jobs.0.remaining",0), click(80,575), check("folder","Projects"),
                        check("total",1), shot("bulk-move-destination"), click(1340,874),
                        check("action_toast.label","Restored 2 messages"),
                        check("bulk.jobs.0.remaining",0), check("total",0),
@@ -4604,7 +4605,7 @@ class NativeFlows(unittest.TestCase):
         source_id = self.mcp.call("desktop.state")["selected_id"]
         self.mcp.batch(key("m"), check("focused_input", "folder-search"), type_text("Projects"),
                        key("Return"), check("dialog", None), check("total", 119),
-                       click(85, 536), check("folder", "Projects"), check("total", 1),
+                       click(85, 575), check("folder", "Projects"), check("total", 1),
                        {"type": "assert", "path": "mail_pending", "value": 1, "op": "gte"},
                        check("mail_rows.0.subject", subject), check("selected", subject),
                        check("mail_rows.0.group_pending", True), shot("move-visible-while-pending"),
@@ -4621,7 +4622,7 @@ class NativeFlows(unittest.TestCase):
             print(f"Destination {outcome}: {result['artifacts']}", flush=True)
             self.mcp.batch(key("m"), check("focused_input", "folder-search"), type_text("Projects"),
                            key("Return"), check("dialog", None), check("total", 119),
-                           click(85, 536), check("folder", "Projects"), check("total", 1),
+                           click(85, 575), check("folder", "Projects"), check("total", 1),
                            {"type":"assert", "path":"mail_pending", "value":1, "op":"gte"},
                            check("mail_rows.0.group_pending", True))
             if outcome == "undo":
@@ -4639,9 +4640,9 @@ class NativeFlows(unittest.TestCase):
         print(f"Cross-account destination: {result['artifacts']}", flush=True)
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(286, 773),
                        check("cross_account_moves", True), key("ctrl+1"), check("tab", "Mail"), wait(80))
-        self.hold_mail_over(402, 245, 95, 636)
+        self.hold_mail_over(402, 245, 95, 673)
         self.mcp.batch(check("mail_drag.valid", True), {"type":"mouse_up"}, check("total", 119),
-                       click(95, 636), check("folder", "Projects"), check("total", 1),
+                       click(95, 673), check("folder", "Projects"), check("total", 1),
                        {"type":"assert", "path":"mail_pending", "value":1, "op":"gte"},
                        check("mail_rows.0.account_id", "preview-personal"),
                        check("mail_rows.0.group_pending", True), shot("cross-account-pending-destination"),
@@ -4652,7 +4653,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("m"), check("dialog", "Move"), shot("move-dialog"), key("Escape"), check("dialog", None),
                        key("ctrl+k"), check("focused_input", "search"), type_text("m"), check("query", "m"), check("dialog", None), key("ctrl+a"), key("BackSpace"), check("query", ""),
                        check("total", 120), check("selected", "A little more room to think"), key("Escape"), wait(80), key("m"), check("dialog", "Move"),
-                       click(600, 407), check("dialog", None), check("total", 119),
+                       click(600, 374), check("dialog", None), check("total", 119),
                        click(85, 398), check("folder", "Archive"), check("total", 1), shot("archived-message"))
 
     def test_appearance_toggle_and_calendar_with_mouse(self):
@@ -4752,7 +4753,7 @@ class NativeFlows(unittest.TestCase):
             if not unified:
                 self.mcp.batch(click(286, 737), check("unified", False))
             self.mcp.batch(check("preferences_saved", True), key("ctrl+1"), check("tab", "Mail"), wait(150),
-                           click(100, 537 if unified else 491), check("folder", "Projects"),
+                           click(100, 575 if unified else 530), check("folder", "Projects"),
                            check("sidebar_focus", True), shot(f"folder-focused-{dark}"),
                            click(85, 115), check("folder", "INBOX"),
                            check("account", None if unified else "preview-work"),
@@ -4894,7 +4895,7 @@ class NativeFlows(unittest.TestCase):
                        click(850, 279), type_text("Meet me Monday"), check("composer.visible", True),
                        click(850, 400), type_text("A message written with the mouse and keyboard."),
                        click(925, 633), check("draft_count", 1), check("composer.visible", True), shot("saved-draft"), key("Escape"), check("composer.visible", False),
-                       click(98, 517), check("composer.visible", True),
+                       click(98, 555), check("composer.visible", True),
                        check("compose_fields.to", "friend@example.com"), check("compose_fields.subject", "Meet me Monday"),
                        check("editor", "A message written with the mouse and keyboard.", "contains"), shot("reopened-draft"))
 
@@ -4911,7 +4912,7 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+comma"), check("tab", "Preferences"), check("dialog", None),
                        check("draft_count", 1),
                        click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
-                       click(98, 517), check("composer.visible", True),
+                       click(98, 555), check("composer.visible", True),
                        check("compose_fields.to", "friend@example.test"), check("compose_fields.cc", "copy@example.test"),
                        check("compose_fields.bcc", "private@example.test"), check("compose_fields.subject", "A saved session"),
                        check("editor", "Keep this text through Preferences.", "contains"),
@@ -4919,7 +4920,7 @@ class NativeFlows(unittest.TestCase):
                        click(850, 470), key("ctrl+End"), type_text(" Saved before close."))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         self.mcp.call("desktop.restart")
-        self.mcp.batch(check("draft_count", 1), click(98, 517), check("composer.visible", True),
+        self.mcp.batch(check("draft_count", 1), click(98, 555), check("composer.visible", True),
                        check("compose_fields.to", "friend@example.test"), check("compose_fields.cc", "copy@example.test"),
                        check("compose_fields.bcc", "private@example.test"), check("compose_fields.subject", "A saved session"),
                        check("editor", "Saved before close.", "contains"),
@@ -4932,20 +4933,20 @@ class NativeFlows(unittest.TestCase):
                        key("c"), check("composer.visible", True), wait(80),
                        click(850, 279), type_text("Second draft to discard"), check("draft_count", 2),
                        key("Escape"), check("composer.visible", False), check("dialog", None), wait(80), shot("drafts-expanded"),
-                       click(98, 478), check("drafts_collapsed", True), check("saved_drafts_collapsed", True),
+                       click(98, 516), check("drafts_collapsed", True), check("saved_drafts_collapsed", True),
                        shot("drafts-collapsed"), key("ctrl+2"), check("tab", "Calendar"),
                        key("ctrl+1"), check("tab", "Mail"), check("drafts_collapsed", True),
-                       click(98, 478), check("drafts_collapsed", False), check("saved_drafts_collapsed", False),
-                       click(1400, 36), check("busy", "sync", "contains"), {"type":"click", "x":100,"y":553,"button":3},
+                       click(98, 516), check("drafts_collapsed", False), check("saved_drafts_collapsed", False),
+                       click(1400, 36), check("busy", "sync", "contains"), {"type":"click", "x":100,"y":592,"button":3},
                        check("draft_context", None, "ne"), check("busy", []),
                        check("draft_context", None, "ne"), shot("draft-context-after-refresh"),
                        key("Down"), key("Return"), check("dialog", "DiscardDraft"), shot("discard-review-light"),
                        key("n"), check("dialog", None), check("draft_count", 2),
-                       {"type":"click", "x":100,"y":553,"button":3}, check("draft_context", None,"ne"),
-                       click(190, 610), check("dialog", "DiscardDraft"), key("Return"),
+                       {"type":"click", "x":100,"y":592,"button":3}, check("draft_context", None,"ne"),
+                       click(190, 649), check("dialog", "DiscardDraft"), key("Return"),
                        check("dialog", None), check("draft_count", 1),
                        check("draft_rows.0.1", "First draft to keep"), shot("draft-discarded"),
-                       click(98, 517), check("composer.visible", True), check("compose_fields.subject", "First draft to keep"))
+                       click(98, 555), check("composer.visible", True), check("compose_fields.subject", "First draft to keep"))
 
     def test_draft_bin_cancel_failure_retry_and_compact_dark_review(self):
         result = self.mcp.call("desktop.start", discard_failure_once=True)
@@ -5000,14 +5001,14 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(812, 726), check("draft_io", False), check("draft_attachments.0.name", second.name),
                        check("draft_attachments.1.name", third.name), wait(150), click(925, 773), key("Escape"), check("composer.visible", False))
         fixture.unlink(); second.unlink(); third.unlink()
-        self.mcp.batch(click(98, 517), check("composer.visible", True), check("compose_fields.cc", "copy@example.com"),
+        self.mcp.batch(click(98, 555), check("composer.visible", True), check("compose_fields.cc", "copy@example.com"),
                        check("compose_fields.bcc", "hidden@example.com"), check("draft_attachments.0.name", second.name),
                        check("editor", "Please read the attached notes.", "contains"), shot("reopened-attachments"),
                        click(680, 773), check("notice", "Sending is disabled in preview", "contains"),
                        check("composer.visible", True), check("draft_attachments.1.name", third.name), shot("send-failure-keeps-draft"),
                        key("Escape"), check("composer.visible", False), check("dialog", None), key("ctrl+comma"), check("tab", "Preferences"),
                        click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
-                       click(98, 517), check("composer.visible", True), shot("composer-dark-attachments"),
+                       click(98, 555), check("composer.visible", True), shot("composer-dark-attachments"),
                        click(750, 773), {"type": "choose_file"}, check("draft_io", False),
                        check("draft_attachments.1.name", third.name), key("Escape"), check("composer.visible", False), check("dialog", None))
 
@@ -5235,7 +5236,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_outbox_delivery_review_and_copy_recovery(self):
         self.mcp.call("desktop.start", outgoing_mail=True)
-        self.mcp.batch(check("outgoing_pending", 2), click(91, 478), check("dialog", "Outbox"),
+        self.mcp.batch(check("outgoing_pending", 2), click(91, 516), check("dialog", "Outbox"),
                        check("outgoing_rows.0.subject", "Delivery needs review"),
                        check("outgoing_rows.0.delivery", "Uncertain"), shot("outbox-delivery-review-light"),
                        click(650, 600), check("outgoing_pending", 2), check("outgoing_confirmed", False),
@@ -5250,7 +5251,7 @@ class NativeFlows(unittest.TestCase):
                        check("outgoing_pending", 1), wait(150), shot("outbox-copy-retry-error"),
                        click(799, 584), check("outgoing_pending", 0), check("outgoing_rows", []),
                        shot("outbox-empty-light"), key("Escape"), check("dialog", None),
-                       click(100, 517), check("composer.visible", True),
+                       click(100, 555), check("composer.visible", True),
                        check("compose_fields.subject", "Delivery needs review"),
                        check("editor", "A saved message for the outgoing recovery flow.", "contains"),
                        check("draft_count", 1), shot("reviewed-delivery-returned-draft"))
@@ -5258,7 +5259,7 @@ class NativeFlows(unittest.TestCase):
     def test_outbox_compact_dark(self):
         self.mcp.call("desktop.start", width=900, height=640, outgoing_mail=True)
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
-                       key("ctrl+1"), check("tab", "Mail"), click(91, 478), check("dialog", "Outbox"),
+                       key("ctrl+1"), check("tab", "Mail"), click(91, 516), check("dialog", "Outbox"),
                        check("outgoing_rows.0.delivery", "Uncertain"), shot("outbox-delivery-review-dark-compact"),
                        click(260, 462), check("outgoing_pending", 2), check("outgoing_confirmed", False),
                        click(212, 423), check("outgoing_confirmed", True), click(260, 462),
@@ -5640,8 +5641,8 @@ class NativeFlows(unittest.TestCase):
                        click(286, 773), check("cross_account_moves", True),
                        click(1145, 566), wait(80), shot("font-size-menu"), click(1140, 173), check("reader_size", 11),
                        key("ctrl+1"), check("tab", "Mail"), wait(80), key("m"), check("dialog", "Move"), shot("cross-account-destination"),
-                       click(710, 327), wait(80), click(710, 403), check("fields.move_account", "preview-personal"),
-                       click(670, 385), type_text("archvie"), key("Return"), check("dialog", None), check("total", 119),
+                       click(710, 294), wait(80), click(710, 370), check("fields.move_account", "preview-personal"),
+                       click(670, 353), type_text("archvie"), key("Return"), check("dialog", None), check("total", 119),
                        click(183, 278), check("inbox_expanded", True), click(104, 357), check("account", "preview-personal"), click(183, 278), check("inbox_expanded", False), click(85, 399), check("folder", "Archive"),
                        check("total", 1), check("selected", "A little more room to think"), shot("transferred-message"))
 
@@ -6173,7 +6174,7 @@ class NativeFlows(unittest.TestCase):
             if mode == "fail":
                 self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
                                click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"))
-            self.mcp.batch({**click(95, 540), "modifiers": ["ctrl"]},
+            self.mcp.batch({**click(95, 575), "modifiers": ["ctrl"]},
                            check("selected_folders", [
                                {"account": None, "folder": "INBOX", "sent_only": False},
                                {"account": "preview-work", "folder": "Projects", "sent_only": False}]),
@@ -6184,7 +6185,7 @@ class NativeFlows(unittest.TestCase):
                            check("total", before["total"] - 1), check("page_unread", before["page_unread"] - 1),
                            check("inbox_unread", before["inbox_unread"]),
                            shot(f"combined-flag-pending-{mode}"),
-                           {**click(95, 540), "modifiers": ["ctrl"]},
+                           {**click(95, 575), "modifiers": ["ctrl"]},
                            check("selected_folders", [{"account": None, "folder": "INBOX", "sent_only": False}]),
                            check("page_unread", before["page_unread"] - 1),
                            {"type": "assert", "path": "mail_pending", "value": 1},
@@ -6220,6 +6221,15 @@ class NativeFlows(unittest.TestCase):
                        click(559, 156), check("settings_tab", "Backups"), shot("backups-compact"))
 
 
+def matches_patterns(name, arguments):
+    """Apply unittest's -k substring/glob selection to a functional-only run."""
+    patterns = [value for flag, value in zip(arguments, arguments[1:]) if flag == "-k"]
+    if not patterns:
+        return True
+    return any(fnmatch.fnmatchcase(name, pattern if "*" in pattern else f"*{pattern}*")
+               for pattern in patterns)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--capture-only", action="store_true")
@@ -6233,7 +6243,8 @@ def main():
         finally:
             client.close()
     elif args.functional_only:
-        names = [name for name in unittest.defaultTestLoader.getTestCaseNames(NativeFlows) if "performance" not in name]
+        names = [name for name in unittest.defaultTestLoader.getTestCaseNames(NativeFlows)
+                 if "performance" not in name and matches_patterns(name, rest)]
         suite = unittest.TestSuite(NativeFlows(name) for name in names)
         result = unittest.TextTestRunner(verbosity=2).run(suite)
         sys.exit(0 if result.wasSuccessful() else 1)
