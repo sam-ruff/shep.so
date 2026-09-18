@@ -502,7 +502,10 @@ impl App {
     fn new() -> (Self, Task<Message>) {
         let args: Vec<_> = std::env::args().collect();
         let demo = cfg!(feature = "test-support") && args.iter().any(|a| a == "--demo");
-        let test_state = if demo {
+        // A live launch is observed like a fixture but runs the production engine.
+        let observed =
+            demo || (cfg!(feature = "test-support") && args.iter().any(|a| a == "--live-imap"));
+        let test_state = if observed {
             args.windows(2)
                 .find(|a| a[0] == "--test-state")
                 .map(|a| a[1].clone().into())

@@ -20,6 +20,10 @@ pub(crate) fn workspace_location(
         }
         return Ok(None);
     }
+    #[cfg(feature = "test-support")]
+    if let Some(directory) = crate::test_support::live::data_root()? {
+        return Ok(Some((directory, "shep.sqlite".into())));
+    }
     let path = directories::ProjectDirs::from("so", "shep", "Shep")
         .context("Could not locate the app data directory")?
         .data_local_dir()
