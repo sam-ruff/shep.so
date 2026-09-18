@@ -558,6 +558,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn selection_mode_foreign_row_reviews_even_one_message() {
+        use super::super::move_candidates::test_account;
+        let (mut app, store, mut commands) = fixture().await;
+        let first = app.page.rows[0].id.clone();
+        let _ = app.checkbox_mail(first);
+        while app.mail_selection.busy() {
+            reply(&mut app, &store, &mut commands).await;
+        }
+        let workspace = Arc::make_mut(&mut app.workspace);
+        workspace.accounts = vec![
+            test_account("fixture", "alex@studio.example", Protocol::Imap),
+            test_account("other", "alex@example.com", Protocol::Imap),
+        ];
+        workspace
+            .account_folders
+            .insert("fixture".into(), vec!["INBOX".into(), "Archive".into()]);
+        workspace
+            .account_folders
+            .insert("other".into(), vec!["INBOX".into(), "Home.Plans".into()]);
+        app.preferences.cross_account_moves = true;
+        app.preferences.foreign_move_folders = true;
+        app.dialog = Some(Dialog::Move);
+        app.fields.insert("folder_search", "plans".into());
+        let rows: Vec<_> = app
+            .ranked_move_candidates()
+            .into_iter()
+            .map(|c| (c.account, c.folder, c.foreign))
+            .collect();
+        assert_eq!(rows, vec![("other".into(), "Home.Plans".into(), true)]);
+        let _ = app.handle(Message::MoveFirst);
+        app.pump_bulk();
+        assert_eq!(app.dialog, Some(Dialog::BulkReview));
+        assert!(
+            app.move_confirm.is_none(),
+            "selection mode uses the group review"
+        );
+        let Command::ReviewSelection(serial, ..) = commands.try_recv().unwrap() else {
+            panic!("Expected a selection review");
+        };
+        let mut review = (**app.mail_selection.snapshot.as_ref().unwrap()).clone();
+        review.frozen = true;
+        review.selected = 1;
+        review.available = 1;
+        let _ = app.handle(Message::Backend(Event::BulkReview(
+            serial,
+            Ok(Arc::new(review)),
+        )));
+        assert_eq!(
+            app.dialog,
+            Some(Dialog::BulkReview),
+            "one foreign message still waits for Enter"
+        );
+        assert!(matches!(
+            app.bulk_action(),
+            Some(crate::bulk::Action::Move { account: Some(account), folder })
+                if account == "other" && folder == "Home.Plans"
+        ));
+        assert!(
+            commands.try_recv().is_err(),
+            "no group starts before confirmation"
+        );
+    }
+
+    #[tokio::test]
     async fn selection_mode_rows_toggle_and_ranges_preserve_other_pages_before_ack() {
         let (mut app, store, mut commands) = fixture().await;
         let first = app.page.rows[0].id.clone();

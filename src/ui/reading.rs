@@ -132,6 +132,18 @@ impl App {
             checkbox(self.preferences.group_conversations)
                 .label("Group related messages in the reader")
                 .on_toggle(Message::PrefConversations),
+            column![
+                checkbox(self.preferences.foreign_move_folders)
+                    .label("Search other accounts' folders when moving")
+                    .on_toggle_maybe(
+                        self.preferences
+                            .cross_account_moves
+                            .then_some(Message::PrefForeignMoveFolders)
+                    ),
+                muted("Matches in other IMAP accounts show the account and ask before moving.")
+                    .size(11)
+            ]
+            .spacing(8),
         ]
         .spacing(16)
         .into()

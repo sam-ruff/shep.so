@@ -184,6 +184,7 @@ impl App {
                 self.begin_bulk(bulk::Intent::Move {
                     account: target.account,
                     folder: target.folder,
+                    foreign: false,
                 });
             }
         }
