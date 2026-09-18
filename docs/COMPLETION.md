@@ -1,5 +1,36 @@
 # Completion audit
 
+## Other accounts' folders in the Move dialog, 18 September 2026
+
+With "Search other accounts' folders when moving" on (it needs cross-account
+moves and syncs through the shared profile as `foreign_move_folders` across
+desktop, Flutter labels and web types, with codec fixtures), typing in the
+Move chooser adds folders from other IMAP accounts behind the current
+account's matches. Foreign rows carry a 15 point penalty in the fuzzy
+ranking, so a same-account leaf match still wins while a foreign exact or
+prefix match beats same-account substring, abbreviation and typo matches;
+each is badged with the account as the sidebar names it. Choosing one opens
+"Move to another account?", where Enter or Y transfers and Escape or N
+returns to the chooser with the query intact; selection mode reviews even a
+single message. An empty search box, an explicit pick-list account and POP3
+sources keep today's rows byte for byte, so saved native coordinates hold.
+During native review the lane found that the Enter submitting the search
+also reached the key handler after the dialog switched, confirming at once;
+the confirmation's key block now ignores captured input.
+
+Lane commits `7a29b44` (codec and preference) and `7a5b884` (chooser,
+confirmation, tests, docs), merged as `bd15369`. Tests: eight pure
+candidate-model tests, eight app confirmation-flow tests, one selection-mode
+test, settings-search coverage, two codec fixture cases (`scripts/test_profile_core.py`),
+native `test_move_foreign_folder_badge_confirmation_keyboard_and_mouse` with
+reviewed badge, confirmation and destination captures, and 59 existing
+move, cross-account, nested-folder, bulk, drag, reading and rapid scenarios
+rerun; 1,339 Rust tests through the hooks; `flutter analyze` clean; web
+`tsc`, vitest and the WASM codec fixtures pass. Limitations: Flutter and web
+decode and label the key but their Move flows do not act on it yet; the
+audit to sync every remaining preference is a separate TODO item; the
+Flutter bridge test over the codec fixtures was not run.
+
 ## Stale running instance after an install, 18 September 2026
 
 Sam kept seeing errors fixed days earlier because the running Shep dated
