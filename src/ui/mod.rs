@@ -11,6 +11,8 @@ mod conversations;
 mod database_import;
 mod database_transfers;
 mod drag_mail;
+#[cfg(feature = "test-support")]
+mod draw_log;
 mod ellipsis;
 mod find_message;
 mod folder_controls;
@@ -42,6 +44,8 @@ mod removals;
 mod selectable;
 mod settings_search;
 mod sidebar;
+#[cfg(feature = "test-support")]
+mod store_truth;
 mod text_context;
 mod tray;
 mod views;
@@ -468,6 +472,10 @@ pub struct App {
     initial_page_loaded: bool,
     #[cfg(feature = "test-support")]
     idle_navigation: bool,
+    #[cfg(feature = "test-support")]
+    store_truth: store_truth::State,
+    #[cfg(feature = "test-support")]
+    draw_log: Arc<draw_log::Log>,
     test_revision: u64,
 }
 
@@ -651,6 +659,10 @@ impl App {
                 initial_page_loaded: false,
                 #[cfg(feature = "test-support")]
                 idle_navigation: demo && args.iter().any(|a| a == "--idle-navigation"),
+                #[cfg(feature = "test-support")]
+                store_truth: Default::default(),
+                #[cfg(feature = "test-support")]
+                draw_log: Default::default(),
                 test_revision: 0,
             },
             iced::system::theme().map(Message::SystemTheme),
@@ -776,6 +788,8 @@ impl App {
         if let Some(key) = close_key {
             self.busy.insert(key);
         }
+        #[cfg(feature = "test-support")]
+        self.store_truth.changed();
         if preferences_request.is_some_and(|request| {
             self.pending_preference_save
                 .as_ref()
@@ -986,6 +1000,8 @@ impl App {
         if self.update_samples.len() > 1000 {
             self.update_samples.pop_front();
         }
+        #[cfg(feature = "test-support")]
+        self.request_store_truth();
         if self.test_state.is_some() {
             Task::batch([task, self.write_test_state()])
         } else {
@@ -1013,6 +1029,12 @@ impl App {
         }
     }
     fn handle(&mut self, message: Message) -> Task<Message> {
+        #[cfg(feature = "test-support")]
+        if let Message::Backend(event) = &message
+            && !matches!(event, Event::StoreTruth(..))
+        {
+            self.store_truth.changed();
+        }
         if !self.read_navigation(&message) {
             return Task::none();
         }
@@ -1497,6 +1519,8 @@ impl App {
                 Event::FlagsFinished(request, mail, result) => {
                     return self.flags_finished(request, mail, result);
                 }
+                #[cfg(feature = "test-support")]
+                Event::StoreTruth(revision, truth) => self.store_truth_received(revision, truth),
                 #[cfg(feature = "test-support")]
                 Event::PreviewSync(round) => self.test_sync_round = round,
                 #[cfg(feature = "test-support")]
@@ -4081,6 +4105,11 @@ impl App {
         #[cfg(feature = "test-support")]
         {
             data["page_loaded"] = serde_json::json!(self.initial_page_loaded);
+            data["store_truth"] = self.store_truth_observation();
+            let (frame, rows) = self.draw_log.snapshot();
+            let ids: Vec<String> = self.page.rows.iter().map(|mail| mail.id.clone()).collect();
+            data["drawn_rows"] =
+                serde_json::json!(draw_log::review(frame, rows, &ids, mail_list::ROW_HEIGHT));
         }
         data["mail_selection"] = serde_json::json!({
             "mode": self.mail_selection.mode, "count": self.mail_selection.count,
@@ -4431,17 +4460,19 @@ impl App {
         )
     }
     fn view(&self) -> Element<'_, Message> {
-        context_menu::ContextArea::root(self.layout(), self.preferences.interface_scale)
-            .with_drag(drag_mail::Region::Root(
-                self.mail_drag.clone(),
-                self.tab == Tab::Mail
-                    && !self.full_reader
-                    && self.dialog.is_none()
-                    && self.context_menu.is_none()
-                    && self.composer.context.is_none(),
-                self.drag_rules(),
-            ))
-            .into()
+        let root = context_menu::ContextArea::root(self.layout(), self.preferences.interface_scale);
+        #[cfg(feature = "test-support")]
+        let root = root.with_draw_log(self.draw_log.clone(), None);
+        root.with_drag(drag_mail::Region::Root(
+            self.mail_drag.clone(),
+            self.tab == Tab::Mail
+                && !self.full_reader
+                && self.dialog.is_none()
+                && self.context_menu.is_none()
+                && self.composer.context.is_none(),
+            self.drag_rules(),
+        ))
+        .into()
     }
 }
 pub fn chord(key: &Key, modifiers: keyboard::Modifiers) -> Option<String> {

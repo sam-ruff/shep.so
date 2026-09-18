@@ -239,6 +239,9 @@ pub(super) struct ContextArea<'a> {
     drag: Option<drag_mail::Region>,
     #[cfg(feature = "test-support")]
     draw_witness: Option<(u64, Arc<std::sync::atomic::AtomicU64>)>,
+    /// A row id records its drawn bounds; `None` opens a new frame at the root.
+    #[cfg(feature = "test-support")]
+    draw_log: Option<(Arc<draw_log::Log>, Option<String>)>,
 }
 impl<'a> ContextArea<'a> {
     pub fn new(content: impl Into<Element<'a, Message>>, mail: String) -> Self {
@@ -252,7 +255,14 @@ impl<'a> ContextArea<'a> {
             drag: None,
             #[cfg(feature = "test-support")]
             draw_witness: None,
+            #[cfg(feature = "test-support")]
+            draw_log: None,
         }
+    }
+    #[cfg(feature = "test-support")]
+    pub fn with_draw_log(mut self, log: Arc<draw_log::Log>, row: Option<String>) -> Self {
+        self.draw_log = Some((log, row));
+        self
     }
     pub fn with_drag(mut self, region: drag_mail::Region) -> Self {
         self.drag = Some(region);
@@ -288,6 +298,8 @@ impl<'a> ContextArea<'a> {
             drag: None,
             #[cfg(feature = "test-support")]
             draw_witness: None,
+            #[cfg(feature = "test-support")]
+            draw_log: None,
         }
     }
     pub fn folder(content: impl Into<Element<'a, Message>>, target: FolderSelection) -> Self {
@@ -306,6 +318,8 @@ impl<'a> ContextArea<'a> {
             drag: None,
             #[cfg(feature = "test-support")]
             draw_witness: None,
+            #[cfg(feature = "test-support")]
+            draw_log: None,
         }
     }
 }
@@ -491,6 +505,10 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        #[cfg(feature = "test-support")]
+        if let Some((log, None)) = &self.draw_log {
+            log.begin_frame();
+        }
         self.content.as_widget().draw(
             &tree.children[0],
             renderer,
@@ -502,6 +520,12 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         );
         if let Some(drag) = &self.drag {
             drag.draw(layout, renderer, theme, viewport);
+        }
+        #[cfg(feature = "test-support")]
+        if let Some((log, Some(id))) = &self.draw_log
+            && layout.bounds().intersects(viewport)
+        {
+            log.row(id, layout.bounds());
         }
         // Observe the real widget draw, never a controller acknowledgment.
         // Native tests can wait for the checkbox layout before injecting input.

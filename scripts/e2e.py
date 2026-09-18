@@ -6220,6 +6220,353 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+comma"), check("tab", "Preferences"), shot("preferences-compact"),
                        click(559, 156), check("settings_tab", "Backups"), shot("backups-compact"))
 
+    # Rapid move and undo sequences against store truth. Every step drains the
+    # pending writes, then requires the store's own page, counts and the drawn
+    # rows (test-support `store_truth` and `drawn_rows` observations) to agree
+    # with the controller before the next input. Undo is the toast control: the
+    # app has no keyboard binding for it.
+    UNDO = click(1340, 874)
+    ARCHIVE_ICON = click(652, 100)
+    TRASH_ICON = click(696, 100)
+    SIDEBAR_INBOX = click(85, 278)
+    SIDEBAR_ARCHIVE = click(85, 399)
+    SIDEBAR_TRASH = click(85, 438)
+    SIDEBAR_WORK_PROJECTS = click(95, 575)
+    SIDEBAR_PERSONAL_PROJECTS = click(95, 673)
+
+    def settled(self, slow=False):
+        drain = [{**check("mail_pending", 0), "timeout_ms": 5000}]
+        if slow:
+            # Serialised 1.8 s fixture acknowledgements: several forwards and
+            # their reversals can be queued behind one another.
+            drain = [wait(2000), wait(2000), wait(2000),
+                     {**check("mail_pending", 1, "lte"), "timeout_ms": 5000}] + drain
+        return drain + [{**check("store_truth.agrees", True), "timeout_ms": 5000},
+                        {**check("drawn_rows.consistent", True), "timeout_ms": 5000}]
+
+    def page_refilled(self, total):
+        """A full page pulls the next row in while the move is still pending, well before a slow acknowledgement."""
+        if total < 50:
+            return []
+        return [{**check("mail_rows.49.id", None, "ne"), "timeout_ms": 1000}]
+
+    def wait_state(self, predicate, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        while True:
+            state = self.mcp.call("desktop.state")
+            if predicate(state) or time.monotonic() >= deadline:
+                return state
+            time.sleep(0.02)
+
+    def assert_store_matches(self, total=None, folder=None):
+        """The list, counts, reader, sidebar count and badge equal what the store holds."""
+        state = self.wait_state(lambda s: s["store_truth"]["agrees"] and s["loaded_message_id"] == s["selected_id"])
+        ids = [mail["id"] for mail in state["mail_rows"]]
+        self.assertEqual(len(ids), len(set(ids)), f"duplicate list rows: {ids}")
+        truth = state["store_truth"]
+        self.assertTrue(truth["fresh"] and truth["agrees"], json.dumps(truth)[:800])
+        facts = truth["truth"]
+        self.assertEqual(ids, facts["page_ids"])
+        self.assertEqual(state["total"], facts["total"])
+        self.assertEqual(state["page_unread"], facts["unread"])
+        self.assertEqual({k: v for k, v in state["inbox_unread"].items() if v}, facts["inbox_unread"])
+        self.assertEqual(state["mail_pending"], 0)
+        self.assertEqual(facts["pending_moves"], 0, "no journal record keeps a cache row")
+        self.assertEqual(state["loaded_message_id"], state["selected_id"], "the reader shows the selected message")
+        if state["selected_id"] is not None:
+            self.assertIn(state["selected_id"], ids)
+        unread_total = sum(facts["inbox_unread"].values())
+        self.assertEqual(state["sidebar_labels"][0], f"Inbox ({unread_total})" if unread_total else "Inbox")
+        if state["folder"] == "INBOX" and not state["account"]:
+            self.assertEqual(sum(f["total"] for f in facts["folders"] if f["folder"] == "INBOX"), state["total"])
+        drawn = state["drawn_rows"]
+        self.assertTrue(drawn["consistent"], json.dumps(drawn)[:800])
+        badge = state.get("desktop_badge")
+        if isinstance(badge, dict) and badge.get("count") is not None:
+            self.assertEqual(badge["count"], truth["badge"], "the published badge equals the store's unread Inbox total")
+        if total is not None:
+            self.assertEqual(state["total"], total)
+        if folder is not None:
+            self.assertEqual(state["folder"], folder)
+        self.assertIsNone(state["notice"])
+        return state
+
+    def rapid_single_actions(self, count, slow=False, undo_every=3, shots=()):
+        """Alternate archive and trash through keyboard and mouse, Undo after every third action."""
+        total = self.mcp.call("desktop.state")["total"]
+        moved = []
+        for step in range(count):
+            archive = step % 2 == 0
+            mouse = step % 4 in (1, 2)
+            before = self.mcp.call("desktop.state")
+            selected = before["selected_id"]
+            subject = next(mail["subject"] for mail in before["mail_rows"] if mail["id"] == selected)
+            if archive:
+                action = self.ARCHIVE_ICON if mouse else key("Delete")
+            else:
+                action = self.TRASH_ICON if mouse else key("ctrl+d")
+            self.mcp.batch(action, check("total", total - 1), check("action_toast.undo", True),
+                           check("action_toast.label", "Archived 1 message" if archive else "Deleted 1 message"),
+                           *self.page_refilled(total - 1))
+            total -= 1
+            moved.append((subject, "Archive" if archive else "Trash"))
+            after = self.mcp.call("desktop.state")
+            ids = [mail["id"] for mail in after["mail_rows"]]
+            self.assertNotIn(selected, ids, "the acted row leaves the list immediately")
+            self.assertEqual(len(ids), len(set(ids)), f"duplicate list rows: {ids}")
+            if (step + 1) % undo_every == 0:
+                self.mcp.batch(self.UNDO, check("total", total + 1),
+                               check("action_toast.label", "Restored 1 message"), *self.settled(slow))
+                total += 1
+                moved.pop()
+                restored = self.assert_store_matches(total=total, folder="INBOX")
+                self.assertIn(subject, [mail["subject"] for mail in restored["mail_rows"]])
+            elif not slow:
+                self.mcp.batch(*self.settled())
+                self.assert_store_matches(total=total, folder="INBOX")
+            if step in shots:
+                self.mcp.batch(shot(f"rapid-single-step-{step}"))
+        self.mcp.batch(*self.settled(slow))
+        self.assert_store_matches(total=total, folder="INBOX")
+        return total, moved
+
+    def assert_folder_contents(self, moved, inbox_total):
+        """Archive and Trash hold exactly the moved subjects; Inbox holds the rest."""
+        for folder, control in (("Archive", self.SIDEBAR_ARCHIVE), ("Trash", self.SIDEBAR_TRASH)):
+            subjects = sorted(subject for subject, destination in moved if destination == folder)
+            self.mcp.batch(control, check("folder", folder), check("total", len(subjects)), *self.settled())
+            state = self.assert_store_matches(total=len(subjects), folder=folder)
+            self.assertEqual(sorted(mail["subject"] for mail in state["mail_rows"]), subjects)
+        self.mcp.batch(self.SIDEBAR_INBOX, check("folder", "INBOX"), check("total", inbox_total), *self.settled())
+        self.assert_store_matches(total=inbox_total, folder="INBOX")
+
+    def restart_and_verify(self, total, name):
+        self.mcp.batch({"type": "restart"}, check("ready", True), check("page_loaded", True),
+                       check("folder", "INBOX"), check("total", total), *self.settled(), shot(name))
+        return self.assert_store_matches(total=total, folder="INBOX")
+
+    def test_rapid_archive_and_trash_alternate_input_with_undo_every_third_action(self):
+        self.mcp.call("desktop.start", persistent=True, desktop_badges=True)
+        self.mcp.batch(check("selected", "A little more room to think"), check("desktop_badge.visible", True), *self.settled())
+        self.assert_store_matches(total=120, folder="INBOX")
+        total, moved = self.rapid_single_actions(24, shots=(2, 11, 23))
+        self.assertEqual(total, 120 - len(moved))
+        self.assert_folder_contents(moved, total)
+        self.restart_and_verify(total, "rapid-single-after-restart")
+        self.assert_folder_contents(moved, total)
+
+    def rapid_move_dialog_sequence(self, slow=False, shots=()):
+        """Move rows to Projects through the dialog, Undo groups mid-sequence, then move the same and neighbouring rows again."""
+        total = self.mcp.call("desktop.state")["total"]
+        moved = []
+        plan = [("move", 1), ("move", 1), ("undo", None), ("move", 0), ("move", 2), ("move", 2),
+                ("undo", None), ("move", 1), ("move", 0), ("undo", None), ("move", 3), ("move", 3)]
+        for index, (kind, row) in enumerate(plan):
+            if kind == "move":
+                before = self.mcp.call("desktop.state")
+                target = before["mail_rows"][row]
+                self.mcp.batch(click(400, mail_row_y(row, before)), check("selected_id", target["id"]),
+                               key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
+                               type_text("Projects"), check("move_enter_destination", "Projects"), key("Return"),
+                               check("dialog", None), check("total", total - 1), check("action_toast.undo", True),
+                               *self.page_refilled(total - 1))
+                total -= 1
+                moved.append(target)
+                after = self.mcp.call("desktop.state")
+                ids = [mail["id"] for mail in after["mail_rows"]]
+                self.assertNotIn(target["id"], ids, "the moved row leaves the list immediately")
+                self.assertEqual(len(ids), len(set(ids)), f"duplicate list rows: {ids}")
+                if not slow:
+                    self.mcp.batch(*self.settled())
+                    self.assert_store_matches(total=total, folder="INBOX")
+            else:
+                count = self.mcp.call("desktop.state")["action_toast"]["count"]
+                self.mcp.batch(self.UNDO, check("total", total + count),
+                               check("action_toast.label", f"Restored {count} message{'s' if count > 1 else ''}"),
+                               *self.settled(slow))
+                total += count
+                restored, moved = moved[-count:], moved[:-count]
+                state = self.assert_store_matches(total=total, folder="INBOX")
+                subjects = [mail["subject"] for mail in state["mail_rows"]]
+                for mail in restored:
+                    self.assertIn(mail["subject"], subjects)
+            if index in shots:
+                self.mcp.batch(shot(f"rapid-move-step-{index}"))
+        self.mcp.batch(*self.settled(slow))
+        self.assert_store_matches(total=total, folder="INBOX")
+        return total, moved
+
+    def assert_projects_contents(self, moved, inbox_total):
+        for account, control in (("preview-work", self.SIDEBAR_WORK_PROJECTS), ("preview-personal", self.SIDEBAR_PERSONAL_PROJECTS)):
+            subjects = sorted(mail["subject"] for mail in moved if mail["account_id"] == account)
+            self.mcp.batch(control, check("folder", "Projects"), check("account", account),
+                           check("total", len(subjects)), *self.settled())
+            state = self.assert_store_matches(total=len(subjects), folder="Projects")
+            self.assertEqual(sorted(mail["subject"] for mail in state["mail_rows"]), subjects)
+        self.mcp.batch(self.SIDEBAR_INBOX, check("folder", "INBOX"), check("total", inbox_total), *self.settled())
+        self.assert_store_matches(total=inbox_total, folder="INBOX")
+
+    def test_rapid_move_dialog_undo_and_neighbouring_rows(self):
+        self.mcp.call("desktop.start", persistent=True)
+        self.mcp.batch(check("selected", "A little more room to think"), *self.settled())
+        total, moved = self.rapid_move_dialog_sequence(shots=(2, 6, 11))
+        self.assert_projects_contents(moved, total)
+        self.restart_and_verify(total, "rapid-move-after-restart")
+        self.assert_projects_contents(moved, total)
+
+    def rapid_bulk_sequence(self, slow=False):
+        """Bulk archive three rows and Undo, then bulk trash a different set and Undo while the batch is still running."""
+        total = self.mcp.call("desktop.state")["total"]
+        for action, rows, review_key, label in (("archive", (0, 1, 2), "BackSpace", "Archived 3 messages"),
+                                                 ("trash", (1, 3, 5), "ctrl+d", "Deleted 3 messages")):
+            before = self.mcp.call("desktop.state")
+            chosen = [before["mail_rows"][row] for row in rows]
+            self.mcp.batch(click(584, 164), check("mail_selection.mode", True), check("mail_selection.drawn", True),
+                           *[click(274, mail_row_y(row, before)) for row in rows],
+                           check("mail_selection.count", 3), check("mail_selection.pending", False),
+                           key(review_key), check("dialog", "BulkReview"), check("bulk.review_count", 3),
+                           key("y"), check("dialog", None), check("total", total - 3),
+                           check("action_toast.label", label), shot(f"rapid-bulk-{action}-immediate"))
+            after = self.mcp.call("desktop.state")
+            ids = [mail["id"] for mail in after["mail_rows"]]
+            for mail in chosen:
+                self.assertNotIn(mail["id"], ids, "selected rows leave the list immediately")
+            self.assertEqual(len(ids), len(set(ids)))
+            if action == "archive" and not slow:
+                self.mcp.batch({**check("bulk.jobs.0.remaining", 0), "timeout_ms": 5000}, *self.settled())
+                self.assert_store_matches(total=total - 3, folder="INBOX")
+            elif slow:
+                # The delayed fixture keeps the batch running so Undo lands mid-job.
+                self.mcp.batch(check("bulk.jobs.0.running", 1))
+            self.mcp.batch(self.UNDO, check("action_toast.label", "Restored 3 messages"), check("total", total),
+                           {**check("bulk.jobs.0.remaining", 0), "timeout_ms": 5000},
+                           check("bulk.jobs.0.failed", 0), check("bulk.jobs.0.uncertain", 0), *self.settled(slow),
+                           shot(f"rapid-bulk-{action}-restored"))
+            state = self.assert_store_matches(total=total, folder="INBOX")
+            subjects = [mail["subject"] for mail in state["mail_rows"]]
+            for mail in chosen:
+                self.assertIn(mail["subject"], subjects)
+            self.mcp.batch(key("Delete"), check("total", total - 1), check("action_toast.label", "Archived 1 message"),
+                           self.UNDO, check("total", total), *self.settled(slow))
+            self.assert_store_matches(total=total, folder="INBOX")
+        return total
+
+    def test_rapid_bulk_selection_archive_undo_then_trash_undo(self):
+        self.mcp.call("desktop.start", persistent=True)
+        self.mcp.batch(check("selected", "A little more room to think"), *self.settled())
+        total = self.rapid_bulk_sequence()
+        self.restart_and_verify(total, "rapid-bulk-after-restart")
+
+    def test_rapid_slow_acknowledgements_land_late_during_further_actions(self):
+        self.mcp.call("desktop.start", mail_actions="slow", persistent=True)
+        self.mcp.batch(check("selected", "A little more room to think"), *self.settled())
+        total, moved = self.rapid_single_actions(9, slow=True, shots=(1, 8))
+        total, projects = self.rapid_move_dialog_sequence(slow=True, shots=(1, 5))
+        total = self.rapid_bulk_sequence(slow=True)
+        self.assert_folder_contents(moved, total)
+        self.assert_projects_contents(projects, total)
+        self.restart_and_verify(total, "rapid-slow-after-restart")
+
+    def test_rapid_restart_while_slow_moves_are_still_pending(self):
+        self.mcp.call("desktop.start", mail_actions="slow", persistent=True)
+        before = self.assert_store_matches(total=120, folder="INBOX")
+        first, second = before["mail_rows"][0], before["mail_rows"][1]
+        self.mcp.batch(key("Delete"), check("total", 119), check("selected_id", second["id"]),
+                       key("ctrl+d"), check("total", 118), check("mail_pending", 2),
+                       shot("rapid-restart-pending"), {"type": "restart"}, check("ready", True),
+                       check("page_loaded", True), check("total", 118), *self.settled(), shot("rapid-restart-landed"))
+        state = self.assert_store_matches(total=118, folder="INBOX")
+        subjects = [mail["subject"] for mail in state["mail_rows"]]
+        self.assertNotIn(first["subject"], subjects)
+        self.assertNotIn(second["subject"], subjects)
+        self.assert_folder_contents([(first["subject"], "Archive"), (second["subject"], "Trash")], 118)
+
+    def test_rapid_actions_while_background_checks_land_mid_sequence(self):
+        self.mcp.call("desktop.start", background_sync=True, desktop_badges=True, persistent=True)
+        self.mcp.batch(check("desktop_badge.visible", True), check("total", 121), check("notice", None),
+                       check("mail_rows.0.subject", "New mail from the background"), *self.settled())
+        self.assert_store_matches(total=121, folder="INBOX")
+        total, moved = self.rapid_single_actions(12, shots=(5, 11))
+        total, projects = self.rapid_move_dialog_sequence(shots=(3,))
+        # Keep acting until further checks have landed inside the sequence.
+        while self.mcp.call("desktop.state")["sync_round"] < 3:
+            total, more = self.rapid_single_actions(3)
+            moved.extend(more)
+        self.mcp.batch(check("refreshing", False), *self.settled())
+        self.assert_folder_contents(moved, total)
+        self.assert_projects_contents(projects, total)
+        self.restart_and_verify(total, "rapid-background-after-restart")
+
+    def test_rapid_cross_account_move_undo_and_move_again(self):
+        self.mcp.call("desktop.start", persistent=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(286, 773), check("cross_account_moves", True),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80), *self.settled())
+        for attempt in range(3):
+            before = self.assert_store_matches(total=120, folder="INBOX")
+            target = before["mail_rows"][0]
+            self.assertEqual(target["account_id"], "preview-work")
+            self.mcp.batch(click(400, mail_row_y(0, before)), check("selected_id", target["id"]),
+                           key("m"), check("dialog", "Move"), wait(80),
+                           click(710, 294), wait(80), click(710, 370), check("fields.move_account", "preview-personal"),
+                           click(670, 353), type_text("Archive"), key("Return"), check("dialog", None),
+                           check("total", 119), check("action_toast.label", "Archived 1 message"))
+            if attempt < 2:
+                self.mcp.batch(self.UNDO, check("total", 120), check("action_toast.label", "Restored 1 message"),
+                               *self.settled(), shot(f"rapid-cross-account-restored-{attempt}"))
+                state = self.assert_store_matches(total=120, folder="INBOX")
+                self.assertEqual(state["mail_rows"][0]["subject"], target["subject"])
+                self.assertEqual(state["mail_rows"][0]["account_id"], "preview-work")
+            else:
+                self.mcp.batch(*self.settled())
+                self.assert_store_matches(total=119, folder="INBOX")
+        self.mcp.batch(self.SIDEBAR_ARCHIVE, check("folder", "Archive"), check("total", 1),
+                       check("mail_rows.0.account_id", "preview-personal"), *self.settled(),
+                       shot("rapid-cross-account-destination"))
+        state = self.assert_store_matches(total=1, folder="Archive")
+        self.assertEqual(state["mail_rows"][0]["subject"], target["subject"])
+        self.mcp.batch(self.SIDEBAR_INBOX, check("folder", "INBOX"), check("total", 119), *self.settled())
+        self.restart_and_verify(119, "rapid-cross-account-after-restart")
+        self.mcp.batch(self.SIDEBAR_ARCHIVE, check("folder", "Archive"), check("total", 1),
+                       check("mail_rows.0.account_id", "preview-personal"), *self.settled())
+        self.assert_store_matches(total=1, folder="Archive")
+
+    def test_rapid_drag_moves_interleaved_with_undo_and_keyboard_actions(self):
+        self.mcp.call("desktop.start", persistent=True)
+        self.mcp.batch(check("selected", "A little more room to think"), *self.settled())
+        total = 120
+        moved = []
+        for step in range(6):
+            before = self.assert_store_matches(total=total, folder="INBOX")
+            target = before["mail_rows"][1]
+            destination = "Archive" if step % 2 == 0 else "Trash"
+            self.hold_mail_over(402, mail_row_y(1, before), 85, 399 if destination == "Archive" else 438)
+            self.mcp.batch(check("mail_drag.count", 1), check("mail_drag.target", destination), check("mail_drag.valid", True),
+                           {"type": "mouse_up"}, check("total", total - 1), check("action_toast.undo", True))
+            total -= 1
+            moved.append((target["subject"], destination))
+            after = self.mcp.call("desktop.state")
+            self.assertNotIn(target["id"], [mail["id"] for mail in after["mail_rows"]])
+            selected = after["selected_id"]
+            keyboard = key("Delete") if destination == "Archive" else key("ctrl+d")
+            self.mcp.batch(keyboard, check("total", total - 1), check("action_toast.count", 2))
+            total -= 1
+            moved.append((next(mail["subject"] for mail in after["mail_rows"] if mail["id"] == selected), destination))
+            if step % 3 == 2:
+                self.mcp.batch(*self.settled(), shot(f"rapid-drag-step-{step}"))
+                self.assert_store_matches(total=total, folder="INBOX")
+            else:
+                self.mcp.batch(self.UNDO, check("total", total + 2), check("action_toast.label", "Restored 2 messages"), *self.settled())
+                total += 2
+                state = self.assert_store_matches(total=total, folder="INBOX")
+                subjects = [mail["subject"] for mail in state["mail_rows"]]
+                for subject, _ in moved[-2:]:
+                    self.assertIn(subject, subjects)
+                del moved[-2:]
+        self.assert_folder_contents(moved, total)
+        self.restart_and_verify(total, "rapid-drag-after-restart")
+        self.assert_folder_contents(moved, total)
+
 
 def matches_patterns(name, arguments):
     """Apply unittest's -k substring/glob selection to a functional-only run."""

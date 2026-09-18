@@ -11,6 +11,8 @@ mod move_journal;
 mod notifications;
 mod read_moves;
 mod staged_mail;
+#[cfg(feature = "test-support")]
+pub mod truth;
 mod write_ledger;
 use crate::model::*;
 pub use write_ledger::{Entry as WriteEntry, SyncEpoch, WriteKind};
@@ -475,73 +477,142 @@ impl Store {
         query: MailQuery,
         projection: Option<(String, u64, Arc<crate::folder_actions::Review>)>,
     ) -> anyhow::Result<MailPage> {
-        self.run(move |c| {
-            let transaction = c.transaction()?;
-            let c = &transaction;
-            read_moves::prepare(c, &query.project_moves)?;
-            let plan = mail_query::Plan::new(c, &query)?;
-            let columns = if query.project_moves.is_empty() && !move_journal::has_projection(c)? { "data,unread,starred,folder,account,0" } else { "data,unread,starred,folder,account,messages.pending_move" };
-            let (page_rows, total, unread) = if let Some(page) = plan.counted_page(c, columns)? {
-                page
-            } else {
-                let (total, unread) = plan.counts(c)?;
-                (plan.page(c, columns, total)?, total, unread)
-            };
-            let folder_count = if let Some((token, revision, review)) = &projection {
-                folder_projection::capture(c, token, review, *revision, &query)?;
-                Some(plan.affected_counts(c, token)?)
-            } else { None };
-            let mut move_placeholders = std::collections::HashSet::new();
-            let mut rows = page_rows.into_iter()
-                .map(|(data,unread,starred,folder,account,pending)| { let mut m:Mail=serde_json::from_str(&data)?; m.unread=unread;m.starred=starred;m.folder=folder;m.account_id=account;if pending { move_placeholders.insert(m.id.clone()); m.remote_id.clear(); } Ok(m) }).collect::<anyhow::Result<Vec<_>>>()?;
-            let source = read_moves::source(c)?;
-            let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} WHERE folder='INBOX' AND unread=1 GROUP BY account"))?
+        self.run(move |c| read_page(c, query, projection)).await
+    }
+}
+/// One page and its counts in a single read transaction; the ordinary path for
+/// every list query, shared by the test-support store-truth view.
+fn read_page(
+    c: &mut Connection,
+    query: MailQuery,
+    projection: Option<(String, u64, Arc<crate::folder_actions::Review>)>,
+) -> anyhow::Result<MailPage> {
+    let transaction = c.transaction()?;
+    let c = &transaction;
+    read_moves::prepare(c, &query.project_moves)?;
+    let plan = mail_query::Plan::new(c, &query)?;
+    let columns = if query.project_moves.is_empty() && !move_journal::has_projection(c)? {
+        "data,unread,starred,folder,account,0"
+    } else {
+        "data,unread,starred,folder,account,messages.pending_move"
+    };
+    let (page_rows, total, unread) = if let Some(page) = plan.counted_page(c, columns)? {
+        page
+    } else {
+        let (total, unread) = plan.counts(c)?;
+        (plan.page(c, columns, total)?, total, unread)
+    };
+    let folder_count = if let Some((token, revision, review)) = &projection {
+        folder_projection::capture(c, token, review, *revision, &query)?;
+        Some(plan.affected_counts(c, token)?)
+    } else {
+        None
+    };
+    let mut move_placeholders = std::collections::HashSet::new();
+    let mut rows = page_rows
+        .into_iter()
+        .map(|(data, unread, starred, folder, account, pending)| {
+            let mut m: Mail = serde_json::from_str(&data)?;
+            m.unread = unread;
+            m.starred = starred;
+            m.folder = folder;
+            m.account_id = account;
+            if pending {
+                move_placeholders.insert(m.id.clone());
+                m.remote_id.clear();
+            }
+            Ok(m)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let source = read_moves::source(c)?;
+    let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} WHERE folder='INBOX' AND unread=1 GROUP BY account"))?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
                 .collect::<rusqlite::Result<_>>()?;
-            let mut observed = std::collections::HashMap::new();
-            let mut relocated = std::collections::HashMap::new();
-            let mut statement = c.prepare(&format!("SELECT account,folder,unread FROM {source} WHERE id=?"))?;
-            for id in query.observe {
-                use rusqlite::OptionalExtension;
-                let value = statement.query_row([&id], |row| Ok(MailMembership {
-                    account: row.get(0)?, folder: row.get(1)?, unread: row.get(2)?,
-                })).optional()?;
-                if value.is_none() && relocated.len()<PAGE_SIZE
-                    && let Some(mail) = move_journal::relocation::observed(c, &id)? {
-                    relocated.insert(id.clone(), mail);
-                }
-                observed.insert(id, value);
-            }
-            anyhow::ensure!(query.observe_bulk.len() <= CHANNEL_CAPACITY, "Observe at most 32 mail operations at a time");
-            let mut bulk_observed = std::collections::HashMap::new();
-            for id in query.observe_bulk {
-                use rusqlite::OptionalExtension;
-                if let Some(undo) = c.query_row("SELECT undo_requested FROM bulk_jobs WHERE id=?",[&id],|r|r.get::<_,bool>(0)).optional()? {
-                    bulk_observed.insert(id,undo);
-                }
-            }
-            let mut move_recovery = std::collections::HashMap::new();
-            for mail in &mut rows {
-                if let Some(record)=move_journal::for_cache(c,&mail.id)? {
-                    mail.remote_id.clear();
-                    move_placeholders.insert(mail.id.clone());
-                    move_recovery.insert(mail.id.clone(),record);
-                }
-            }
-            let mut bulk_pending = std::collections::HashSet::new();
-            for mail in &rows {
-                let pending: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?)",[&mail.id],|r|r.get(0))?;
-                if pending { bulk_pending.insert(mail.id.clone()); }
-            }
-            let page = MailPage { move_pending_total:move_journal::pending(c)?, relocated, move_recovery, move_placeholders, rows, total, unread, folder_count, inbox_unread, observed, bulk_pending, bulk_observed, bulk_placeholders: Default::default(), bulk_revision: get(c,"bulk_revision")? };
-            drop(statement);
-            if projection.is_some() {
-                read_moves::prepare(c, &[])?;
-                transaction.commit()?;
-            }
-            Ok(page)
-        }).await
+    let mut observed = std::collections::HashMap::new();
+    let mut relocated = std::collections::HashMap::new();
+    let mut statement = c.prepare(&format!(
+        "SELECT account,folder,unread FROM {source} WHERE id=?"
+    ))?;
+    for id in query.observe {
+        use rusqlite::OptionalExtension;
+        let value = statement
+            .query_row([&id], |row| {
+                Ok(MailMembership {
+                    account: row.get(0)?,
+                    folder: row.get(1)?,
+                    unread: row.get(2)?,
+                })
+            })
+            .optional()?;
+        if value.is_none()
+            && relocated.len() < PAGE_SIZE
+            && let Some(mail) = move_journal::relocation::observed(c, &id)?
+        {
+            relocated.insert(id.clone(), mail);
+        }
+        observed.insert(id, value);
     }
+    anyhow::ensure!(
+        query.observe_bulk.len() <= CHANNEL_CAPACITY,
+        "Observe at most 32 mail operations at a time"
+    );
+    let mut bulk_observed = std::collections::HashMap::new();
+    for id in query.observe_bulk {
+        use rusqlite::OptionalExtension;
+        if let Some(undo) = c
+            .query_row(
+                "SELECT undo_requested FROM bulk_jobs WHERE id=?",
+                [&id],
+                |r| r.get::<_, bool>(0),
+            )
+            .optional()?
+        {
+            bulk_observed.insert(id, undo);
+        }
+    }
+    let mut move_recovery = std::collections::HashMap::new();
+    for mail in &mut rows {
+        if let Some(record) = move_journal::for_cache(c, &mail.id)? {
+            mail.remote_id.clear();
+            move_placeholders.insert(mail.id.clone());
+            move_recovery.insert(mail.id.clone(), record);
+        }
+    }
+    let mut bulk_pending = std::collections::HashSet::new();
+    for mail in &rows {
+        let pending: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?)",
+            [&mail.id],
+            |r| r.get(0),
+        )?;
+        if pending {
+            bulk_pending.insert(mail.id.clone());
+        }
+    }
+    let page = MailPage {
+        move_pending_total: move_journal::pending(c)?,
+        relocated,
+        move_recovery,
+        move_placeholders,
+        rows,
+        total,
+        unread,
+        folder_count,
+        inbox_unread,
+        observed,
+        bulk_pending,
+        bulk_observed,
+        bulk_placeholders: Default::default(),
+        bulk_revision: get(c, "bulk_revision")?,
+    };
+    drop(statement);
+    if projection.is_some() {
+        read_moves::prepare(c, &[])?;
+        transaction.commit()?;
+    }
+    Ok(page)
+}
+impl Store {
     pub async fn detail(&self, id: String) -> anyhow::Result<MailDetail> {
         self.detail_limited(id, READER_BODY_PAGE).await
     }
