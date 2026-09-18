@@ -22,9 +22,13 @@ The installer builds with `--release --locked --no-default-features`, installs `
 
 Shep reuses one running application per profile catalogue directory. Opening
 the launcher again restores its window, including after minimising or closing
-to the tray. Separate data directories remain independent. After upgrading
-from a version without launch ownership, quit the older copies normally before
-starting the new build; updating the executable does not replace running code.
+to the tray. Separate data directories remain independent. Opening Shep after an install
+asks a running older build to quit and takes over on the new one, or shows a
+notice to quit it from the tray when it does not answer; the installer prints
+the same advice when a Shep is still running the replaced binary. After
+upgrading from a version without launch ownership, quit the older copies
+normally before starting the new build; updating the executable does not
+replace running code.
 The launcher declares `StartupNotify=false`: Shep does not complete that
 desktop protocol, and advertising it leaves later GNOME dock activations waiting.
 

@@ -48,6 +48,7 @@ mod sidebar;
 mod store_truth;
 mod text_context;
 mod tray;
+pub mod update_notice;
 mod views;
 
 use crate::{
@@ -303,6 +304,7 @@ pub enum Message {
     PrefCloseToTray(bool),
     Tray(crate::desktop_tray::Event),
     Activate(u64),
+    RestartForUpdate(u64),
     MainWindowOpened(iced::window::Id),
     WindowCloseRequested(iced::window::Id),
     DesktopBadge(crate::desktop_badge::Event),
@@ -472,6 +474,9 @@ pub struct App {
     initial_page_loaded: bool,
     #[cfg(feature = "test-support")]
     idle_navigation: bool,
+    /// Fixture owner that never answers a newer build's restart request.
+    #[cfg(feature = "test-support")]
+    hold_restart_requests: bool,
     #[cfg(feature = "test-support")]
     store_truth: store_truth::State,
     #[cfg(feature = "test-support")]
@@ -663,6 +668,8 @@ impl App {
                 #[cfg(feature = "test-support")]
                 idle_navigation: demo && args.iter().any(|a| a == "--idle-navigation"),
                 #[cfg(feature = "test-support")]
+                hold_restart_requests: demo && args.iter().any(|a| a == "--hold-restart-requests"),
+                #[cfg(feature = "test-support")]
                 store_truth: Default::default(),
                 #[cfg(feature = "test-support")]
                 draw_log: Default::default(),
@@ -692,8 +699,14 @@ impl App {
             tick
         };
         Subscription::batch([
-            Subscription::run_with(self.activation.clone(), crate::activation::subscription)
-                .map(Message::Activate),
+            Subscription::run_with(self.activation.clone(), crate::activation::subscription).map(
+                |request| match request {
+                    crate::activation::Request::Open(generation) => Message::Activate(generation),
+                    crate::activation::Request::Restart(generation) => {
+                        Message::RestartForUpdate(generation)
+                    }
+                },
+            ),
             Subscription::run_with(self.demo, engine::subscription).map(Message::Backend),
             Subscription::run(crate::desktop_badge::subscription).map(Message::DesktopBadge),
             Subscription::run_with(self.demo, crate::desktop_tray::subscription).map(Message::Tray),
@@ -1073,6 +1086,7 @@ impl App {
             Message::DesktopBadge(crate::desktop_badge::Event::Overlay(_)) => {}
             Message::Tray(event) => return self.tray_event(event),
             Message::Activate(generation) => return self.activate(generation),
+            Message::RestartForUpdate(generation) => return self.restart_for_update(generation),
             Message::MainWindowOpened(window) => return self.main_window_opened(window),
             Message::WindowCloseRequested(window) => return self.request_main_close(window),
             Message::PrefCloseToTray(value) => {
@@ -4171,6 +4185,8 @@ impl App {
         {
             data["sync_round"] = serde_json::json!(self.test_sync_round);
             data["account_sync_waiting"] = serde_json::json!(self.test_account_sync_waiting);
+            // A replacement process writes the same file; the harness waits for its pid.
+            data["pid"] = serde_json::json!(std::process::id());
         }
         data["refreshing"] = serde_json::json!(self.busy.contains("sync"));
         data["refresh_animation"] = serde_json::json!({

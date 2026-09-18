@@ -127,6 +127,9 @@ class Desktop:
         self.launch_size = None
         self.restarts = 0
         self.mouse_held = False
+        self.second = None
+        self.second_log = None
+        self.second_launches = 0
         atexit.register(self.stop)
 
     def stop(self):
@@ -154,7 +157,8 @@ class Desktop:
             self.browser_log.close()
             self.browser_log = None
         self.env.pop("SHEP_TEST_PRINT_BROWSER", None)
-        for process in (self.clipboard, self.app, self.badge_monitor, self.badge_bus, self.xvfb):
+        self.env.pop("SHEP_TEST_BINARY_IDENTITY", None)
+        for process in (self.clipboard, self.app, self.second, self.badge_monitor, self.badge_bus, self.xvfb):
             if process and process.poll() is None:
                 process.terminate()
                 try:
@@ -162,7 +166,10 @@ class Desktop:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=3)
-        self.app = self.xvfb = None
+        self.app = self.xvfb = self.second = None
+        if self.second_log:
+            self.second_log.close()
+            self.second_log = None
         self.persistent = False
         self.launch_args = None
         self.clipboard = None
@@ -222,10 +229,12 @@ class Desktop:
             time.sleep(.02)
         self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
 
-    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False, live_imap=False):
+    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False, live_imap=False, activation=None):
         self.stop()
         if type(live_imap) is not bool:
             raise ValueError("Live IMAP launch must be a boolean.")
+        if activation not in (None, "hold-restart", "legacy"):
+            raise ValueError("Unknown activation fixture.")
         if live_imap:
             missing = live_variables_missing(os.environ)
             if missing:
@@ -355,6 +364,11 @@ class Desktop:
         self.launch_args = [str(binary), "--demo", *(["--backup-run=" + backup_run] if backup_run else []), *(["--tray-fixture"] if tray else []), *(["--held-provider-slots"] if held_provider_slots else []), *(["--hold-database-import"] if held_database_import else []), *(["--hold-database-export"] if held_database_export else []), *(["--held-account-sync", "--background-sync"] if held_account_sync else []), *(["--folder-actions=" + folder_actions] if folder_actions else []), *(["--move-recovery=" + ("committed" if move_recovery is True else move_recovery)] if move_recovery else []), *(["--notification-delivery=" + notification_delivery] if notification_delivery else []), *(["--idle-navigation"] if idle_navigation else []), *(["--nested-folders"] if nested_folders else []), *(["--pop3-personal"] if pop3_account else []), *(["--persist-demo"] if persistent else []), *(["--bulk-history"] if bulk_history else []), "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--reading-mail"] if reading_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--discard-failure-once"] if discard_failure_once else []), *(["--undo-failure-once"] if undo_failure_once else []), *(["--search-mail"] if search_mail else []), *(["--long-mail"] if long_mail else []), *(["--html-mail"] if html_mail else []), *(["--background-sync"] if background_sync else []), *(["--sync-failure-once"] if sync_failure_once else []), *(["--mail-actions=" + mail_actions] if mail_actions in ("slow", "fail", "refuse") else []), *(["--google-permissions=" + google_permissions] if google_permissions else []), *(["--google-legacy-client"] if google_legacy_client else [])]
         if large_incoming:
             self.launch_args.append("--large-incoming")
+        if activation == "hold-restart":
+            self.launch_args.append("--hold-restart-requests")
+        elif activation == "legacy":
+            # An owner from before binary identities publishes none.
+            self.env["SHEP_TEST_BINARY_IDENTITY"] = "none"
         if self.tray_fixture:
             self.launch_args[self.launch_args.index("--test-state") + 1] = str(self.tray_fixture.owned_dir / "state.json")
         if profile_sync is not None:
@@ -389,10 +403,15 @@ class Desktop:
         name = "app.log" if self.restarts == 0 else f"app-restart-{self.restarts}.log"
         self.log = (self.directory / name).open("w")
         self.app = subprocess.Popen(self.launch_args, cwd=ROOT, env=self.env, stdout=self.log, stderr=self.log)
-        deadline = time.monotonic() + 20
+        return self.wait_ready(self.app, self.directory / "app.log")
+
+    def wait_ready(self, process, log, deadline=None):
+        """The owned process must show the main window and write its own state."""
+        width, height = self.launch_size
+        deadline = deadline or time.monotonic() + 20
         while time.monotonic() < deadline:
-            if self.app.poll() is not None:
-                raise RuntimeError(f"Shep exited. See {self.directory / 'app.log'}")
+            if process.poll() is not None:
+                raise RuntimeError(f"Shep exited. See {log}")
             try:
                 windows = self.command("xdotool", "search", "--name", "Shep.*Mail")
                 if windows:
@@ -401,14 +420,84 @@ class Desktop:
                     self.command("xdotool", "windowmove", self.window, "0", "0")
                     self.command("xdotool", "windowfocus", self.window)
                     state = self.state()
-                    if state.get("ready") and state.get("page_loaded"):
-                        return {"pid": self.app.pid, "window": self.window, "size": [width, height], "state": state,
+                    if state.get("ready") and state.get("page_loaded") and state.get("pid") == process.pid:
+                        return {"pid": process.pid, "window": self.window, "size": [width, height], "state": state,
                                 "artifacts": str(self.directory),
                                 "window_class": self.command("xprop", "-id", self.window, "WM_CLASS").strip() if self.tray_fixture else None}
             except (subprocess.SubprocessError, FileNotFoundError, json.JSONDecodeError):
                 pass
             time.sleep(0.05)
         raise RuntimeError("Shep was not ready within 20 seconds; check the app log and test-support feature.")
+
+    def launch_second(self, identity=None):
+        """Launch the same fixture again, as a launcher click would, and report what the two processes did.
+
+        identity spoofs the second copy's executable identity (an inode number),
+        so a newer install can be simulated with one binary. The owner must
+        never be killed: the outcome is observed from real process exits and
+        native windows only."""
+        if not self.app or self.app.poll() is not None or not self.launch_args:
+            raise RuntimeError("Start an owned fixture before launching a second copy.")
+        if self.second and self.second.poll() is None:
+            raise RuntimeError("Close the previous second copy first.")
+        if identity is not None and (type(identity) is not str or not re.fullmatch(r"[0-9]{1,18}", identity)):
+            raise ValueError("A spoofed identity is a decimal inode number.")
+        env = self.env.copy()
+        if identity is None:
+            env.pop("SHEP_TEST_BINARY_IDENTITY", None)
+        else:
+            env["SHEP_TEST_BINARY_IDENTITY"] = identity
+        self.second_launches += 1
+        if self.second_log:
+            self.second_log.close()
+        log = self.directory / f"second-launch-{self.second_launches}.log"
+        self.second_log = log.open("w")
+        self.second = subprocess.Popen(self.launch_args, cwd=ROOT, env=env, stdout=self.second_log, stderr=self.second_log)
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline:
+            if self.second.poll() is not None:
+                second, self.second = self.second, None
+                return {"outcome": "exited", "returncode": second.returncode, "owner_pid": self.app.pid,
+                        "owner_running": self.app.poll() is None, "log": str(log)}
+            if self.app.poll() is not None:
+                previous = {"pid": self.app.pid, "returncode": self.app.returncode}
+                if self.log:
+                    self.log.close()
+                self.app, self.second = self.second, None
+                self.log, self.second_log = self.second_log, None
+                self.restarts += 1
+                # The replacement's revisions start again from one; the old
+                # owner's higher revision would otherwise mask its state.
+                state = self.directory / "state.json"
+                if state.exists():
+                    state.replace(self.directory / f"state-before-restart-{self.restarts}.json")
+                result = self.wait_ready(self.app, log, deadline)
+                result.update(outcome="took_over", previous_process=previous)
+                return result
+            try:
+                windows = self.command("xdotool", "search", "--all", "--onlyvisible", "--pid", str(self.second.pid), "--name", "^Shep$")
+            except subprocess.CalledProcessError:
+                windows = ""
+            if windows:
+                window = windows.splitlines()[-1]
+                time.sleep(0.3)
+                path = self.directory / f"second-launch-{self.second_launches}-notice.webp"
+                self.command("import", "-window", "root", "-quality", "90", str(path))
+                return {"outcome": "notice", "pid": self.second.pid, "window": window, "screenshot": str(path),
+                        "owner_pid": self.app.pid, "owner_running": self.app.poll() is None, "log": str(log)}
+            time.sleep(0.05)
+        raise RuntimeError("The second copy neither exited, took over nor showed a notice within 40 seconds.")
+
+    def close_second(self):
+        """Close the second copy's notice window natively and wait for its exit."""
+        if not self.second or self.second.poll() is not None:
+            raise RuntimeError("No second copy is running.")
+        windows = self.command("xdotool", "search", "--all", "--pid", str(self.second.pid), "--name", "^Shep$")
+        request_window_close(self.env["DISPLAY"], windows.splitlines()[-1])
+        self.second.wait(timeout=10)
+        second, self.second = self.second, None
+        return {"closed": True, "pid": second.pid, "returncode": second.returncode,
+                "owner_running": self.app is not None and self.app.poll() is None}
 
     def close_app(self, crash=False):
         if type(crash) is not bool:
@@ -940,11 +1029,14 @@ class Desktop:
 
 TOOLS = [
     {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or cloud writes. live_imap=true instead runs the production sync path against the disposable account named by the SHEP_LIVE_* environment variables, with a fresh data root and a memory-only keychain.",
-     "inputSchema": {"type": "object", "properties": {"live_imap":{"type":"boolean","default":False}, "profile_passwords":{"type":"string","enum":["ready","reject"]}, "backup_run":{"type":"string","enum":["ready","recover","warning","held"]}, "tray":{"type":"string","enum":["available","missing"]}, "profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once","missing-destination","kept-rediscovered"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once","native"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "bulk_history": {"type": "boolean", "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "large_incoming": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail", "refuse"]}, "search_mail": {"type": "boolean", "default": False}, "long_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "google_client": {"type": "string", "enum": ["fixture", "none"], "default": "fixture"}, "google_legacy_client": {"type": "boolean", "default": False}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+     "inputSchema": {"type": "object", "properties": {"live_imap":{"type":"boolean","default":False}, "activation":{"type":"string","enum":["hold-restart","legacy"]}, "profile_passwords":{"type":"string","enum":["ready","reject"]}, "backup_run":{"type":"string","enum":["ready","recover","warning","held"]}, "tray":{"type":"string","enum":["available","missing"]}, "profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once","missing-destination","kept-rediscovered"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once","native"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "bulk_history": {"type": "boolean", "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "large_incoming": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail", "refuse"]}, "search_mail": {"type": "boolean", "default": False}, "long_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "google_client": {"type": "string", "enum": ["fixture", "none"], "default": "fixture"}, "google_legacy_client": {"type": "boolean", "default": False}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
     {"name": "desktop.close", "description": "Close only the owned fixture app, keeping its Xvfb display and persistent fixture cache available for restart. Normally sends WM_DELETE_WINDOW; crash=true kills only the owned process for recovery tests.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.restart", "description": "Restart only the owned persistent fixture app on its existing Xvfb display. Normally sends a native window-close request; crash=true kills that owned process to exercise journal recovery. Retains the fixture SQLite cache and never changes app state directly.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including held left-button mouse_down/mouse_up, short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
      "inputSchema": {"type": "object", "required": ["actions"], "properties": {"actions": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "required": ["type"], "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}, "type": {"enum": ["pixel_reference", "measure_pixels", "close_request", "tray_menu", "tray_host_stop", "tray_host_start", "tray_theme", "wait_exit", "restart", "click", "double_click", "mouse_down", "mouse_up", "hover", "resize", "drag", "type", "paste", "key", "key_sequence", "choose_file", "print_output", "cancel_print", "release_profile_upload", "focus_app", "browser_screenshot", "scroll", "wait", "assert", "wait_for", "screenshot", "state"]}, "points": {"type": "array", "minItems": 8, "maxItems": 128, "items": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"type": "integer"}}}, "count": {"type": "integer"}, "pages": {"type": "integer"}, "x": {"type": "integer"}, "y": {"type": "integer"}, "width": {"type": "integer"}, "height": {"type": "integer"}, "button": {"type": "integer", "enum": [1, 2, 3]}, "modifiers": {"type": "array", "items": {"type": "string", "enum": ["ctrl", "shift", "alt", "super"]}}, "end_x": {"type": "integer"}, "end_y": {"type": "integer"}, "duration_ms": {"type": "integer", "maximum": 2000}, "text": {"type": "string"}, "key": {"type": "string"}, "keys": {"type":"array","minItems":1,"maxItems":32,"items":{"type":"string","minLength":1,"maxLength":80}}, "ms": {"type": "integer", "maximum": 2000}, "path": {"type": "string"}, "op": {"enum": ["eq", "ne", "contains", "gte", "lte"]}, "value": {}, "name": {"type": "string"}, "amount": {"type": "integer"}, "timeout_ms": {"type": "integer", "maximum": 5000}}}}}}},
+    {"name": "desktop.launch_second", "description": "Launch the owned fixture a second time, as a launcher click would. identity spoofs the second copy's executable identity (a decimal inode) so a newer install can be simulated with one binary. Reports exited (same build handed over), took_over (the older owner quit and the second copy is now the owned app) or notice (the second copy shows the stale-owner notice window). Never kills the owner.",
+     "inputSchema": {"type": "object", "properties": {"identity": {"type": "string", "pattern": "^[0-9]{1,18}$"}}}},
+    {"name": "desktop.close_second", "description": "Close the second copy's notice window with a native close request and wait for that process to exit.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "desktop.state", "description": "Read observed UI state, cache counts, shortcuts and handler timings; does not change app state.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "desktop.screenshot", "description": "Capture the actual iced window as WebP. Returns image and artifact path.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     {"name": "desktop.stop", "description": "Stop only the isolated app and Xvfb processes created by this harness.", "inputSchema": {"type": "object", "properties": {}}},
@@ -972,6 +1064,7 @@ def main():
                 name = params["name"]
                 arguments = params.get("arguments", {})
                 handlers = {"desktop.start": desktop.start, "desktop.restart": desktop.restart, "desktop.close": desktop.close_app, "desktop.batch": desktop.batch,
+                            "desktop.launch_second": desktop.launch_second, "desktop.close_second": desktop.close_second,
                             "desktop.state": desktop.state, "desktop.screenshot": desktop.screenshot,
                             "desktop.stop": desktop.stop}
                 try:

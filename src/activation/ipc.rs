@@ -12,6 +12,8 @@ use tokio::{
 };
 
 const MAGIC: &[u8; 8] = b"SHEPOP01";
+/// An owner built before this request reads only the first magic and drops it.
+const RESTART_MAGIC: &[u8; 8] = b"SHEPRS01";
 const HANDSHAKE: Duration = Duration::from_millis(250);
 const ACKNOWLEDGMENT: Duration = Duration::from_secs(2);
 
@@ -19,12 +21,15 @@ const ACKNOWLEDGMENT: Duration = Duration::from_secs(2);
 pub(super) enum Reply {
     Accepted,
     Closing,
+    /// The owner is quitting so the launching build can take over.
+    Restarting,
 }
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub(super) trait Transport: Send + Sync {
     async fn request(&self, record: Record) -> anyhow::Result<Reply>;
+    async fn restart(&self, record: Record) -> anyhow::Result<Reply>;
 }
 
 pub(super) struct Local;
@@ -32,20 +37,29 @@ pub(super) struct Local;
 #[async_trait::async_trait]
 impl Transport for Local {
     async fn request(&self, record: Record) -> anyhow::Result<Reply> {
-        timeout(ACKNOWLEDGMENT + HANDSHAKE, async move {
-            let name = record.endpoint.as_str().to_ns_name::<GenericNamespaced>()?;
-            let connection = Stream::connect(name).await?;
-            let mut connection = &connection;
-            connection.write_all(MAGIC).await?;
-            connection.write_all(record.secret.as_bytes()).await?;
-            match connection.read_u8().await? {
-                1 => Ok(Reply::Accepted),
-                2 => Ok(Reply::Closing),
-                _ => anyhow::bail!("Invalid activation acknowledgment"),
-            }
-        })
-        .await?
+        exchange(record, MAGIC).await
     }
+
+    async fn restart(&self, record: Record) -> anyhow::Result<Reply> {
+        exchange(record, RESTART_MAGIC).await
+    }
+}
+
+async fn exchange(record: Record, magic: &'static [u8; 8]) -> anyhow::Result<Reply> {
+    timeout(ACKNOWLEDGMENT + HANDSHAKE, async move {
+        let name = record.endpoint.as_str().to_ns_name::<GenericNamespaced>()?;
+        let connection = Stream::connect(name).await?;
+        let mut connection = &connection;
+        connection.write_all(magic).await?;
+        connection.write_all(record.secret.as_bytes()).await?;
+        match connection.read_u8().await? {
+            1 => Ok(Reply::Accepted),
+            2 => Ok(Reply::Closing),
+            3 => Ok(Reply::Restarting),
+            _ => anyhow::bail!("Invalid activation acknowledgment"),
+        }
+    })
+    .await?
 }
 
 pub(super) struct Server {
@@ -122,12 +136,16 @@ async fn serve(connection: Stream, record: Record, signal: Signal) {
     if !matches!(
         timeout(HANDSHAKE, connection.read_exact(&mut request)).await,
         Ok(Ok(_))
-    ) || &request[..8] != MAGIC
-        || &request[8..] != record.secret.as_bytes()
+    ) || &request[8..] != record.secret.as_bytes()
     {
         return;
     }
-    let reply = match signal.request() {
+    let (admitted, accepted) = match &request[..8] {
+        magic if magic == MAGIC => (signal.request(), 1),
+        magic if magic == RESTART_MAGIC => (signal.request_restart(), 3),
+        _ => return,
+    };
+    let reply = match admitted {
         None => 2,
         Some(generation) => {
             if !matches!(
@@ -136,7 +154,7 @@ async fn serve(connection: Stream, record: Record, signal: Signal) {
             ) {
                 return;
             }
-            1
+            accepted
         }
     };
     let _ = timeout(HANDSHAKE, connection.write_u8(reply)).await;
