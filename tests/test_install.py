@@ -1,4 +1,6 @@
+from contextlib import redirect_stdout
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -100,6 +102,39 @@ print(json.dumps({"reason":"compiler-artifact","target":{"name":"shep","kind":["
                 self.assertFalse(scalable.exists())
                 self.assertFalse(tray.exists())
                 self.assertEqual(vault.read_bytes(), b"personal mail")
+
+    def test_install_reports_a_shep_still_running_the_replaced_binary_without_signalling_it(self):
+        with tempfile.TemporaryDirectory(prefix="shep install ") as temporary:
+            root = Path(temporary)
+            prefix, data, proc = root / "prefix", root / "data", root / "proc"
+            binary = root / "release-binary"
+            binary.write_bytes(b"updated release")
+            destination = (prefix / "bin" / "shep").resolve()
+            other = root / "other-program"
+            other.write_bytes(b"unrelated")
+            for pid, target in ((4242, f"{destination} (deleted)"), (4243, str(destination)),
+                                (4244, str(other)), (4245, f"{other} (deleted)")):
+                (proc / str(pid)).mkdir(parents=True)
+                os.symlink(target, proc / str(pid) / "exe")
+            (proc / "self").mkdir()
+            os.symlink(str(destination), proc / "self" / "exe")
+            (proc / "4246").mkdir()
+            with patch.object(installer.shutil, "which", return_value=None), \
+                    patch.object(installer.os, "kill") as kill:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    installer.install(binary, prefix, data, process_root=proc)
+                kill.assert_not_called()
+            self.assertEqual(installer.running_previous_instances(destination, proc), [4242])
+            lines = output.getvalue().splitlines()
+            self.assertEqual(lines[-1], "Shep is still running the previous version (pid 4242). "
+                                        "Quit it from the tray and open Shep again to use the update.")
+            self.assertEqual(destination.read_bytes(), b"updated release")
+            with patch.object(installer.shutil, "which", return_value=None):
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    installer.install(binary, prefix, data, process_root=root / "no-proc-here")
+            self.assertNotIn("still running", output.getvalue())
 
     def test_desktop_exec_escapes_reserved_characters(self):
         encoded = installer.exec_value('/tmp/a% "b$`\\c/shep')
