@@ -1,5 +1,38 @@
 # Completion audit
 
+## Rapid move and Undo flows against store truth, 18 September 2026
+
+Sam reported that with real mail, moving messages, undoing and continuing to
+move left the list out of step with the actual moves, with artefacts on some
+rows. The native harness gained two test-support observations: `store_truth`
+(the store's own page ids, totals, unread and per-account Inbox counts, folder
+totals, pending moves, bulk effects and ledger entries, read through the
+ordinary list query) and `drawn_rows` (the mail rows the widget tree actually
+drew in the latest frame, with duplicate, stale, out-of-order and overlapping
+checks). Eight `test_rapid_*` scenarios drive long fast sequences: alternating
+keyboard and mouse archive and trash with Undo every third action, Move dialog
+moves of the same and neighbouring rows with grouped Undo, bulk selections
+with Undo mid-batch, drag and drop between keyboard actions, cross-account
+move then Undo then move, the same under slow acknowledgements and with
+background checks landing mid-sequence, restart while slow moves are pending,
+and a restart after every sequence. Each step asserts list, counts, reader,
+sidebar count and badge against the store and the drawn rows.
+
+Found and fixed: after a move on a full page the list stayed one row short
+until the server receipt's requery, then reflowed (`3fad235`: the page is
+refilled with the projected rows straight away; unit regression), and the
+background fixture re-listed a moved-away UID each round, producing a
+duplicate arrival row that a real server would not (`fff764d`). No UI-store
+desync remained on the fixture harness. Lane commits `5410aa0`, `3fad235`,
+`fff764d`, `5415063`, merged as `8a2231c`. Evidence: 92 related native
+scenarios pass in 521 s, the family alone in 135 s, 1,388 hook executions,
+reviewed screenshots under `artifacts/e2e/`. Limitations: the fixture server
+rekeys moved messages and completes moves locally, so real IMAP timing is not
+modelled; `drawn_rows` proves layout bounds, not presented pixels; there is
+no keyboard Undo binding, so Undo is the toast control; the refill fix is a
+smoothness improvement, not proven to be the whole of Sam's report, which the
+live-mailbox flows are for.
+
 ## Native sidebar coordinates after the Spam entry, 18 September 2026
 
 Eight native move flows had failed since `12e6e2d` (13 September) added the
