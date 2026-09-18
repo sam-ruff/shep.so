@@ -58,6 +58,7 @@ portable! {
     group_conversations: bool,
     unread_badge: bool,
     tooltips: bool,
+    foreign_move_folders: bool,
 }
 
 #[derive(Clone, Debug)]

@@ -785,6 +785,47 @@ class NativeFlows(unittest.TestCase):
                        {**click(95,708),"modifiers":["ctrl"]},check("expanded_folders.preview-work","Teams","contains"),
                        check("total",2),shot("nested-parent-child-combined-inbox"))
 
+    def test_move_foreign_folder_badge_confirmation_keyboard_and_mouse(self):
+        # The personal fixture account has Home.Plans, which the work account
+        # lacks, so typing "plans" only matches another account's folders.
+        result=self.mcp.call("desktop.start",nested_folders=True)
+        print(f"Foreign folder Move evidence: {result['artifacts']}",flush=True)
+        self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),
+                       click(286,773),check("cross_account_moves",True),
+                       click(286,848),check("foreign_move_folders",True),check("preferences_saved",True),
+                       wait(150),shot("foreign-folders-preference"),
+                       key("ctrl+1"),check("tab","Mail"),wait(80),check("total",120),
+                       check("selected","A little more room to think"),
+                       key("m"),check("dialog","Move"),check("focused_input","folder-search"),
+                       check("move_enter_account","preview-work"),check("move_candidates.0.foreign",False),
+                       type_text("plans"),check("move_enter_destination","Home.Plans"),
+                       check("move_enter_account","preview-personal"),check("move_candidates.0.foreign",True),
+                       check("move_candidates.1.folder","Home.Plans.2026"),wait(150),shot("move-foreign-badge"),
+                       key("Return"),check("dialog","MoveConfirm"),check("move_confirm.account","preview-personal"),
+                       check("move_confirm.folder","Home.Plans"),wait(200),check("dialog","MoveConfirm"),
+                       check("total",120),shot("move-foreign-confirm"),
+                       key("Escape"),check("dialog","Move"),check("fields.folder_search","plans"),
+                       check("focused_input","folder-search"),check("move_enter_destination","Home.Plans"),
+                       check("total",120),check("mail_pending",0),
+                       key("Return"),check("dialog","MoveConfirm"),key("Return"),check("dialog",None),
+                       check("total",119),{**check("mail_pending",0),"timeout_ms":5000},
+                       check("action_toast.label","Moved 1 message to Home.Plans"),shot("move-foreign-moved"),
+                       click(85,767),check("expanded_folders.preview-personal",["Home"]),key("Right"),
+                       check("sidebar_index",12),key("Return"),check("folder","Home.Plans"),check("total",2),
+                       check("mail_rows.1.subject","A little more room to think"),
+                       check("mail_rows.1.account_id","preview-personal"),shot("move-foreign-destination"))
+        self.mcp.batch(click(85,115),check("folder","INBOX"),check("total",119),
+                       click(402,mail_row_y(0)),check("selected","Your weekly workspace digest"),
+                       key("m"),check("dialog","Move"),check("focused_input","folder-search"),type_text("plans"),
+                       check("move_enter_destination","Home.Plans"),click(600,542),check("dialog","MoveConfirm"),
+                       check("move_confirm.folder","Home.Plans"),click(495,559),check("dialog","Move"),
+                       check("fields.folder_search","plans"),check("focused_input","folder-search"),check("total",119),
+                       click(600,542),check("dialog","MoveConfirm"),click(943,559),check("dialog",None),
+                       check("total",118),{**check("mail_pending",0),"timeout_ms":5000},
+                       check("action_toast.label","Moved 2 messages to Home.Plans"),
+                       click(85,806),check("folder","Home.Plans"),check("total",3),
+                       check("mail_rows.0.account_id","preview-personal"),shot("move-foreign-mouse-destination"))
+
     def test_nested_folder_compact_dark_keyboard_reveal_and_saved_size(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)
         print(f"Compact folder tree evidence: {result['artifacts']}",flush=True)

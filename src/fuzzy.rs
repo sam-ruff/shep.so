@@ -142,7 +142,7 @@ impl Matcher {
         self.score_normalized(&normalized(candidate))
     }
 
-    fn score_normalized(&mut self, candidate: &str) -> Option<usize> {
+    pub(crate) fn score_normalized(&mut self, candidate: &str) -> Option<usize> {
         let query = self.query.as_str();
         if query.is_empty() {
             return Some(0);

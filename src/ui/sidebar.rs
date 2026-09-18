@@ -198,11 +198,9 @@ impl App {
         for account in &self.workspace.accounts {
             items.push(SidebarItem {
                 account_email: duplicate(account).then(|| account.email.clone()),
-                label: if duplicate(account) {
-                    account.name.clone()
-                } else {
-                    account.email.clone()
-                },
+                label: move_candidates::account_display(&self.workspace.accounts, &account.id)
+                    .unwrap_or(&account.email)
+                    .to_owned(),
                 icon: "mail",
                 action: Message::ToggleAccountFolders(account.id.clone()),
                 active: false,
@@ -641,29 +639,88 @@ impl App {
 }
 
 impl App {
-    pub(super) fn move_folder_label<'a>(&'a self, folder: &'a str) -> std::borrow::Cow<'a, str> {
-        let account = if !self.field("move_account").is_empty() {
-            Some(self.field("move_account"))
-        } else if self.mail_selection.mode {
+    /// The account whose tree decodes home Move labels.
+    fn move_label_account(&self) -> Option<&str> {
+        if !self.field("move_account").is_empty() {
+            return Some(self.field("move_account"));
+        }
+        if self.mail_selection.mode {
             // The reader may belong to another account after a move. Match
-            // the selected membership used by move_folders, including encoding.
-            self.mail_selection
+            // the selected membership used by the chooser, including encoding.
+            return self
+                .mail_selection
                 .snapshot
                 .as_ref()
                 .and_then(|snapshot| snapshot.accounts.keys().next())
-                .map(String::as_str)
-        } else {
-            self.action_mail().map(|mail| mail.account_id.as_str())
-        };
-        self.workspace.folder_label(account, folder)
+                .map(String::as_str);
+        }
+        self.action_mail().map(|mail| mail.account_id.as_str())
     }
-    pub(super) fn ranked_move_folders(&self) -> Vec<String> {
-        crate::fuzzy::ranked_labels(
-            self.field("folder_search"),
-            self.move_folders().into_iter().map(|folder| {
-                let label = self.move_folder_label(&folder).into_owned();
-                (folder, label)
-            }),
+    #[cfg(test)]
+    pub(super) fn move_folder_label<'a>(&'a self, folder: &'a str) -> std::borrow::Cow<'a, str> {
+        self.workspace
+            .folder_label(self.move_label_account(), folder)
+    }
+    pub(super) fn ranked_move_candidates(&self) -> Vec<move_candidates::MoveCandidate> {
+        use move_candidates::{Home, Source};
+        let explicit = Some(self.field("move_account")).filter(|account| !account.is_empty());
+        let source = if self.mail_selection.mode {
+            Source::Selection(
+                self.mail_selection
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.accounts.keys().map(String::as_str).collect()),
+            )
+        } else {
+            Source::Message(self.move_action_mail().map(|mail| mail.account_id.as_str()))
+        };
+        let home = Home {
+            explicit,
+            source,
+            label_account: self.move_label_account(),
+        };
+        let query = self.field("folder_search");
+        move_candidates::rank(
+            query,
+            move_candidates::gather(
+                &self.workspace,
+                &home,
+                self.foreign_moves_enabled(),
+                query.trim().is_empty(),
+            ),
         )
+    }
+    #[cfg(test)]
+    pub(super) fn ranked_move_folders(&self) -> Vec<String> {
+        self.ranked_move_candidates()
+            .into_iter()
+            .map(|candidate| candidate.folder)
+            .collect()
+    }
+    /// The account badge with its secondary identity beside it.
+    pub(super) fn account_badge(&self, id: &str) -> Element<'_, Message> {
+        let accounts = &self.workspace.accounts;
+        let display = move_candidates::account_display(accounts, id)
+            .unwrap_or(id)
+            .to_owned();
+        let secondary = accounts
+            .iter()
+            .find(|account| account.id == id)
+            .map(|account| {
+                if display == account.email {
+                    account.name.trim()
+                } else {
+                    account.email.as_str()
+                }
+            })
+            .unwrap_or("")
+            .to_owned();
+        let mut content = row![badge_inline(display)]
+            .spacing(10)
+            .align_y(Alignment::Center);
+        if !secondary.is_empty() {
+            content = content.push(muted(secondary).size(12));
+        }
+        content.into()
     }
 }

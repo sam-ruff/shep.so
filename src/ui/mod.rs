@@ -25,6 +25,7 @@ mod layout;
 mod mail_actions;
 mod mail_list;
 mod mail_selection;
+mod move_candidates;
 mod move_recovery;
 mod native_input;
 mod notifications;
@@ -101,12 +102,22 @@ pub enum Dialog {
     Account,
     Calendar,
     Move,
+    MoveConfirm,
     DiscardDraft,
     Event,
     Export,
     Restore,
     RemoveBackup,
     Sender,
+}
+
+/// A chosen folder in another account, awaiting confirmation.
+#[derive(Clone, Debug)]
+struct MoveConfirm {
+    mail_id: String,
+    account: String,
+    folder: String,
+    label: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -314,6 +325,10 @@ pub enum Message {
     FindSetting(SettingsTab, &'static str),
     ShowAllSettings,
     PrefCrossAccount(bool),
+    PrefForeignMoveFolders(bool),
+    MoveForeign(String, String),
+    ConfirmMove,
+    CancelMoveConfirm,
     PrefReaderSize(u16),
     PrefScale(u16),
     ApplyPaneResize,
@@ -440,6 +455,7 @@ pub struct App {
     removal: removals::Removal,
     outbox: outgoing::Outbox,
     move_recovery: move_recovery::Recovery,
+    move_confirm: Option<MoveConfirm>,
     remapping: Option<(Action, Slot)>,
     busy: HashSet<String>,
     refresh: refresh::Animation,
@@ -631,6 +647,7 @@ impl App {
                 removal: Default::default(),
                 outbox: Default::default(),
                 move_recovery: Default::default(),
+                move_confirm: None,
                 remapping: None,
                 busy: HashSet::new(),
                 refresh: Default::default(),
@@ -938,6 +955,7 @@ impl App {
     fn open(&mut self, dialog: Dialog) {
         self.pending_focus = None;
         self.focused_input = None;
+        self.move_confirm = None;
         self.dialog = Some(dialog);
         self.fields.clear();
         self.remapping = None;
@@ -2126,6 +2144,7 @@ impl App {
                 }
                 self.pending_focus = None;
                 self.focused_input = None;
+                self.move_confirm = None;
                 if self.dialog.is_none() && self.compose_visible() {
                     self.close_composer();
                 }
@@ -2341,10 +2360,89 @@ impl App {
             Message::SyncCalendar => self.send(Command::SyncCalendar),
             Message::MoveFirst => {
                 if self.dialog == Some(Dialog::Move)
-                    && let Some(folder) = self.ranked_move_folders().into_iter().next()
+                    && let Some(first) = self.ranked_move_candidates().into_iter().next()
                 {
+                    if first.foreign {
+                        return self.handle(Message::MoveForeign(first.account, first.folder));
+                    }
+                    return self.handle(Message::Move(first.folder));
+                }
+            }
+            Message::MoveForeign(account, folder) => {
+                if self.dialog != Some(Dialog::Move) || !self.foreign_moves_enabled() {
+                    return Task::none();
+                }
+                if self.mail_selection.mode {
+                    self.begin_bulk(bulk::Intent::Move {
+                        account: Some(account),
+                        folder,
+                        foreign: true,
+                    });
+                    return Task::none();
+                }
+                let Some(mail) = self.move_action_mail() else {
+                    return Task::none();
+                };
+                if mail.account_id == account {
                     return self.handle(Message::Move(folder));
                 }
+                let label = self
+                    .workspace
+                    .folder_label(Some(&account), &folder)
+                    .into_owned();
+                self.move_confirm = Some(MoveConfirm {
+                    mail_id: mail.id.clone(),
+                    account,
+                    folder,
+                    label,
+                });
+                self.dialog = Some(Dialog::MoveConfirm);
+                self.focused_input = None;
+                self.pending_focus = None;
+                return widget::operation::focus("unfocused");
+            }
+            Message::ConfirmMove => {
+                if self.dialog != Some(Dialog::MoveConfirm) {
+                    return Task::none();
+                }
+                let Some(confirm) = self.move_confirm.take() else {
+                    return Task::none();
+                };
+                let destination_ok = self
+                    .workspace
+                    .accounts
+                    .iter()
+                    .any(|a| a.id == confirm.account && a.protocol == Protocol::Imap);
+                let mail = self
+                    .move_action_mail()
+                    .filter(|mail| mail.id == confirm.mail_id && mail.account_id != confirm.account)
+                    .filter(|_| destination_ok && self.foreign_moves_enabled())
+                    .cloned();
+                let Some(mail) = mail else {
+                    self.dialog = None;
+                    self.focused_input = None;
+                    self.pending_focus = None;
+                    self.notice(
+                        "The message or account changed. Check it and try again.",
+                        true,
+                    );
+                    return widget::operation::focus("unfocused");
+                };
+                self.transfer_mail(mail, confirm.account, confirm.folder);
+                if self.dialog.is_some() {
+                    self.dialog = None;
+                    self.focused_input = None;
+                    self.pending_focus = None;
+                }
+                return widget::operation::focus("unfocused");
+            }
+            Message::CancelMoveConfirm => {
+                if self.dialog != Some(Dialog::MoveConfirm) {
+                    return Task::none();
+                }
+                self.move_confirm = None;
+                self.dialog = Some(Dialog::Move);
+                return focus_after_layout("folder-search");
             }
             Message::Move(folder) => {
                 if self.mail_selection.mode {
@@ -2352,7 +2450,11 @@ impl App {
                         && self.preferences.cross_account_moves
                         && !self.field("move_account").is_empty())
                     .then(|| self.field("move_account").to_owned());
-                    self.begin_bulk(bulk::Intent::Move { account, folder });
+                    self.begin_bulk(bulk::Intent::Move {
+                        account,
+                        folder,
+                        foreign: false,
+                    });
                     return Task::none();
                 }
                 if let Some(mail) = self.move_action_mail().cloned() {
@@ -3219,6 +3321,10 @@ impl App {
                 self.preferences.cross_account_moves = value;
                 self.save_preferences();
             }
+            Message::PrefForeignMoveFolders(value) => {
+                self.preferences.foreign_move_folders = value;
+                self.save_preferences();
+            }
             Message::PrefReaderSize(value) => {
                 self.preferences.reader_font_size = value;
                 self.save_preferences();
@@ -3417,43 +3523,8 @@ impl App {
             }
         }
     }
-    fn move_folders(&self) -> Vec<String> {
-        if self.mail_selection.mode && self.field("move_account").is_empty() {
-            let Some(snapshot) = &self.mail_selection.snapshot else {
-                return vec![];
-            };
-            let mut accounts = snapshot.accounts.keys();
-            let Some(first) = accounts.next() else {
-                return vec![];
-            };
-            let mut folders = self
-                .workspace
-                .account_folders
-                .get(first)
-                .cloned()
-                .unwrap_or_default();
-            for account in accounts {
-                folders.retain(|folder| {
-                    self.workspace
-                        .account_folders
-                        .get(account)
-                        .is_some_and(|f| f.contains(folder))
-                });
-            }
-            return folders;
-        }
-        let account = if self.field("move_account").is_empty() {
-            self.move_action_mail()
-                .map(|mail| mail.account_id.as_str())
-                .unwrap_or("")
-        } else {
-            self.field("move_account")
-        };
-        self.workspace
-            .account_folders
-            .get(account)
-            .cloned()
-            .unwrap_or_else(|| self.workspace.folders.clone())
+    fn foreign_moves_enabled(&self) -> bool {
+        self.preferences.cross_account_moves && self.preferences.foreign_move_folders
     }
     fn mail_filter(&self) -> MailFilter {
         if self.query.unread_only {
@@ -3789,6 +3860,25 @@ impl App {
                 }
                 Key::Character(value) if value.eq_ignore_ascii_case("n") => {
                     return self.handle(Message::Close);
+                }
+                _ => {}
+            }
+        }
+        // The Enter that submitted the folder search is captured by its input;
+        // only a later, uncaptured key may confirm or cancel.
+        if self.dialog == Some(Dialog::MoveConfirm) && modifiers.is_empty() && !captured {
+            match &key {
+                Key::Named(keyboard::key::Named::Enter) => {
+                    return self.handle(Message::ConfirmMove);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("y") => {
+                    return self.handle(Message::ConfirmMove);
+                }
+                Key::Named(keyboard::key::Named::Escape) => {
+                    return self.handle(Message::CancelMoveConfirm);
+                }
+                Key::Character(value) if value.eq_ignore_ascii_case("n") => {
+                    return self.handle(Message::CancelMoveConfirm);
                 }
                 _ => {}
             }
@@ -4143,11 +4233,24 @@ impl App {
                     == self.mail_selection.draw_epoch
             );
         }
-        data["move_enter_destination"] = serde_json::json!(if self.dialog == Some(Dialog::Move) {
-            self.ranked_move_folders().first().cloned()
+        let candidates = if self.dialog == Some(Dialog::Move) {
+            self.ranked_move_candidates()
         } else {
-            None
-        });
+            Vec::new()
+        };
+        data["move_enter_destination"] = serde_json::json!(candidates.first().map(|c| &c.folder));
+        data["move_enter_account"] = serde_json::json!(candidates.first().map(|c| &c.account));
+        data["move_candidates"] = serde_json::json!(
+            candidates
+                .iter()
+                .take(20)
+                .map(|c| serde_json::json!({"account":c.account,"folder":c.folder,"foreign":c.foreign}))
+                .collect::<Vec<_>>()
+        );
+        data["move_confirm"] = serde_json::json!(self.move_confirm.as_ref().map(|c| {
+            serde_json::json!({"account":c.account,"folder":c.folder,"label":c.label})
+        }));
+        data["foreign_move_folders"] = serde_json::json!(self.preferences.foreign_move_folders);
         data["tooltips"] = serde_json::json!(self.preferences.tooltips);
         data["shortcut_tooltips"] = serde_json::json!(self.preferences.shortcut_tooltips);
         data["settings_search"] = serde_json::json!(self.settings_search);

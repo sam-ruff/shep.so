@@ -837,6 +837,186 @@ mod tests {
         };
         assert_eq!(destination, "INBOX");
     }
+
+    /// Two IMAP accounts, both move preferences on and the chooser open with
+    /// a query that only the other account's folder matches.
+    fn open_foreign_chooser(app: &mut App) {
+        use super::super::move_candidates::test_account;
+        let workspace = Arc::make_mut(&mut app.workspace);
+        workspace.accounts = vec![
+            test_account("fixture", "alex@studio.example", Protocol::Imap),
+            test_account("other", "alex@example.com", Protocol::Imap),
+        ];
+        workspace
+            .account_folders
+            .insert("fixture".into(), vec!["INBOX".into(), "Archive".into()]);
+        workspace
+            .account_folders
+            .insert("other".into(), vec!["INBOX".into(), "Home.Plans".into()]);
+        app.preferences.cross_account_moves = true;
+        app.preferences.foreign_move_folders = true;
+        app.dialog = Some(Dialog::Move);
+        let _ = app.handle(Message::Field("folder_search", "plans".into()));
+    }
+    fn press(app: &mut App, key: Key) {
+        let _ = app.key(key, keyboard::Modifiers::empty(), false);
+    }
+
+    #[tokio::test]
+    async fn foreign_first_result_opens_the_confirmation_instead_of_moving() {
+        let (mut app, mut commands, _) = fixture().await;
+        open_foreign_chooser(&mut app);
+        let rows: Vec<_> = app
+            .ranked_move_candidates()
+            .into_iter()
+            .map(|c| (c.account, c.folder, c.foreign))
+            .collect();
+        assert_eq!(rows, vec![("other".into(), "Home.Plans".into(), true)]);
+        let _ = app.handle(Message::MoveFirst);
+        assert_eq!(app.dialog, Some(Dialog::MoveConfirm));
+        let confirm = app.move_confirm.as_ref().expect("pending choice");
+        assert_eq!(
+            (confirm.account.as_str(), confirm.folder.as_str()),
+            ("other", "Home.Plans")
+        );
+        assert!(
+            commands.try_recv().is_err(),
+            "nothing moves before confirmation"
+        );
+        assert_eq!(app.page.rows.len(), 1);
+        assert!(app.focused_input.is_none());
+    }
+
+    #[tokio::test]
+    async fn escape_and_n_return_to_the_chooser_with_the_query_and_nothing_moves() {
+        for key in [
+            Key::Named(keyboard::key::Named::Escape),
+            Key::Character("n".into()),
+        ] {
+            let (mut app, mut commands, _) = fixture().await;
+            open_foreign_chooser(&mut app);
+            let _ = app.handle(Message::MoveFirst);
+            assert_eq!(app.dialog, Some(Dialog::MoveConfirm));
+            press(&mut app, key);
+            assert_eq!(app.dialog, Some(Dialog::Move));
+            assert_eq!(app.field("folder_search"), "plans");
+            assert!(app.move_confirm.is_none());
+            assert!(commands.try_recv().is_err());
+            assert_eq!(app.page.rows.len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn enter_and_y_confirm_and_dispatch_the_transfer() {
+        for key in [
+            Key::Named(keyboard::key::Named::Enter),
+            Key::Character("y".into()),
+        ] {
+            let (mut app, mut commands, original) = fixture().await;
+            open_foreign_chooser(&mut app);
+            let _ = app.handle(Message::MoveFirst);
+            press(&mut app, key);
+            let Command::Transfer(_, mail, account, folder) = commands.try_recv().unwrap() else {
+                panic!("Expected a transfer");
+            };
+            assert_eq!(mail.id, original.summary.id);
+            assert_eq!((account.as_str(), folder.as_str()), ("other", "Home.Plans"));
+            assert_eq!(app.dialog, None);
+            assert!(app.move_confirm.is_none());
+            assert!(app.page.rows.is_empty(), "the source row hides at once");
+        }
+    }
+
+    #[tokio::test]
+    async fn close_clears_the_pending_choice() {
+        let (mut app, mut commands, _) = fixture().await;
+        open_foreign_chooser(&mut app);
+        let _ = app.handle(Message::MoveFirst);
+        let _ = app.handle(Message::Close);
+        assert_eq!(app.dialog, None);
+        assert!(app.move_confirm.is_none());
+        let _ = app.handle(Message::ConfirmMove);
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn confirmation_rechecks_the_message_and_preferences() {
+        let (mut app, mut commands, _) = fixture().await;
+        open_foreign_chooser(&mut app);
+        let _ = app.handle(Message::MoveFirst);
+        app.preferences.foreign_move_folders = false;
+        let _ = app.handle(Message::ConfirmMove);
+        assert!(commands.try_recv().is_err());
+        assert_eq!(app.dialog, None);
+        assert!(app.notice.as_ref().is_some_and(|n| n.1));
+
+        let (mut app, mut commands, _) = fixture().await;
+        open_foreign_chooser(&mut app);
+        let _ = app.handle(Message::MoveFirst);
+        Arc::make_mut(&mut app.workspace)
+            .accounts
+            .retain(|a| a.id != "other");
+        let _ = app.handle(Message::ConfirmMove);
+        assert!(commands.try_recv().is_err());
+        assert_eq!(app.dialog, None);
+
+        let (mut app, mut commands, _) = fixture().await;
+        open_foreign_chooser(&mut app);
+        let _ = app.handle(Message::MoveFirst);
+        app.selected = Some("someone-else".into());
+        app.detail = None;
+        let _ = app.handle(Message::ConfirmMove);
+        assert!(commands.try_recv().is_err());
+        assert_eq!(app.dialog, None);
+    }
+
+    #[tokio::test]
+    async fn foreign_rows_need_typing_and_both_preferences() {
+        let (mut app, _, _) = fixture().await;
+        open_foreign_chooser(&mut app);
+        let _ = app.handle(Message::Field("folder_search", String::new()));
+        let rows: Vec<_> = app
+            .ranked_move_candidates()
+            .into_iter()
+            .map(|c| (c.folder, c.foreign))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![("Archive".into(), false), ("INBOX".into(), false)]
+        );
+        let _ = app.handle(Message::Field("folder_search", "plans".into()));
+        app.preferences.foreign_move_folders = false;
+        assert!(app.ranked_move_candidates().is_empty());
+        app.preferences.foreign_move_folders = true;
+        app.preferences.cross_account_moves = false;
+        assert!(app.ranked_move_candidates().is_empty());
+        let _ = app.handle(Message::MoveForeign("other".into(), "Home.Plans".into()));
+        assert_eq!(
+            app.dialog,
+            Some(Dialog::Move),
+            "a disabled preference ignores the row"
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_pick_list_choice_still_transfers_immediately() {
+        let (mut app, mut commands, original) = fixture().await;
+        open_foreign_chooser(&mut app);
+        let _ = app.handle(Message::Field("move_account", "other".into()));
+        let rows: Vec<_> = app
+            .ranked_move_candidates()
+            .into_iter()
+            .map(|c| (c.folder, c.foreign))
+            .collect();
+        assert_eq!(rows, vec![("Home.Plans".into(), false)]);
+        let _ = app.handle(Message::MoveFirst);
+        let Command::Transfer(_, mail, account, folder) = commands.try_recv().unwrap() else {
+            panic!("Expected an immediate transfer");
+        };
+        assert_eq!(mail.id, original.summary.id);
+        assert_eq!((account.as_str(), folder.as_str()), ("other", "Home.Plans"));
+        assert_eq!(app.dialog, None);
+    }
     #[tokio::test]
     async fn archive_removes_immediately_and_failed_move_restores_the_row() {
         let (mut app, mut commands, original) = fixture().await;
