@@ -1,5 +1,106 @@
 # Completion audit
 
+## Windows binaries start again: Common Controls manifest, 18 September 2026
+
+Every Windows binary, the release `shep.exe` and each test binary, failed at
+process start with `STATUS_ENTRYPOINT_NOT_FOUND`. The failure-only import
+diagnostic added to CI (`44d4a42`, corrected for forwarded exports in
+`95c86bc`) named the single absent import: `comctl32.dll!GetWindowSubclass`,
+used by the taskbar badge adapter in `src/desktop_badge/windows.rs`. Those
+subclassing functions are exported by name only from Common Controls v6,
+which a process receives only when its manifest declares that dependency,
+and nothing embedded a manifest. `build.rs` now compiles
+`assets/windows/shep.rc`, which embeds `assets/windows/shep.manifest`
+declaring `Microsoft.Windows.Common-Controls` 6.0.0.0, into every target
+through `embed-resource`; the crt-static `RUSTFLAGS` in CI and
+`scripts/release.py` are unchanged. Evidence so far: `cargo check --target
+x86_64-pc-windows-gnu` compiles the resource with `windres` on Linux and the
+compiled resource contains the dependency. The MSVC test run and an
+installed Windows release remain to be confirmed.
+
+## Safe search query kept, search budgets raised, 15 September 2026
+
+Sam chose the safe and correct relevance query (per-tier relations scored by
+SQLite's built-in `bm25()`) over the single-pass ranking extension that
+needed about 150 lines of unsafe FTS5 FFI, and asked for the benchmark
+budgets to match it. `e585cdb` is reverted in full (`search_rank.rs`,
+`search_cache.rs`, the query and fuzzy changes and their docs). The
+responsiveness benchmark keeps 50 ms for the Inbox and account pages and
+10 ms for a cached body, and now allows 100 ms for one- and two-term
+relevance searches and 150 ms for the four-term case, the range the runner
+measured for this query (FTS 45 to 50 ms, transposed 52 ms, four terms 60 to
+134 ms p95). Measured on the shared development host the safe query sits at
+18, 20 and 28 ms p95. The search and abbreviation suites pass 17 of 17 on the
+reverted tree. Alternatives that stay available without unsafe code: a
+larger `PRAGMA cache_size` (about 3 ms per search) and FTS `optimize` after
+bulk loads (vocabulary probing about seven times cheaper).
+
+## Untouched check interval migrated to 5 seconds, 15 September 2026
+
+Sam asked for saved preferences still on the previous 15 second default to
+follow the new 5 second default. Database version 5 runs the change once at
+open: a saved interval of exactly 15 becomes 5, any other value is kept, and
+because the version is recorded a 15 chosen afterwards stays. The interval is
+not a shared-profile setting, so nothing propagates between devices.
+`tests/preferences.rs` covers the old default, a custom value and a
+deliberate 15 after migration; the preferences suite passes 14 of 14.
+
+## Mail actions beside a live download, 15 September 2026
+
+Move, archive, delete, flag and read changes no longer interrupt or wait for
+the account's running check. `engine/account_work.rs` grants a write beside a
+sync, keeps writes FIFO per account, refuses a second download while one
+runs, and reserves the interrupt path for exclusive lifecycle work (account
+save and test, removal, restore, profile import, folder creation and jobs,
+calendar writes), shutdown and the cycle timeout. `store/write_ledger.rs`
+records acknowledged flag writes and cache relocations (ids and kinds only,
+scratch database, 256 per account); each check takes an epoch before its
+first SELECT, and items from that check keep local flags, keep a moved-in row
+and drop a moved-away body when the write was acknowledged after the epoch.
+Finishing a check clears the entries it observed, so an action on another
+client wins from the next check; entries older than the 600 second cycle
+bound are pruned.
+
+Lane commit `877c414`, merged as `5dad5cb`. Tests: coordinator (write beside
+held sync without interrupting the provider, FIFO writes, second sync
+refused, exclusive interrupts), ledger, store reconciliation and
+scripted-provider engine tests; 1,346 hook executions. Native: held-sync
+close, flag, failed flag and tray quit, the four badge flows and the flag
+flows pass on the harness display. Eight native move flows fail on a sidebar
+`Projects` row that disappears after the first move; the lane reproduced this
+with a binary predating its change, and it is tracked separately in TODO.
+Limitations: exclusive lifecycle work still interrupts a download (a
+deliberate deviation from "shutdown and timeout only"); the flag ledger entry
+is recorded at acknowledgement time; the grace window equals the cycle bound;
+the post-move folder refresh relies on the next scheduled or pushed check
+when a check is already running; no live-server verification.
+
+## Single-pass relevance search ranking, 15 September 2026
+
+The responsiveness benchmark failed on the CI runner because FTS5's `bm25()`
+walks the whole index once per phrase to fetch document frequencies, and the
+typo expansion probed the vocabulary per term. `store/search_rank.rs`
+registers two FTS5 auxiliary functions that compute tiered BM25 from the
+cursor's instance lists in one MATCH pass (exact phrase, all exact terms,
+expanded alternatives), equal to the built-in `bm25()` per phrase or group.
+`store/search_cache.rs` keeps per-phrase document counts and typo expansions
+per index snapshot in scratch, keyed on `total_changes()` and
+`data_version`, and a read that filled the cache commits its transaction.
+
+Lane commit `92aeea3`, merged as `e585cdb`. Bench on the shared development
+host, best of three alternating runs: FTS search p95 17.7 to 12.8 ms,
+transposed 19.7 to 13.1 ms, four terms 27.8 to 16.2 ms; page queries
+unchanged. Tests: six `search_rank` unit tests (float-exact equality with
+`bm25()`, overlapping repeats, unknown counts, malformed specs), two
+`search_cache` tests (reuse, invalidation on write, rollback safety), a plan
+regression asserting one FTS scan with no automatic index or per-tier
+relation, the two search integration suites, 1,345 hook executions.
+Limitations: about 150 lines of `unsafe` FFI against the bundled SQLite 3.51
+FTS5 API; the page statement still materialises the ranked keys and uses a
+bounded sorter (measured faster than the indexed alternative); the runner has
+not yet confirmed the numbers; a larger `cache_size` and FTS `optimize` after
+bulk loads were measured as further wins and left for a separate decision.
+
 ## Device-only completion of refused moves, 15 September 2026
 
 A definite server refusal (a tagged NO or BAD on MOVE with no COPYUID, a

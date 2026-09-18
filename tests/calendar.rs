@@ -154,8 +154,9 @@ async fn calendar_cache_migrates_legacy_keys_once_and_preserves_events() {
         .run(move |connection| {
             let key: String = connection.query_row("SELECT id FROM events", [], |r| r.get(0))?;
             assert_eq!(key, old.key());
+            // Reopening lands on the current schema version, not the legacy one.
             let version: u32 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-            assert_eq!(version, 4);
+            assert_eq!(version, 5);
             Ok(())
         })
         .await
