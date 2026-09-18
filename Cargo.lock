@@ -6403,6 +6403,7 @@ dependencies = [
  "reqwest",
  "rfd",
  "roxmltree 0.21.1",
+ "rsa",
  "rusqlite",
  "russh",
  "russh-sftp",
