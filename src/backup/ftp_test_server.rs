@@ -60,15 +60,29 @@ pub(crate) struct Fixture {
     stop: oneshot::Sender<()>,
     task: tokio::task::JoinHandle<()>,
 }
+/// Self-signed loopback identity as (certificate, PKCS#8 key) PEM. The key is
+/// RSA because native-tls on Windows (Schannel) imports PKCS#8 through the
+/// CryptoAPI RSA provider and rejects rcgen's ECDSA default with "ASN1 bad
+/// tag value met". Generated once per test process.
+fn identity() -> &'static (String, String) {
+    static IDENTITY: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        use rsa::pkcs8::EncodePrivateKey;
+        let private = rsa::RsaPrivateKey::new(&mut rand_sftp::rng(), 2048).unwrap();
+        let key = private.to_pkcs8_pem(rsa::pkcs8::LineEnding::LF).unwrap();
+        let signing_key = rcgen::KeyPair::from_pem(&key).unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["localhost".into(), "127.0.0.1".into()])
+            .unwrap()
+            .self_signed(&signing_key)
+            .unwrap();
+        (cert.pem(), key.to_string())
+    })
+}
 impl Fixture {
     pub async fn start(security: Security) -> Self {
-        let rcgen::CertifiedKey { cert, signing_key } =
-            rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])
-                .unwrap();
-        let certificate: Arc<[u8]> = cert.pem().as_bytes().into();
-        let identity =
-            native_tls::Identity::from_pkcs8(&certificate, signing_key.serialize_pem().as_bytes())
-                .unwrap();
+        let (cert, key) = identity();
+        let certificate: Arc<[u8]> = cert.as_bytes().into();
+        let identity = native_tls::Identity::from_pkcs8(&certificate, key.as_bytes()).unwrap();
         let tls =
             tokio_native_tls::TlsAcceptor::from(native_tls::TlsAcceptor::new(identity).unwrap());
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
