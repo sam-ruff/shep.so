@@ -59,6 +59,9 @@ pub enum Command {
         bool,
     ),
     Query(u64, MailQuery, bool),
+    /// Test-support only: the store's own answer for a query, for harness comparison.
+    #[cfg(feature = "test-support")]
+    StoreTruth(u64, MailQuery),
     Selection(u64, selections::Request, Vec<String>),
     ReviewSelection(u64, crate::store::MailSelectionId, u64, Vec<String>),
     ReleaseSelection(crate::store::MailSelectionId),
@@ -207,6 +210,8 @@ pub enum Event {
     PreferencesSaved(u64, Arc<crate::store::PreferenceSnapshot>),
     PreferencesSaveFailed(u64, String),
     Page(u64, Arc<MailPage>, bool),
+    #[cfg(feature = "test-support")]
+    StoreTruth(u64, Arc<crate::store::truth::StoreTruth>),
     Conversation(
         u64,
         String,
@@ -737,6 +742,15 @@ impl Engine {
                         generation,
                         Arc::new(self.store.query(query).await?),
                         prefetch,
+                    ))
+                    .await?;
+            }
+            #[cfg(feature = "test-support")]
+            Command::StoreTruth(revision, query) => {
+                output
+                    .send(Event::StoreTruth(
+                        revision,
+                        Arc::new(self.store.truth(query).await?),
                     ))
                     .await?;
             }

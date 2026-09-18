@@ -329,7 +329,21 @@ impl App {
             self.pending_focus = None;
             self.project_mail_flags();
             self.select_after_removal(&id, neighbors);
+            self.refill_short_page();
         }
+    }
+
+    /// A hidden source row leaves a full page short until its receipt refreshes
+    /// the list. Ask for the projected page now so a slow server does not show
+    /// a gap at the bottom while the move is pending.
+    fn refill_short_page(&mut self) {
+        if self.mail_actions.follow.is_some()
+            || self.page.rows.len() >= PAGE_SIZE
+            || self.query.offset + self.page.rows.len() >= self.page.total
+        {
+            return;
+        }
+        self.request_page();
     }
 
     fn dispatch_transfer(&mut self, id: &str) {
@@ -438,6 +452,7 @@ impl App {
         self.pending_focus = None;
         self.project_mail_flags();
         self.select_after_removal(&id, neighbors);
+        self.refill_short_page();
     }
 
     fn dispatch_move(&mut self, id: &str) {
@@ -710,6 +725,71 @@ mod tests {
         };
         assert_eq!(mail.id, older.id);
         assert_eq!(mail.folder, "Archive");
+    }
+
+    #[tokio::test]
+    async fn a_pending_move_on_a_full_page_requests_the_projected_refill() {
+        let store = crate::store::Store::memory().unwrap();
+        let mails = (0..=PAGE_SIZE)
+            .map(|index| {
+                parse_mail(
+                    "fixture",
+                    &format!("{index}"),
+                    "INBOX",
+                    format!("From: a@example.test\r\nSubject: Row {index}\r\n\r\nbody")
+                        .into_bytes(),
+                    false,
+                    false,
+                )
+                .unwrap()
+            })
+            .collect();
+        store.upsert(mails).await.unwrap();
+        let (sender, mut network, mut reads) = engine::CommandSender::move_test_channels();
+        let (mut app, _) = App::new();
+        app.tx = Some(sender);
+        app.query.folder = "INBOX".into();
+        app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        assert_eq!(
+            (app.page.rows.len(), app.page.total),
+            (PAGE_SIZE, PAGE_SIZE + 1)
+        );
+        let first = app.page.rows[0].clone();
+        app.selected = Some(first.id.clone());
+        app.move_mail(first.clone(), "Archive".into());
+        assert!(matches!(network.try_recv(), Ok(Command::Move(..))));
+        assert_eq!(
+            (app.page.rows.len(), app.page.total),
+            (PAGE_SIZE - 1, PAGE_SIZE)
+        );
+        // Selecting the neighbour also asks the read lane for its body.
+        let queries = |reads: &mut tokio::sync::mpsc::Receiver<Command>| {
+            std::iter::from_fn(|| reads.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::Query(generation, query, false) => Some((generation, query)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut refills = queries(&mut reads);
+        assert_eq!(refills.len(), 1, "one refill per removal");
+        let (generation, query) = refills.remove(0);
+        assert_eq!(generation, app.generation);
+        assert_eq!(query.project_moves.len(), 1);
+        assert_eq!(query.project_moves[0].id, first.id);
+        assert_eq!(query.project_moves[0].folder, "Archive");
+        // The store answers with the projection applied: a full page again.
+        app.set_mail_page(Arc::new(store.query(query).await.unwrap()));
+        assert_eq!(
+            (app.page.rows.len(), app.page.total),
+            (PAGE_SIZE, PAGE_SIZE)
+        );
+        assert!(!app.page.rows.iter().any(|mail| mail.id == first.id));
+        // A short final page has nothing to pull in.
+        let last = app.page.rows[PAGE_SIZE - 1].clone();
+        app.move_mail(last, "Trash".into());
+        assert!(matches!(network.try_recv(), Ok(Command::Move(..))));
+        assert!(queries(&mut reads).is_empty());
     }
 
     pub(super) async fn fixture() -> (App, tokio::sync::mpsc::Receiver<Command>, Arc<MailDetail>) {
