@@ -182,6 +182,7 @@ fn copy_database(
     if cancelled(&mut cancel) {
         return Ok(Outcome::Cancelled);
     }
+    let chosen = destination.to_path_buf();
     let (source, destination) = checked_destination(source, destination)?;
     let parent = destination.parent().context("Choose an export folder")?;
     anyhow::ensure!(
@@ -232,8 +233,10 @@ fn copy_database(
         .map(|_| "Database exported, but the folder could not confirm its final disk flush. Keep this copy and check the destination drive.".into());
     #[cfg(not(unix))]
     let warning = None;
+    // Report the location as chosen; the canonical form (a `\\?\` path on
+    // Windows) was only needed for the checks above.
     Ok(Outcome::Saved {
-        path: destination,
+        path: chosen,
         bytes,
         warning,
     })
