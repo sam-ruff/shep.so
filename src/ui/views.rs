@@ -458,10 +458,12 @@ impl App {
                 self.drag_payload(mail),
             ));
             #[cfg(feature = "test-support")]
-            let entry = entry.with_draw_witness(
-                self.mail_selection.draw_epoch,
-                self.mail_selection.drawn_epoch.clone(),
-            );
+            let entry = entry
+                .with_draw_witness(
+                    self.mail_selection.draw_epoch,
+                    self.mail_selection.drawn_epoch.clone(),
+                )
+                .with_draw_log(self.draw_log.clone(), Some(mail.id.clone()));
             messages = messages.push(entry).push(line());
         }
         messages = messages.push(space().height((self.page.rows.len() - end) as f32 * row_height));
