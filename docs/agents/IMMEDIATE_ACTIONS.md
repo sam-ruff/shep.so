@@ -269,8 +269,9 @@ and equivalent browser/mobile preparation phases remain open.
 Native and browser folder creation also save logical requests before provider
 capacity. Namespace planning freezes an exact target before CREATE; a durable
 receipt precedes catalog repair. Unknown results require read-only inspection.
-Pending names cannot be used as physical Move destinations. Checked browser
-folder changes and mobile folder adoption remain separate migrations.
+Pending names cannot be used as physical Move destinations. Browser checked
+subtree changes now retain exact reviews, outgoing-target fences and receipts
+through bounded repair. Mobile folder adoption remains a separate migration.
 
 Native group flags now persist their receipt before updating the cache. Cache
 repair and its Undo transition commit together; repair cannot repeat STORE or

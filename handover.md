@@ -2,7 +2,9 @@
 
 ## Current immediate-action continuation
 
-Latest uncommitted integration: native removal (schema 10) passes 1,204 combined
+Implementation checkpoint `8db87f1` is verified for shipping with this evidence
+update. Normal hooks pass 1,586 Rust executions, ten ignored; owned calendar HTTP
+tests run explicitly. Native removal (schema 10) passes 1,204 combined
 library executions, 47 integration tests and ten distinct native controls. The
 three original pending-read/delete/Undo regressions also pass. Normal root hooks
 pass. Preserve the root folder-history query fix and Preferences readiness waits.
@@ -25,8 +27,10 @@ is 4,903,500. Root v2 correctness with the oracle passes (`010a375f4c3c`). Final
 report `artifacts/performance/actions.json`, reviewed capture `3f6da406de91`.
 Preserve the first failed report. Browser's three 100,000-message regressions
 also pass in a quiet window. Common performance-gate wiring and its tests pass.
-Final hooks and checkpoint shipping remain; broader client/domain/platform work
-is unfinished.
+The evidence update ships alongside the implementation; broader client/domain/
+platform work remains unfinished. Next integrate CalDAV22, then Flutter folders23,
+and the independent browser calendar18 lane, preserving their explicit schema
+dependencies and existing Google request recovery.
 
 Shipped checkpoint `d7f06b7` after `48cd150` integrates native schema 8 checked
 credential slots/account admission, bounded candidate seeks, group failure
