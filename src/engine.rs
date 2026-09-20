@@ -46,7 +46,9 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
-    CreateFolder(folder_creation::Request),
+    AdmitFolderCreation(String, folder_creation::Request),
+    DecideFolderCreation(String, u64, bool),
+    DismissFolderCreation(String, u64),
     ProfileSync(crate::profile_sync::commands::Request),
     Profiles(u64, crate::profiles::Request),
     Database(crate::transfer::Request),
@@ -116,7 +118,8 @@ pub enum Command {
     DiscoverCalendars(u64, String, String, SecretString),
     ConnectCalendars(u64, u64, Vec<CalendarSource>, SecretString),
     RemovalPreview(u64, crate::store::ConnectionRef),
-    RemoveConnection(u64, crate::store::RemovalPreview, bool),
+    AdmitRemoval(u64, String, crate::store::RemovalPreview, bool),
+    RetryRemoval(crate::store::RemovalJob),
     CleanupCredentials,
     RestoreGoogleCalendars,
     SyncCalendar,
@@ -197,6 +200,8 @@ impl Command {
 #[derive(Debug, Clone)]
 pub enum Event {
     FolderCreated(u64, Result<crate::folders::Mailbox, String>),
+    CreationAdmitted(u64, String, Result<crate::store::CreationJob, String>),
+    CreationChanged(crate::store::CreationJob),
     ProfileSync(u64, crate::profile_sync::commands::Update),
     Profiles(u64, Result<Arc<crate::profiles::Snapshot>, String>),
     Database(u64, crate::transfer::Update),
@@ -301,7 +306,8 @@ pub enum Event {
         Result<Vec<crate::store::account_setup::Attempt>, String>,
     ),
     RemovalPreview(u64, Result<crate::store::RemovalPreview, String>),
-    ConnectionRemoved(u64, Result<usize, String>),
+    RemovalAdmitted(u64, String, Result<crate::store::RemovalJob, String>),
+    RemovalChanged(crate::store::RemovalJob),
     CalendarsDiscovered(
         u64,
         Result<Vec<providers::calendar::discovery::DiscoveredCalendar>, String>,
@@ -549,6 +555,14 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         let _ = output
             .send(Event::Ready(tx, Arc::new(workspace), preview_google))
             .await;
+        if let Err(error) = engine.store.recover_creations().await {
+            let _ = output
+                .send(Event::Error(format!(
+                    "Could not recover folder creation requests. {error:#}"
+                )))
+                .await;
+            return;
+        }
         if let Err(error) = engine.store.recover_calendar_actions().await {
             let _ = output
                 .send(Event::Error(format!(
@@ -609,6 +623,12 @@ impl Engine {
         &self,
         source: &CalendarSource,
     ) -> anyhow::Result<Box<dyn CalendarProvider>> {
+        self.store
+            .check_connection(crate::store::ConnectionRef {
+                kind: crate::store::ConnectionKind::Calendar,
+                id: source.id.clone(),
+            })
+            .await?;
         Ok(match source.kind {
             CalendarKind::Google => Box::new(providers::calendar::GoogleCalendar {
                 google: self.google.clone(),
@@ -827,7 +847,32 @@ impl Engine {
             }
             Command::ReleaseSelection(id) => self.store.release_selection(id).await?,
             Command::Folder(request) => self.folder_command(request, output).await?,
-            Command::CreateFolder(request) => self.create_folder(request, output).await?,
+            Command::AdmitFolderCreation(id, request) => {
+                let result = self
+                    .store
+                    .admit_folder_creation(
+                        id.clone(),
+                        request.account,
+                        request.connection,
+                        request.parent,
+                        request.name,
+                    )
+                    .await
+                    .map_err(|error| format!("{error:#}"));
+                output
+                    .send(Event::CreationAdmitted(request.serial, id, result))
+                    .await?;
+            }
+            Command::DecideFolderCreation(id, revision, cancel) => {
+                let job = self.store.decide_creation(id, revision, cancel).await?;
+                output.send(Event::CreationChanged(job)).await?;
+                self.workspace(&mut output).await?;
+            }
+            Command::DismissFolderCreation(id, revision) => {
+                let job = self.store.dismiss_creation(id, revision).await?;
+                output.send(Event::CreationChanged(job)).await?;
+                self.workspace(&mut output).await?;
+            }
             Command::BulkStart(id, selection, action) => {
                 let result = self
                     .store
@@ -1465,20 +1510,26 @@ impl Engine {
                     .map_err(|e| format!("{e:#}"));
                 output.send(Event::RemovalPreview(request, result)).await?;
             }
-            Command::RemoveConnection(request, preview, cancel) => {
+            Command::AdmitRemoval(request, id, preview, cancel) => {
                 let result = self
-                    .remove_connection(preview, cancel)
+                    .store
+                    .admit_connection_removal(id.clone(), preview, cancel)
                     .await
-                    .map_err(|e| format!("{e:#}"));
-                let removed = result.is_ok();
+                    .map_err(|error| format!("{error:#}"));
+                let saved = result.is_ok();
                 output
-                    .send(Event::ConnectionRemoved(request, result))
+                    .send(Event::RemovalAdmitted(request, id, result))
                     .await?;
-                if removed {
+                if saved {
                     self.workspace(&mut output).await?;
                     output.send(Event::Changed).await?;
                     self.send_calendar(&mut output).await?;
                 }
+            }
+            Command::RetryRemoval(job) => {
+                let saved = self.retry_removal(job).await?;
+                output.send(Event::RemovalChanged(saved)).await?;
+                self.workspace(&mut output).await?;
             }
             Command::CleanupCredentials => {
                 let failed = self.cleanup_credentials().await?;

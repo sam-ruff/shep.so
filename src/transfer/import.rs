@@ -276,6 +276,23 @@ fn validate_schema_in(
         "This database version is not supported. Use matching, current Shep versions on both devices."
     );
     let mut expected = expected.clone();
+    if version < 10 {
+        expected.remove("connection_removal_request");
+        expected.remove("connection_removal_pending");
+        if let Some((_, _, Some(sql))) = expected.get_mut("connection_tombstones") {
+            *sql = sql.replace(", pending TEXT", "");
+        }
+    }
+    if version < 9 {
+        if let Some((_, _, Some(sql))) = expected.get_mut("outgoing") {
+            *sql = sql.replace(", preparation TEXT", "");
+        }
+        expected.remove("folder_creation_id");
+        expected.remove("folder_creation_ready");
+        if let Some((_, _, sql)) = expected.get_mut("folder_creations") {
+            *sql = Some("CREATE TABLE folder_creations(\n        account TEXT NOT NULL, connection TEXT NOT NULL, request TEXT NOT NULL,\n        target TEXT NOT NULL, PRIMARY KEY(account,connection,request))".into());
+        }
+    }
     if version < 8 {
         expected.remove("bulk_ready_seek");
         expected.retain(|_, (_, owner, _)| {

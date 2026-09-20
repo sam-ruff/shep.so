@@ -8,6 +8,77 @@ use crate::{
 };
 
 #[tokio::test]
+async fn imported_preparation_requires_a_new_send_without_claiming_uncertain_delivery() {
+    let directory = tempfile::tempdir().expect("fixture directory");
+    let path = directory.path().join("imported.sqlite");
+    let store = super::super::tests::workspace(&path).await;
+    let account = store
+        .get::<Vec<Account>>("accounts")
+        .await
+        .expect("accounts")
+        .remove(0);
+    let draft = Draft {
+        id: "preparing-import".into(),
+        account_id: account.id.clone(),
+        to: "reader@example.test".into(),
+        body: "Keep imported draft".into(),
+        ..Default::default()
+    };
+    store.save_draft(draft).await.expect("save draft");
+    let draft = store
+        .draft_state()
+        .await
+        .expect("drafts")
+        .drafts
+        .into_iter()
+        .find(|draft| draft.id == "preparing-import")
+        .expect("saved draft");
+    let info = store
+        .admit_outgoing(draft, account)
+        .await
+        .expect("admit preparation");
+    let (_alive, cancel) = watch::channel(false);
+    apply(
+        &path,
+        None,
+        uuid::Uuid::new_v4(),
+        "Imported",
+        &Preferences::default(),
+        &cancel,
+    )
+    .expect("fence imported work");
+    let imported = store
+        .outgoing_info(info.attempt.clone())
+        .await
+        .expect("outgoing");
+    assert_eq!(imported.delivery, DeliveryState::Rejected);
+    assert!(!imported.needs_delivery_review());
+    assert!(
+        store
+            .next_queued_outgoing()
+            .await
+            .expect("candidate")
+            .is_none()
+    );
+    assert!(
+        store
+            .outgoing_preparation(info.attempt)
+            .await
+            .expect("preparation")
+            .is_none()
+    );
+    assert!(
+        store
+            .draft_state()
+            .await
+            .expect("drafts")
+            .drafts
+            .iter()
+            .any(|d| d.id == "preparing-import")
+    );
+}
+
+#[tokio::test]
 async fn imported_flag_acknowledgements_keep_cache_only_repair_and_never_become_dispatchable() {
     use crate::{mail_actions::Flags, model::MailQuery};
     let original = tempfile::tempdir().expect("source directory");
@@ -616,6 +687,8 @@ async fn version_two_exports_migrate_privately_and_future_stores_are_not_modifie
     let source = super::super::tests::workspace(&path).await;
     source
         .run(|c| {
+            c.execute_batch("DROP INDEX connection_removal_request; DROP INDEX connection_removal_pending; ALTER TABLE connection_tombstones DROP COLUMN pending;")?;
+            c.execute_batch("ALTER TABLE outgoing DROP COLUMN preparation; DROP INDEX folder_creation_id; DROP INDEX folder_creation_ready; ALTER TABLE folder_creations DROP COLUMN data;")?;
             c.execute_batch(
                 "DROP TABLE account_setup_attempts; DROP TABLE account_setup_current; DROP TABLE account_credential_slots; DROP TABLE backup_history; DROP TABLE imported_operations; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; DROP TABLE bulk_field_owners; DROP TABLE bulk_admissions; DROP INDEX bulk_item_unconfirmed_identity; DROP INDEX bulk_ready_seek; DROP TRIGGER mail_lineage_insert; DROP TRIGGER mail_lineage_replace; DROP TRIGGER mail_lineage_delete; DROP TABLE mail_lineage; DROP TABLE mail_lineage_alias; DROP TABLE mail_identity_history; PRAGMA user_version=2;",
             )?;
@@ -745,6 +818,8 @@ async fn backup_history_version_three_exports_migrate_without_changing_the_sourc
     let source = super::super::tests::workspace(&path).await;
     source
         .run(|c| {
+            c.execute_batch("DROP INDEX connection_removal_request; DROP INDEX connection_removal_pending; ALTER TABLE connection_tombstones DROP COLUMN pending;")?;
+            c.execute_batch("ALTER TABLE outgoing DROP COLUMN preparation; DROP INDEX folder_creation_id; DROP INDEX folder_creation_ready; ALTER TABLE folder_creations DROP COLUMN data;")?;
             c.execute_batch("DROP TABLE account_setup_attempts; DROP TABLE account_setup_current; DROP TABLE account_credential_slots; DROP TABLE backup_history; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; DROP TABLE bulk_field_owners; DROP TABLE bulk_admissions; DROP INDEX bulk_item_unconfirmed_identity; DROP INDEX bulk_ready_seek; DROP TRIGGER mail_lineage_insert; DROP TRIGGER mail_lineage_replace; DROP TRIGGER mail_lineage_delete; DROP TABLE mail_lineage; DROP TABLE mail_lineage_alias; DROP TABLE mail_identity_history; PRAGMA user_version=3;")?;
             Ok(())
         })
@@ -820,6 +895,9 @@ async fn backup_history_old_import_marker_recovery_migrates_without_repeating_pr
     .unwrap();
     let c = Connection::open(prepared.path()).unwrap();
     let archived = count(&c, "SELECT count(*) FROM imported_operations").unwrap();
+    c.execute_batch("DROP INDEX connection_removal_request; DROP INDEX connection_removal_pending; ALTER TABLE connection_tombstones DROP COLUMN pending;").expect("old removal schema");
+    c.execute_batch("ALTER TABLE outgoing DROP COLUMN preparation; DROP INDEX folder_creation_id; DROP INDEX folder_creation_ready; ALTER TABLE folder_creations DROP COLUMN data;")
+        .unwrap();
     let preferences: String = c
         .query_row("SELECT value FROM kv WHERE key='preferences'", [], |r| {
             r.get(0)

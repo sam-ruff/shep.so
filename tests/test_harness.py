@@ -16,6 +16,44 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_store_truth_oracle_defaults_on_and_rejects_non_boolean_values(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (1, None, "no"):
+                with self.assertRaisesRegex(ValueError, "Store truth observation"):
+                    desktop.start(store_truth=value)
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertTrue(tool["inputSchema"]["properties"]["store_truth"]["default"])
+
+    def test_selection_mailbox_fixture_validates_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (1, None, "yes"):
+                with self.assertRaisesRegex(ValueError, "Selection mailbox fixture"):
+                    desktop.start(selection_mailbox=value)
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["selection_mailbox"]["type"], "boolean")
+
+    def test_changed_pixel_reference_rejects_replaced_baseline_and_geometry(self):
+        from scripts import native_pixels
+        desktop = harness.Desktop()
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        desktop.window = "123"
+        desktop.env["DISPLAY"] = ":owned"
+        desktop.screenshot = Mock()
+        desktop.pixel_baseline = ("current", (":owned", "123", 1440, 920), bytearray())
+        probe = Mock()
+        with patch.dict(sys.modules, {"native_pixels": native_pixels}), patch.object(native_pixels, "Window", return_value=probe):
+            for token, geometry in (("old", (1440, 920)), ("current", (900, 640))):
+                probe.dimensions.return_value = geometry
+                with self.assertRaisesRegex(RuntimeError, "baseline expired"):
+                    desktop.batch([{"type": "changed_pixel_reference", "baseline": token, "regions": [[0, 0, 50, 50]]}])
+            probe.rgb.assert_not_called()
+        desktop.app = None
+
     def test_preference_save_failure_fixture_is_boolean_and_described(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

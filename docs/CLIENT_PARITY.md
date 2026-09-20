@@ -1,5 +1,26 @@
 # Client parity
 
+Desktop schema 10 removal hides the committed account/calendar before provider
+drain and exposes failed local cleanup with Retry; ten integrated native scenarios
+and 47 bulk/calendar/connection tests pass. Browser schema 17 adds checked subtree
+Rename/Move/Delete with frozen metadata, receipt-first repair, uncertainty review
+and outgoing filing fences. Its integrated 235 unit, 57 backend and 22 Chromium
+checks pass, plus three 100,000-message browser scenarios. Native ten-of-100,000
+review and confirmation pixel timing passes at 32.31 ms and 22.14 ms p95 with
+provider capacity held. These changes are not yet shipped; other-platform
+coverage remains separate.
+
+Flutter schema 21 uses shared calendar event/receipt contracts for Google save
+and delete. Local admission precedes token access and retains its exact original
+request for lost-reply lookup. Coherent snapshots and queued work retain their
+Google subject; execution rechecks the SDK grant. Integrated Rust verification
+passes 153 tests after shared HTTP extraction, including stale sync, receipt
+repair and safe successive edits. Flutter passes 234 tests and 29 final focused
+controls/FFI cases for lost replies, bounded pending requests and editor close.
+The shared HTTP adapter passes eight tests; authenticated Calendar transport and
+common Drive/Calendar renewal pass 67 backend tests. CalDAV, browser calendar
+controls, live Google and Apple execution remain open.
+
 Native group flag writes now retain provider receipts before cache updates;
 cache-only repair preserves Undo and never repeats a provider write. Native
 calendar actions now admit durable requests independently of provider capacity.
@@ -42,8 +63,14 @@ actions now use indexed 50-row pages, with 100,000-row database-step tests. Flut
 resumption retains per-account exclusion across failed reads and an explicit
 Activity Retry. These gates do not establish whole-app latency or platform parity.
 
-Desktop Send now admits prepared MIME to a durable Queued Outbox before provider
-capacity and supports local cancellation before dispatch. Browser now saves
+Desktop schema 9 now admits a frozen draft as Preparing before MIME work and
+supports local cancellation before dispatch. Its combined native verification is
+in progress. Folder creation also admits locally and retains a logical pending
+row, receipt-first repair and explicit uncertain-result inspection. Browser schema
+16 creation and its real authenticated gateway now pass 77 focused unit tests,
+49 backend tests (one fixture prerequisite ignored), and 12 Chromium controls
+covering creation, upgrades, removal fences and preferences. Checked folder
+Move/Delete/Rename and mobile folder adoption remain open. Browser now saves
 queued Send before provider reservation, retains connection-attempt recovery and
 atomically saves preference values with intent revisions.
 Browser Activity also reads a bounded connection-attempt page from its existing
@@ -53,8 +80,8 @@ Flutter now saves the exact message and delivery identity before returning from 
 the background and queued cancellation retains the draft. Account and credential
 changes are checked before SMTP. Outbox resumes the same saved attempt and
 refreshes its bounded page without clearing errors or review choices. Wider
-activity adoption remains open. MIME preparation before native admission remains a
-responsiveness limitation.
+activity adoption remains open. Browser and Flutter still prepare MIME before
+Send admission; equivalent preparation lifecycle and timing gates remain open.
 
 20 September immediate actions: the approved common lifecycle is being adopted
 on desktop, starting with bulk review during pending mail writes and calendar

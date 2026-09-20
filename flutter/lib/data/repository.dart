@@ -65,6 +65,128 @@ abstract interface class DurableMutationRepository {
   Future<void> cancelAdmittedMutation(String actionId);
 }
 
+class CalendarActivity {
+  const CalendarActivity(this.data);
+  final Map<String, dynamic> data;
+  String get id => data['id'] as String;
+  String get status => data['status'] as String;
+  String? get error => data['error'] as String?;
+  String? get subject => data['subject'] as String?;
+  bool get canResume => const {'queued', 'waiting', 'repair'}.contains(status);
+  bool get canCancel =>
+      const {'queued', 'waiting', 'rejected'}.contains(status);
+  bool get canInspect => status == 'uncertain';
+  Map<String, dynamic> get _mutation =>
+      Map<String, dynamic>.from(data['mutation'] as Map);
+  bool get isDelete => _mutation.containsKey('delete');
+  String get statusLabel => switch (status) {
+    'queued' => isDelete ? 'Deletion queued' : 'Event queued',
+    'running' => isDelete ? 'Deleting event' : 'Saving event',
+    'waiting' => isDelete ? 'Deletion waiting' : 'Event waiting',
+    'uncertain' =>
+      isDelete ? 'Deletion needs checking' : 'Event needs checking',
+    'repair' => 'Saving on this device',
+    'rejected' => isDelete ? 'Event was not deleted' : 'Event was not saved',
+    _ => 'Calendar activity',
+  };
+  Map<String, dynamic>? get _save => _mutation['save'] == null
+      ? null
+      : Map<String, dynamic>.from(_mutation['save'] as Map);
+  Map<String, dynamic> get _delete =>
+      Map<String, dynamic>.from(_mutation['delete'] as Map);
+  CalendarEntry? get before => isDelete
+      ? CalendarEntry.fromCalendarJson(
+          Map<String, dynamic>.from(_delete['before'] as Map),
+        )
+      : _save!['before'] == null
+      ? null
+      : CalendarEntry.fromCalendarJson(
+          Map<String, dynamic>.from(_save!['before'] as Map),
+        );
+  CalendarEntry get requested => isDelete
+      ? before!
+      : CalendarEntry.fromCalendarJson(
+          Map<String, dynamic>.from(_save!['after'] as Map),
+        );
+  CalendarEntry? get saved {
+    final receipt = data['receipt'];
+    if (receipt is! Map || receipt['after'] == null) return null;
+    return CalendarEntry.fromCalendarJson(
+      Map<String, dynamic>.from(receipt['after'] as Map),
+    );
+  }
+}
+
+class CalendarAdmission {
+  const CalendarAdmission(this.data);
+  final Map<String, dynamic> data;
+  String get id => data['id'] as String;
+  String get status => data['status'] as String;
+  String get subject => data['subject'] as String;
+  Map<String, dynamic> get mutation =>
+      Map<String, dynamic>.from(data['mutation'] as Map);
+  CalendarEntry? get saved {
+    final receipt = data['receipt'];
+    if (receipt is! Map || receipt['after'] == null) return null;
+    return CalendarEntry.fromCalendarJson(
+      Map<String, dynamic>.from(receipt['after'] as Map),
+    );
+  }
+}
+
+class CalendarSource extends CalendarSourceView {
+  const CalendarSource(super.id, super.name, super.readOnly);
+  factory CalendarSource.fromJson(Map<String, dynamic> json) => CalendarSource(
+    json['id'] as String,
+    json['name'] as String,
+    json['read_only'] as bool? ?? false,
+  );
+}
+
+class CalendarSnapshot {
+  const CalendarSnapshot(this.sources, this.events, {this.subject});
+  final List<CalendarSource> sources;
+  final List<CalendarEntry> events;
+  final String? subject;
+}
+
+abstract interface class DurableCalendarRepository {
+  Future<CalendarAdmission> admitCalendarAction(
+    String actionId,
+    CalendarEntry entry,
+    CalendarEntry? before, {
+    required String subject,
+  });
+  Future<CalendarAdmission> admitCalendarDelete(
+    String actionId,
+    CalendarEntry entry, {
+    required String subject,
+  });
+  Future<void> executeCalendarAction(
+    String actionId,
+    String accessToken, {
+    required String subject,
+  });
+  Future<void> repairCalendarAction(String actionId);
+  Future<void> waitCalendarAction(String actionId, String error);
+  Future<void> cancelCalendarAction(String actionId);
+  Future<CalendarAdmission?> calendarActionAdmission(String actionId);
+  Future<void> inspectCalendarAction(
+    String actionId,
+    String accessToken, {
+    required String subject,
+  });
+  Future<List<CalendarActivity>> calendarActions({int offset = 0});
+  Future<List<CalendarEntry>> calendarEvents();
+  Future<CalendarSnapshot> calendarSnapshot();
+  Future<CalendarSnapshot> syncCalendar(
+    String accessToken,
+    DateTime start,
+    DateTime end, {
+    required String subject,
+  });
+}
+
 /// Production startup is empty until the native provider adapter is connected.
 /// It cannot turn a button click into a false server acknowledgment.
 class UnconnectedRepository implements MailRepository {

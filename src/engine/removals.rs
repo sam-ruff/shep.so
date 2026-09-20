@@ -1,6 +1,10 @@
 use super::*;
-use crate::store::{ConnectionKind, ConnectionRef, RemovalPreview};
+#[cfg(test)]
+use crate::store::RemovalPreview;
+use crate::store::{ConnectionKind, ConnectionRef};
+mod durable;
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub(super) trait SecretRemover: Send + Sync {
     async fn remove(&self, key: &str) -> anyhow::Result<()>;
@@ -59,6 +63,7 @@ impl Engine {
         }
         Ok(failed)
     }
+    #[cfg(test)]
     pub(super) async fn remove_connection(
         &self,
         preview: RemovalPreview,
@@ -72,7 +77,15 @@ impl Engine {
         // Local removal is committed. A keychain failure remains a durable job,
         // never a reason to restore the removed account or pretend nothing changed.
         match self.cleanup_owner(&preview.target).await {
-            Ok(failed) => Ok(failed),
+            Ok(failed) => {
+                if failed == 0 {
+                    let _ = self
+                        .store
+                        .finish_removal_credentials(preview.target.clone())
+                        .await;
+                }
+                Ok(failed)
+            }
             Err(_) => Ok(self
                 .store
                 .cleanup_jobs()
@@ -93,7 +106,11 @@ impl Engine {
         let mut failed = 0;
         for owner in owners {
             let _guard = self.connection_access(&owner).await;
-            failed += self.cleanup_owner(&owner).await?;
+            let remaining = self.cleanup_owner(&owner).await?;
+            failed += remaining;
+            if remaining == 0 {
+                self.store.finish_removal_credentials(owner).await?;
+            }
         }
         Ok(failed)
     }

@@ -187,6 +187,8 @@ fn review(c: &Connection, account: &str, source: &str, action: Action) -> anyhow
 
 fn ready(c: &Connection, account: &str) -> anyhow::Result<()> {
     use sha2::Digest;
+    anyhow::ensure!(!c.query_row("SELECT EXISTS(SELECT 1 FROM folder_creations WHERE account=? AND (data IS NULL OR json_extract(data,'$.stage') NOT IN ('succeeded','cancelled','dismissed')))",[account],|r|r.get::<_,bool>(0))?,
+        "Finish or review this account's saved folder creations before changing its folders.");
     let (_, pending) = bulk::account_review(c, account, &mut sha2::Sha256::new())?;
     anyhow::ensure!(
         pending == 0
@@ -270,11 +272,16 @@ impl FolderLease {
 
 impl Store {
     pub async fn current_folder_catalog(&self, account: String) -> anyhow::Result<Vec<Mailbox>> {
-        self.run(move |c| catalog(c, &account)).await
+        self.run(move |c| {
+            connections::allow(c, ConnectionKind::Account, &account)?;
+            catalog(c, &account)
+        })
+        .await
     }
     /// The cached catalog, empty for an account that has not listed folders yet.
     pub async fn cached_folder_catalog(&self, account: String) -> anyhow::Result<Vec<Mailbox>> {
         self.run(move |c| {
+            connections::allow(c, ConnectionKind::Account, &account)?;
             let mut catalogs: HashMap<String, Vec<Mailbox>> = get(c, "folder_catalogs")?;
             Ok(catalogs.remove(&account).unwrap_or_default())
         })
@@ -367,7 +374,7 @@ impl Store {
     pub async fn next_pending_folder(&self, after: String) -> anyhow::Result<Option<String>> {
         self.run(move |c| {
             Ok(c.query_row(
-                "SELECT id FROM folder_jobs WHERE closed=0 AND id>? ORDER BY id LIMIT 1",
+                "SELECT id FROM folder_jobs j WHERE closed=0 AND id>? AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=j.account) ORDER BY id LIMIT 1",
                 [after],
                 |r| r.get(0),
             )
@@ -378,7 +385,7 @@ impl Store {
     pub async fn folder_jobs(&self, offset: usize) -> anyhow::Result<Vec<Job>> {
         self.run(move |c| {
             c.prepare(
-                "SELECT id FROM folder_jobs ORDER BY closed,created DESC,id LIMIT 20 OFFSET ?",
+                "SELECT id FROM folder_jobs j WHERE NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=j.account) ORDER BY closed,created DESC,id LIMIT 20 OFFSET ?",
             )?
             .query_map([i64::try_from(offset)?], |r| r.get::<_, String>(0))?
             .map(|id| job(c, &id?))

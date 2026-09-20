@@ -12,6 +12,7 @@ pub mod creation;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     Move { parent: Option<String> },
+    Rename { name: String },
     Delete,
 }
 
@@ -109,7 +110,10 @@ impl Job {
     /// Recheck the remaining scope before each destructive command. A server may
     /// remove an empty NoSelect ancestor after its final child was deleted.
     pub fn preflight(&self, catalog: &[Mailbox]) -> anyhow::Result<HashSet<String>> {
-        if matches!(self.review.plan.action, Action::Move { .. }) {
+        if matches!(
+            self.review.plan.action,
+            Action::Move { .. } | Action::Rename { .. }
+        ) {
             self.review.plan.revalidate(catalog)?;
             return Ok(HashSet::new());
         }
@@ -260,6 +264,24 @@ impl Plan {
                 member.destination = Some(path);
             }
             parent.map(|p| p.mailbox.clone())
+        } else if let Action::Rename { name } = &action {
+            let parent = root.parent.map(|id| &tree.nodes[id]);
+            let mut namespace = root.mailbox.clone();
+            namespace.name = parent.map_or_else(String::new, |node| node.path.clone());
+            let destination = creation::plan(&namespace, None, name)?.name;
+            anyhow::ensure!(destination != root.path, "Choose a different folder name.");
+            let source_paths: HashSet<_> =
+                members.iter().map(|member| member.path.clone()).collect();
+            for member in &mut members {
+                let path = format!("{}{}", destination, &member.path[root.path.len()..]);
+                valid_name(&path)?;
+                anyhow::ensure!(
+                    tree.node(&path).is_none() || source_paths.contains(&path),
+                    "A folder already exists at the destination."
+                );
+                member.destination = Some(path);
+            }
+            parent.map(|node| node.mailbox.clone())
         } else {
             None
         };
@@ -273,7 +295,7 @@ impl Plan {
 
     pub fn steps(&self) -> Vec<Step> {
         match self.action {
-            Action::Move { .. } => {
+            Action::Move { .. } | Action::Rename { .. } => {
                 let root = self
                     .members
                     .iter()
@@ -389,6 +411,83 @@ mod tests {
         .map(folder)
         .collect()
     }
+    #[test]
+    fn rename_keeps_the_parent_and_encodes_the_reviewed_subtree() {
+        let catalog = catalog();
+        let plan = Plan::new(
+            &Tree::new(&catalog),
+            "Projects/Design",
+            Action::Rename {
+                name: "日本語 & plans".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plan.steps(),
+            vec![Step::Rename {
+                source: "Projects/Design".into(),
+                destination: "Projects/&ZeVnLIqe- &- plans".into()
+            }]
+        );
+        assert_eq!(plan.members.len(), 2);
+        plan.revalidate(&catalog).unwrap();
+        let mut changed = catalog.clone();
+        changed.push(folder("Projects/Design/New"));
+        assert!(plan.revalidate(&changed).is_err());
+        for name in ["", "Design", "one/two", "bad\rname"] {
+            assert!(
+                Plan::new(
+                    &Tree::new(&catalog),
+                    "Projects/Design",
+                    Action::Rename { name: name.into() }
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn rename_refuses_collisions_and_supports_flat_namespaces() {
+        let catalog = catalog();
+        assert!(
+            Plan::new(
+                &Tree::new(&catalog),
+                "Projects",
+                Action::Rename {
+                    name: "Archive".into()
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            Plan::new(
+                &Tree::new(&catalog),
+                "INBOX",
+                Action::Rename {
+                    name: "Other".into()
+                }
+            )
+            .is_err()
+        );
+        let mut flat = folder("Original");
+        flat.delimiter = None;
+        let plan = Plan::new(
+            &Tree::new(&[flat]),
+            "Original",
+            Action::Rename {
+                name: "New/Flat".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            plan.steps(),
+            vec![Step::Rename {
+                source: "Original".into(),
+                destination: "New/Flat".into()
+            }]
+        );
+    }
+
     #[test]
     fn move_reviews_whole_subtree_and_preserves_wire_names() {
         let catalog = catalog();

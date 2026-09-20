@@ -523,6 +523,10 @@ impl Store {
             if !concurrent && tx.query_row("SELECT EXISTS(SELECT 1 FROM bulk_items WHERE job=? AND status IN ('running','repair'))", [&id], |r|r.get::<_,bool>(0))? { return Ok(None); }
             for _ in 0..50 {
             let next=tx.query_row("SELECT position,id,original,undo,status,receipt,error FROM bulk_items i WHERE job=?1 AND status='queued' AND (?2 IS NULL OR position=?2)
+                AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND
+                    (t.id=json_extract(i.original,'$.account_id') OR t.id=json_extract(i.receipt,'$.Move.account')
+                     OR t.id=(SELECT json_extract(action,'$.Move.account') FROM bulk_jobs WHERE id=i.job)
+                     OR t.id=(SELECT m.account FROM bulk_admissions a JOIN mail_lineage l ON l.lineage=a.lineage JOIN messages m ON m.id=l.id WHERE a.job=i.job AND a.position=i.position)))
                 AND NOT EXISTS(SELECT 1 FROM bulk_admissions a JOIN bulk_admissions prior ON prior.lineage=a.lineage AND prior.sequence<a.sequence
                     JOIN bulk_items p ON p.job=prior.job AND p.position=prior.position
                     WHERE a.job=i.job AND a.position=i.position AND p.status IN ('queued','running','repair','uncertain'))

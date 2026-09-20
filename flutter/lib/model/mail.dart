@@ -141,10 +141,62 @@ class CalendarEntry {
     this.end, {
     this.calendar = 'Personal',
     this.location = '',
+    this.description = '',
+    this.sourceId = 'primary',
+    this.allDay = false,
+    this.etag,
+    this.remoteUrl,
     this.readOnly = false,
   });
-  final String id, title, calendar, location;
+  final String id, title, calendar, location, description, sourceId;
   final DateTime start, end;
+  final bool readOnly, allDay;
+  final String? etag, remoteUrl;
+  Map<String, Object?> toCalendarJson() => {
+    'id': id,
+    'source_id': sourceId,
+    'title': title,
+    'start': start.toUtc().toIso8601String(),
+    'end': end.toUtc().toIso8601String(),
+    'location': location,
+    'description': description,
+    'all_day': allDay,
+    'etag': etag,
+    'remote_url': remoteUrl,
+  };
+  factory CalendarEntry.fromCalendarJson(Map<String, dynamic> json) =>
+      CalendarEntry(
+        json['id'] as String,
+        json['title'] as String,
+        DateTime.parse(json['start'] as String).toLocal(),
+        DateTime.parse(json['end'] as String).toLocal(),
+        calendar: json['source_id'] as String,
+        sourceId: json['source_id'] as String,
+        location: json['location'] as String? ?? '',
+        description: json['description'] as String? ?? '',
+        allDay: json['all_day'] as bool? ?? false,
+        etag: json['etag'] as String?,
+        remoteUrl: json['remote_url'] as String?,
+      );
+  CalendarEntry withSource(CalendarSourceView source) => CalendarEntry(
+    id,
+    title,
+    start,
+    end,
+    calendar: source.name,
+    location: location,
+    description: description,
+    sourceId: source.id,
+    allDay: allDay,
+    etag: etag,
+    remoteUrl: remoteUrl,
+    readOnly: source.readOnly,
+  );
+}
+
+class CalendarSourceView {
+  const CalendarSourceView(this.id, this.name, this.readOnly);
+  final String id, name;
   final bool readOnly;
 }
 

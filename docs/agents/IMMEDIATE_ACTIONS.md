@@ -257,12 +257,20 @@ imports retain acknowledged cache repairs and fence unattempted work for review.
 Pre-dispatch offline/authentication failures remain Waiting with visible Retry
 and Cancel; dispatched timeouts retain uncertain recovery.
 
-Desktop Send saves prepared MIME and its stable identity as Queued through the
-local persistence lane, then closes the composer and wakes the existing durable
-worker. Provider capacity is acquired afterward. Only Queued may dispatch; its
-atomic transition to Submitting prevents automatic replay after a crash. Queued
-cancellation is local and conditional on dispatch not having started. Large MIME
-preparation still precedes admission and needs separate responsiveness work.
+Desktop Send saves an exact draft/account snapshot, attachment identities and a
+reserved Message-ID as Preparing through the local persistence lane, then closes
+the matching composer. The existing durable worker prepares MIME before a checked
+transition to Queued; provider capacity is acquired afterward. Only Queued may
+dispatch, and its atomic transition to Submitting prevents automatic replay after
+a crash. Preparing and queued cancellation are local, conditional on dispatch not
+having started. Imported preparations require review. Final latency measurements
+and equivalent browser/mobile preparation phases remain open.
+
+Native and browser folder creation also save logical requests before provider
+capacity. Namespace planning freezes an exact target before CREATE; a durable
+receipt precedes catalog repair. Unknown results require read-only inspection.
+Pending names cannot be used as physical Move destinations. Checked browser
+folder changes and mobile folder adoption remain separate migrations.
 
 Native group flags now persist their receipt before updating the cache. Cache
 repair and its Undo transition commit together; repair cannot repeat STORE or

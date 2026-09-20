@@ -52,6 +52,8 @@ pub struct AppState {
     profiles: Arc<profiles::ProfileState>,
     auth_slots: Arc<Semaphore>,
     mail: Arc<mail::MailHub>,
+    calendar: Option<Arc<dyn shep_calendar_core::http::CalendarProvider>>,
+    calendar_slots: Arc<Semaphore>,
 }
 impl AppState {
     pub fn new(
@@ -68,7 +70,16 @@ impl AppState {
             sessions: Default::default(),
             profiles: Default::default(),
             auth_slots: Arc::new(Semaphore::new(8)),
+            calendar: None,
+            calendar_slots: Arc::new(Semaphore::new(4)),
         }
+    }
+    pub fn with_calendar_provider(
+        mut self,
+        provider: Arc<dyn shep_calendar_core::http::CalendarProvider>,
+    ) -> Self {
+        self.calendar = Some(provider);
+        self
     }
     async fn session(&self, headers: &HeaderMap) -> Option<Session> {
         let token = cookie(headers, SESSION_COOKIE)?;
@@ -362,7 +373,7 @@ async fn capabilities(State(state): State<AppState>) -> Json<serde_json::Value> 
         .map(|e| serde_json::json!({"host":e.host,"port":e.port,"service":e.service}))
         .collect();
     Json(
-        serde_json::json!({"beta":true,"mail":!endpoints.is_empty(),"endpoints":endpoints,"calendar":false,"backups":false,"sent_copy":state.config.mail_endpoints.iter().any(|e| e.service == mail::policy::Service::Imap)}),
+        serde_json::json!({"beta":true,"mail":!endpoints.is_empty(),"endpoints":endpoints,"calendar":state.calendar.is_some(),"backups":false,"sent_copy":state.config.mail_endpoints.iter().any(|e| e.service == mail::policy::Service::Imap)}),
     )
 }
 async fn security_headers(request: Request, next: Next) -> Response {

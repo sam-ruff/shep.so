@@ -99,10 +99,12 @@ class Window:
         finally:
             self.x.XDestroyImage(data)
 
-    def click_until_visible(self, points, timeout_ms=5000):
+    def click_until_visible(self, points, timeout_ms=5000, require_change=False):
         if type(timeout_ms) is not int or not 1 <= timeout_ms <= 10000:
             raise ValueError("Pixel measurement deadline must be 1–10000 milliseconds.")
         before = self.matched(points)
+        if require_change and before > .1:
+            raise ValueError("Changed-region reference already matches the pre-action pixels.")
         if before >= .97:
             raise ValueError("The reference pixels are already visible; choose a different message first.")
         self.x.XSync(self.display, False)
@@ -125,7 +127,7 @@ class Window:
                         "started_at": wall_started,
                         "before_match": before, "polls": polls, "max_poll_interval_ms": max_interval*1000}
             if (now-started)*1000 >= timeout_ms:
-                raise TimeoutError(f"HTML reference pixels did not appear ({match:.1%} matched).")
+                raise TimeoutError(f"Reference pixels did not appear ({match:.1%} matched).")
             time.sleep(.002)
 
 
@@ -154,4 +156,45 @@ def reference_points(rgb, width, height, bounds):
                         best, selected = score, (px, py)
             px, py = selected
             points.append([px, py, *pixel(px, py)])
+    return points
+
+
+def changed_reference_points(before, after, width, height, bounds):
+    """Require changed foreground edges in every requested UI region."""
+    if len(before) != width * height * 3 or len(after) != len(before):
+        raise ValueError("Pixel baseline and reference dimensions must agree.")
+    if not isinstance(bounds, list) or not 1 <= len(bounds) <= 4:
+        raise ValueError("Choose one to four meaningful label or row regions.")
+    points = []
+    for region in bounds:
+        if not isinstance(region, list) or len(region) != 4 or any(type(v) is not int for v in region):
+            raise ValueError("Regions use integer [x, y, width, height] bounds.")
+        x, y, w, h = region
+        if x < 0 or y < 0 or w < 8 or h < 8 or x + w > width or y + h > height:
+            raise ValueError("Pixel region must fit inside the owned window.")
+        if w * h > 250000:
+            raise ValueError("Choose a bounded label or row region, not the whole window.")
+        candidates = []
+        for py in range(y + 1, y + h - 1):
+            for px in range(x + 1, x + w - 1):
+                offset = (py * width + px) * 3
+                colour = after[offset:offset + 3]
+                change = max(abs(a - b) for a, b in zip(colour, before[offset:offset + 3]))
+                if change < 40:
+                    continue
+                edge = max(max(abs(a - b) for a, b in zip(colour, after[other:other + 3]))
+                           for other in (offset - 3, offset + 3, offset - width * 3, offset + width * 3))
+                if edge >= 40:
+                    candidates.append((min(edge, change), px, py, colour))
+        selected = []
+        for _, px, py, colour in sorted(candidates, reverse=True):
+            if any(abs(px - q[0]) < 3 and abs(py - q[1]) < 3 for q in selected):
+                continue
+            selected.append([px, py, *colour])
+            if len(selected) == 32:
+                break
+        if len(selected) < 8:
+            raise ValueError("Each region needs at least eight distinct changed foreground edges.")
+        points.extend(selected)
+    validate_points(points, width, height)
     return points

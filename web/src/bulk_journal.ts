@@ -1,5 +1,6 @@
 import { sameReviewedSource } from "./mail_lineage";
 import { openMailDatabase } from "./storage";
+import { assertFolderAvailable } from "./folder_fences";
 import { selectionToken } from "./selection_types";
 import { intentValues, type IntentLease } from "./mail_intents";
 import type { Fields } from "./model";
@@ -956,6 +957,10 @@ export class BulkJournal {
     for await (const chunk of chunks) {
       if (!chunk.length || chunk.length > 50)
         throw Error("Stage one group page at a time.");
+      const cache = await openMailDatabase(this.user);
+      try {
+        await assertFolderAvailable(cache.transaction("folderActions", "readonly"), new Set(chunk.flatMap(row => [row.account, ...(chosen.kind === "move" && chosen.account ? [chosen.account] : [])])));
+      } finally { cache.close(); }
       await this.transaction("readwrite", async (tx) => {
         const job = await this.job(tx, id);
         if (job.state !== "preparing" || job.staged + chunk.length > job.total)

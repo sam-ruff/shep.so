@@ -22,6 +22,7 @@ mod accounts;
 #[cfg(test)]
 mod accounts_tests;
 
+mod calendar;
 mod connections;
 #[cfg(test)]
 mod connections_tests;

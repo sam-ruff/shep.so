@@ -206,6 +206,17 @@ class NativeFlows(unittest.TestCase):
         return ({"type": "hover", "x": 100, "y": 700},
                 {"type": "scroll", "amount": 30}, wait(120), click(85, 808))
 
+    def open_saved_folder_with_keyboard(self, label):
+        self.mcp.batch(key("ctrl+1"), {"type": "hover", "x": 100, "y": 400},
+                       {"type": "scroll", "amount": -30}, wait(120), click(85, 278),
+                       check("sidebar_focus", True))
+        state = self.mcp.call("desktop.state")
+        destination = state["sidebar_labels"].index(label)
+        distance = destination - state["sidebar_index"]
+        self.mcp.batch(keys(*(["Down" if distance >= 0 else "Up"] * abs(distance))),
+                       check("sidebar_index", destination), key("Return"),
+                       check("dialog", "FolderCreation"))
+
     def test_new_folder_keyboard_root_validation_and_restart(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True)
         print(f"New folder evidence: {result['artifacts']}", flush=True)
@@ -227,6 +238,27 @@ class NativeFlows(unittest.TestCase):
                        check("folder_creation.name", ""), key("Escape"),
                        {"type": "restart"}, check("sidebar_labels", "Receipts", "contains"),
                        check("folder_creation.saved", []), shot("new-folder-root-restarted"))
+
+    def test_new_folder_admission_with_held_capacity_closes_and_survives_normal_exit(self):
+        result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, held_provider_slots=True)
+        print(f"Queued folder evidence: {result['artifacts']}", flush=True)
+        self.open_new_folder_with_keyboard()
+        self.mcp.batch(type_text("Saved receipts"), key("Return"), check("dialog", None),
+                       check("folder_creation.busy", False), check("folder_creation.saved.0.stage", "queued"),
+                       check("sidebar_labels", "Saved receipts · Saved", "contains"), shot("folder-saved-before-provider-capacity"))
+        original = self.mcp.call("desktop.state")["folder_creation"]["saved"][0]
+        self.assertIsNone(original["target"])
+        self.assertIsNone(original["receipt"])
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("folder_creation.saved.0.stage", "queued"),
+                       check("folder_creation.saved.0.id", original["id"]),
+                       check("sidebar_labels", "Saved receipts · Saved", "contains"), shot("folder-saved-after-restart"))
+        self.open_saved_folder_with_keyboard("Saved receipts · Saved")
+        self.mcp.batch(shot("folder-saved-cancel-review"), click(540, 516),
+                       check("folder_creation.saved", []), shot("folder-cancelled-before-provider"), key("Escape"),
+                       {"type": "restart"}, check("folder_creation.saved", []))
+        self.assertNotIn("Saved receipts", self.mcp.call("desktop.state")["sidebar_labels"])
 
     def test_new_folder_mouse_nested_unicode(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True)
@@ -273,44 +305,43 @@ class NativeFlows(unittest.TestCase):
         print(f"New folder retry evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(*self.new_folder_mouse_actions(), check("dialog", "FolderCreation"),
                        check("focused_input", "new-folder-name"),
-                       type_text("Reports"), key("Return"), check("folder_creation.busy", True),
-                       check("folder_creation.busy", False), check("folder_creation.error", "refused", "contains"),
-                       check("folder_creation.saved.0.name", "Reports"), check("focused_input", "new-folder-name"), shot("new-folder-rejected"),
-                       key("Escape"), {"type": "restart"},
-                       *self.new_folder_mouse_actions(), check("dialog", "FolderCreation"),
-                       check("focused_input", "new-folder-name"),
-                       check("folder_creation.name", "Reports"), check("folder_creation.account", "preview-work"),
-                       check("folder_creation.error", "unfinished", "contains"),
-                       key("ctrl+a"), type_text("Another folder"), check("folder_creation.name", "Another folder"),
-                       shot("new-folder-previous-request-visible"),
-                       click(945, 596), check("folder_creation.name", "Reports"),
-                       check("focused_input", "new-folder-name"), shot("new-folder-resume-control"),
-                       key("Escape"), {"type": "restart"}, *self.new_folder_mouse_actions(),
-                       check("focused_input", "new-folder-name"),
-                       check("folder_creation.name", "Reports"), shot("new-folder-restored-request"),
-                       key("Return"), check("folder_creation.busy", True), check("dialog", None),
-                       check("sidebar_labels", "Reports", "contains"), check("folder_creation.saved", []),
-                       shot("new-folder-retry-complete"))
+                       type_text("Reports"), key("Return"), check("dialog", None),
+                       check("folder_creation.saved.0.stage", "rejected"), shot("new-folder-rejected"))
+        saved = self.mcp.call("desktop.state")["folder_creation"]["saved"][0]
+        self.mcp.batch({"type": "restart"}, check("folder_creation.saved.0.id", saved["id"]),
+                       check("folder_creation.saved.0.target", saved["target"]))
+        self.open_saved_folder_with_keyboard("Reports · Needs attention")
+        self.mcp.batch(shot("new-folder-rejected-review"), key("Escape"), key("ctrl+comma"),
+                       check("tab", "Preferences"), click(690, 366), check("dark", True),
+                       key("ctrl+1"), {"type": "resize", "width": 980, "height": 760})
+        self.open_saved_folder_with_keyboard("Reports · Needs attention")
+        self.mcp.batch(shot("new-folder-retry-compact-dark"), click(305, 439),
+                       check("folder_creation.saved", []), key("Escape"),
+                       check("sidebar_labels", "Reports", "contains"), shot("new-folder-retry-complete"))
         self.assertEqual(self.mcp.call("desktop.state")["sidebar_labels"].count("Reports"), 1)
 
     def test_new_folder_lost_reply_completes_while_mail_navigation_remains_available(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions="uncertain")
         print(f"New folder acknowledgement evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(*self.new_folder_mouse_actions(), check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"), type_text("Receipts"),
-                       key("Return"), check("folder_creation.busy", True), shot("new-folder-pending"),
-                       key("Escape"), key("ctrl+2"), check("tab", "Calendar"),
-                       check("folder_creation.busy", False), check("folder_creation.error", None),
-                       check("folder_creation.saved", []), check("tab", "Calendar"),
-                       key("ctrl+1"), check("sidebar_labels", "Receipts", "contains"),
-                       shot("new-folder-lost-reply-confirmed"), {"type": "restart"},
-                       check("sidebar_labels", "Receipts", "contains"), check("folder_creation.saved", []))
+                       key("Return"), check("dialog", None), shot("new-folder-pending"),
+                       key("ctrl+2"), check("tab", "Calendar"),
+                       check("folder_creation.saved.0.stage", "uncertain"), check("tab", "Calendar"))
+        saved = self.mcp.call("desktop.state")["folder_creation"]["saved"][0]
+        self.mcp.batch({"type": "restart"}, check("folder_creation.saved.0.id", saved["id"]),
+                       check("folder_creation.saved.0.target", saved["target"]))
+        self.open_saved_folder_with_keyboard("Receipts · Needs attention")
+        self.mcp.batch(shot("new-folder-unconfirmed-review"),
+                       click(535, 584),
+                       check("folder_creation.saved", []), key("Escape"),
+                       check("sidebar_labels", "Receipts", "contains"), shot("new-folder-lost-reply-confirmed"))
         self.assertEqual(self.mcp.call("desktop.state")["sidebar_labels"].count("Receipts"), 1)
 
     def test_new_folder_graceful_close_waits_for_accepted_creation(self):
         result = self.mcp.call("desktop.start", nested_folders=True, persistent=True, folder_actions="slow")
         print(f"New folder close evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(*self.new_folder_mouse_actions(), check("dialog", "FolderCreation"), check("focused_input", "new-folder-name"), type_text("Before closing"),
-                       key("Return"), check("folder_creation.busy", True),
+                       key("Return"), check("dialog", None), check("folder_creation.saved.0.stage", "running"),
                        {"type": "restart"}, check("sidebar_labels", "Before closing", "contains"),
                        check("folder_creation.saved", []), wait(150), shot("new-folder-close-confirmed"))
 
@@ -4338,6 +4369,24 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), wait(80), key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1), key("Escape"), check("dialog", None),
                        check("reply_count", 1), check("attachment_count", 4), shot("reply-layout"))
 
+    def test_bulk_ten_of_large_mailbox_projects_with_held_provider_capacity(self):
+        started = self.mcp.call("desktop.start", selection_mailbox=True, held_provider_slots=True)
+        print(f"Large mailbox action evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("total", 100000),
+                       {"type": "click", "x": 400, "y": mail_row_y(0), "modifiers": ["ctrl"]},
+                       check("mail_selection.mode", True), check("mail_selection.drawn", True),
+                       {"type": "click", "x": 400, "y": mail_row_y(9), "modifiers": ["shift"]},
+                       check("mail_selection.count", 10), check("mail_selection.pending", False),
+                       click(696, 100), check("dialog", "BulkReview"), check("bulk.review_count", 10),
+                       shot("large-mailbox-review-ready"), key("Return"),
+                       check("dialog", None), check("total", 99990),
+                       check("action_toast.label", "Deleted 10 messages"),
+                       check("bulk.jobs.0.total", 10), check("bulk.jobs.0.completed", 0),
+                       shot("large-mailbox-confirmed-before-provider"), click(1327, 872),
+                       check("total", 100000), check("bulk.jobs.0.undo_requested", True),
+                       check("store_truth.agrees", True), check("drawn_rows.consistent", True),
+                       shot("large-mailbox-immediate-undo"))
+
     def test_bulk_ten_delete_reviews_and_projects_before_pending_read_finishes(self):
         result = self.mcp.call("desktop.start", mail_actions="slow")
         print(f"Pending read bulk evidence: {result['artifacts']}", flush=True)
@@ -5137,6 +5186,22 @@ class NativeFlows(unittest.TestCase):
                        click(532, 562), check("outgoing_pending", 0), check("busy", []),
                        check("draft_count", 1), shot("queued-send-returned-to-drafts"))
 
+    def test_send_preparation_closes_editor_before_mime_and_cancel_fences_late_bytes(self):
+        self.mcp.call("desktop.start", persistent=True, held_provider_slots=True, mail_actions="slow")
+        self.mcp.batch(key("r"), check("composer.visible", True),
+                       check("focused_input", "compose-body"), type_text("Cancel before MIME is ready."),
+                       click(675, 564), check("composer.visible", False),
+                       check("outgoing_pending", 1), check("busy", []),
+                       click(91, 516), check("dialog", "Outbox"),
+                       check("outgoing_rows.0.delivery", "Preparing"), shot("send-preparing-editor-closed"),
+                       click(532, 562), check("outgoing_pending", 0), check("busy", []),
+                       wait(1800), check("outgoing_pending", 0), check("draft_count", 1),
+                       shot("send-preparing-cancelled"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("outgoing_pending", 0), check("draft_count", 1),
+                       shot("send-preparing-cancelled-restarted"))
+
     def test_inline_composer_send_preparation_allows_another_reply_and_preserves_failure(self):
         started = self.mcp.call("desktop.start", mail_actions="slow")
         print(f"Inline send navigation: {started['artifacts']}", flush=True)
@@ -5824,6 +5889,73 @@ class NativeFlows(unittest.TestCase):
                        check("selected", "Coffee next Thursday?"), key("Down"),
                        check("selected", "Weekend plans"), shot("remaining-account-mail"))
 
+    def test_account_removal_admission_survives_close_beside_held_sync(self):
+        started = self.mcp.call("desktop.start", persistent=True, held_account_sync=True)
+        print(f"Durable removal beside held sync: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("account_sync_waiting", True), key("ctrl+comma"),
+                       check("tab", "Preferences"), wait(80),
+                       click(383, 156), check("settings_tab", "Accounts"),
+                       click(1150, 334), check("dialog", "Removal"),
+                       check("removal.messages", 118), click(890, 555),
+                       check("dialog", None), check("account_count", 1),
+                       shot("account-removal-background-admitted"),
+                       key("ctrl+1"), check("total", 2))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        database = Path(started["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database.as_uri()+"?mode=ro", uri=True) as cache:
+            rows = cache.execute("SELECT id,json_extract(pending,'$.id'),json_extract(pending,'$.stage') FROM connection_tombstones WHERE kind='account' AND pending IS NOT NULL").fetchall()
+            self.assertEqual(len(rows), 1)
+            account, removal_id, stage = rows[0]
+            self.assertTrue(removal_id)
+            self.assertIn(stage, ("queued", "cleanup", "succeeded"))
+            accounts = json.loads(cache.execute("SELECT value FROM kv WHERE key='accounts'").fetchone()[0])
+            self.assertNotIn(account, [row["id"] for row in accounts])
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("account_count", 1), check("total", 2),
+                       shot("account-removal-projection-after-restart"))
+
+    def test_account_removal_shows_saved_progress_before_slow_mail_finishes(self):
+        started = self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Removal queued behind owned mail write: {started['artifacts']}", flush=True)
+        self.mcp.batch(click(570, 215), check("mail_pending", 1),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(383, 156), check("settings_tab", "Accounts"),
+                       click(1150, 334), check("dialog", "Removal"),
+                       check("removal.transfers", 1, "gte"), click(482, 570),
+                       check("removal_cancel_transfers", True), click(890, 627),
+                       check("dialog", None), check("account_count", 1),
+                       check("removal_jobs.0.stage", "queued"),
+                       shot("account-removal-waiting-for-owned-write"),
+                       check("removal_jobs", []), key("ctrl+1"), check("total", 2),
+                       shot("account-removal-owned-write-drained"))
+
+    def test_account_removal_cleanup_failure_survives_restart_and_retries_from_preferences(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        print(f"Local removal cleanup recovery: {started['artifacts']}", flush=True)
+        database = Path(started["artifacts"]) / "fixture.sqlite"
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        with sqlite3.connect(database) as cache:
+            cache.execute("CREATE TRIGGER removal_fixture_failure BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT,'fixture cleanup unavailable'); END")
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(383, 156), check("settings_tab", "Accounts"),
+                       click(1150, 334), check("removal.messages", 118), click(890, 555),
+                       check("dialog", None), check("account_count", 1),
+                       check("removal_jobs.0.stage", "failed"),
+                       shot("account-removal-cleanup-failed"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        with sqlite3.connect(database) as cache:
+            original = cache.execute("SELECT json_extract(pending,'$.id') FROM connection_tombstones WHERE kind='account'").fetchone()[0]
+            self.assertEqual(cache.execute("SELECT count(*) FROM messages").fetchone()[0], 120)
+            cache.execute("DROP TRIGGER removal_fixture_failure")
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("account_count", 1), key("ctrl+comma"), check("tab", "Preferences"), click(383, 156),
+                       check("removal_jobs.0.stage", "failed"),
+                       shot("account-removal-cleanup-recovery-after-restart"), click(355, 625),
+                       check("removal_jobs", []), key("ctrl+1"), check("total", 2),
+                       shot("account-removal-cleanup-retried"))
+        with sqlite3.connect(database.as_uri()+"?mode=ro", uri=True) as cache:
+            saved = cache.execute("SELECT json_extract(pending,'$.id'),json_extract(pending,'$.stage') FROM connection_tombstones WHERE kind='account'").fetchone()
+            self.assertEqual(saved, (original, "succeeded"))
+
     def test_calendar_removal_review_and_reconnect(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(445, 156),
                        check("settings_tab", "Calendars"), shot("calendar-removal-controls"),
@@ -5845,7 +5977,10 @@ class NativeFlows(unittest.TestCase):
                        click(290, 156), check("settings_tab", "General"), click(563, 366), check("dark", True),
                        click(445, 156), check("settings_tab", "Calendars"), click(834, 334),
                        check("removal.events", 4), shot("calendar-removal-dark-compact"),
-                       key("Escape"), check("dialog", None), check("calendar_count", 2))
+                       key("Escape"), check("dialog", None), check("calendar_count", 2),
+                       click(834, 334), check("removal.events", 4), click(620, 412),
+                       check("dialog", None), check("calendar_count", 1), check("events", 1),
+                       shot("calendar-removal-admitted-dark-compact"))
 
     def test_account_removal_with_unfinished_move(self):
         self.mcp.call("desktop.start", pending_transfer=True)

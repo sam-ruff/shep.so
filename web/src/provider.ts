@@ -1,6 +1,9 @@
 import { samePhysical, metadataIdentity } from "./mail_lineage";
 import { DraftConflict, observeDraft, sameDraftObservation, type DraftObservation } from "./draft_revision";
 import type { MailAction } from "./mail_activity";
+import { ActionWake, runAccountActions, type ActionSource } from "./action_scheduler";
+import { folderSteps, localFolderPlan, mutationJob, type FolderAction, type FolderMutationReview, type FolderPlan, type FolderStep } from "./folder_mutations";
+import { executeFolderCreation, folderConnection, validMailbox, type FolderCreation, type FolderCreationReply, type FolderCatalog, type Mailbox } from "./folder_actions";
 import type { CacheMail } from "./cache_changes";
 import { BrowserGroups } from "./bulk_client";
 import { MailboxWorkerClient } from "./mailbox_worker_client";
@@ -342,6 +345,8 @@ export class GatewayRepository implements Repository, SelectionRepository {
   private actionsClosed = false;
   private activeActions = new Set<string>();
   private resumingActions?: Promise<void>;
+  private actionsAgain = false;
+  private readonly actionWake = new ActionWake();
   private actionProgress?: () => void;
   private outgoingResume?: Promise<void>;
   private outgoingAgain = false;
@@ -362,30 +367,245 @@ export class GatewayRepository implements Repository, SelectionRepository {
   }
   resumeActions(): Promise<void> {
     if (this.actionsClosed || !this.actionActivity) return Promise.resolve();
+    this.actionsAgain = true;
+    this.actionWake.notify();
     if (this.resumingActions) return this.resumingActions;
-    const running = this.resumeSavedActions().catch(() => {}).finally(() => {
+    const running = (async () => {
+      do { this.actionsAgain = false; await this.resumeSavedActions(); }
+      while (this.actionsAgain && !this.actionsClosed);
+    })().catch(() => {}).finally(() => {
       this.resumingActions = undefined;
     });
     return this.resumingActions = running;
   }
   private async resumeSavedActions() {
     await this.holdActionOwner();
-    let after: string | undefined;
-    const tasks = new Set<Promise<void>>(), accounts = new Set<string>();
-    do {
+    const sources: ActionSource[] = [{ page: async after => {
       const page = await this.actionActivity!.page(after);
-      after = page.next;
-      for (const action of page.rows) {
-        if (this.actionsClosed) break;
-        if (!action.owner || !["Queued", "Waiting"].includes(action.status) || (action.owner === this.actionOwner && action.status !== "Waiting")) continue;
-        if (accounts.has(action.account)) { await Promise.all(tasks); }
-        while (tasks.size >= 4) await Promise.race(tasks);
-        accounts.add(action.account);
-        const work = this.resumeAction(action).finally(() => { tasks.delete(work); accounts.delete(action.account); });
-        tasks.add(work);
+      return { next: page.next, rows: page.rows.map(action => ({ id: action.id, account: action.account, eligible: !!action.owner && ["Queued", "Waiting"].includes(action.status) && (action.owner !== this.actionOwner || action.status === "Waiting"), run: () => this.resumeAction(action) })) };
+    } }];
+    if (this.store.folderActions) sources.push({ page: async after => {
+      const page = await this.store.folderActions!.page(after);
+      return { next: page.next, rows: page.rows.map(folder => ({ id: folder.id, account: folder.account, eligible: this.folderRunnable(folder), run: () => this.resumeFolder(folder) })) };
+    } });
+    await runAccountActions(sources, this.actionWake, () => this.actionsClosed);
+  }
+  get folderActivity() { return this.store.folderActions; }
+  async reviewFolder(accountId: string, source: string, action: FolderAction) {
+    const account = this.accounts.find(account => account.id === accountId);
+    if (!account || !this.store.folderMutations) throw Error("Folder reviews are unavailable. Reopen this account.");
+    let plan: FolderPlan;
+    if (account.protocol === "Pop3") {
+      const catalog = await this.store.get<FolderCatalog>("folderCatalogs", accountId);
+      plan = localFolderPlan(catalog?.mailboxes ?? [], source, action);
+      await this.store.commit([{ store: "folderCatalogs", key: accountId, value: { ...catalog, account: accountId, mailboxes: catalog!.mailboxes, complete: true } satisfies FolderCatalog }]);
+    } else {
+      const value = await this.folderRequest(account, "review", { source, action }) as { plan?: FolderPlan; catalog?: Mailbox[] };
+      if (!value?.plan || !Array.isArray(value.plan.members) || value.plan.members.length > 128 || !value.plan.members.every(member => validMailbox(member.mailbox)) || !Array.isArray(value.catalog) || value.catalog.length > 4096 || !value.catalog.every(validMailbox)) throw Error("The service returned an invalid subtree review.");
+      plan = value.plan;
+      if (plan.source !== source || JSON.stringify(plan.action) !== JSON.stringify(action)) throw Error("The returned folder review does not match this request.");
+      await this.store.commit([{ store: "folderCatalogs", key: accountId, value: { account: accountId, mailboxes: value.catalog, complete: true } satisfies FolderCatalog }]);
+    }
+    return BulkJournal.inspect(this.profileId, async groups => {
+      if ((await groups.accountReview(accountId)).unfinished) throw Error("Finish or review this account's message groups before changing its folders.");
+      return this.store.folderMutations!.review(accountId, plan);
+    });
+  }
+  async changeFolder(review: FolderMutationReview, id = crypto.randomUUID()) {
+    if (!this.store.folderMutations || this.actionsClosed) throw Error("Folder changes are unavailable. Reopen Shep.");
+    await this.holdActionOwner();
+    await BulkJournal.inspect(this.profileId, async groups => {
+      if ((await groups.accountReview(review.account)).unfinished) throw Error("Message groups changed after this review. Finish or review them before changing the folder.");
+    });
+    const job = await this.store.folderMutations.admit(id, this.actionOwner, review);
+    this.actionProgress?.();
+    void this.resumeActions();
+    return job;
+  }
+  private async folderRequest(account: Account, path: string, body: object) {
+    const response = await this.response(`/api/mail/folders/${path}`, { connection: this.connection(account), ...body });
+    if (!response.ok) throw Error("The folder service could not confirm this request. Reconnect or retry the check.");
+    return response.json() as Promise<unknown>;
+  }
+  async createFolder(accountId: string, parent: string | null, name: string, id = crypto.randomUUID()) {
+    if (this.actionsClosed || !this.store.folderActions) throw Error("Folder changes are unavailable. Reopen Shep.");
+    const account = this.accounts.find(a => a.id === accountId);
+    if (!account) throw Error("This account is unavailable. Reopen Preferences.");
+    await this.holdActionOwner();
+    const job = await this.store.folderActions.admit({ id, account: accountId, connection: folderConnection(account), parent, name, owner: this.actionOwner });
+    await this.loadFolderCatalogs();
+    this.actionProgress?.();
+    void this.resumeActions();
+    return job;
+  }
+  async decideFolder(expected: FolderCreation, decision: "retry" | "check" | "dismiss" | "accept" | "repair") {
+    const journal = this.store.folderActions;
+    if (!journal || this.actionsClosed) throw Error("Folder changes are unavailable. Reopen Shep.");
+    const decide = () => this.exclusive(`account.${expected.account}`, async () => {
+      if (this.activeActions.has(`folder:${expected.id}`)) throw Error("This folder change is still running.");
+      if (expected.mutation) {
+        const mutation = expected.mutation;
+        if (decision === "dismiss" && expected.status === "Repair") return this.store.folderMutations!.stopCheckedReceipt(expected);
+        if (decision === "repair" && (expected.status !== "Repair" || !mutation.receipt)) throw Error("Only an acknowledged cache receipt can be saved again.");
+        if (decision === "accept") {
+          if (expected.status !== "Uncertain" || mutation.checked !== "applied" || mutation.review.plan.action !== "Delete") throw Error("Only a checked absent subtree step can retire its exact saved cache rows.");
+          return this.store.folderMutations!.receipt(expected, { step: folderSteps(mutation.review.plan)[mutation.completed], origin: "observed" });
+        }
+        if (decision === "retry" && !(["Waiting", "Rejected"].includes(expected.status) || expected.status === "Uncertain" && mutation.checked === "original")) throw Error("Check the saved subtree before retrying this change.");
+        if (decision === "retry" && mutation.prepared !== mutation.review.messages) throw Error("This preparation was interrupted. Stop tracking it and make a new folder review.");
+        if (decision === "check" && !["Uncertain", "Rejected", "Repair"].includes(expected.status)) throw Error("Wait for this folder change before checking it.");
+        if (decision === "dismiss" && ["Running", "Checking", "Repair", "Succeeded", "Dismissed"].includes(expected.status)) throw Error("Finish saving the acknowledged folder receipt before stopping tracking.");
+        return journal.update(expected, { status: decision === "retry" ? "Queued" : decision === "repair" ? "Repair" : decision === "check" ? "Checking" : "Dismissed", mutation: { ...mutation, checked: undefined, checkedCache: undefined }, owner: this.actionOwner, error: undefined });
       }
-    } while (after && !this.actionsClosed);
-    await Promise.all(tasks);
+      if (decision === "repair") throw Error("This creation uses its exact folder check to finish saving.");
+      if (decision === "accept") throw Error("This creation does not have a checked deletion to accept.");
+      if (decision === "retry" && !["Waiting", "Rejected"].includes(expected.status)) throw Error("Check this folder's current state before retrying.");
+      if (decision === "check" && (!expected.target || !["Uncertain", "Repair", "Rejected"].includes(expected.status))) throw Error("This folder change cannot be checked yet.");
+      if (decision === "dismiss" && ["Running", "Checking", "Succeeded", "Dismissed"].includes(expected.status)) throw Error("Wait for the current folder result before stopping tracking.");
+      return journal.update(expected, { status: decision === "retry" ? "Queued" : decision === "check" ? "Checking" : "Dismissed", owner: this.actionOwner, error: undefined });
+    }, false);
+    const result = expected.owner === this.actionOwner ? await decide() : await this.exclusive(`actions.tab.${expected.owner}`, decide, false);
+    this.actionProgress?.();
+    void this.resumeActions();
+    return result;
+  }
+  private folderRunnable(job: FolderCreation) {
+    if (job.status === "Repair" && job.mutation?.checkedCache) return false;
+    if (job.mutation && job.status === "Preparing") return !this.activeActions.has(`folder:${job.id}`);
+    if (job.status === "Running" || job.owner !== this.actionOwner && job.status === "Checking") return !this.activeActions.has(`folder:${job.id}`);
+    return ["Queued", "Waiting", "Checking", "Repair"].includes(job.status) && !this.activeActions.has(`folder:${job.id}`);
+  }
+  private async resumeFolder(expected: FolderCreation) {
+    const journal = this.store.folderActions!;
+    const key = `folder:${expected.id}`;
+    const run = () => this.exclusive(`account.${expected.account}`, async () => {
+      if (this.actionsClosed || this.activeActions.has(key)) return;
+      let current = await journal.get(expected.id);
+      if (!current || current.revision !== expected.revision) return;
+      this.activeActions.add(key);
+      try {
+        if (current.owner !== this.actionOwner || current.status === "Running") {
+          current = await journal.update(current, { owner: this.actionOwner, ...(["Running", "Checking"].includes(current.status) ? { status: current.mutation?.receipt ? "Repair" as const : "Uncertain" as const, error: "The previous attempt did not finish. Check this exact folder before deciding what to do." } : {}) });
+        }
+        const account = this.accounts.find(a => a.id === current!.account);
+        if (!account || folderConnection(account) !== current.connection) return;
+        if (current.mutation) {
+          await this.exclusive(`cache.${account.id}`, () => this.runFolderMutation(current!, account));
+          await this.loadFolderCatalogs();
+          await this.reloadMail();
+          return;
+        }
+        if (!this.connected(account.id)) {
+          await journal.update(current, { ...(["Queued", "Waiting"].includes(current.status) ? { status: "Waiting" as const } : {}), error: "Reconnect this account in Preferences to continue the saved folder change." });
+          return;
+        }
+        const connection = this.connection(account);
+        const read = async (path: string, body: object) => {
+          const response = await this.response(`/api/mail/folders/${path}`, { connection, ...body });
+          if (!response.ok) throw Error("The folder service could not confirm this request. Reconnect or retry the check.");
+          return response.json() as Promise<unknown>;
+        };
+        await executeFolderCreation(journal, current, {
+          plan: async (parent, name) => {
+            const value = await read("plan", { parent, name });
+            if (!validMailbox(value)) throw Error("Invalid folder plan received.");
+            return value;
+          },
+          inspect: async target => {
+            const value = await read("inspect", { target });
+            if (value !== null && !validMailbox(value)) throw Error("Invalid folder observation received.");
+            return value as Mailbox | null;
+          },
+          create: async target => {
+            const value = await read("create", { target }) as Partial<FolderCreationReply>;
+            if (!value || !["observed", "acknowledged", "waiting", "rejected", "uncertain"].includes(value.state ?? "")) throw Error("The folder creation response could not be confirmed.");
+            return value as FolderCreationReply;
+          },
+        }, () => this.actionsClosed);
+        await this.loadFolderCatalogs();
+      } finally {
+        this.activeActions.delete(key);
+        if (this.actionsClosed && !this.activeActions.size) this.releaseActions?.();
+      }
+    });
+    const owned = () => expected.mutation ? BulkJournal.own(this.profileId, async groups => {
+      if ((await groups.accountReview(expected.account)).unfinished) throw Error("Finish or review message groups on this account before continuing the saved folder change.");
+      await run();
+    }) : run();
+    try {
+      if (expected.owner !== this.actionOwner) await this.exclusive(`actions.tab.${expected.owner}`, owned, false);
+      else await owned();
+    } catch {
+      const latest = await journal.get(expected.id).catch(() => undefined);
+      if (latest?.owner === this.actionOwner && latest.status === "Running") {
+        await journal.update(latest, { status: "Uncertain", error: "The attempt ended before its result could be saved. Check the exact folder; creation will not be repeated automatically." }).catch(() => {});
+      } else if (latest?.mutation && latest.active) {
+        await journal.update(latest, { error: "The saved folder change could not progress. Finish other account actions, then refresh Folder changes to retry." }).catch(() => {});
+      }
+    }
+    finally { if (!this.actionsClosed) this.actionProgress?.(); }
+  }
+  private async loadFolderCatalogs() {
+    for (const catalog of await this.store.all<FolderCatalog>("folderCatalogs")) {
+      const names = catalog.mailboxes.filter(m => m.selectable && !m.non_existent).map(m => m.name);
+      this.folders.set(catalog.account, catalog.complete ? names : [...new Set([...(this.folders.get(catalog.account) ?? []), ...names])]);
+    }
+  }
+  private async runFolderMutation(initial: FolderCreation, account: Account) {
+    const journal = this.store.folderActions!, mutations = this.store.folderMutations!;
+    let job = initial;
+    try {
+      if (job.status === "Preparing") {
+        if (mutationJob(job).prepared) {
+          await journal.update(job, { status: "Rejected", error: "Preparation was interrupted. Stop tracking this request and make a new review; no server step was authorised." });
+          return;
+        }
+        job = await mutations.prepare(job);
+      }
+      while (!this.actionsClosed) {
+        const mutation = mutationJob(job);
+        if (job.status === "Repair") { job = await mutations.repair(job); continue; }
+        if (job.status === "Checking") {
+          if (account.protocol === "Pop3") {
+            if (mutation.receipt) {
+              await mutations.checkedReceipt(job, "original");
+              return;
+            }
+            await journal.update(job, { status: "Uncertain", mutation: { ...mutation, checked: "original" }, error: "The local receipt was not recorded. The saved original cache remains available; retry or stop tracking." });
+            return;
+          }
+          const checked = await this.folderRequest(account, "check-step", { plan: mutation.review.plan, completed: mutation.completed }) as { state?: string };
+          if (!["applied", "original", "changed"].includes(checked.state ?? "")) throw Error("The subtree check returned an invalid result.");
+          if (mutation.receipt) {
+            await mutations.checkedReceipt(job, checked.state as "applied" | "original" | "changed");
+            return;
+          }
+          await journal.update(job, { status: "Uncertain", mutation: { ...mutation, checked: checked.state as "applied" | "original" | "changed" }, error: checked.state === "applied" ? mutation.review.plan.action === "Delete" ? "The exact folder is absent. Accept this checked state to remove only its reviewed cached messages." : "The destination folders exist. Their message identities are not proven by this listing. Stop tracking and refresh them to read current server mail; the old cached messages are retained." : checked.state === "original" ? "The reviewed original subtree is still present. You can explicitly retry the saved step." : "The server folders differ from this review. Keep the cached messages and make a new review." });
+          return;
+        }
+        if (!["Queued", "Waiting"].includes(job.status)) return;
+        if (account.protocol !== "Pop3" && !this.connected(account.id)) {
+          await journal.update(job, { status: "Waiting", error: "Reconnect this account to continue its saved folder change." }); return;
+        }
+        job = await journal.update(job, { status: "Running", error: undefined });
+        const step = folderSteps(mutation.review.plan)[mutation.completed];
+        let reply: { state: string; step?: FolderStep };
+        try {
+          reply = account.protocol === "Pop3" ? { state: "local", step } : await this.folderRequest(account, "step", { plan: mutation.review.plan, completed: mutation.completed }) as typeof reply;
+        } catch {
+          await journal.update(job, { status: "Uncertain", error: "The folder command's result was not confirmed. Check the saved step before deciding what to do." }); return;
+        }
+        if ((["acknowledged", "observed"].includes(reply.state) || account.protocol === "Pop3" && reply.state === "local") && reply.step && JSON.stringify(reply.step) === JSON.stringify(step)) {
+          job = await mutations.receipt(job, { step, origin: reply.state as "acknowledged" | "observed" | "local" });
+          continue;
+        }
+        await journal.update(job, { status: reply.state === "waiting" ? "Waiting" : reply.state === "rejected" ? "Rejected" : "Uncertain", error: reply.state === "rejected" ? "The server refused this step or its subtree changed. Check the exact saved review before retrying." : "This folder step needs a checked result before continuing." });
+        return;
+      }
+    } catch (error) {
+      const latest = await journal.get(job.id);
+      if (latest?.active) await journal.update(latest, { status: latest.mutation?.receipt ? "Repair" : ["Running", "Checking"].includes(latest.status) ? "Uncertain" : latest.status === "Preparing" ? "Rejected" : latest.status, error: error instanceof Error ? error.message : "The saved folder change needs review." });
+    }
   }
   private async resumeAction(action: MailAction) {
     try {
@@ -440,12 +660,23 @@ export class GatewayRepository implements Repository, SelectionRepository {
     const mail = await resolveMail(this.store, id);
     if (!mail) return undefined; // Missing messages get their ordinary per-item result.
     const account = this.accounts.find((a) => a.id === mail.core.account_id);
+    if (await this.folderChangeBlocks(mail.core.account_id)) return "Finish or review the saved folder change before continuing this message group.";
     return account &&
       account.protocol !== "Pop3" &&
       !mail.local &&
       !this.connected(account.id)
       ? "Reconnect this account in Preferences, then retry the failed message and resume the group in History."
       : undefined;
+  }
+  private async folderChangeBlocks(account: string) {
+    if (!this.store.folderActions) return false;
+    let after: string | undefined;
+    do {
+      const page = await this.store.folderActions.page(after);
+      if (page.rows.some(job => job.account === account && job.mutation)) return true;
+      after = page.next;
+    } while (after);
+    return false;
   }
   private mailboxWorker?: MailboxWorkerClient;
   private mailboxStopped = false;
@@ -486,6 +717,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
   }
   stopMailbox() {
     this.actionsClosed = true;
+    this.actionWake.notify();
     if (!this.activeActions.size) this.releaseActions?.();
     this.mailboxStopped = true;
     this.groupClient?.stop();
@@ -595,6 +827,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
       this.store.all<Account>("accounts"),
       this.store.all<Draft>("drafts"),
     ]);
+    await this.loadFolderCatalogs();
     for (const draft of this.drafts)
       draft.attachments = (await this.files(draft.id)).map((f) => f.info);
     await this.reloadMail();
@@ -1615,6 +1848,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
     let receipt: BulkReceipt | undefined,
       cacheApplied = false;
     const checkConnection = async () => {
+      if (await this.folderChangeBlocks(account.id)) throw Error("Finish or review the saved folder change before changing this message.");
       if (!lease?.action) return;
       const action = await this.actionActivity?.get(lease.action);
       if (action?.connection !== JSON.stringify(await this.store.get("accounts", account.id)))

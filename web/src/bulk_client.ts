@@ -198,6 +198,7 @@ export class BrowserGroups extends EventTarget {
         this.active = undefined;
         this.executionRevision++;
         this.refreshAttention();
+        void this.repository.resumeActions();
       }
     });
   }

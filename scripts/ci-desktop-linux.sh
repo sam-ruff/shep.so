@@ -68,6 +68,7 @@ cargo build --locked --profile test-ui --features test-support
 cargo bench --locked --bench responsiveness
 python3 scripts/e2e.py
 python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
+python3 scripts/action_latency.py --samples 20 --output artifacts/performance/actions.json
 python3 scripts/performance_gate.py
 if [[ -n "$shep_version" ]]; then
   python3 scripts/release.py "$shep_version" --no-stamp \

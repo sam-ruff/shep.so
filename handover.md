@@ -2,6 +2,32 @@
 
 ## Current immediate-action continuation
 
+Latest uncommitted integration: native removal (schema 10) passes 1,204 combined
+library executions, 47 integration tests and ten distinct native controls. The
+three original pending-read/delete/Undo regressions also pass. Normal root hooks
+pass. Preserve the root folder-history query fix and Preferences readiness waits.
+Browser schema 17 checked folder changes pass 235 units, 57 backend tests and 22
+Chromium controls, with clean Clippy and a passing production build. Flutter
+schema 21 passes 154 Rust tests and Clippy: subject-bound coherent snapshots,
+safe queued edits, exact admission requests and read-only lost-reply lookup.
+Dart admission reconciliation passes 29 focused controls/FFI tests; the full
+Flutter suite passes 234. Preserve the root local pending bound, closed-editor
+recovery, unbound-owner guard, held-sync test and capacity test's explicit poll.
+Shared Google HTTP passes eight tests and replaces the Flutter copy (153 Rust
+tests pass); the Calendar gateway and common Drive/Calendar grant renewal pass
+67 backend tests with one configured browser skip. Root added current-session
+validation even when the cached token needs no renewal. CalDAV22/shared provider
+and browser calendar18 continue isolated until this checkpoint ships.
+Native pixel v1 failed review timing because the optional full StoreTruth oracle
+contended on the same worker. Direct review is 2,600 SQLite VM steps; oracle work
+is 4,903,500. Root v2 correctness with the oracle passes (`010a375f4c3c`). Final
+20-cycle pixel timing passes review p95 32.31 ms and confirmation p95 22.14 ms;
+report `artifacts/performance/actions.json`, reviewed capture `3f6da406de91`.
+Preserve the first failed report. Browser's three 100,000-message regressions
+also pass in a quiet window. Common performance-gate wiring and its tests pass.
+Final hooks and checkpoint shipping remain; broader client/domain/platform work
+is unfinished.
+
 Shipped checkpoint `d7f06b7` after `48cd150` integrates native schema 8 checked
 credential slots/account admission, bounded candidate seeks, group failure
 cooldown and preference Retry; Flutter fair resumption, retained draft sessions
@@ -15,15 +41,47 @@ Both are corrected; four rebuilt password/backup flows pass, covering the final
 failure and restart, with reviewed capture `a9b0b41a59b3`. Normal hooks pass 1,547
 Rust executions with four ignored; strict docs pass and remote main is verified.
 
-The next uncommitted batch integrates browser draft conflict review (schema 15),
+Shipped checkpoint `2605ff5` integrates browser draft conflict review (schema 15),
 owned preference Retry and Flutter account lifecycle (schema 18). Flutter passes
 134 Rust and 203 controls with clean analysis/Clippy, two additional reviewed
 recovery goldens and 26 final FFI/control tests after the duplicate-reply fix.
 Browser passes 113 focused tests and 37 distinct controls across reruns. The
 100,000-message case passed in 57.5 seconds in a quiet window after loaded-run
-timeouts; no budget changed. Keep failing evidence. Commit gates/shipping remain.
-Native folder creation (schema 9), real browser folder gateway/admission (schema
-16) and shared Flutter calendar adoption (schema 19) remain isolated follow-ups.
+timeouts; no budget changed. Keep failing evidence. Normal hooks pass 1,547 Rust
+executions with four ignored; strict docs pass and remote main is verified.
+Root has integrated durable desktop Send preparation and folder creation in
+schema 9, including the combined legacy-import compatibility. Library gates pass
+1,189 tests with two ignored; the final combined native binary is building.
+Browser schema 16 creation, its real gateway and scheduler are integrated:
+78 distinct focused units, 12 Chromium controls and 49 backend tests pass (one ignored).
+Per-candidate fairness and receipt provenance corrections are integrated and tested.
+The combined native build passes 14 control scenarios with reviewed folder/Outbox
+captures; native and backend Clippy and the real pinned TLS folder test pass.
+These changes are uncommitted. Flutter Google calendar schema 19 is integrated:
+141 Rust and 210 Flutter tests pass, plus eight final policy tests and clean
+analysis/Clippy. Review then found Delete decoding, source-scoped identities,
+empty-cache and newer-intent projection bugs; the lane is correcting these before
+shipping. Release stamping now includes calendar-core and uses manifest suffixes
+instead of hard-coded list offsets; all 46 release tests pass. Native schema 10 removal, browser
+checked folder changes and Flutter CalDAV schema 20 continue in isolated lanes.
+The Google v1 UI correction is not integrated: newest-visible-action sorting still
+lets an old rejected action override a newer completed result. The lane is replacing
+that with durable intent ownership, adding stale-sync and capacity-free cache-repair
+tests, and preserving editor ETags/remote identity so an edit cannot become CREATE.
+Google correction v2 is now integrated. Ten Rust calendar and eleven Flutter
+FFI/control regressions pass, including Delete decoding, owner-based projection,
+retained editor metadata, exact receipt cache versions and stale UI replies.
+Analysis and Clippy pass; the corrected compact dark empty state is reviewed.
+The v2 full runs pass 144 Rust and 216 Flutter tests; all three explicit HTTP
+contracts pass again. Logs are `artifacts/logs/actions-google-v2-*`.
+The lane is adding durable Google subject binding, coherent snapshot transactions,
+sync/cache-repair revision fences and provider-capacity fairness. Do not ship the
+adapter before those gates pass. FFI reopen is another repository handle, not a
+process restart. Root owns the Dart refresh-generation edits and HTTP tests.
+Root added and explicitly ran three ignored loopback HTTP contracts; all pass,
+with clean Flutter Rust Clippy. Preserve `calendar/http_tests.rs` and its module
+declaration when applying the next correction. The 100,000-row native folder query
+correction and all 20 import regressions now pass.
 Preserve `handover-fable.md` without reading or staging it.
 TODO remains authoritative and the full action architecture is unfinished.
 

@@ -4,6 +4,15 @@ This inventory follows the [approved contract](IMMEDIATE_ACTIONS.md). It describ
 the existing owner for each mutation and the remaining adoption work. A visible
 local result is separate from provider confirmation.
 
+Schema 17 extends the existing folder owner to checked Rename, Move and Delete.
+Reviews freeze exact subtrees and capture at most 50 metadata rows per cache
+transaction. Each provider acknowledgement is durable before cache repair;
+unknown rename results never invent UID mappings. A fresh checked recovery can
+stop tracking while keeping cached mail and receipts, without claiming success.
+Pending individual/group work, retained Sent roles and frozen outgoing filing
+destinations exclude conflicting admission. Cross-account and protected special
+folders require a separate reviewed migration; folder Undo is not offered.
+
 | Domain | Entry point and durable owner | Current boundary and remaining work |
 | --- | --- | --- |
 | Individual Archive, Trash, Move, read and flag | `Workspace.change` in `web/src/model.ts`; `BrowserIntents` in `mail_intents.ts`; `GatewayRepository.mutateWithReceipt` in `provider.ts` | Immediate field projections and input-order admission exist. The individual intent owner admits a metadata action record atomically, persists dispatch and acknowledgment separately, resumes safe queued work and exposes checked recovery in Activity. Offline waiting, durable projection, safe queued cancellation and receipt-based Undo use the same owner. |
@@ -14,7 +23,7 @@ local result is separate from provider confirmation.
 | Account removal | `account_removal.ts`, browser mail transaction and group removal journal | Reviewed local deletion is authoritative; no provider deletion. Reviews and the transaction now include individual action records, including records whose field intent already finished. Late result writes cannot recreate removed records. |
 | Preferences and portable settings | `Workspace.savePreferences`, `profile_settings.ts`, `profile_publication.ts`, `profile_enrollment.ts` | Local values and field revisions commit in one authoritative settings envelope; the old settings key is a compatibility mirror. Publication retains its existing durable stopped/error/Resume controls. Failed local application cannot produce an enrollment receipt. Activity links to Accounts and profile sync. |
 | Calendar edits | `ui.ts` event form and `Repository.saveEvent` | Preview has fixture saving; production gateway rejects unsupported calendar writes. Desktop optimistic calendar behaviour must not be claimed as browser provider parity. |
-| Folder changes | Browser navigation and Move destination choices | Full provider folder create/rename/delete jobs are not implemented in this client. Future adoption must preserve physical mailbox identity and queued child dependencies. |
+| Folder changes | Schema 16 folder journal through the existing account action owner | Creation admits locally, freezes exact provider targets and retains receipts before cache repair. Unknown CREATE requires inspection. Checked rename/move/delete remains in progress. |
 | Profile publication/import | Profile controllers, worker-owned shared history and local profile store | Exact staged requests and independent device history remain authoritative. Account application and credential activation retain their checked boundaries. |
 | Print and downloaded attachments | Printing/attachment controllers and workers | Preparation and external browser/download completion retain their existing lifetimes. These operations must show progress without claiming provider or external success. |
 | Backup/restore | No complete production browser equivalent | Remains a parity gap; no optimistic success is presented. |

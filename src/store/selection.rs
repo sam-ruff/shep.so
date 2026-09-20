@@ -522,6 +522,108 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn ten_row_review_work_is_bounded_in_a_hundred_thousand_row_capture() -> anyhow::Result<()>
+    {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let store = Store::memory()?;
+        let source = MailSelectionId::default();
+        let source_key = source.to_string();
+        let mail = parse_mail(
+            "fixture",
+            "0",
+            "INBOX",
+            b"Subject: Selection\r\n\r\nBody".to_vec(),
+            false,
+            false,
+        )?;
+        store.run(move |c| {
+            let tx = c.transaction()?;
+            tx.execute("WITH RECURSIVE n(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM n WHERE i<99999)
+                INSERT INTO messages(id,account,folder,sender,subject,body,timestamp,unread,starred,data,raw)
+                SELECT 'large-'||i,'fixture','INBOX','sender','Selection','Body',i,i<3,i=4,
+                    json_set(?1,'$.id','large-'||i,'$.remote_id',CAST(i AS TEXT)),?2 FROM n",
+                params![serde_json::to_string(&mail.summary)?,mail.raw])?;
+            tx.execute("INSERT INTO scratch.mail_selections(id,revision,frozen) VALUES(?,0,0)", [&source_key])?;
+            tx.execute("INSERT INTO scratch.mail_selection_rows(selection,id,position,selected)
+                SELECT ?,id,timestamp,timestamp<10 FROM messages", [&source_key])?;
+            tx.commit()?;
+            Ok(())
+        }).await?;
+        let work = Arc::new(AtomicUsize::new(0));
+        let counter = work.clone();
+        store
+            .run(move |c| {
+                c.progress_handler(
+                    100,
+                    Some(move || {
+                        counter.fetch_add(100, Ordering::Relaxed);
+                        false
+                    }),
+                )?;
+                Ok(())
+            })
+            .await?;
+        let visible = (0..50).map(|i| format!("large-{i}")).collect::<Vec<_>>();
+        let started = std::time::Instant::now();
+        let review = store.review_selection(source, 0, visible.clone()).await?;
+        eprintln!("Direct review worker completion: {:?}", started.elapsed());
+        let steps = work.load(Ordering::Relaxed);
+        assert_eq!(
+            (review.total, review.selected, review.available),
+            (10, 10, 10)
+        );
+        assert_eq!(
+            (review.unread, review.starred, review.observed.len()),
+            (3, 1, 10)
+        );
+        assert!(
+            steps < 15_000,
+            "Ten-row review executed {steps} SQLite VM steps"
+        );
+        #[cfg(feature = "test-support")]
+        {
+            work.store(0, Ordering::Relaxed);
+            let started = std::time::Instant::now();
+            let truth = store.truth(MailQuery::default()).await?;
+            assert_eq!(truth.total, 100_000);
+            eprintln!(
+                "Full test observer worker completion: {:?}, {} SQLite VM steps",
+                started.elapsed(),
+                work.load(Ordering::Relaxed)
+            );
+        }
+        store
+            .run(|c| {
+                c.progress_handler(0, None::<fn() -> bool>)?;
+                c.execute("DELETE FROM messages WHERE id='large-1'", [])?;
+                Ok(())
+            })
+            .await?;
+        let changed = store.review_selection(source, 0, visible).await?;
+        assert_eq!(
+            (changed.total, changed.selected, changed.available),
+            (10, 10, 9)
+        );
+        assert_eq!(
+            (changed.unread, changed.starred, changed.observed.len()),
+            (2, 1, 9)
+        );
+        let key = changed.id.to_string();
+        assert_eq!(
+            store
+                .run(move |c| Ok(c.query_row(
+                    "SELECT COUNT(*) FROM scratch.mail_review_lineage WHERE selection=?",
+                    [key],
+                    |r| r.get::<_, i64>(0)
+                )?))
+                .await?,
+            9
+        );
+        eprintln!("Ten-row review across 100,000 captured messages: {steps} SQLite VM steps");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn selected_count_uses_the_selected_membership_index() {
         let store = Store::memory().unwrap();
         store

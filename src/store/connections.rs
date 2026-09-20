@@ -1,6 +1,10 @@
 use super::*;
 use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
+mod removal;
+pub(crate) use removal::fence_import as fence_removal_import;
+pub(super) use removal::pending as pending_removals;
+pub use removal::{RemovalJob, RemovalStage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum ConnectionKind {
@@ -22,6 +26,8 @@ pub struct ConnectionRef {
 }
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct RemovalPreview {
+    #[serde(default)]
+    pub removal_epoch: u64,
     pub target: ConnectionRef,
     pub name: String,
     pub address: String,
@@ -50,6 +56,7 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
         CREATE TABLE IF NOT EXISTS credential_cleanup (
         kind TEXT NOT NULL,id TEXT NOT NULL,key TEXT NOT NULL,PRIMARY KEY(kind,id,key));",
     )?;
+    removal::schema(c)?;
     Ok(())
 }
 pub(super) fn changed(c: &Connection) -> anyhow::Result<u64> {
@@ -83,6 +90,23 @@ pub(super) fn allow(c: &Connection, kind: ConnectionKind, id: &str) -> anyhow::R
     Ok(())
 }
 pub(super) fn revive(c: &Connection, kind: ConnectionKind, id: &str) -> anyhow::Result<()> {
+    removal::allow_reconnect(c, kind, id)?;
+    clear_removal(c, kind, id)
+}
+pub(super) fn restore_removed(
+    c: &Connection,
+    kind: ConnectionKind,
+    id: &str,
+) -> anyhow::Result<()> {
+    let unfinished:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM connection_tombstones WHERE kind=? AND id=? AND pending IS NOT NULL AND json_extract(pending,'$.local_done')=0)",params![kind.key(),id],|r|r.get(0))?;
+    anyhow::ensure!(
+        !unfinished,
+        "Finish this connection's local removal before restoring its backup."
+    );
+    // Restore owns the lifecycle grant and replaces credentials after this transaction.
+    clear_removal(c, kind, id)
+}
+fn clear_removal(c: &Connection, kind: ConnectionKind, id: &str) -> anyhow::Result<()> {
     c.execute(
         "DELETE FROM connection_tombstones WHERE kind=? AND id=?",
         params![kind.key(), id],
@@ -133,6 +157,7 @@ fn preview(c: &Connection, target: ConnectionRef) -> anyhow::Result<RemovalPrevi
         }
     };
     let mut out = RemovalPreview {
+        removal_epoch: removal::epoch(c, &target)?,
         target,
         name,
         address,
@@ -185,6 +210,14 @@ fn preview(c: &Connection, target: ConnectionRef) -> anyhow::Result<RemovalPrevi
             out.transfers += pending_bulk;
             out.transfers += move_journal::account_review(c, &out.target.id, &mut digest)?;
             out.transfers += folder_actions::account_review(c, &out.target.id, &mut digest)?;
+            let mut creations=c.prepare("SELECT data FROM folder_creations WHERE account=? AND data IS NOT NULL AND json_extract(data,'$.stage') NOT IN ('succeeded','cancelled','dismissed') ORDER BY json_extract(data,'$.id')")?;
+            let mut rows = creations.query([&out.target.id])?;
+            while let Some(row) = rows.next()? {
+                let data: String = row.get(0)?;
+                digest.update((data.len() as u64).to_le_bytes());
+                digest.update(data);
+                out.transfers += 1;
+            }
         }
         ConnectionKind::Calendar => {
             let mut statement = c.prepare("SELECT data FROM events WHERE source=? ORDER BY id")?;
@@ -211,15 +244,32 @@ impl Store {
         expected: RemovalPreview,
         cancel_transfers: bool,
     ) -> anyhow::Result<()> {
+        let review = expected.clone();
+        let saved:Option<String>=self.run(move |c|Ok(c.query_row("SELECT json_extract(pending,'$.id') FROM connection_tombstones WHERE kind=? AND id=? AND json_extract(pending,'$.fingerprint')=? AND json_extract(pending,'$.review_epoch')=? AND json_extract(pending,'$.cancel_transfers')=?",params![review.target.kind.key(),review.target.id,review.fingerprint,review.removal_epoch as i64,cancel_transfers],|row|row.get(0)).optional()?)).await?;
+        let mut job = self
+            .admit_connection_removal(
+                saved.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+                expected,
+                cancel_transfers,
+            )
+            .await?;
+        while !job.local_done {
+            job = self.finish_connection_removal(job).await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn finish_connection_removal(
+        &self,
+        expected: RemovalJob,
+    ) -> anyhow::Result<RemovalJob> {
         self.run(move |c| {
             let tx = c.transaction()?;
+            let mut job = removal::current(&tx, &expected)?;
+            anyhow::ensure!(job.stage==RemovalStage::Queued,"Refresh removal progress before continuing cleanup.");
+            anyhow::ensure!(!job.local_done, "This connection's local data was already removed.");
             let target = &expected.target;
-            if removed(&tx, target.kind, &target.id)?.is_some() { return Ok(()); }
-            let current = preview(&tx, target.clone())?;
-            anyhow::ensure!(current.fingerprint == expected.fingerprint, "Local data changed while this dialog was open. Review the updated counts before removing the connection.");
-            anyhow::ensure!(current.transfers == 0 || cancel_transfers, "Confirm cancellation of the unfinished mail changes before removing this account.");
             let mut keys = Vec::new();
-            let mut google_data = None;
             match target.kind {
                 ConnectionKind::Account => {
                     super::account_setup::remove(&tx, &target.id)?;
@@ -227,7 +277,7 @@ impl Store {
                     accounts.retain(|a| a.id != target.id);
                     super::profile_sync::join::reconnected(&tx, &target.id)?;
                     put(&tx, "accounts", &accounts)?;
-                    keys.extend([target.id.clone(),format!("{}:smtp",target.id)]);
+                    if job.device_credentials { keys.extend([target.id.clone(),format!("{}:smtp",target.id)]); }
                     for (key,_) in transfers(&tx, &target.id)? { tx.execute("DELETE FROM kv WHERE key=?", [key])?; }
                     tx.execute("DELETE FROM draft_sent WHERE id IN (SELECT draft FROM outgoing WHERE account=?)",[&target.id])?;
                     tx.execute("DELETE FROM outgoing WHERE account=?",[&target.id])?;
@@ -238,7 +288,14 @@ impl Store {
                     move_journal::remove_account(&tx, &target.id)?;
                     tx.execute("DELETE FROM folder_jobs WHERE account=?", [&target.id])?;
                     tx.execute("DELETE FROM folder_creations WHERE account=?", [&target.id])?;
-                    tx.execute("DELETE FROM messages WHERE account=?", [&target.id])?;
+                    tx.execute("DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE account=? ORDER BY id LIMIT 50)", [&target.id])?;
+                    let remains:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE account=?)",[&target.id],|r|r.get(0))?;
+                    if remains {
+                        job.stage=RemovalStage::Queued;
+                        removal::save(&tx,&mut job)?;
+                        tx.commit()?;
+                        return Ok(job);
+                    }
                     super::notifications::remove_account(&tx, &target.id)?;
                     tx.execute("DELETE FROM conversation_tokens WHERE account=?", [&target.id])?;
                     let mut folder_map: std::collections::HashMap<String,Vec<String>> = get(&tx, "account_folders")?;
@@ -256,27 +313,31 @@ impl Store {
                     drafts::changed(&tx)?;
                 }
                 ConnectionKind::Calendar => {
-                    let pending: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions WHERE source=? AND status NOT IN ('succeeded','cancelled'))",[&target.id],|r|r.get(0))?;
-                    anyhow::ensure!(!pending,"Finish or review this calendar's pending changes before removing it.");
                     let mut sources: Vec<CalendarSource> = get(&tx, "calendars")?;
-                    if let Some(source) = sources.iter().find(|s| s.id == target.id) {
-                        if source.kind == CalendarKind::CalDav { keys.push(target.id.clone()); }
-                        else { google_data = Some(serde_json::to_string(source)?); }
-                    }
+                    if job.device_credentials && job.calendar_key { keys.push(target.id.clone()); }
                     sources.retain(|s| s.id != target.id); put(&tx, "calendars", &sources)?;
                     let mut archived: std::collections::HashSet<String> = get(&tx, "google_archived")?;
                     archived.remove(&target.id);
                     put(&tx, "google_archived", &archived)?;
-                    tx.execute("DELETE FROM events WHERE source=?", [&target.id])?;
+                    tx.execute("DELETE FROM events WHERE id IN (SELECT id FROM events WHERE source=? ORDER BY id LIMIT 50)", [&target.id])?;
                     calendar_changed(&tx)?;
+                    let remains:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM events WHERE source=?)",[&target.id],|r|r.get(0))?;
+                    if remains {
+                        job.stage=RemovalStage::Queued;
+                        removal::save(&tx,&mut job)?;
+                        tx.commit()?;
+                        return Ok(job);
+                    }
                 }
             }
-            let revision = changed(&tx)?;
-            tx.execute("INSERT INTO connection_tombstones(kind,id,revision,google_data) VALUES(?,?,?,?)", params![target.kind.key(),target.id,revision as i64,google_data])?;
-            tx.execute("INSERT INTO connection_removal_epochs(kind,id,revision) VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET revision=excluded.revision", params![target.kind.key(),target.id,revision as i64])?;
             for key in keys { tx.execute("INSERT OR IGNORE INTO credential_cleanup VALUES(?,?,?)", params![target.kind.key(),target.id,key])?; }
+            job.local_done = true;
+            let pending_keys:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM credential_cleanup WHERE kind=? AND id=?)",params![target.kind.key(),target.id],|r|r.get(0))?;
+            job.stage = if pending_keys {RemovalStage::Cleanup} else {RemovalStage::Succeeded};
+            job.error = None;
+            removal::save(&tx, &mut job)?;
             tx.commit()?;
-            Ok(())
+            Ok(job)
         }).await
     }
     pub async fn cleanup_jobs(&self) -> anyhow::Result<Vec<CredentialCleanup>> {

@@ -288,7 +288,7 @@ async fn pending_moves_require_explicit_cancellation_and_other_journals_survive(
 }
 
 #[tokio::test]
-async fn failed_removal_rolls_back_data_indexes_credentials_and_tombstone() {
+async fn failed_cleanup_rolls_back_physical_page_but_keeps_admitted_removal_hidden() {
     let store = Store::memory().unwrap();
     store.save_account(account("work")).await.unwrap();
     store.upsert(vec![mail("work", "1")]).await.unwrap();
@@ -305,18 +305,8 @@ async fn failed_removal_rolls_back_data_indexes_credentials_and_tombstone() {
             .await
             .is_err()
     );
-    assert_eq!(
-        store.workspace().await.unwrap().connections_revision,
-        revision
-    );
-    assert_eq!(
-        store
-            .removal_preview(preview.target.clone())
-            .await
-            .unwrap()
-            .fingerprint,
-        preview.fingerprint
-    );
+    assert!(store.workspace().await.unwrap().connections_revision > revision);
+    assert!(store.removal_preview(preview.target.clone()).await.is_err());
     assert_eq!(
         store
             .query(MailQuery {
@@ -326,10 +316,57 @@ async fn failed_removal_rolls_back_data_indexes_credentials_and_tombstone() {
             .await
             .unwrap()
             .total,
-        1
+        0
     );
     assert!(store.cleanup_jobs().await.unwrap().is_empty());
-    store.check_connection(preview.target).await.unwrap();
+    assert!(
+        store
+            .check_connection(preview.target.clone())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .run(|c| Ok(c.query_row(
+                "SELECT count(*) FROM messages WHERE account='work'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .run(|c| Ok(c.query_row(
+                "SELECT json_array_length(value) FROM kv WHERE key='drafts'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?))
+            .await
+            .unwrap(),
+        1
+    );
+    store
+        .run(|c| {
+            c.execute_batch("DROP TRIGGER fail_removal")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    store.remove_connection(preview, false).await.unwrap();
+    assert_eq!(
+        store
+            .run(|c| Ok(c.query_row(
+                "SELECT count(*) FROM messages WHERE account='work'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )?))
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(store.cleanup_jobs().await.unwrap().len(), 2);
 }
 
 #[tokio::test]

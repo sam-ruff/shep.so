@@ -1,5 +1,54 @@
 # Shep development instructions
 
+`shared/calendar-core` owns portable event/mutation/receipt and typed failure
+contracts. Include it in coordinated version stamping. Flutter schema 21 saves
+calendar intent through the existing native cache owner before token access or
+provider capacity. Keep exact source/ETag binding, receipt-before-cache recovery,
+bounded active/history pages and explicit uncertain-result inspection. A lost
+DELETE reply cannot be repeated automatically. Google SDK tokens stay transient;
+readonly sources reject edits before admission. Preserve actual FFI, real controls
+and compact recovery evidence separately from live Google and Apple verification.
+Calendar edits retain exact ETag/resource identity and untouched event fields.
+Project current durable intent in one coherent snapshot; stale UI replies cannot
+replace newer local input. Cache repair must keep newer physical versions and
+remain independent of provider capacity. Google work must retain its original
+authenticated subject through disconnect, reconnect and restart.
+Bind admission to the subject observed with the cached calendar snapshot. Token
+access and dispatch must check the saved action subject against the SDK grant;
+an account mismatch retains Waiting and never sends the action to another account.
+Keep the original admission request separate from a coalesced dispatch baseline.
+Retry the same UUID only with exact input; lost replies use its saved current
+status/receipt and never allocate another automatic CREATE identity.
+The optional shared calendar HTTP adapter owns Google protocol handling. Exact
+inspection checks the requested identity and nonempty ETag. Missing or invalid
+acknowledgement metadata remains uncertain, never permission to repeat a write;
+unknown calendar access roles remain read-only. Keep loopback HTTP policy tests
+separate from mocked orchestration and live-provider verification.
+
+Desktop schema 10 admits account/calendar removal into the existing connection
+tombstone owner before waiting for provider work. Hide committed removals from
+queries and projections, including transfers into another account, then drain
+active work and delete bounded local pages. Failed cleanup remains hidden with
+Retry. Imported removals cannot delete another device's credentials. Preserve
+review epochs and late sync/reconnect fences; never remove provider mail.
+
+Browser folder creation uses `web/src/folder_actions.ts`, mail schema 16 and the
+existing account action owner. Admit exact logical requests locally before
+namespace discovery; pending rows cannot become physical Move destinations.
+The authenticated gateway freezes the shared provider's encoded target and
+returns CREATE acknowledgement before catalog/cache repair. Preserve pinned
+endpoints, TLS hostname checks and mockable transport boundaries. Interrupted
+or unknown CREATE needs exact read-only inspection; Stop tracking cannot imply
+server success or delete a folder. Keep removal fingerprints, strict transactions,
+bounded history/admission, held-provider and tab-loss controls. Mixed-domain
+scheduling must alternate eligible work without starving another account.
+Browser schema 17 extends this owner to checked folder Rename/Move/Delete.
+Freeze subtree metadata and persist each provider receipt before bounded cache
+repair. Pending individual/group work and frozen outgoing filing targets exclude
+conflicting folder admission. An unknown rename cannot infer message UIDs from
+LIST. Checked stop-tracking decisions retain cache/receipts, reject stale reviews
+and remain distinct from success.
+
 ## Monorepo and feature parity
 
 The Rust + iced desktop application stays at the repository root. `flutter/` is the Android/iOS client; `web/` is the separate browser client matching the desktop behavior; `website/` is the promotional website. The earlier separate `shep.flutter` repository and hosted Flutter-client proposals are superseded. Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is the single integration branch for the desktop, mobile and website sessions: desktop changes reach the client branch through merges from `main`, never through hand-ported commits, and root desktop code follows `main` when the two disagree. Mobile/web/website development continues in Git worktrees; combining agent work inside a review worktree is allowed. The shipping request authorizes committing and pushing combined client work promptly to `feat/mobile-web-clients` for review, without waiting for full parity; keep incomplete features tracked, and treat merging client work into `main` as an explicit integrator step rather than part of a checkpoint push. The latest request authorizes installing the Rust beta service on the email VPS once its target and OAuth/owner configuration are supplied; do not invent another permission step.
@@ -161,6 +210,14 @@ The latest user priority is HTML opening latency (R72). They explicitly authoriz
 During development run targeted tests after backend changes, the benchmark after storage/scheduling changes, and the MCP E2E suite after UI changes. Run the complete relevant set before pushing. Do not claim live Google, IMAP, POP3, SMTP, CalDAV, Windows or macOS verification based solely on fixture tests.
 
 ## MCP testing and automated equivalents
+
+`scripts/action_latency.py` measures real ten-of-100,000 review and confirmation
+pixels separately, with held provider capacity and unchanged 100 ms p95 budgets.
+Its process disables only the optional full StoreTruth comparison, whose unbounded
+test scan otherwise contends on the database worker. Correctness flows keep that
+oracle enabled and require agreement after Undo. A disabled oracle must report
+that state and never report agreement. Preserve changed-foreground references,
+binary fingerprint, sample cardinality and metadata/body bounds in timing gates.
 
 Read the repository skill [`.agents/skills/shep-e2e/SKILL.md`](.agents/skills/shep-e2e/SKILL.md) for UI work. `scripts/mcp_harness.py` is a stdio MCP server using JSON-RPC and real X11 input. Tools: `desktop.start`, `desktop.batch`, `desktop.state`, `desktop.screenshot`, `desktop.stop`.
 
@@ -622,6 +679,15 @@ Active tombstones reject delayed sync/draft saves. Calendar removal epochs survi
 `tests/connections.rs` covers account/source isolation, FTS/conversation/draft-file cleanup, changed reviews (including attachments), move-journal consent, rollback and reopen. Engine tests use injected fake secret removers for failures, shared aliases and controlled cleanup/reconnect ordering; never test removal on a personal account. The native suite removes/cancels fixture connections, navigates remaining mail, restores Google calendar entries and reviews light/dark/900×640 dialogs. `desktop.start(pending_transfer=true)` seeds one fixture unfinished move; its saved scenario checks the disabled confirmation and explicit checkbox. Keep these flows functional-only until final performance testing on an idle host.
 
 ## Outgoing recovery and server Sent
+
+Desktop schema 9 admits an exact frozen draft, attachment identities and account
+into the existing Outbox as Preparing before MIME work. Close only the matching
+editor after that local commit. The shared action owner prepares bytes in the
+background using the reserved Message-ID; only a checked Preparing transition
+can queue SMTP. Return to drafts, removal and imported preparations fence late
+bytes. Reject attachment/text writes against the frozen draft. Preparation
+failure retains an Outbox error without dispatching SMTP; imported preparation
+requires a fresh reviewed Send. Preserve the preparing/cancel/restart native flow.
 
 `outgoing.rs`, `store/outgoing.rs`, `engine/outgoing.rs` and `ui/outgoing.rs` separate delivery from Sent-copy recovery. Commit the exact MIME, private SMTP envelope, immutable attempt/Message-ID and account configuration before any SMTP call. Reject stale draft text/files and duplicate attempts transactionally. A surviving Submitting record is uncertain, never an automatic retry. Known rejections permit an explicit new Send. Do not include server response text or credentials in delivery diagnostics.
 
@@ -1270,13 +1336,19 @@ An existing original row takes precedence over the old Kept reader alias;
 failed preparation must roll back the source-lookup change.
 
 Sidebar folder creation uses `engine/folder_creation.rs` and its content-free
-store journal. Freeze the exact Mailbox and connection before CREATE; changed
-encoding cannot reinterpret that saved wire path. After an uncertain response,
-reconnect for a read-only exact check. Retain unfinished requests through list
-publication failure and restart, with at most 32 per current account connection
-in the ordinary form. POP3 creation stays local. Preserve name-field and sidebar
-focus when the folder tree changes, and guard direct repeated WindowClose as
-well as the central close dependency until the creation receipt is observed.
+store journal. Schema 9 admits the request UUID, connection and logical name
+through the local writer before provider capacity; close the matching form and
+show a pending sidebar entry that cannot be used as a physical Move destination.
+The common action owner plans and freezes the exact Mailbox before CREATE;
+changed encoding cannot reinterpret that saved wire path. Persist acknowledgement
+before catalog repair. Unknown CREATE results require a read-only exact check,
+never automatic replay. Retain at most 32 active requests, including failures,
+through restart; POP3 creation stays local. Preserve name-field/sidebar focus,
+owned close dependencies, imported-operation fences and visible recovery controls.
+Pending/admission queries use explicit active-stage seeks in the existing ready
+index; legacy lookup also seeks its null stage. Keep the 100,000-completed-row
+VM-step regression when changing stages or query predicates.
+See [folder creation](docs/agents/IMMEDIATE_FOLDER_CREATION.md).
 
 The a81d767 recovery checkpoint uses `mail_actions/journal.rs`, `runner.rs` and
 `store/move_journal.rs`. IMAP preflight finishes before durable preparation;

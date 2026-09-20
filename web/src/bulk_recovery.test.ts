@@ -19,7 +19,7 @@ function deferred<T>() {
 }
 function observe() {
   const groups = new BrowserGroups(
-    { profileId: profile } as GatewayRepository,
+    { profileId: profile, resumeActions: async () => {} } as GatewayRepository,
     () => undefined,
   );
   const events: GroupRecovery[] = [];

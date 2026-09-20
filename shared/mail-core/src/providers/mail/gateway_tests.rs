@@ -11,6 +11,14 @@ async fn fixture(
     service: &'static str,
     starttls: bool,
 ) -> (PinnedMail, tokio::task::JoinHandle<()>, Arc<AtomicBool>) {
+    fixture_catalog(service, starttls, false).await
+}
+
+async fn fixture_catalog(
+    service: &'static str,
+    starttls: bool,
+    plain_catalog: bool,
+) -> (PinnedMail, tokio::task::JoinHandle<()>, Arc<AtomicBool>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let peer = listener.local_addr().unwrap();
     let identity = native_tls::Identity::from_pkcs8(CERT, KEY).unwrap();
@@ -103,8 +111,19 @@ async fn fixture(
                     if command == "CAPABILITY" {
                         format!("* CAPABILITY IMAP4rev1 SPECIAL-USE\r\n{tag} OK capability\r\n")
                     } else if command.starts_with("LIST ") {
-                        assert_eq!(command, "LIST \"\" \"*\" RETURN (SPECIAL-USE)");
+                        assert_eq!(
+                            command,
+                            if plain_catalog {
+                                "LIST \"\" \"*\""
+                            } else {
+                                "LIST \"\" \"*\" RETURN (SPECIAL-USE)"
+                            }
+                        );
                         format!("* LIST (\\Sent) \"/\" \"Sent Mail\"\r\n{tag} OK listed\r\n")
+                    } else if command.starts_with("CREATE ") {
+                        assert!(plain_catalog);
+                        assert_eq!(command, "CREATE \"Fixture\"");
+                        format!("{tag} OK created\r\n")
                     } else if command.starts_with("UID SEARCH ") {
                         assert_eq!(
                             command,
@@ -231,6 +250,45 @@ async fn pinned_smtp_uses_required_tls_with_original_hostname_and_no_unauthentic
                     .await
                     .is_err()
             );
+        }
+    }
+}
+
+#[tokio::test]
+async fn pinned_folder_catalog_and_create_preserve_tls_hostname_validation() {
+    use crate::{
+        folder_actions::{Connection as _, creation::CreateOutcome},
+        folders::{Mailbox, NameEncoding},
+    };
+    for starttls in [false, true] {
+        for wrong_host in [false, true] {
+            let (client, server, authenticated) = fixture_catalog("imap", starttls, true).await;
+            let result = client
+                .folders(
+                    &account("imap", starttls, wrong_host),
+                    &SecretString::from("fixture-password"),
+                )
+                .await;
+            assert_eq!(result.is_ok(), !wrong_host);
+            if let Ok(mut folders) = result {
+                let catalog = folders.catalog().await.expect("folder catalog");
+                assert_eq!(catalog.len(), 1);
+                assert_eq!(catalog[0].name, "Sent Mail");
+                assert_eq!(catalog[0].delimiter, Some('/'));
+                let target = Mailbox {
+                    encoding: NameEncoding::ImapUtf7,
+                    ..Mailbox::flat("Fixture".into())
+                };
+                assert_eq!(
+                    folders.create_planned_folder(&target).await,
+                    CreateOutcome::Acknowledged
+                );
+            }
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .expect("fixture completion")
+                .expect("fixture task");
+            assert_eq!(authenticated.load(Ordering::SeqCst), !wrong_host);
         }
     }
 }

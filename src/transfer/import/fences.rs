@@ -48,6 +48,8 @@ pub(super) fn apply(
     }
 
     crate::store::account_setup::fence_import(&tx, &import_id)?;
+    crate::store::folder_creation::fence_import(&tx, REVIEW_NOTE)?;
+    crate::store::fence_removal_import(&tx)?;
     tx.execute("INSERT INTO imported_operations SELECT ?,'preferences',key,value FROM kv WHERE key='preferences'", [&import_id])?;
     tx.execute(
         "INSERT INTO imported_operations SELECT ?,'profile-marker',key,value FROM kv WHERE key=?",
@@ -117,7 +119,14 @@ pub(super) fn apply(
             "An outgoing record has inconsistent delivery state. Review Outbox on the original device."
         );
         let mut changed = false;
-        if matches!(
+        if info.delivery == DeliveryState::Preparing {
+            info.delivery = DeliveryState::Rejected;
+            changed = true;
+            tx.execute(
+                "UPDATE outgoing SET preparation=NULL WHERE attempt=?",
+                [&attempt],
+            )?;
+        } else if matches!(
             info.delivery,
             DeliveryState::Queued
                 | DeliveryState::Submitting

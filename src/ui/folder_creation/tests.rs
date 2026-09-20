@@ -1,5 +1,21 @@
 use super::*;
 
+fn admitted(id: String, request: &engine::folder_creation::Request) -> crate::store::CreationJob {
+    crate::store::CreationJob {
+        id,
+        account: request.account.clone(),
+        connection: request.connection.clone(),
+        parent: request.parent.clone(),
+        name: request.name.clone(),
+        stage: crate::store::CreationStage::Queued,
+        target: None,
+        receipt: None,
+        provider_acknowledged: false,
+        error: None,
+        revision: 1,
+    }
+}
+
 async fn fixture() -> (App, tokio::sync::mpsc::Receiver<Command>) {
     let store = crate::store::Store::memory().expect("fixture store");
     for id in ["a", "b"] {
@@ -19,6 +35,87 @@ async fn fixture() -> (App, tokio::sync::mpsc::Receiver<Command>) {
     app.tx = Some(tx);
     app.query.account = Some("b".into());
     (app, rx)
+}
+
+#[tokio::test]
+async fn late_workspace_cannot_hide_admission_or_restore_a_completed_or_removed_request() {
+    let (mut app, mut commands) = fixture().await;
+    let stale = app.workspace.clone();
+    let _ = app.handle_folder_creation(Message::Open);
+    let _ = app.handle_folder_creation(Message::Name("Receipts".into()));
+    let _ = app.handle_folder_creation(Message::Submit);
+    let Some(Command::AdmitFolderCreation(id, request)) = commands.recv().await else {
+        panic!("admission");
+    };
+    let job = admitted(id.clone(), &request);
+    app.creation_admitted(request.serial, id, Ok(job.clone()));
+    let _ = app.handle(super::super::Message::Backend(Event::Workspace(stale)));
+    assert_eq!(app.workspace.creation_jobs, vec![job.clone()]);
+    let stale = app.workspace.clone();
+    let mut done = job.clone();
+    done.stage = crate::store::CreationStage::Succeeded;
+    done.revision += 1;
+    app.creation_changed(done);
+    let _ = app.handle(super::super::Message::Backend(Event::Workspace(
+        stale.clone(),
+    )));
+    assert!(app.workspace.creation_jobs.is_empty());
+    app.removal.target = Some(crate::store::ConnectionRef {
+        kind: crate::store::ConnectionKind::Account,
+        id: job.account.clone(),
+    });
+    app.removal.removing = Some(12);
+    app.connection_removed(12, Ok(0));
+    let mut late = job;
+    late.revision += 10;
+    app.creation_changed(late);
+    let _ = app.handle(super::super::Message::Backend(Event::Workspace(stale)));
+    assert!(app.workspace.creation_jobs.is_empty());
+}
+
+#[tokio::test]
+async fn saved_admission_closes_form_and_projects_only_a_logical_sidebar_entry() {
+    let (mut app, mut commands) = fixture().await;
+    let _ = app.handle_folder_creation(Message::Open);
+    let _ = app.handle_folder_creation(Message::Name("Receipts".into()));
+    let _ = app.handle_folder_creation(Message::Submit);
+    let Some(Command::AdmitFolderCreation(id, request)) = commands.recv().await else {
+        panic!("admit");
+    };
+    let job = crate::store::CreationJob {
+        id: id.clone(),
+        account: request.account.clone(),
+        connection: request.connection.clone(),
+        parent: None,
+        name: request.name.clone(),
+        stage: crate::store::CreationStage::Queued,
+        target: None,
+        receipt: None,
+        provider_acknowledged: false,
+        error: None,
+        revision: 1,
+    };
+    app.creation_admitted(request.serial, id, Ok(job.clone()));
+    assert!(app.dialog.is_none());
+    assert!(!app.folder_creation.busy);
+    assert!(app.sidebar_items().iter().any(|item|item.label=="Receipts · Saved" && matches!(&item.action,super::super::Message::FolderCreation(Message::Review(shown)) if shown==&job.id)));
+    assert!(
+        app.workspace
+            .account_folders
+            .values()
+            .all(|folders| !folders.contains(&"Receipts".into()))
+    );
+    assert!(matches!(commands.recv().await, Some(Command::BulkRun(_))));
+    let _ = app.handle_folder_creation(Message::Open);
+    let _ = app.handle_folder_creation(Message::Name("Newer folder".into()));
+    let mut failed = job.clone();
+    failed.stage = crate::store::CreationStage::Rejected;
+    failed.error = Some("NO".into());
+    failed.revision += 1;
+    app.creation_changed(failed.clone());
+    assert_eq!(app.folder_creation.name, "Newer folder");
+    app.creation_changed(job);
+    assert_eq!(app.workspace.creation_jobs[0], failed);
 }
 
 #[tokio::test]
@@ -48,18 +145,18 @@ async fn creation_keeps_explicit_account_parent_and_name_through_error_retry() {
     )));
     let _ = app.handle_folder_creation(Message::Name("  Receipts  ".into()));
     let _ = app.handle_folder_creation(Message::Submit);
-    let Some(Command::CreateFolder(first)) = commands.recv().await else {
+    let Some(Command::AdmitFolderCreation(id, first)) = commands.recv().await else {
         panic!("creation command")
     };
     assert_eq!(first.account, "a");
     assert_eq!(first.parent.as_deref(), Some("Projects"));
     assert_eq!(first.name, "Receipts");
     assert!(app.has_required_close_work());
-    app.folder_created(first.serial, Err("Disconnected".into()));
+    app.creation_admitted(first.serial, id, Err("Local save failed".into()));
     assert!(!app.folder_creation.busy);
     assert_eq!(app.folder_creation.name, "  Receipts  ");
     let _ = app.handle_folder_creation(Message::Submit);
-    let Some(Command::CreateFolder(second)) = commands.recv().await else {
+    let Some(Command::AdmitFolderCreation(_, second)) = commands.recv().await else {
         panic!("retry command")
     };
     assert_eq!(first.account, second.account);
@@ -74,29 +171,27 @@ async fn closing_dialog_keeps_pending_creation_and_late_completion_preserves_nav
     let _ = app.handle_folder_creation(Message::Open);
     let _ = app.handle_folder_creation(Message::Name("Receipts".into()));
     let _ = app.handle_folder_creation(Message::Submit);
-    let Some(Command::CreateFolder(request)) = commands.recv().await else {
+    let Some(Command::AdmitFolderCreation(id, request)) = commands.recv().await else {
         panic!("creation command")
     };
     let _ = app.handle(super::super::Message::Close);
     assert!(app.folder_creation.busy);
     app.dialog = Some(Dialog::Move);
     app.query.folder = "Archive".into();
-    app.folder_created(
+    app.creation_admitted(
         request.serial.wrapping_sub(1),
-        Ok(crate::folders::Mailbox::flat("Wrong".into())),
+        id.clone(),
+        Ok(admitted(id.clone(), &request)),
     );
     assert!(app.folder_creation.busy);
-    app.folder_created(
-        request.serial,
-        Ok(crate::folders::Mailbox::flat("Receipts".into())),
-    );
+    app.creation_admitted(request.serial, id.clone(), Ok(admitted(id, &request)));
     assert!(!app.folder_creation.busy);
     assert_eq!(app.dialog, Some(Dialog::Move));
     assert_eq!(app.query.folder, "Archive");
 }
 
 #[tokio::test]
-async fn reopening_restores_saved_request_and_new_name_does_not_replace_it() {
+async fn legacy_reopening_restores_saved_request_and_new_name_does_not_replace_it() {
     let (mut app, mut commands) = fixture().await;
     let account = &app.workspace.accounts[1];
     let saved = crate::store::PendingCreation {
@@ -116,7 +211,7 @@ async fn reopening_restores_saved_request_and_new_name_does_not_replace_it() {
     assert_eq!(app.workspace.folder_creations, vec![saved.clone()]);
     let _ = app.handle_folder_creation(Message::Resume(saved.clone()));
     let _ = app.handle_folder_creation(Message::Submit);
-    let Some(Command::CreateFolder(request)) = commands.recv().await else {
+    let Some(Command::AdmitFolderCreation(_, request)) = commands.recv().await else {
         panic!("saved request")
     };
     assert_eq!(request.connection, saved.connection);
@@ -132,7 +227,7 @@ async fn account_change_cannot_silently_rebind_a_saved_request() {
     Arc::make_mut(&mut app.workspace).accounts[1].host = "changed.example.test".into();
     let _ = app.handle_folder_creation(Message::Name("Receipts".into()));
     let _ = app.handle_folder_creation(Message::Submit);
-    let Some(Command::CreateFolder(request)) = commands.recv().await else {
+    let Some(Command::AdmitFolderCreation(_, request)) = commands.recv().await else {
         panic!("bound request")
     };
     assert_eq!(request.connection, original);
@@ -149,7 +244,7 @@ async fn repeated_window_close_waits_for_creation_even_after_bulk_has_stopped() 
         let _ = app.handle_folder_creation(Message::Open);
         let _ = app.handle_folder_creation(Message::Name("Receipts".into()));
         let _ = app.handle_folder_creation(Message::Submit);
-        let Some(Command::CreateFolder(request)) = commands.recv().await else {
+        let Some(Command::AdmitFolderCreation(id, request)) = commands.recv().await else {
             panic!("creation")
         };
         app.bulk.stopped = true;
@@ -161,12 +256,13 @@ async fn repeated_window_close_waits_for_creation_even_after_bulk_has_stopped() 
             assert!(!app.tray.exiting);
         }
         let result = if failed {
-            Err("Creation could not be confirmed".into())
+            Err("Creation admission could not be saved".into())
         } else {
-            Ok(crate::folders::Mailbox::flat("Receipts".into()))
+            Ok(admitted(id.clone(), &request))
         };
-        let _ = app.update(super::super::Message::Backend(Event::FolderCreated(
+        let _ = app.update(super::super::Message::Backend(Event::CreationAdmitted(
             request.serial,
+            id,
             result,
         )));
         assert!(!app.folder_creation.busy);

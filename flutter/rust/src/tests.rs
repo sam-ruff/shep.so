@@ -2850,6 +2850,79 @@ async fn find_visible_text_works_with_all_provider_capacity_occupied() {
 }
 
 #[tokio::test]
+async fn calendar_receipt_repair_does_not_wait_for_provider_capacity() {
+    let (_dir, p) = profile().await;
+    let before = shep_calendar_core::Event {
+        id: "remote".into(),
+        source_id: "primary".into(),
+        title: "Before".into(),
+        start: chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        end: chrono::DateTime::from_timestamp(1_800_003_600, 0).unwrap(),
+        location: String::new(),
+        description: String::new(),
+        all_day: false,
+        etag: Some("v1".into()),
+        remote_url: Some("remote".into()),
+    };
+    let mut after = before.clone();
+    after.title = "After".into();
+    after.etag = Some("v2".into());
+    p.database
+        .write({
+            let before = before.clone();
+            let after = after.clone();
+            move |db| {
+                db.execute(
+                    "INSERT INTO calendar_events(source_id,id,event) VALUES('primary','remote',?1)",
+                    [serde_json::to_string(&before)?],
+                )?;
+                db.execute(
+                    "INSERT INTO calendar_actions(id,status,error,created,mutation,subject) VALUES('repair','repair',NULL,1,?1,'subject')",
+                    [serde_json::to_string(&shep_calendar_core::Mutation::Save {
+                        before: Some(before.clone()),
+                        after: after.clone(),
+                    })?],
+                )?;
+                db.execute(
+                    "INSERT INTO calendar_intents(source_id,event_id,action) VALUES('primary','remote','repair')",
+                    [],
+                )?;
+                db.execute(
+                    "INSERT INTO calendar_action_receipts(action,receipt) VALUES('repair',?1)",
+                    [serde_json::to_string(&shep_calendar_core::Receipt {
+                        request_id: "repair".into(),
+                        before: Some(before),
+                        after: Some(after),
+                    })?],
+                )?;
+                Ok(())
+            }
+        })
+        .await
+        .unwrap();
+    let _occupied = p.operations.hold_network_capacity().await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        p.request(json!({"op":"repair_calendar_action","id":"repair"}).to_string()),
+    )
+    .await
+    .expect("repair must not acquire provider capacity")
+    .unwrap();
+    let status = p
+        .database
+        .read(|db| {
+            Ok(db.query_row(
+                "SELECT status FROM calendar_actions WHERE id='repair'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(status, "succeeded");
+}
+
+#[tokio::test]
 async fn formatted_cache_aliases_work_without_provider_slots_and_do_not_occupy_find() {
     let (_dir, p) = profile().await;
     seed(&p, 0).await;

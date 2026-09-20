@@ -10,6 +10,9 @@ pub enum Message {
     Parent(Choice),
     Name(String),
     Submit,
+    Review(String),
+    Decide(String, u64, bool),
+    Dismiss(String, u64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +32,10 @@ pub(super) struct State {
     name: String,
     pub busy: bool,
     error: Option<String>,
+    pending: Option<(String, engine::folder_creation::Request)>,
+    review: Option<crate::store::CreationJob>,
+    observed: std::collections::HashMap<String, u64>,
+    removed: std::collections::HashSet<String>,
 }
 
 fn wrap(message: Message) -> super::Message {
@@ -36,8 +43,215 @@ fn wrap(message: Message) -> super::Message {
 }
 
 impl App {
+    pub(super) fn folder_creation_reviewing(&self) -> bool {
+        self.folder_creation.review.is_some()
+    }
+    pub(super) fn reconcile_creation_workspace(&self, workspace: &mut crate::store::Workspace) {
+        workspace.creation_jobs.retain(|job| {
+            !self.folder_creation.removed.contains(&job.account)
+                && self
+                    .folder_creation
+                    .observed
+                    .get(&job.id)
+                    .is_none_or(|revision| job.revision >= *revision)
+        });
+        for job in &self.workspace.creation_jobs {
+            if !self.folder_creation.removed.contains(&job.account)
+                && self.folder_creation.observed.get(&job.id) == Some(&job.revision)
+                && !workspace
+                    .creation_jobs
+                    .iter()
+                    .any(|saved| saved.id == job.id)
+            {
+                workspace.creation_jobs.push(job.clone());
+            }
+        }
+    }
+
+    pub(super) fn folder_creation_removed(&mut self, account: &str) {
+        self.folder_creation.removed.insert(account.into());
+        if self
+            .folder_creation
+            .pending
+            .as_ref()
+            .is_some_and(|(_, request)| request.account == account)
+        {
+            self.folder_creation.pending = None;
+            self.folder_creation.busy = false;
+        }
+        if self
+            .folder_creation
+            .review
+            .as_ref()
+            .is_some_and(|job| job.account == account)
+        {
+            self.folder_creation.review = None;
+        }
+        Arc::make_mut(&mut self.workspace)
+            .creation_jobs
+            .retain(|job| job.account != account);
+    }
+
+    pub(super) fn creation_admitted(
+        &mut self,
+        serial: u64,
+        id: String,
+        result: Result<crate::store::CreationJob, String>,
+    ) {
+        let Some((pending, request)) = self.folder_creation.pending.as_ref() else {
+            return;
+        };
+        if pending != &id || request.serial != serial {
+            return;
+        }
+        let same_form = self.dialog == Some(Dialog::FolderCreation)
+            && self.folder_creation.account == request.account
+            && self.folder_creation.parent == request.parent.clone().unwrap_or_default()
+            && self.folder_creation.name.trim() == request.name;
+        self.folder_creation.pending = None;
+        self.folder_creation.busy = false;
+        match result {
+            Ok(job) => {
+                self.creation_changed(job);
+                if same_form {
+                    self.dialog = None;
+                    self.folder_creation.name.clear();
+                    self.focus_new_folder_control();
+                }
+                self.notice(
+                    "Folder request saved. Creating it in the background.",
+                    false,
+                );
+            }
+            Err(error) => {
+                self.pending_close = None;
+                self.folder_creation.error = Some(error.clone());
+                self.notice(error, true);
+            }
+        }
+    }
+
+    pub(super) fn creation_changed(&mut self, job: crate::store::CreationJob) {
+        use crate::store::CreationStage;
+        let keep_new_folder = self.sidebar_focus
+            && self
+                .sidebar_items()
+                .get(self.sidebar_index)
+                .is_some_and(|item| {
+                    matches!(item.action, super::Message::FolderCreation(Message::Open))
+                });
+        if self.folder_creation.removed.contains(&job.account)
+            || !self.workspace.accounts.iter().any(|a| a.id == job.account)
+            || self
+                .folder_creation
+                .observed
+                .get(&job.id)
+                .is_some_and(|revision| *revision >= job.revision)
+        {
+            return;
+        }
+        self.folder_creation
+            .observed
+            .insert(job.id.clone(), job.revision);
+        let terminal = matches!(
+            job.stage,
+            CreationStage::Succeeded | CreationStage::Cancelled | CreationStage::Dismissed
+        );
+        let workspace = Arc::make_mut(&mut self.workspace);
+        workspace.creation_jobs.retain(|saved| saved.id != job.id);
+        if !terminal {
+            workspace.creation_jobs.push(job.clone());
+        }
+        if keep_new_folder {
+            self.focus_new_folder_control();
+        }
+        if self
+            .folder_creation
+            .review
+            .as_ref()
+            .is_some_and(|shown| shown.id == job.id)
+        {
+            self.folder_creation.review = Some(job.clone());
+        }
+        if job.stage == CreationStage::Succeeded
+            && let Some(receipt) = &job.receipt
+        {
+            let mut ancestors = Vec::new();
+            if let Some(tree) = self.folder_tree(&job.account) {
+                let mut parent = tree.node(&receipt.name).and_then(|node| node.parent);
+                while let Some(index) = parent {
+                    let node = &tree.nodes[index];
+                    ancestors.push(node.path.clone());
+                    parent = node.parent;
+                }
+            }
+            let mut changed = self.preferences.collapsed_accounts.contains(&job.account);
+            self.preferences
+                .collapsed_accounts
+                .retain(|id| id != &job.account);
+            let expanded = self
+                .preferences
+                .expanded_folders
+                .entry(job.account.clone())
+                .or_default();
+            let before = expanded.len();
+            expanded.extend(ancestors);
+            changed |= expanded.len() != before;
+            if changed {
+                self.save_preferences();
+            }
+        }
+        if matches!(
+            job.stage,
+            CreationStage::Waiting | CreationStage::Rejected | CreationStage::Uncertain
+        ) {
+            self.notice(
+                "Folder creation needs attention. Open its pending folder to review.",
+                true,
+            );
+        }
+        self.send(Command::BulkRun(String::new()));
+    }
+
+    fn focus_new_folder_control(&mut self) {
+        if self.sidebar_focus
+            && let Some(index) = self.sidebar_items().iter().position(|item| {
+                matches!(item.action, super::Message::FolderCreation(Message::Open))
+            })
+        {
+            self.sidebar_index = index;
+        }
+    }
+
     pub(super) fn handle_folder_creation(&mut self, message: Message) -> Task<super::Message> {
+        if let Message::Review(id) = &message {
+            let Some(job) = self
+                .workspace
+                .creation_jobs
+                .iter()
+                .find(|job| &job.id == id)
+                .cloned()
+            else {
+                return Task::none();
+            };
+            self.folder_creation.review = Some(job);
+            self.open(Dialog::FolderCreation);
+            return Task::none();
+        }
+        if let Message::Decide(id, revision, cancel) = &message {
+            self.send(Command::DecideFolderCreation(
+                id.clone(),
+                *revision,
+                *cancel,
+            ));
+            return Task::none();
+        }
+        if let Message::Dismiss(id, revision) = &message {
+            self.send(Command::DismissFolderCreation(id.clone(), *revision));
+            return Task::none();
+        }
         if matches!(message, Message::Open) {
+            self.folder_creation.review = None;
             if !self.folder_creation.busy && self.folder_creation.error.is_none() {
                 let account = self.query.account.clone().or_else(|| {
                     self.workspace
@@ -121,7 +335,18 @@ impl App {
                     name: name.to_owned(),
                 };
                 let serial = request.serial;
-                if self.try_command(Command::CreateFolder(request)) {
+                let id = uuid::Uuid::new_v4().to_string();
+                self.pending_close = None;
+                self.cancel_account_setup_stop();
+                if self.bulk.stopped || self.bulk.stop_requested {
+                    if !self.try_command(Command::BulkResume(String::new())) {
+                        return Task::none();
+                    }
+                    self.bulk.stopped = false;
+                    self.bulk.stop_requested = false;
+                }
+                if self.try_command(Command::AdmitFolderCreation(id.clone(), request.clone())) {
+                    self.folder_creation.pending = Some((id, request));
                     self.folder_creation.serial = serial;
                     self.folder_creation.busy = true;
                     self.folder_creation.error = None;
@@ -130,7 +355,7 @@ impl App {
                         Some("Folder creation could not start. Try again.".into());
                 }
             }
-            Message::Open => {}
+            Message::Open | Message::Review(_) | Message::Decide(..) | Message::Dismiss(..) => {}
         }
         Task::none()
     }
@@ -230,6 +455,59 @@ impl App {
     }
 
     pub(super) fn folder_creation_form(&self) -> Element<'_, super::Message> {
+        if let Some(job) = &self.folder_creation.review {
+            use crate::store::CreationStage;
+            let mut body = column![
+                text(&job.name).size(20),
+                text(match job.stage {
+                    CreationStage::Queued => "Saved. Waiting to create the folder.",
+                    CreationStage::Waiting => "Waiting for the connection. Your request is saved.",
+                    CreationStage::Running => "Creating the folder.",
+                    CreationStage::Checking => "Checking the saved server destination.",
+                    CreationStage::Repair => "The folder is confirmed. Refreshing the folder list.",
+                    CreationStage::Succeeded => "Folder is available.",
+                    CreationStage::Rejected => "The server refused this request.",
+                    CreationStage::Uncertain => "The server result is unconfirmed.",
+                    CreationStage::Cancelled => "Request cancelled before creation.",
+                    CreationStage::Dismissed =>
+                        "Tracking stopped. The server result remains unconfirmed.",
+                })
+            ]
+            .spacing(12);
+            if let Some(error) = &job.error {
+                body = body.push(text(error));
+            }
+            if job.stage == CreationStage::Uncertain {
+                body=body.push(text("Stopping tracking keeps all server folders and does not confirm whether creation succeeded."))
+                    .push(action("Stop tracking request",wrap(Message::Dismiss(job.id.clone(),job.revision))));
+            }
+            if matches!(
+                job.stage,
+                CreationStage::Waiting
+                    | CreationStage::Rejected
+                    | CreationStage::Uncertain
+                    | CreationStage::Repair
+            ) {
+                body = body.push(action(
+                    if job.stage == CreationStage::Uncertain {
+                        "Check saved folder"
+                    } else {
+                        "Retry folder request"
+                    },
+                    wrap(Message::Decide(job.id.clone(), job.revision, false)),
+                ));
+            }
+            if matches!(
+                job.stage,
+                CreationStage::Queued | CreationStage::Waiting | CreationStage::Rejected
+            ) {
+                body = body.push(action(
+                    "Cancel folder request",
+                    wrap(Message::Decide(job.id.clone(), job.revision, true)),
+                ));
+            }
+            return body.push(action("Close", super::Message::Close)).into();
+        }
         let state = &self.folder_creation;
         let accounts: Vec<_> = self
             .workspace
@@ -367,7 +645,7 @@ impl App {
         let state = &self.folder_creation;
         serde_json::json!({"open":self.dialog == Some(Dialog::FolderCreation),
             "account":state.account,"parent":state.parent,"name":state.name,
-            "busy":state.busy,"error":state.error,"saved":self.workspace.folder_creations})
+            "busy":state.busy,"error":state.error,"saved":self.workspace.creation_jobs})
     }
 }
 

@@ -24,6 +24,9 @@ use std::{
 use tokio::sync::Mutex;
 use zeroize::Zeroizing;
 
+mod calendar;
+mod grants;
+
 const PENDING_SECONDS: u64 = 600;
 const REFRESH_MARGIN: Duration = Duration::from_secs(60);
 pub const MAX_MEDIA_BYTES: usize = 1024 * 1024;
@@ -198,6 +201,7 @@ impl DriveRequest {
 }
 
 #[async_trait]
+#[cfg_attr(test, mockall::automock)]
 pub trait ProfileProvider: Send + Sync {
     /// Whether a real Google project is configured; fixtures report false so the
     /// browser can say that live provider access is not connected.
@@ -217,6 +221,8 @@ pub trait ProfileProvider: Send + Sync {
 }
 
 struct Grant {
+    generation: String,
+    refresh_owner: Arc<Mutex<()>>,
     access_token: Zeroizing<String>,
     refresh_token: Option<Zeroizing<String>>,
     expires: Instant,
@@ -257,6 +263,7 @@ impl ProfileState {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(calendar::routes())
         .route("/api/profiles/connection", get(connection))
         .route("/api/profiles/connect", post(connect))
         .route("/api/profiles/disconnect", post(disconnect))
@@ -490,6 +497,8 @@ async fn callback(
     grants.insert(
         key,
         Grant {
+            generation: token(),
+            refresh_owner: Arc::new(Mutex::new(())),
             access_token: tokens.access_token,
             // Google omits the refresh token on re-consent; keep the earlier one.
             refresh_token: tokens
@@ -516,66 +525,25 @@ async fn disconnect(State(state): State<AppState>, headers: HeaderMap) -> Respon
 
 async fn drive(
     State(state): State<AppState>,
+    Extension(session): Extension<Session>,
     headers: HeaderMap,
     Json(request): Json<DriveRequest>,
 ) -> Response {
     let reject = |status: StatusCode, message: &str| {
         (status, Json(serde_json::json!({"error": message}))).into_response()
     };
-    let Some(key) = session_key(&headers) else {
-        return StatusCode::UNAUTHORIZED.into_response();
-    };
     if let Err(message) = request.validate() {
         return reject(StatusCode::BAD_REQUEST, message);
     }
-    let mut grants = state.profiles.grants.lock().await;
-    let Some(grant) = grants.get_mut(&key) else {
-        return reject(
-            StatusCode::CONFLICT,
-            "Connect Google with Drive app data in Preferences before using profiles.",
-        );
+    let permission = if request.needs_drive() {
+        grants::Permission::Drive
+    } else {
+        grants::Permission::Identity
     };
-    if request.needs_drive() && !grant.access.drive {
-        return reject(
-            StatusCode::CONFLICT,
-            "Google did not grant Drive app data access. Reconnect Google in Preferences and approve that permission.",
-        );
-    }
-    if grant.expires.saturating_duration_since(Instant::now()) < REFRESH_MARGIN {
-        let Some(refresh) = grant.refresh_token.as_ref() else {
-            return reject(
-                StatusCode::CONFLICT,
-                "The Google connection expired. Reconnect Google in Preferences.",
-            );
-        };
-        match state.provider.refresh(refresh).await {
-            Ok(tokens) => {
-                // Refresh keeps the requested set: scope changes narrow, never widen.
-                let access = Access::from_scope(tokens.scope.as_deref(), grant.requested);
-                grant.access_token = tokens.access_token;
-                if let Some(token) = tokens.refresh_token {
-                    grant.refresh_token = Some(token);
-                }
-                grant.expires =
-                    Instant::now() + Duration::from_secs(tokens.expires_in.clamp(30, 86_400));
-                grant.access = access;
-                if request.needs_drive() && !access.drive {
-                    return reject(
-                        StatusCode::CONFLICT,
-                        "Google no longer grants Drive app data access. Reconnect Google in Preferences.",
-                    );
-                }
-            }
-            Err(_) => {
-                return reject(
-                    StatusCode::BAD_GATEWAY,
-                    "Google did not renew the connection. Retry, or reconnect Google in Preferences.",
-                );
-            }
-        }
-    }
-    let access_token = grant.access_token.clone();
-    drop(grants);
+    let access_token = match grants::access_token(&state, &session, &headers, permission).await {
+        Ok(token) => token,
+        Err((status, message)) => return reject(status, message),
+    };
     match state.provider.drive(&access_token, request).await {
         Ok(value) => Json(value).into_response(),
         Err(_) => reject(

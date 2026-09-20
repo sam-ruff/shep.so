@@ -28,6 +28,23 @@ class _CalendarViewState extends State<CalendarView> {
     'November',
     'December',
   ];
+  @override
+  void initState() {
+    super.initState();
+    widget.workspace.addListener(_changed);
+    widget.workspace.openCalendar();
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.workspace.removeListener(_changed);
+    super.dispose();
+  }
+
   Future<void> edit([CalendarEntry? entry]) async {
     final date = selected ?? DateTime.now();
     await showDialog<void>(
@@ -58,6 +75,56 @@ class _CalendarViewState extends State<CalendarView> {
     return ListView(
       padding: const EdgeInsets.all(18),
       children: [
+        if (widget.workspace.calendarActivities.any(
+          (action) =>
+              action.status != 'succeeded' && action.status != 'cancelled',
+        ))
+          ...widget.workspace.calendarActivities
+              .where(
+                (action) =>
+                    action.status != 'succeeded' &&
+                    action.status != 'cancelled',
+              )
+              .map(
+                (action) => Card(
+                  child: ListTile(
+                    title: Text(action.statusLabel),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          action.requested.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (action.error case final error?) Text(error),
+                      ],
+                    ),
+                    trailing: Wrap(
+                      children: [
+                        if (action.canResume)
+                          TextButton(
+                            onPressed: () =>
+                                widget.workspace.retryCalendarActivity(action),
+                            child: const Text('Retry'),
+                          ),
+                        if (action.canInspect)
+                          TextButton(
+                            onPressed: () => widget.workspace
+                                .inspectCalendarActivity(action),
+                            child: const Text('Check'),
+                          ),
+                        if (action.canCancel)
+                          TextButton(
+                            onPressed: () =>
+                                widget.workspace.cancelCalendarActivity(action),
+                            child: const Text('Cancel'),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
         Row(
           children: [
             Expanded(
@@ -150,7 +217,13 @@ class _CalendarViewState extends State<CalendarView> {
               ),
             ),
             TextButton.icon(
-              onPressed: edit,
+              onPressed:
+                  widget.workspace.calendarSources.isNotEmpty &&
+                      !widget.workspace.calendarSources.any(
+                        (source) => !source.readOnly,
+                      )
+                  ? null
+                  : edit,
               icon: const ShepIcon('plus', size: 18),
               label: const Text('New event'),
             ),
@@ -199,12 +272,22 @@ class EventEditor extends StatefulWidget {
 }
 
 class _EventEditorState extends State<EventEditor> {
+  late final eventId =
+      widget.entry?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
   late final title = TextEditingController(text: widget.entry?.title);
   late final location = TextEditingController(text: widget.entry?.location);
   String? error;
   bool saving = false;
+  late String sourceId =
+      widget.entry?.sourceId ??
+      widget.workspace.calendarSources
+          .where((source) => !source.readOnly)
+          .firstOrNull
+          ?.id ??
+      'primary';
   @override
   void dispose() {
+    widget.workspace.releaseCalendarEditor(sourceId, eventId);
     title.dispose();
     location.dispose();
     super.dispose();
@@ -227,10 +310,32 @@ class _EventEditorState extends State<EventEditor> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              entry == null
+              entry == null || entry.allDay
                   ? '${day.day}/${day.month}/${day.year} · All day'
                   : '${day.day}/${day.month}/${day.year} · ${day.hour.toString().padLeft(2, '0')}:${day.minute.toString().padLeft(2, '0')}',
             ),
+            if (entry == null &&
+                widget.workspace.calendarSources.any(
+                  (source) => !source.readOnly,
+                )) ...[
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                initialValue: sourceId,
+                decoration: const InputDecoration(labelText: 'Calendar'),
+                items: widget.workspace.calendarSources
+                    .where((source) => !source.readOnly)
+                    .map(
+                      (source) => DropdownMenuItem(
+                        value: source.id,
+                        child: Text(source.name),
+                      ),
+                    )
+                    .toList(),
+                onChanged: saving
+                    ? null
+                    : (value) => setState(() => sourceId = value ?? sourceId),
+              ),
+            ],
             const SizedBox(height: 16),
             TextField(
               controller: title,
@@ -252,6 +357,27 @@ class _EventEditorState extends State<EventEditor> {
           onPressed: saving ? null : () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
+        if (entry != null && !entry.readOnly)
+          TextButton(
+            onPressed: saving
+                ? null
+                : () async {
+                    setState(() => saving = true);
+                    final ok = await widget.workspace.deleteEvent(entry);
+                    if (!context.mounted) return;
+                    if (ok) {
+                      Navigator.pop(context);
+                    } else {
+                      setState(() {
+                        saving = false;
+                        error =
+                            widget.workspace.error ??
+                            'Event deletion could not be queued. Retry.';
+                      });
+                    }
+                  },
+            child: const Text('Delete'),
+          ),
         if (entry?.readOnly != true)
           FilledButton(
             onPressed: saving
@@ -264,13 +390,17 @@ class _EventEditorState extends State<EventEditor> {
                     setState(() => saving = true);
                     final ok = await widget.workspace.saveEvent(
                       CalendarEntry(
-                        entry?.id ??
-                            DateTime.now().microsecondsSinceEpoch.toString(),
+                        eventId,
                         title.text.trim(),
                         day,
                         entry?.end ?? day.add(const Duration(days: 1)),
                         calendar: entry?.calendar ?? 'Personal',
+                        sourceId: entry?.sourceId ?? sourceId,
                         location: location.text,
+                        description: entry?.description ?? '',
+                        allDay: entry?.allDay ?? true,
+                        etag: entry?.etag,
+                        remoteUrl: entry?.remoteUrl,
                       ),
                     );
                     if (!context.mounted) return;

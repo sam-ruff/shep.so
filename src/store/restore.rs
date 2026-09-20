@@ -30,7 +30,7 @@ impl Store {
             let mut allowed = HashSet::new();
             let mut kept_connections = 0;
             for account in snapshot.accounts {
-                connections::revive(&tx, ConnectionKind::Account, &account.id)?;
+                connections::restore_removed(&tx, ConnectionKind::Account, &account.id)?;
                 for key in [&account.id, &format!("{}:smtp", account.id)] {
                     anyhow::ensure!(slots.get(key).is_none_or(|owner| owner == &(false, account.id.clone())), "An account in this backup conflicts with an existing credential owner. No local data was changed.");
                 }
@@ -50,7 +50,7 @@ impl Store {
                 }
             }
             for source in snapshot.calendars {
-                connections::revive(&tx, ConnectionKind::Calendar, &source.id)?;
+                connections::restore_removed(&tx, ConnectionKind::Calendar, &source.id)?;
                 anyhow::ensure!(slots.get(&source.id).is_none_or(|owner| owner == &(true, source.id.clone())), "A calendar in this backup conflicts with an existing credential owner. No local data was changed.");
                 if let Some(current) = calendars.iter().find(|current| current.id == source.id) {
                     let mut connection = source.clone();

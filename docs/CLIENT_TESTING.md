@@ -13,6 +13,15 @@ MIME/Message-ID; only Queued may claim once as Submitting. Changed connection
 settings reject dispatch, imported queues require review, and a cancellation
 racing dispatch must not report that an already-started message was unsent.
 
+Native Preparing scenarios additionally hold MIME preparation after durable
+admission, verify the matching editor closes, and cancel through Outbox before
+bytes arrive. Restart retains the editable draft; late bytes cannot queue it.
+Storage tests cover exact attachment identities, removed accounts, rejected
+preparation and imported drafts requiring review. Folder creation controls cover
+admission with held capacity, restart, uncertainty inspection, receipt repair,
+compact recovery and retained keyboard focus. Provider tests separately cover
+the actual CREATE acknowledgement and TLS hostname boundary.
+
 Use [the parity matrix](CLIENT_PARITY.md) to distinguish preview behavior from real provider/platform evidence. Tests use `shared/preview.json`, fake transports and synthetic mail; never personal accounts. Keep every new scenario reproducible and keep screenshots/logs in ignored `artifacts/`.
 
 Native Preferences recovery uses the owned `preference_save_failure_once` fixture:
@@ -21,7 +30,22 @@ its first Dark appearance save fails after a short delay. The saved
 checks immediate appearance, retained errors after dismissal/navigation, visible
 Retry and restart at desktop and compact sizes. It never changes personal settings.
 
+Native action timing uses `python3 scripts/action_latency.py --samples 20 --output artifacts/performance/actions.json`
+after the test UI build. It measures real review/confirmation button presses
+against changed foreground pixels for ten messages in a 100,000-message fixture
+while provider capacity is held. Each stage keeps the 100 ms p95 target. The
+optional full database-comparison oracle is disabled only in this timing process;
+the saved large-mailbox correctness flow retains it and checks agreement after
+Undo. Keep both results and visual evidence.
+
 ## Flutter
+
+Google calendar HTTP contracts run explicitly with
+`cargo test -p shep-calendar-core --features http,test-support -- --include-ignored`.
+They use owned loopback sockets and fictional tokens to check reserved create IDs,
+ETag PATCH/DELETE headers, retryable authentication/rate limits, conflicts and
+lost responses. Fast orchestration tests mock `CalendarProvider` separately;
+neither layer establishes live Google or Apple execution.
 
 Flutter is pinned to **3.44.2 / Dart 3.12.2**, with flutter_rust_bridge 2.13.0 and Rust 1.96.0. The native-assets hook builds `flutter/rust` against `shared/mail-core`; Android builds require SDK 37, NDK 28.2, Perl and make. The hook honors Android minSdk 24 for C/OpenSSL and handles the Linux Snap Perl mismatch. Apple native TLS uses platform trust. iOS now targets 14.0 for WebP support in WKWebView; this minimum is not an Apple execution claim. From `flutter/`:
 
