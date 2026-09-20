@@ -197,6 +197,11 @@ impl CommandSender {
             | Command::BulkStart(..)
             | Command::AdmitMail(..)
             | Command::AdmitAccount(..)
+            | Command::AdmitRemoval(..)
+            | Command::RetryRemoval(_)
+            | Command::AdmitFolderCreation(..)
+            | Command::DecideFolderCreation(..)
+            | Command::DismissFolderCreation(..)
             | Command::InterruptAccountSetups(_)
             | Command::BulkUndo(_)
             | Command::BulkResolve(_)
@@ -242,8 +247,7 @@ async fn network_operation<Fut: std::future::Future<Output = anyhow::Result<()>>
     // the receipt/cache commit if the overall operation takes longer.
     if matches!(
         &command,
-        Command::CreateFolder(..)
-            | Command::Move(..)
+        Command::Move(..)
             | Command::Transfer(..)
             | Command::UndoMove(..)
             | Command::RecoverMailMove(..)
@@ -269,7 +273,6 @@ async fn network_operation<Fut: std::future::Future<Output = anyhow::Result<()>>
             | Command::CheckCalendarJob(..)
             | Command::SaveAccount(..)
             | Command::ConnectAccount(..)
-            | Command::RemoveConnection(..)
             | Command::CleanupCredentials
             | Command::RestoreGoogleCalendars
     ) {

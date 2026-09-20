@@ -2,6 +2,12 @@ use super::*;
 use crate::folders::Mailbox;
 use rusqlite::OptionalExtension;
 use std::collections::HashMap;
+mod journal;
+pub(crate) use journal::fence_import;
+pub(super) use journal::pending_jobs;
+pub use journal::{CreationJob, CreationStage};
+
+const LEGACY_PENDING: &str = "SELECT request FROM folder_creations INDEXED BY folder_creation_ready WHERE json_extract(data,'$.stage') IS NULL AND data IS NULL AND account=? AND connection=? ORDER BY rowid DESC LIMIT 32";
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct PendingCreation {
@@ -13,7 +19,7 @@ pub struct PendingCreation {
 
 pub(super) fn pending(c: &Connection) -> anyhow::Result<Vec<PendingCreation>> {
     let mut pending = Vec::new();
-    let mut statement = c.prepare("SELECT request FROM folder_creations WHERE account=? AND connection=? ORDER BY rowid DESC LIMIT 32")?;
+    let mut statement = c.prepare(LEGACY_PENDING)?;
     for account in get::<Vec<Account>>(c, "accounts")? {
         let connection = crate::mail_actions::connection_key(&account);
         for request in statement.query_map(params![account.id, connection], |row| {
@@ -37,7 +43,7 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
         account TEXT NOT NULL, connection TEXT NOT NULL, request TEXT NOT NULL,
         target TEXT NOT NULL, PRIMARY KEY(account,connection,request));",
     )?;
-    Ok(())
+    journal::schema(c)
 }
 
 fn checked_account(c: &Connection, id: &str, expected: &str) -> anyhow::Result<Account> {
@@ -80,6 +86,7 @@ fn save_catalog(c: &Connection, account: &str, catalog: Vec<Mailbox>) -> anyhow:
     Ok(())
 }
 
+#[cfg(test)]
 impl Store {
     pub(crate) async fn folder_creation_target(
         &self,
@@ -399,9 +406,10 @@ mod tests {
         }
         let store = Store::open(&path).expect("reopen fixture");
         let workspace = store.workspace().await.expect("restart workspace");
-        assert_eq!(workspace.folder_creations.len(), 1);
-        assert_eq!(workspace.folder_creations[0].name, "Receipts");
-        assert_eq!(workspace.folder_creations[0].parent, None);
+        assert_eq!(workspace.creation_jobs.len(), 1);
+        assert_eq!(workspace.creation_jobs[0].name, "Receipts");
+        assert_eq!(workspace.creation_jobs[0].parent, None);
+        assert_eq!(workspace.creation_jobs[0].stage, CreationStage::Uncertain);
         let redirected = Mailbox::flat("Changed/Receipts".into());
         assert_eq!(
             store

@@ -25,7 +25,7 @@ afterEach(() => {
 });
 const groups = () =>
   new BrowserGroups(
-    { profileId: profile } as GatewayRepository,
+    { profileId: profile, resumeActions: async () => {} } as GatewayRepository,
     () => undefined,
     1000,
   );

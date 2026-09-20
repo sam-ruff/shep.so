@@ -2,6 +2,8 @@ import { GroupUI } from "./bulk_ui";
 import { DraftSession } from "./draft_session";
 import { observeDraft } from "./draft_revision";
 import { connectionActivity, connectionStatus } from "./connection_activity";
+import { folderStatus } from "./folder_actions";
+import { folderSteps, type FolderAction, type FolderMutationReview } from "./folder_mutations";
 import {
   dialogShortcuts,
   keyCombo,
@@ -334,11 +336,11 @@ export function mount(
       activityAgain = false;
       let summary: string;
       try {
-        const [page, connections] = await Promise.all([
-          gateway.actionActivity.page(), connectionActivity(gateway),
+        const [page, connections, folders] = await Promise.all([
+          gateway.actionActivity.page(), connectionActivity(gateway), gateway.folderActivity?.page(),
         ]);
-        const count = page.rows.length + connections.rows.length;
-        summary = count ? `${count}${page.next || connections.more ? "+" : ""}` : "";
+        const count = page.rows.length + connections.rows.length + (folders?.rows.length ?? 0);
+        summary = count ? `${count}${page.next || connections.more || folders?.next ? "+" : ""}` : "";
       } catch { summary = "!"; }
       if (summary !== activitySummary) { activitySummary = summary; render(); }
     } while (activityAgain);
@@ -346,6 +348,150 @@ export function mount(
   }
   w.addEventListener("change", () => void refreshActivitySummary());
   void refreshActivitySummary();
+  function newFolder(account: string) {
+    if (!gateway?.folderActivity) return;
+    const d = modal("Create folder"), name = el("input"), parent = el("select"), status = el("p", "form-status");
+    const id = crypto.randomUUID();
+    name.type = "text"; name.maxLength = 1024; name.setAttribute("aria-label", "Folder name");
+    parent.setAttribute("aria-label", "Parent folder");
+    const root = el("option", "", "Account root"); root.value = ""; parent.append(root);
+    for (const folder of gateway.folders.get(account) ?? []) {
+      const option = el("option", "", folder); option.value = folder; parent.append(option);
+    }
+    status.role = "status";
+    const save = button("Create folder", async () => {
+      save.disabled = true; name.disabled = true; parent.disabled = true;
+      status.textContent = "Saving folder request…";
+      try {
+        const job = await gateway!.createFolder(account, parent.value || null, name.value, id);
+        status.textContent = job.status === "Succeeded" ? "Folder saved on this device." : "Folder request saved. Server confirmation will appear in Folder changes.";
+        w.changed();
+        save.remove();
+        d.append(button("Review folder changes", () => { d.close(); void folderActivity(); }));
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : "The request could not be saved. Keep this name and retry.";
+        save.disabled = false; name.disabled = false; parent.disabled = false;
+      }
+    });
+    d.append(el("p", "muted", "The folder becomes available after its saved request is confirmed."), parent, name, status, save);
+    name.focus();
+  }
+  function manageFolders(account: string) {
+    if (!gateway?.folderActivity) return;
+    const d = modal("Change folder"), source = el("select"), operation = el("select"), destination = el("input"), parent = el("select"), status = el("p", "form-status"), details = el("div");
+    source.setAttribute("aria-label", "Folder to change");
+    operation.setAttribute("aria-label", "Folder change");
+    destination.setAttribute("aria-label", "New folder name"); destination.maxLength = 1024;
+    parent.setAttribute("aria-label", "Destination parent");
+    const root = el("option", "", "Account root"); root.value = ""; parent.append(root);
+    for (const name of gateway.folders.get(account) ?? []) {
+      const option = el("option", "", name); option.value = name; source.append(option);
+      const target = el("option", "", name); target.value = name; parent.append(target);
+    }
+    for (const label of ["Rename", "Move", "Delete"]) operation.append(el("option", "", label));
+    let review: FolderMutationReview | undefined;
+    const requestId = crypto.randomUUID();
+    const confirm = button("Confirm folder change", async () => {
+      if (!review) return;
+      confirm.disabled = true; status.textContent = "Saving this reviewed request…";
+      try {
+        await gateway!.changeFolder(review, requestId);
+        status.textContent = "Folder change saved. It will continue in the background.";
+        confirm.remove(); inspect.remove();
+        d.append(button("Review folder changes", () => { d.close(); void folderActivity(); }));
+        w.changed();
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : "The request could not be saved. Keep this review and retry.";
+        confirm.disabled = false;
+      }
+    });
+    confirm.hidden = true;
+    const inputs = [source, operation, destination, parent];
+    const inspect = button("Review folder change", async () => {
+      review = undefined; confirm.hidden = true; inspect.disabled = true;
+      for (const input of inputs) input.disabled = true;
+      details.replaceChildren(); status.textContent = "Checking the exact folder and its children…";
+      const action: FolderAction = operation.value === "Delete" ? "Delete" : operation.value === "Move" ? { Move: { parent: parent.value || null } } : { Rename: { name: destination.value } };
+      try {
+        const checked = await gateway!.reviewFolder(account, source.value, action);
+        if (!d.isConnected) return;
+        review = checked;
+        details.append(el("p", "", `${checked.plan.members.length} folders and ${checked.messages} cached messages are included.`));
+        for (const member of checked.plan.members) details.append(el("p", "", member.destination ? `${member.path} → ${member.destination}` : member.path));
+        details.append(el("p", "", action === "Delete" ? "Delete permanently removes these server folders and all messages in them, including mail that is not cached here. This cannot be undone." : "These exact folders and their messages will move together. The original folders remain available until the server confirms the change."));
+        status.textContent = "Review the folders before confirming.";
+        confirm.hidden = false;
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : "The folder could not be reviewed. Retry after reconnecting.";
+        for (const input of inputs) input.disabled = false;
+      } finally { inspect.disabled = false; }
+    });
+    operation.onchange = () => {
+      destination.hidden = operation.value !== "Rename";
+      parent.hidden = operation.value !== "Move";
+    };
+    parent.hidden = true; status.role = "status";
+    d.append(source, operation, destination, parent, details, status, inspect, confirm);
+  }
+  async function folderActivity() {
+    if (!gateway?.folderActivity) return;
+    const d = modal("Folder changes"), content = el("div", "outbox-entries"), status = el("p", "form-status");
+    d.classList.add("folder-activity");
+    status.role = "status";
+    let after: string | undefined, next: string | undefined, completed = false, busy = false, generation = 0;
+    const refresh = button("Refresh folder changes", () => { void gateway!.resumeActions(); void draw(); });
+    const older = button("Next folder changes", () => { after = next; void draw(); });
+    const first = button("First folder changes", () => { after = undefined; void draw(); });
+    const recent = button("Recent folder changes", () => { completed = !completed; after = undefined; recent.textContent = completed ? "Pending folder changes" : "Recent folder changes"; void draw(); });
+    const controls = el("div", "outbox-actions");
+    controls.append(refresh, first, older, recent);
+    d.append(content, status, controls);
+    async function draw() {
+      const request = ++generation;
+      try {
+        const page = await gateway!.folderActivity!.page(after, completed);
+        if (!d.isConnected || generation !== request) return;
+        next = page.next; older.disabled = !next; first.disabled = !after;
+        content.replaceChildren();
+        if (!page.rows.length) content.append(el("p", "empty", "No folder changes in this view."));
+        for (const job of page.rows) {
+          const card = el("section", "settings-card");
+          card.append(el("h3", "", job.target?.name ?? (job.parent ? `${job.parent} / ${job.name}` : job.name)), el("p", "", folderStatus(job)));
+          if (job.mutation) {
+            const mutation = job.mutation, plan = mutation.review.plan;
+            const operation = plan.action === "Delete" ? "Delete" : "Rename" in plan.action ? "Rename" : "Move";
+            card.append(el("p", "", `${operation}: ${mutation.completed} of ${folderSteps(plan).length} steps saved. ${mutation.review.messages} reviewed cached messages.`));
+          }
+          if (job.error) card.append(el("p", "", job.error));
+          const decide = async (decision: "retry" | "check" | "dismiss" | "accept" | "repair") => {
+            if (busy) return; busy = true;
+            for (const button of card.querySelectorAll("button")) button.disabled = true;
+            try { await gateway!.decideFolder(job, decision); status.textContent = "Decision saved."; await draw(); w.changed(); }
+            catch (error) { status.textContent = error instanceof Error ? error.message : "This decision could not be saved. Refresh and retry."; }
+            finally { busy = false; for (const button of card.querySelectorAll("button")) button.disabled = false; }
+          };
+          if (["Waiting", "Rejected"].includes(job.status) || job.status === "Uncertain" && job.mutation?.checked === "original") card.append(button(`Retry ${job.name}`, () => void decide("retry")));
+          if ((job.target || job.mutation) && ["Uncertain", "Repair", "Rejected"].includes(job.status)) card.append(button(`Check ${job.name}`, () => void decide("check")));
+          if (job.status === "Repair" && job.mutation?.receipt) card.append(button(`Retry saving ${job.name}`, () => void decide("repair")));
+          if (job.status === "Repair" && job.mutation?.checkedCache) card.append(button(`Keep cached mail and stop tracking ${job.name}`, () => {
+            const review = modal("Keep cached mail and stop tracking");
+            const location = gateway!.accounts.find(account => account.id === job.account)?.protocol === "Pop3" ? "The local folder change remains." : "The server change remains.";
+            review.append(el("p", "", `${location} This keeps the current cached messages and the acknowledged receipt in history, without completing the cache repair. The cache may need refreshing. Continue?`), button("Keep cached mail and stop tracking", () => { review.close(); void decide("dismiss"); }));
+          }));
+          if (job.status === "Uncertain" && job.mutation?.checked === "applied" && job.mutation.review.plan.action === "Delete") card.append(button(`Accept checked deletion of ${job.name}`, () => {
+            const review = modal("Accept checked folder deletion");
+            review.append(el("p", "", "The server check found this exact folder absent. Remove its unchanged reviewed messages from this browser's cache? This does not send another delete."), button("Accept checked deletion", () => { review.close(); void decide("accept"); }));
+          }));
+          if (!["Running", "Checking", "Succeeded", "Dismissed", ...(job.mutation ? ["Repair"] : [])].includes(job.status)) card.append(button(`Stop tracking ${job.name}`, () => {
+            const review = modal("Stop tracking folder change");
+            review.append(el("p", "", "This only dismisses the saved request on this browser. It does not delete a server folder or confirm an unknown result."), button("Stop tracking", () => { review.close(); void decide("dismiss"); }));
+          }));
+          content.append(card);
+        }
+      } catch (error) { status.textContent = error instanceof Error ? error.message : "Folder changes could not load. Refresh to retry."; }
+    }
+    await draw();
+  }
   async function actionActivity() {
     if (!gateway?.actionActivity) return;
     const d = modal("Activity"), content = el("div", "outbox-entries"), status = el("p", "form-status");
@@ -359,6 +505,7 @@ export function mount(
     controls.append(refresh, first, older, recent);
     if (groupUI) controls.append(button("Group history", () => { d.close(); groupUI.history(); }));
     controls.append(button("Outbox", () => { d.close(); void outbox(); }));
+    if (gateway.folderActivity) controls.append(button("Folder changes", () => { d.close(); void folderActivity(); }));
     controls.append(button("Accounts and profile sync", () => { d.close(); tab = "Preferences"; w.changed(); }));
     d.append(content, status, controls);
     async function draw() {
@@ -1477,6 +1624,8 @@ export function mount(
         ),
       );
       const account = gateway?.accounts.find((a) => a.email === name);
+      if (account && gateway?.folderActivity) details.append(button(`Create folder for ${name}`, () => newFolder(account.id)));
+      if (account && gateway?.folderActivity) details.append(button(`Manage folders for ${name}`, () => manageFolders(account.id)));
       for (const folder of (account && gateway?.folders.get(account.id)) ??
         []) {
         if (folder !== "Inbox")

@@ -5,9 +5,18 @@ bounded scheduler seeks, fair Flutter resumption and retained Flutter/browser dr
 failures, plus independent native/Flutter preference Retry. Combined gates and
 shipping are recorded in [Completion](COMPLETION.md); remaining domain migrations
 and the final latency/platform gates stay active. This is implementation of the
-approved architecture, not completion of the app-wide request. The next integrated
-batch adds browser draft conflict review and independent preference Retry, plus
-Flutter account admission/re-entry with retry generations and removal fences.
+approved architecture, not completion of the app-wide request. Checkpoint
+`2605ff5` ships browser draft conflict review and independent preference Retry,
+plus Flutter account admission/re-entry with retry generations and removal fences.
+The current uncommitted integration adds native Preparing Outbox, saved folder
+creation and durable account/calendar removal; browser checked folder changes;
+and Flutter Google calendar admission, subject binding and lost-reply recovery.
+The final ten-of-100,000 native pixel run passes review at 32.31 ms p95 and deletion
+feedback at 22.14 ms p95, with server capacity held. Separate correctness retains
+the full database oracle. Flutter passes 234 tests and 29 final focused controls;
+shared HTTP and authenticated gateway tests cover provider/identity boundaries.
+Remaining domain migrations, gate integration, shipping and platform evidence
+stay active. These checks do not establish complete app-wide adoption.
 
 **20 September immediate actions across the app:** Sam reported slow preparation
 and deletion for about ten selected messages, accepted background server work

@@ -39,15 +39,11 @@ impl Engine {
             ))
             .await?;
         let account = self.account(&draft.account_id).await?;
-        let files = self.store.draft_files(draft.clone()).await?;
-        let build_draft = draft.clone();
-        let mut submission = tokio::task::spawn_blocking(move || {
-            let message = crate::compose::build(&account, &build_draft, files)?;
-            Submission::new(account, &build_draft, message)
-        })
-        .await??;
         #[cfg(feature = "test-support")]
-        if self.demo && std::env::args().any(|arg| arg == "--mail-actions=slow") {
+        if self.demo
+            && std::env::args().any(|arg| arg == "--mail-actions=slow")
+            && !std::env::args().any(|arg| arg == "--held-provider-slots")
+        {
             // Hold fixture preparation so native tests can switch editors before
             // the existing preview refusal. No SMTP or keychain access occurs.
             tokio::time::sleep(Duration::from_millis(1600)).await;
@@ -58,13 +54,51 @@ impl Engine {
                     && std::env::args().any(|arg| arg == "--held-provider-slots")),
             "Sending is disabled in preview. Your draft is saved locally."
         );
-        submission.info.delivery = DeliveryState::Queued;
-        self.store.begin_outgoing(submission, draft.clone()).await?;
+        self.store.admit_outgoing(draft.clone(), account).await?;
         output
             .send(Event::SubmissionQueued(draft.id.clone(), draft.revision))
             .await?;
         self.outgoing_changed(output).await?;
         Ok(())
+    }
+
+    async fn prepare_outgoing(&self, attempt: &str, output: &mut Output) -> anyhow::Result<()> {
+        let Some(preparation) = self.store.outgoing_preparation(attempt.into()).await? else {
+            return Ok(());
+        };
+        #[cfg(feature = "test-support")]
+        if self.demo && std::env::args().any(|arg| arg == "--mail-actions=slow") {
+            tokio::time::sleep(Duration::from_millis(1600)).await;
+        }
+        let prepared = async {
+            let files = self.store.draft_files(preparation.draft.clone()).await?;
+            let submission = tokio::task::spawn_blocking(move || {
+                let message = crate::compose::build_with_message_id(
+                    &preparation.account,
+                    &preparation.draft,
+                    files,
+                    &preparation.info.message_id,
+                )?;
+                Submission::new(preparation.account, &preparation.draft, message)
+            })
+            .await??;
+            self.store
+                .complete_outgoing_preparation(attempt.into(), submission)
+                .await?;
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        if let Err(error) = prepared {
+            let failed = self.store.fail_outgoing_preparation(attempt.into(), format!(
+                "Could not prepare this message. Return it to drafts and review it. {error:#}"
+            )).await?;
+            self.outgoing_changed(output).await?;
+            if failed {
+                return Err(error);
+            }
+            return Ok(());
+        }
+        self.outgoing_changed(output).await
     }
 
     #[cfg(test)]
@@ -75,6 +109,7 @@ impl Engine {
             .outgoing_for_draft(draft.id)
             .await?
             .context("The queued message is missing.")?;
+        self.prepare_outgoing(&info.attempt, output).await?;
         self.submit_outgoing(&info.attempt, output).await
     }
 
@@ -116,6 +151,9 @@ impl Engine {
         output: &mut Output,
     ) -> anyhow::Result<()> {
         let initial = self.store.outgoing_info(attempt.into()).await?;
+        if initial.delivery == DeliveryState::Preparing {
+            return self.prepare_outgoing(attempt, output).await;
+        }
         let _slot = tokio::select! {
             biased;
             _ = self.bulk_control.stopping.requested() => return Ok(()),
@@ -306,7 +344,12 @@ impl Engine {
         output: &mut Output,
     ) -> anyhow::Result<()> {
         let initial = self.store.outgoing_info(attempt.clone()).await?;
-        if action == RecoveryAction::ReturnDraft && initial.delivery == DeliveryState::Queued {
+        if action == RecoveryAction::ReturnDraft
+            && matches!(
+                initial.delivery,
+                DeliveryState::Preparing | DeliveryState::Queued
+            )
+        {
             self.store.cancel_queued_outgoing(attempt).await?;
             output
                 .send(Event::Notice(
@@ -538,6 +581,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preparation_failure_is_durable_and_reports_attention_without_smtp() {
+        let state = Arc::new(State::default());
+        let engine = engine(state.clone()).await;
+        let (mut output, _rx) = futures::channel::mpsc::channel(32);
+        let invalid = Draft {
+            to: "not an address".into(),
+            ..draft()
+        };
+        engine
+            .queue_draft(invalid, &mut output)
+            .await
+            .expect("local admission");
+        let admitted = engine
+            .store
+            .outgoing_for_draft("draft".into())
+            .await
+            .expect("outbox")
+            .expect("attempt");
+        assert_eq!(admitted.delivery, DeliveryState::Preparing);
+        assert!(
+            engine
+                .submit_outgoing(&admitted.attempt, &mut output)
+                .await
+                .is_err()
+        );
+        let failed = engine
+            .store
+            .outgoing_info(admitted.attempt)
+            .await
+            .expect("saved failure");
+        assert_eq!(failed.delivery, DeliveryState::Rejected);
+        assert!(
+            failed
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Return it to drafts"))
+        );
+        assert_eq!(state.sends.load(Ordering::SeqCst), 0);
+        assert!(
+            engine
+                .store
+                .next_queued_outgoing()
+                .await
+                .expect("candidate")
+                .is_none()
+        );
+        assert_eq!(
+            engine
+                .store
+                .draft_state()
+                .await
+                .expect("drafts")
+                .drafts
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn queued_send_admits_without_account_or_provider_capacity_and_cancels_without_smtp() {
         let state = Arc::new(State::default());
         let engine = engine(state.clone()).await;
@@ -560,7 +662,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(queued.delivery, DeliveryState::Queued);
+        assert_eq!(queued.delivery, DeliveryState::Preparing);
         assert_eq!(state.sends.load(Ordering::SeqCst), 0);
         engine
             .resolve_outgoing(

@@ -174,6 +174,12 @@ impl Store {
             };
             // Keep duplicate choice and chronological rank in the owned
             // encrypted scratch database, returning one metadata page to iced.
+            if connections::removed(&tx, ConnectionKind::Account, &account)?.is_some() {
+                return Ok(ConversationPage {
+                    anchor,
+                    ..Default::default()
+                });
+            }
             let (total, position) =
                 ranking::capture(&tx, &account, &group, &anchor, focus.as_deref())?;
             let last = total.saturating_sub(1) / CONVERSATION_PAGE_SIZE * CONVERSATION_PAGE_SIZE;

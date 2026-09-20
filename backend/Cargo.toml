@@ -32,7 +32,10 @@ tower = { version = "0.5", features = ["util", "limit"] }
 tower-http = { version = "0.6", features = ["fs", "limit"] }
 url = "2"
 zeroize = { version = "1", features = ["derive"] }
+shep-calendar-core = { version = "0.1.0", path = "../shared/calendar-core", features = ["http"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
+mockall = "0.15.0"
+shep-calendar-core = { path = "../shared/calendar-core", features = ["test-support"] }
 tempfile = "3"

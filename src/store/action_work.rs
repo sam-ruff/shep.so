@@ -15,6 +15,8 @@ pub(crate) enum Work {
     Folder(String),
     Calendar(String),
     Outgoing(String),
+    Creation(String),
+    Removal(String),
 }
 
 #[derive(Clone, Debug)]
@@ -46,9 +48,12 @@ impl Work {
     }
     pub fn id(&self) -> &str {
         match self {
-            Self::Mail { id, .. } | Self::Folder(id) | Self::Calendar(id) | Self::Outgoing(id) => {
-                id
-            }
+            Self::Mail { id, .. }
+            | Self::Folder(id)
+            | Self::Calendar(id)
+            | Self::Outgoing(id)
+            | Self::Creation(id)
+            | Self::Removal(id) => id,
         }
     }
 }
@@ -60,7 +65,7 @@ impl Store {
         id: String,
         changed: bool,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(domain < 4, "Unknown action domain");
+        anyhow::ensure!(domain < 6, "Unknown action domain");
         let domain = domain as i64;
         self.run(move |c| {
             if changed {
@@ -131,6 +136,7 @@ impl Store {
                      WHERE i.job=?1 AND i.position=?4 AND j.paused=0 AND (j.id||':'||i.position) NOT IN (SELECT value FROM json_each(?3))
                        AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=0 AND b.id=j.id AND b.until>unixepoch())
                        AND i.status IN ('queued','running','repair')
+                       AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND (t.id=COALESCE((SELECT m.account FROM bulk_admissions a JOIN mail_lineage l ON l.lineage=a.lineage JOIN messages m ON m.id=l.id WHERE a.job=i.job AND a.position=i.position),json_extract(i.original,'$.account_id'), '') OR t.id=json_extract(j.action,'$.Move.account')))
                        AND (i.status IN ('running','repair') OR NOT EXISTS(SELECT 1 FROM bulk_admissions a JOIN bulk_admissions prior ON prior.lineage=a.lineage AND prior.sequence<a.sequence
                            JOIN bulk_items p ON p.job=prior.job AND p.position=prior.position
                            WHERE a.job=i.job AND a.position=i.position AND p.status IN ('queued','running','repair','uncertain')))
@@ -145,6 +151,7 @@ impl Store {
                 },
                 1 => c.query_row(
                     "SELECT id,0,account,NULL,0 FROM folder_jobs j WHERE closed=0 AND id>?1 AND ?4=0
+                     AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=j.account)
                      AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=1 AND b.id=j.id AND b.until>unixepoch())
                      AND 'mail:'||account NOT IN (SELECT value FROM json_each(?2))
                      AND id NOT IN (SELECT value FROM json_each(?3))
@@ -152,7 +159,8 @@ impl Store {
                      ORDER BY id LIMIT 1", parameters, |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?,
                 2 => c.query_row(
                     "SELECT a.id,0,a.source,NULL,a.status='repair' FROM calendar_actions a LEFT JOIN calendar_actions p ON p.id=a.previous
-                     WHERE (CASE WHEN a.status='repair' THEN '0' ELSE '1' END||a.id)>?1 AND (?4=0 OR a.status='repair') AND 'calendar:'||a.source NOT IN (SELECT value FROM json_each(?2))
+                     WHERE NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='calendar' AND t.id=a.source)
+                     AND (CASE WHEN a.status='repair' THEN '0' ELSE '1' END||a.id)>?1 AND (?4=0 OR a.status='repair') AND 'calendar:'||a.source NOT IN (SELECT value FROM json_each(?2))
                      AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=2 AND b.id=a.id AND b.until>unixepoch())
                      AND a.id NOT IN (SELECT value FROM json_each(?3))
                      AND (a.status='repair' AND json_extract(a.data,'$.checked')=0 AND json_extract(a.data,'$.cache_applied')=0
@@ -160,23 +168,38 @@ impl Store {
                             AND (p.id IS NULL OR p.status IN ('succeeded','rejected','cancelled')))
                      ORDER BY CASE WHEN a.status='repair' THEN '0' ELSE '1' END||a.id LIMIT 1", parameters, |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?,
                 3 => c.query_row(
-                    "SELECT attempt,0,account,NULL,0 FROM outgoing WHERE stage='Queued' AND attempt>?1 AND ?4=0
+                    "SELECT attempt,0,account,NULL,0 FROM outgoing WHERE stage IN ('Preparing','Queued') AND attempt>?1 AND ?4=0
+                     AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=outgoing.account)
                      AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=3 AND b.id=outgoing.attempt AND b.until>unixepoch())
                      AND 'mail:'||account NOT IN (SELECT value FROM json_each(?2))
                      AND attempt NOT IN (SELECT value FROM json_each(?3)) ORDER BY attempt LIMIT 1",
                     parameters, |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?,
+                4 => c.query_row(
+                    "SELECT json_extract(data,'$.id'),0,account,NULL,0 FROM folder_creations j
+                     WHERE json_extract(data,'$.stage') IN ('queued','checking','repair') AND json_extract(data,'$.id')>?1 AND ?4=0
+                     AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=j.account)
+                     AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=4 AND b.id=json_extract(j.data,'$.id') AND b.until>unixepoch())
+                     AND 'mail:'||account NOT IN (SELECT value FROM json_each(?2))
+                     AND json_extract(data,'$.id') NOT IN (SELECT value FROM json_each(?3)) ORDER BY json_extract(data,'$.id') LIMIT 1",
+                    parameters, |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?,
+                5 => c.query_row("SELECT json_extract(pending,'$.id'),0,CASE kind WHEN 'account' THEN 'mail:' ELSE 'calendar:' END||id,NULL,0 FROM connection_tombstones r
+                    WHERE json_extract(pending,'$.stage') IN ('queued','cleanup') AND json_extract(pending,'$.id')>?1 AND ?4=0
+                    AND (CASE kind WHEN 'account' THEN 'mail:' ELSE 'calendar:' END||id) NOT IN (SELECT value FROM json_each(?2))
+                    AND json_extract(pending,'$.id') NOT IN (SELECT value FROM json_each(?3))
+                    AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=5 AND b.id=json_extract(r.pending,'$.id') AND b.until>unixepoch())
+                    ORDER BY json_extract(pending,'$.id') LIMIT 1",parameters,|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?,
                 _ => anyhow::bail!("Unknown action domain"),
             };
             Ok(row.map_or_else(||continuation.map_or(WorkPage::Done, WorkPage::More), |(id, position, source, destination, repair)| {
                 let prefix = if domain == 2 { "calendar:" } else { "mail:" };
-                let mut accounts = vec![format!("{prefix}{source}")];
+                let mut accounts = vec![if domain==5 {source.clone()} else {format!("{prefix}{source}")}];
                 if let Some(destination) = destination.filter(|v| v != &source) { accounts.push(format!("mail:{destination}")); }
                 let cursor = match domain {
                     0 => format!("{}{id}:{position:020}", if repair { '0' } else { '1' }),
                     2 => format!("{}{id}", if repair { '0' } else { '1' }),
                     _ => id.clone(),
                 };
-                let work = match domain { 0 => Work::Mail { id, position: position as u64 }, 1 => Work::Folder(id), 2 => Work::Calendar(id), _ => Work::Outgoing(id) };
+                let work = match domain { 0 => Work::Mail { id, position: position as u64 }, 1 => Work::Folder(id), 2 => Work::Calendar(id), 4 => Work::Creation(id), 5 => Work::Removal(id), _ => Work::Outgoing(id) };
                 WorkPage::Ready(ReadyWork { work, accounts, cursor })
             }))
         }).await

@@ -6,14 +6,26 @@ use super::*;
 use crate::store::truth::StoreTruth;
 use std::collections::BTreeMap;
 
-#[derive(Default)]
 pub(super) struct State {
+    enabled: bool,
     latest: Option<Arc<StoreTruth>>,
     /// Backend events and dispatched commands since launch.
     changes: u64,
     /// The change count the latest answer was requested at.
     seen: u64,
     inflight: Option<u64>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            enabled: !std::env::args().any(|arg| arg == "--no-store-truth"),
+            latest: None,
+            changes: 0,
+            seen: 0,
+            inflight: None,
+        }
+    }
 }
 
 impl State {
@@ -37,7 +49,7 @@ impl App {
     /// Ask for the store's answer when something may have changed it. Only an
     /// observed fixture run sends this; unit tests see the ordinary commands.
     pub(super) fn request_store_truth(&mut self) {
-        if self.test_state.is_none() {
+        if self.test_state.is_none() || !self.store_truth.enabled {
             return;
         }
         let state = &self.store_truth;
@@ -67,6 +79,9 @@ impl App {
 
     pub(super) fn store_truth_observation(&self) -> serde_json::Value {
         let state = &self.store_truth;
+        if !state.enabled {
+            return serde_json::json!({"enabled": false, "fresh": false, "agrees": false});
+        }
         let Some(truth) = &state.latest else {
             return serde_json::json!({"fresh": false, "agrees": false, "changes": state.changes});
         };
@@ -100,6 +115,23 @@ impl App {
 mod tests {
     use super::*;
     use crate::store::truth::FolderCount;
+
+    #[test]
+    fn pixel_runs_can_disable_the_expensive_oracle_without_claiming_agreement() {
+        let (sender, mut commands) = engine::CommandSender::foreground_test_channel();
+        let (mut app, _) = App::new();
+        app.tx = Some(sender);
+        app.test_state = Some(std::path::PathBuf::from("unused"));
+        app.store_truth.enabled = false;
+        app.store_truth.changed();
+        app.request_store_truth();
+        assert!(commands.try_recv().is_err());
+        assert_eq!(app.store_truth_observation()["enabled"], false);
+        assert_eq!(app.store_truth_observation()["agrees"], false);
+        app.store_truth.enabled = true;
+        app.request_store_truth();
+        assert!(matches!(commands.try_recv(), Ok(Command::StoreTruth(..))));
+    }
 
     fn truth(
         ids: &[&str],

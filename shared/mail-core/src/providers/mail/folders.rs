@@ -62,16 +62,23 @@ impl ImapFolders<Tls> {
             "POP3 folders are managed in the local cache."
         );
         tokio::time::timeout(Duration::from_secs(30), async {
-            let mut session = imap(account, password).await?;
-            let capabilities = session.capabilities().await?;
-            Ok(Self {
-                session,
-                encoding: encoding(&capabilities),
-                create_special_use: creation::create_special_use(&capabilities),
-            })
+            Self::from_session(imap(account, password).await?).await
         })
         .await
         .context("The mail server took too long to connect.")?
+    }
+}
+
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug>
+    ImapFolders<T>
+{
+    pub(super) async fn from_session(mut session: async_imap::Session<T>) -> anyhow::Result<Self> {
+        let capabilities = session.capabilities().await?;
+        Ok(Self {
+            session,
+            encoding: encoding(&capabilities),
+            create_special_use: creation::create_special_use(&capabilities),
+        })
     }
 }
 

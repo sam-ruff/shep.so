@@ -24,6 +24,10 @@ pub(super) struct State {
 }
 
 impl App {
+    pub(super) fn cancel_account_setup_stop(&mut self) {
+        self.account_setup.stopping = None;
+    }
+
     pub(super) fn account_setup_removed(&mut self, account: &str) {
         self.account_setup.removed.insert(account.into());
         self.account_setup.serial += 1;

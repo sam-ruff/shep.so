@@ -117,15 +117,69 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   Flutter passes 134 Rust and 203 Flutter tests, with two additional reviewed
   recovery goldens and 26 final FFI/control regressions. Keep exact draft observations,
   same-attempt retry generations, shared reconciled duplicate results,
-  removed-account fences and the 32-attempt bound. Commit gates/shipping remain.
+  removed-account fences and the 32-attempt bound. Checkpoint `2605ff5` is pushed
+  to main after normal hooks and strict docs; the full architecture remains open.
   Browser folder gateway/admission and shared Flutter calendar adoption are
   continuing in isolated lanes; no fixture-only provider parity is accepted.
-  Native folder creation still acquires provider/account capacity before saving
-  its planned target and closes the dialog only after remote completion. Extend
-  its existing creation owner with local request admission, a pending tree entry,
-  receipt-first recovery and shared scheduling; keep namespace planning and
-  unknown CREATE inspection separate from local acceptance. This path is not
-  covered by the existing rename/delete journal migration.
+  Native schema 9 folder creation and Preparing Outbox admission are integrated,
+  with exact identity, cancellation, attachment and import fences. The combined
+  library gate passes 1,189 tests with two ignored; combined native controls and
+  normal shipping gates remain. Browser schema 16 folder creation and its real
+  gateway are integrated: 75 focused units, four Chromium controls and 49 backend
+  tests pass, with one ignored fixture prerequisite. Per-candidate domain fairness
+  adds two regressions and is under final verification. Checked browser folder
+  Move/Delete/Rename, Flutter Google calendar integration and CalDAV continue in
+  isolated lanes. Native account removal also still
+  waits for provider/account ownership; migrate its admission separately after
+  folder creation, keeping reviewed local deletion and late-result fences.
+  Flutter Google calendar schema 19 passes its initial 141 Rust/210 Flutter gates,
+  but integration review found real Delete activity decoding, source-scoped event
+  identity, empty-cache retirement and newer-intent projection gaps. Correct these
+  with actual FFI and workspace regressions before shipping that adapter. Passing
+  fixture tests alone do not establish its delete/restart behaviour.
+  Three owned HTTP contract tests now verify Google create identities, ETags,
+  retry/refusal policy and lost replies. Fence a stale sync listing against newer
+  acknowledged calendar writes before shipping; sync and mutation currently use
+  different operation locks.
+  Real calendar editing must retain ETag/remote identity and event fields. The
+  initial editor reconstruction dropped them and could turn an edit into CREATE;
+  enforce immutable edit identity in Rust and cover the actual editor controls.
+  Known readonly sources need backend admission/claim validation as well.
+  Save receipt repair must accept its exact previous cache version while refusing
+  a newer ETag, even when content matches. The initial adapter rejected ordinary
+  edits and could replace same-content newer versions; keep both regressions.
+  Google correction v2 is integrated for verification. Remaining release gates
+  include a coherent read transaction, stale UI/sync reply fences, cache repair
+  with occupied provider slots, actual FFI Delete/reopen, and durable Google
+  subject binding so reconnect cannot send queued work to another account.
+  Checked browser folder recovery must let an acknowledged action with replaced
+  local rows stop tracking after a fresh review, retaining receipts and cached
+  mail. Never leave the account permanently blocked or treat that choice as
+  provider success. Freeze the provider/cache observation and reject stale reviews.
+  Native schema 10 removal and Flutter schema 20 Google subject binding are now
+  integrated for verification. Removal hides only after durable admission and
+  retains failed cleanup through restart. Calendar snapshots own their cached
+  subject; admission stays local/offline, while dispatch requires the matching SDK
+  grant. Keep coherent snapshot, stale sync, provider-capacity and migration gates.
+  Native removal now passes 1,204 combined library checks, 47 integration checks
+  and ten distinct real native scenarios after fixing test navigation readiness.
+  Browser schema 17 checked subtree changes are integrated: 235 unit, 57 backend
+  and 22 Chromium scenarios pass, including outgoing/storage regressions;
+  the production build and backend Clippy pass.
+  Flutter schema 21 adds exact saved admission requests and readonly lost-reply
+  lookup; 154 Rust tests pass. Dart request retention/reconciliation now passes
+  29 integrated controls/FFI tests, including bounded unknown requests and
+  coherent close recovery. Shared Google HTTP tests pass eight cases; its new
+  authenticated gateway and shared Drive/Calendar grant owner pass 67 backend
+  tests. The full Flutter suite passes 234; after shared HTTP extraction, its
+  Rust suite passes 153. CalDAV now targets schema 22, not 20.
+  Final native ten-of-100,000 pixel measurement passes 20 cycles: review p95
+  32.31 ms and confirmation p95 22.14 ms, both against 100 ms. Separate correctness
+  keeps full database comparison enabled. The first timing run was contended by
+  that optional test observer; preserve its failed report and the query-step
+  diagnosis. Agent builds/tests were stopped; ordinary user applications remained
+  running. Common performance-gate wiring and its tests pass. Finish final hooks
+  and checkpoint shipping, then continue remaining client/domain and platform work.
 
 Sam reports new mail is slow to arrive and moves failing on `sam@shep.so`
 (Stalwart at `mail.shep.so`). These items outrank everything below. Sam's

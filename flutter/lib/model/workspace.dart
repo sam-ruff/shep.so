@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../data/repository.dart';
 import '../data/settings_store.dart';
@@ -20,6 +22,17 @@ import '../data/profile_enrollment.dart';
 import '../data/profile_discovery.dart';
 part 'profile_application.dart';
 
+class _CalendarAdmissionAttempt {
+  _CalendarAdmissionAttempt({
+    required this.id,
+    required this.subject,
+    required this.mutation,
+  });
+  final String id, subject;
+  final Map<String, Object?> mutation;
+  bool closed = false;
+}
+
 class Workspace extends ChangeNotifier {
   Workspace(
     this.repository,
@@ -35,6 +48,12 @@ class Workspace extends ChangeNotifier {
   final ProfileDiscovery? profileDiscovery;
   final MailRepository repository;
   List<MailActivity> mailActivities = const [];
+  List<CalendarActivity> calendarActivities = const [];
+  List<CalendarSource> calendarSources = const [];
+  final Set<String> _runningCalendarActions = {};
+  final Map<String, _CalendarAdmissionAttempt> _calendarAdmissions = {};
+  int _calendarViewRevision = 0;
+  String? _calendarSubject;
   final Set<String> _resumingMailActivity = {};
   final Set<String> _resumingMailAccounts = {};
   final Set<String> _seenMailResumeAccounts = {};
@@ -1626,9 +1645,172 @@ class Workspace extends ChangeNotifier {
   }
 
   Future<bool> saveEvent(CalendarEntry entry) async {
+    final revision = ++_calendarViewRevision;
+    final durable = switch (repository) {
+      DurableCalendarRepository value => value,
+      _ => null,
+    };
+    if (durable != null) {
+      final before = events
+          .where(
+            (event) => event.id == entry.id && event.sourceId == entry.sourceId,
+          )
+          .firstOrNull;
+      final subject = _calendarSubject ?? google?.active?.subject ?? '';
+      final key = '${entry.sourceId}\u0000${entry.id}';
+      final mutation = <String, Object?>{
+        'save': <String, Object?>{
+          'before': before?.toCalendarJson(),
+          'after': entry.toCalendarJson(),
+        },
+      };
+      var pending = _calendarAdmissions[key];
+      pending?.closed = false;
+      if (pending != null &&
+          jsonEncode(pending.mutation) != jsonEncode(mutation)) {
+        try {
+          final known = await durable.calendarActionAdmission(pending.id);
+          if (known != null) {
+            if (const {'rejected', 'cancelled'}.contains(known.status)) {
+              _calendarAdmissions.remove(key);
+              pending = null;
+            } else if (known.status == 'succeeded' && known.saved != null) {
+              final saved = known.saved!;
+              if (_disposed || revision != _calendarViewRevision) {
+                if (!_disposed) unawaited(refreshCalendarActivity());
+                return false;
+              }
+              events = [
+                ...events.where(
+                  (event) =>
+                      (event.id != entry.id ||
+                          event.sourceId != entry.sourceId) &&
+                      (event.id != saved.id ||
+                          event.sourceId != saved.sourceId),
+                ),
+                saved,
+              ];
+              error =
+                  'The previous event was saved with its provider identity. Reopen it before applying these edits.';
+              _changed();
+              return false;
+            } else {
+              if (!_disposed &&
+                  const {
+                    'queued',
+                    'waiting',
+                    'repair',
+                  }.contains(known.status)) {
+                unawaited(
+                  _runCalendarAction(
+                    known.id,
+                    subject: known.subject,
+                    repair: known.status == 'repair',
+                  ),
+                );
+              } else if (!_disposed && known.status == 'uncertain') {
+                unawaited(refreshCalendarActivity());
+              }
+              error =
+                  'The previous save for this event must finish or be reviewed before saving these edits.';
+              _changed();
+              return false;
+            }
+          }
+          if (known == null) {
+            _calendarAdmissions.remove(key);
+            pending = null;
+          }
+        } catch (exception) {
+          error =
+              'Could not confirm whether the previous save was admitted. Your edits are still open. $exception';
+          _changed();
+          return false;
+        }
+      }
+      if (!_canReserveCalendarAdmission(pending)) return false;
+      pending ??= _CalendarAdmissionAttempt(
+        id: _calendarActionId(),
+        subject: subject,
+        mutation: mutation,
+      );
+      _calendarAdmissions[key] = pending;
+      CalendarAdmission admission;
+      try {
+        admission =
+            await durable.calendarActionAdmission(pending.id) ??
+            await durable.admitCalendarAction(
+              pending.id,
+              entry,
+              before,
+              subject: pending.subject,
+            );
+      } catch (exception) {
+        try {
+          final known = await durable.calendarActionAdmission(pending.id);
+          if (known == null) {
+            error = 'The event was not admitted. Your edits are still open.';
+            _changed();
+            return false;
+          }
+          admission = known;
+        } catch (_) {
+          error =
+              'Could not confirm whether the event was admitted. Your edits are still open. $exception';
+          _changed();
+          return false;
+        }
+      }
+      if (admission.status != 'succeeded' || admission.saved == null) {
+        _calendarAdmissions.remove(key);
+      }
+      if (const {'rejected', 'cancelled'}.contains(admission.status)) {
+        await refreshCalendarActivity();
+        error = 'The event was not saved. Your edits are still open.';
+        _changed();
+        return false;
+      }
+      if (!_disposed &&
+          const {'queued', 'waiting', 'repair'}.contains(admission.status)) {
+        unawaited(
+          _runCalendarAction(
+            admission.id,
+            subject: admission.subject,
+            repair: admission.status == 'repair',
+          ),
+        );
+      }
+      if (_disposed || revision != _calendarViewRevision) {
+        if (!_disposed) unawaited(refreshCalendarActivity());
+        return true;
+      }
+      _calendarViewRevision++;
+      final projected = admission.saved ?? entry;
+      events = [
+        ...events.where(
+          (event) =>
+              (event.id != entry.id || event.sourceId != entry.sourceId) &&
+              (event.id != projected.id ||
+                  event.sourceId != projected.sourceId),
+        ),
+        projected,
+      ];
+      notice = admission.status == 'succeeded'
+          ? 'Event saved'
+          : admission.status == 'uncertain'
+          ? 'Event needs checking'
+          : 'Event queued';
+      _changed();
+      return true;
+    }
     try {
       await repository.saveEvent(entry);
-      events = [...events.where((e) => e.id != entry.id), entry];
+      events = [
+        ...events.where(
+          (event) => event.id != entry.id || event.sourceId != entry.sourceId,
+        ),
+        entry,
+      ];
       notice = 'Event saved';
       _changed();
       return true;
@@ -1637,6 +1819,365 @@ class Workspace extends ChangeNotifier {
       _changed();
       return false;
     }
+  }
+
+  String _calendarActionId() {
+    final random = Random.secure();
+    return '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}-${List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
+  }
+
+  void releaseCalendarEditor(String sourceId, String eventId) {
+    for (final key in [
+      '$sourceId\u0000$eventId',
+      '$sourceId\u0000$eventId\u0000delete',
+    ]) {
+      final pending = _calendarAdmissions[key];
+      if (pending != null) {
+        pending.closed = true;
+        unawaited(_reconcileClosedCalendarEditor(key, pending));
+      }
+    }
+  }
+
+  bool _canReserveCalendarAdmission(_CalendarAdmissionAttempt? pending) {
+    if (pending != null || _calendarAdmissions.length < 32) return true;
+    error =
+        'Check the unresolved calendar changes before saving another event.';
+    _changed();
+    return false;
+  }
+
+  Future<void> _reconcileClosedCalendarEditor(
+    String key,
+    _CalendarAdmissionAttempt pending,
+  ) async {
+    final durable = switch (repository) {
+      DurableCalendarRepository value => value,
+      _ => null,
+    };
+    if (durable == null) return;
+    try {
+      final known = await durable.calendarActionAdmission(pending.id);
+      if (!pending.closed || !identical(_calendarAdmissions[key], pending)) {
+        return;
+      }
+      if (known == null) {
+        _calendarAdmissions.remove(key);
+        return;
+      }
+      if (const {'succeeded', 'rejected', 'cancelled'}.contains(known.status)) {
+        final revision = _calendarViewRevision;
+        final snapshot = await durable.calendarSnapshot();
+        if (_disposed ||
+            revision != _calendarViewRevision ||
+            !pending.closed ||
+            !identical(_calendarAdmissions[key], pending)) {
+          return;
+        }
+        _calendarViewRevision++;
+        calendarSources = snapshot.sources;
+        _calendarSubject = snapshot.subject;
+        events = snapshot.events;
+        _calendarAdmissions.remove(key);
+        _changed();
+        return;
+      }
+      if (!_disposed &&
+          const {'queued', 'waiting', 'repair'}.contains(known.status)) {
+        unawaited(
+          _runCalendarAction(
+            known.id,
+            subject: known.subject,
+            repair: known.status == 'repair',
+          ),
+        );
+      } else if (!_disposed) {
+        unawaited(refreshCalendarActivity());
+      }
+    } catch (_) {
+      // Keep the exact identity until a later read establishes its outcome.
+    }
+  }
+
+  Future<bool> deleteEvent(CalendarEntry entry) async {
+    final revision = ++_calendarViewRevision;
+    final durable = repository as DurableCalendarRepository;
+    final subject = _calendarSubject ?? google?.active?.subject ?? '';
+    final key = '${entry.sourceId}\u0000${entry.id}\u0000delete';
+    final mutation = <String, Object?>{
+      'delete': <String, Object?>{'before': entry.toCalendarJson()},
+    };
+    var pending = _calendarAdmissions[key];
+    pending?.closed = false;
+    if (pending != null &&
+        jsonEncode(pending.mutation) != jsonEncode(mutation)) {
+      try {
+        final known = await durable.calendarActionAdmission(pending.id);
+        if (known == null ||
+            const {'rejected', 'cancelled'}.contains(known.status)) {
+          _calendarAdmissions.remove(key);
+          pending = null;
+        } else {
+          error =
+              'The previous deletion must finish or be reviewed before deleting this changed event.';
+          _changed();
+          return false;
+        }
+      } catch (exception) {
+        error =
+            'Could not confirm the previous deletion. The changed event remains open. $exception';
+        _changed();
+        return false;
+      }
+    }
+    if (!_canReserveCalendarAdmission(pending)) return false;
+    pending ??= _CalendarAdmissionAttempt(
+      id: _calendarActionId(),
+      subject: subject,
+      mutation: mutation,
+    );
+    _calendarAdmissions[key] = pending;
+    CalendarAdmission admission;
+    try {
+      admission =
+          await durable.calendarActionAdmission(pending.id) ??
+          await durable.admitCalendarDelete(
+            pending.id,
+            entry,
+            subject: pending.subject,
+          );
+    } catch (exception) {
+      try {
+        final known = await durable.calendarActionAdmission(pending.id);
+        if (known == null) {
+          error =
+              'The deletion was not admitted. Retry to use the same request.';
+          _changed();
+          return false;
+        }
+        admission = known;
+      } catch (_) {
+        error =
+            'Could not confirm whether the deletion was admitted. The event remains open. $exception';
+        _changed();
+        return false;
+      }
+    }
+    _calendarAdmissions.remove(key);
+    if (const {'rejected', 'cancelled'}.contains(admission.status)) {
+      await refreshCalendarActivity();
+      error = 'The event was not deleted.';
+      _changed();
+      return false;
+    }
+    if (!_disposed &&
+        const {'queued', 'waiting', 'repair'}.contains(admission.status)) {
+      unawaited(
+        _runCalendarAction(
+          admission.id,
+          subject: admission.subject,
+          repair: admission.status == 'repair',
+        ),
+      );
+    }
+    if (_disposed || revision != _calendarViewRevision) {
+      if (!_disposed) unawaited(refreshCalendarActivity());
+      return true;
+    }
+    _calendarViewRevision++;
+    events = events
+        .where(
+          (event) => event.id != entry.id || event.sourceId != entry.sourceId,
+        )
+        .toList();
+    notice = admission.status == 'succeeded'
+        ? 'Event deleted'
+        : admission.status == 'uncertain'
+        ? 'Deletion needs checking'
+        : 'Event deletion queued';
+    _changed();
+    return true;
+  }
+
+  Future<void> openCalendar() async {
+    await refreshCalendarActivity();
+    await syncCalendar();
+    await refreshCalendarActivity(resume: true);
+  }
+
+  Future<void> syncCalendar() async {
+    final durable = switch (repository) {
+      DurableCalendarRepository value => value,
+      _ => null,
+    };
+    if (durable == null || google == null) return;
+    final revision = _calendarViewRevision;
+    try {
+      final scopes = google!.active?.permissions.scopes
+          .where((scope) => scope.contains('/auth/calendar.'))
+          .toList();
+      final subject = google!.active?.subject;
+      final token = await _calendarToken(subject, scopes ?? const []);
+      final now = DateTime.now().toUtc();
+      await durable.syncCalendar(
+        token,
+        now.subtract(const Duration(days: 365)),
+        now.add(const Duration(days: 365)),
+        subject: subject!,
+      );
+      if (_disposed) return;
+      await refreshCalendarActivity();
+    } catch (exception) {
+      if (_disposed || revision != _calendarViewRevision) return;
+      error = '$exception';
+      _changed();
+    }
+  }
+
+  Future<void> refreshCalendarActivity({bool resume = false}) async {
+    final durable = switch (repository) {
+      DurableCalendarRepository value => value,
+      _ => null,
+    };
+    if (durable == null) return;
+    final revision = ++_calendarViewRevision;
+    try {
+      final retired = <String, _CalendarAdmissionAttempt>{};
+      for (final item in _calendarAdmissions.entries.toList()) {
+        if (!item.value.closed) continue;
+        try {
+          final known = await durable.calendarActionAdmission(item.value.id);
+          if (known == null ||
+              const {
+                'succeeded',
+                'rejected',
+                'cancelled',
+              }.contains(known.status)) {
+            retired[item.key] = item.value;
+          }
+        } catch (_) {
+          // A failed lookup cannot retire an unknown local write.
+        }
+      }
+      final activities = await durable.calendarActions();
+      final snapshot = await durable.calendarSnapshot();
+      if (_disposed || revision != _calendarViewRevision) return;
+      calendarActivities = activities;
+      calendarSources = snapshot.sources;
+      _calendarSubject = snapshot.subject;
+      events = snapshot.events;
+      for (final item in retired.entries) {
+        if (item.value.closed &&
+            identical(_calendarAdmissions[item.key], item.value)) {
+          _calendarAdmissions.remove(item.key);
+        }
+      }
+      _changed();
+      if (resume) {
+        for (final action in calendarActivities.where(
+          (action) => action.canResume,
+        )) {
+          unawaited(
+            _runCalendarAction(
+              action.id,
+              subject: action.subject,
+              repair: action.status == 'repair',
+            ),
+          );
+        }
+      }
+    } catch (exception) {
+      if (_disposed || revision != _calendarViewRevision) return;
+      error = '$exception';
+      _changed();
+    }
+  }
+
+  Future<String> _calendarToken(String? subject, List<String> scopes) async {
+    final connection = google;
+    final active = connection?.active;
+    if (subject == null ||
+        subject.isEmpty ||
+        connection == null ||
+        active?.subject != subject) {
+      throw StateError(
+        'Reconnect the Google account used by this calendar, then retry.',
+      );
+    }
+    final generation = connection.grantGeneration;
+    final token = await connection.accessToken(scopes);
+    if (connection.grantGeneration != generation ||
+        !identical(connection.active, active)) {
+      throw StateError(
+        'Google changed while this request was starting. Retry with the original account.',
+      );
+    }
+    return token;
+  }
+
+  Future<void> _runCalendarAction(
+    String id, {
+    required String? subject,
+    bool repair = false,
+  }) async {
+    final durable = repository as DurableCalendarRepository;
+    if (!_runningCalendarActions.add(id)) return;
+    try {
+      if (repair) {
+        await durable.repairCalendarAction(id);
+        return;
+      }
+      final token = await _calendarToken(subject, const [
+        'https://www.googleapis.com/auth/calendar.events',
+      ]);
+      await durable.executeCalendarAction(id, token, subject: subject!);
+    } catch (exception) {
+      try {
+        await durable.waitCalendarAction(id, '$exception');
+      } catch (_) {}
+    } finally {
+      _runningCalendarActions.remove(id);
+      await refreshCalendarActivity();
+    }
+  }
+
+  Future<void> retryCalendarActivity(CalendarActivity action) async {
+    if (!action.canResume) return;
+    await _runCalendarAction(
+      action.id,
+      subject: action.subject,
+      repair: action.status == 'repair',
+    );
+  }
+
+  Future<void> cancelCalendarActivity(CalendarActivity action) async {
+    final durable = repository as DurableCalendarRepository;
+    if (!action.canCancel) return;
+    _calendarViewRevision++;
+    try {
+      await durable.cancelCalendarAction(action.id);
+    } catch (exception) {
+      error = '$exception';
+    }
+    await refreshCalendarActivity();
+  }
+
+  Future<void> inspectCalendarActivity(CalendarActivity action) async {
+    final durable = repository as DurableCalendarRepository;
+    if (!action.canInspect) return;
+    try {
+      final token = await _calendarToken(action.subject, const [
+        'https://www.googleapis.com/auth/calendar.events.readonly',
+      ]);
+      await durable.inspectCalendarAction(
+        action.id,
+        token,
+        subject: action.subject!,
+      );
+    } catch (exception) {
+      error = '$exception';
+    }
+    await refreshCalendarActivity();
   }
 
   @override

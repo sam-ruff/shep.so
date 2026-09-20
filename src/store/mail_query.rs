@@ -89,7 +89,7 @@ impl Plan {
     pub fn new(c: &Connection, query: &MailQuery) -> anyhow::Result<Self> {
         let scope = query.search_scope();
         let query = scope.as_ref();
-        let mut filters = vec!["1=1".to_string()];
+        let mut filters = vec!["NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND (t.id=messages.account OR t.id=(SELECT physical.account FROM main.messages physical WHERE physical.id=messages.id)))".to_string()];
         let mut values = Vec::new();
         let sent = "((folder='Sent' AND (id LIKE '%:local-sent-%' OR account NOT IN (SELECT account FROM sent_folders))) OR (account,folder) IN (SELECT account,folder FROM sent_folders))";
         let prefix = if let Some(folders) = &query.folders {

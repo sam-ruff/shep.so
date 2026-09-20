@@ -24,6 +24,8 @@ export type RemovalSnapshot = Partial<Record<StoreName, any[]>>;
 export const reviewStores = [
   "accounts",
   "accountConnections",
+  "folderActions",
+  "folderCatalogs",
   "mail",
   "drafts",
   "draftFiles",
@@ -73,6 +75,9 @@ export function removalPreview(s: RemovalSnapshot, id: string): RemovalReview {
   );
   const actions = ordered(((s.mailActions ?? []) as MailAction[]).filter(a => a.account === id), a => a.id);
   const connections = (s.accountConnections ?? []).filter(attempt => attempt.account?.id === id);
+  const folders = ordered((s.folderActions ?? []).filter(action => action.account === id), action => action.id);
+  const catalogs = (s.folderCatalogs ?? []).filter(catalog => catalog.account === id);
+  for (const folder of folders) if (folder.active) pending.add(`folder:${folder.id}`);
   for (const connection of connections) pending.add(`connection:${connection.id}`);
   for (const action of actions) if (action.status !== "Succeeded") pending.add(action.lease.id);
   for (const intent of intents)
@@ -106,6 +111,8 @@ export function removalPreview(s: RemovalSnapshot, id: string): RemovalReview {
       intents,
       actions,
       connections,
+      folders,
+      catalogs,
     ]),
   };
 }
@@ -164,6 +171,8 @@ export function removalChanges(
       .map(a => ({ store: "mailActions" as const, key: a.id })),
     { store: "accounts", key: expected.id },
     { store: "accountConnections", key: expected.id },
+    ...(s.folderActions ?? []).filter(action => action.account === expected.id).map(action => ({ store: "folderActions" as const, key: action.id })),
+    { store: "folderCatalogs", key: expected.id },
     {
       store: "removedAccounts",
       key: expected.id,
@@ -194,7 +203,7 @@ export function checkRemovedWrites(changes: Change[], removed: any[]) {
             ? v.accountId
             : c.store === "outgoing"
               ? (v.account?.id ?? v.draft?.accountId)
-              : c.store === "mailRoles" || c.store === "mailIntents" || c.store === "mailActions"
+              : c.store === "mailRoles" || c.store === "mailIntents" || c.store === "mailActions" || c.store === "folderActions" || c.store === "folderCatalogs" || c.store === "folderMembers"
                 ? v.account
                 : undefined;
     if (

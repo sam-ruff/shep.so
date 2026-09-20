@@ -1,6 +1,7 @@
 use super::*;
 use crate::outgoing::*;
 use rusqlite::OptionalExtension;
+mod preparation;
 
 pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     c.execute_batch(
@@ -15,7 +16,23 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
         CREATE INDEX IF NOT EXISTS outgoing_message ON outgoing(account,logical_id);
         CREATE INDEX IF NOT EXISTS conversation_logical_message ON conversation_members(account,logical_id);",
     )?;
+    let has_preparation: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('outgoing') WHERE name='preparation')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_preparation {
+        c.execute("ALTER TABLE outgoing ADD COLUMN preparation TEXT", [])?;
+    }
     Ok(())
+}
+
+pub(super) fn preparing(c: &Connection, draft: &str) -> anyhow::Result<bool> {
+    Ok(c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft=? AND stage='Preparing')",
+        [draft],
+        |row| row.get(0),
+    )?)
 }
 pub(super) fn changed(c: &Connection) -> anyhow::Result<()> {
     let current: u64 = get(c, "outgoing_revision")?;
@@ -53,7 +70,7 @@ fn write(c: &Connection, info: &OutgoingInfo) -> anyhow::Result<()> {
 }
 pub(super) fn pending(c: &Connection) -> anyhow::Result<usize> {
     Ok(c.query_row(
-        "SELECT COUNT(*) FROM outgoing WHERE stage NOT IN ('Complete','Released')",
+        "SELECT COUNT(*) FROM outgoing o WHERE stage NOT IN ('Complete','Released') AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=o.account)",
         [],
         |r| r.get::<_, i64>(0),
     )? as usize)
@@ -61,14 +78,14 @@ pub(super) fn pending(c: &Connection) -> anyhow::Result<usize> {
 impl Store {
     pub async fn outgoing_page(&self, offset: usize) -> anyhow::Result<OutgoingPage> {
         self.run(move |c| {
-            let rows=c.prepare("SELECT data FROM outgoing WHERE stage NOT IN ('Complete','Released') ORDER BY created DESC,attempt LIMIT ? OFFSET ?")?
+            let rows=c.prepare("SELECT data FROM outgoing o WHERE stage NOT IN ('Complete','Released') AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=o.account) ORDER BY created DESC,attempt LIMIT ? OFFSET ?")?
                 .query_map(params![OUTGOING_PAGE_SIZE as i64, i64::try_from(offset)?],|r|r.get::<_,String>(0))?.map(|r|Ok(serde_json::from_str(&r?)?)).collect::<anyhow::Result<Vec<_>>>()?;
             Ok(OutgoingPage {revision:get(c,"outgoing_revision")?,offset,total:pending(c)?,rows})
         }).await
     }
     pub async fn outgoing_for_draft(&self, draft: String) -> anyhow::Result<Option<OutgoingInfo>> {
         self.run(move |c| {
-            c.query_row("SELECT data FROM outgoing WHERE draft=?", [draft], |r| {
+            c.query_row("SELECT data FROM outgoing o WHERE draft=? AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=o.account)", [draft], |r| {
                 r.get::<_, String>(0)
             })
             .optional()?
@@ -83,7 +100,7 @@ impl Store {
     pub async fn next_queued_outgoing(&self) -> anyhow::Result<Option<String>> {
         self.run(|c| {
             Ok(c.query_row(
-            "SELECT attempt FROM outgoing WHERE stage='Queued' ORDER BY created,attempt LIMIT 1",
+            "SELECT attempt FROM outgoing o WHERE stage IN ('Preparing','Queued') AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=o.account) ORDER BY created,attempt LIMIT 1",
             [], |r| r.get(0),
         ).optional()?)
         })
@@ -223,14 +240,14 @@ impl Store {
             let tx = c.transaction()?;
             let mut saved = info(&tx, &attempt)?;
             anyhow::ensure!(
-                saved.delivery == DeliveryState::Queued,
+                matches!(saved.delivery, DeliveryState::Preparing | DeliveryState::Queued),
                 "Sending has already started. Review delivery in Outbox."
             );
             saved.delivery = DeliveryState::Released;
             saved.error = None;
             write(&tx, &saved)?;
             tx.execute(
-                "UPDATE outgoing SET config=NULL,envelope=NULL,raw=NULL WHERE attempt=?",
+                "UPDATE outgoing SET config=NULL,envelope=NULL,raw=NULL,preparation=NULL WHERE attempt=?",
                 [&attempt],
             )?;
             tx.commit()?;

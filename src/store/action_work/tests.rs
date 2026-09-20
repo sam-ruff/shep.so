@@ -125,7 +125,7 @@ async fn reopening_version_seven_adds_the_ready_index_without_changing_owned_ite
     let store = Store::open(&path).unwrap();
     assert_eq!(store.bulk_job("migration".into()).await.unwrap().running, 1);
     store.run(|c| {
-        assert_eq!(c.query_row("PRAGMA user_version",[],|r|r.get::<_,u32>(0))?,8);
+        assert_eq!(c.query_row("PRAGMA user_version",[],|r|r.get::<_,u32>(0))?,crate::store::DATABASE_VERSION);
         assert_eq!(c.query_row("SELECT count(*) FROM sqlite_schema WHERE type='index' AND name='bulk_ready_seek'",[],|r|r.get::<_,i64>(0))?,1);
         Ok(())
     }).await.unwrap();

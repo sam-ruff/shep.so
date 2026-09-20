@@ -7,8 +7,8 @@ pub(crate) mod calendar_actions;
 mod mail_lineage;
 pub use calendar_actions::CalendarJob;
 mod folder_actions;
-mod folder_creation;
-pub use folder_creation::PendingCreation;
+pub(crate) mod folder_creation;
+pub use folder_creation::{CreationJob, CreationStage, PendingCreation};
 pub use move_journal::LOCAL_RETRY_SECONDS;
 mod folder_projection;
 mod mail_actions;
@@ -23,8 +23,11 @@ mod write_ledger;
 use crate::model::*;
 pub use write_ledger::{Entry as WriteEntry, SyncEpoch, WriteKind};
 mod connections;
+pub(crate) use connections::fence_removal_import;
 mod conversations;
-pub use connections::{ConnectionKind, ConnectionRef, CredentialCleanup, RemovalPreview};
+pub use connections::{
+    ConnectionKind, ConnectionRef, CredentialCleanup, RemovalJob, RemovalPreview, RemovalStage,
+};
 mod drafts;
 mod google_lifecycle;
 mod outgoing;
@@ -53,13 +56,15 @@ pub struct Store(
     Option<Arc<crate::cache_cipher::ownership::Guard>>,
 );
 
-pub(crate) const DATABASE_VERSION: u32 = 8;
+pub(crate) const DATABASE_VERSION: u32 = 10;
 /// Plain-text characters the reader loads per page of a long message.
 pub const READER_BODY_PAGE: usize = 32_000;
 
 #[derive(Debug, Clone, Default)]
 pub struct Workspace {
+    pub removals: Vec<RemovalJob>,
     pub folder_creations: Vec<PendingCreation>,
+    pub creation_jobs: Vec<CreationJob>,
     pub move_pending_total: usize,
     pub accounts: Vec<Account>,
     pub account_reconnect: crate::profile_sync::join::Reconnect,
@@ -390,7 +395,7 @@ impl Store {
                 "Sent".into(),
                 "Trash".into(),
             ];
-            let mut stmt = c.prepare("SELECT DISTINCT folder FROM recovered_mail ORDER BY folder")?;
+            let mut stmt = c.prepare("SELECT DISTINCT folder FROM recovered_mail m WHERE NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=m.account) ORDER BY folder")?;
             for f in stmt.query_map([], |r| r.get::<_, String>(0))? {
                 let f = f?;
                 if !folders.contains(&f) {
@@ -406,6 +411,14 @@ impl Store {
             let mut account_folders: std::collections::HashMap<String, Vec<String>> =
                 get(c, "account_folders")?;
             let mut catalogs: std::collections::HashMap<String, Vec<crate::folders::Mailbox>> = get(c, "folder_catalogs")?;
+            let creation_jobs=folder_creation::pending_jobs(c)?;
+            let observed_accounts:std::collections::HashSet<_>=account_folders.keys().chain(catalogs.keys()).chain(creation_jobs.iter().map(|job|&job.account)).cloned().collect();
+            let removed=c.prepare("SELECT id FROM connection_tombstones WHERE kind='account' AND id IN (SELECT value FROM json_each(?))")?.query_map([serde_json::to_string(&observed_accounts)?],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+            account_folders.retain(|account,_|!removed.contains(account));
+            catalogs.retain(|account,_|!removed.contains(account));
+            if !removed.is_empty() {
+                folders.retain(|folder|matches!(folder.as_str(),"INBOX"|"Archive"|"Sent"|"Trash") || account_folders.values().any(|names|names.contains(folder)));
+            }
             let catalog_selection: std::collections::HashMap<_, std::collections::HashMap<_,bool>> = catalogs.iter().map(|(account,catalog)| {
                 let mut selection=std::collections::HashMap::new();
                 for folder in catalog {
@@ -416,7 +429,7 @@ impl Store {
             }).collect();
             let mut seen: std::collections::HashMap<_,std::collections::HashSet<_>> = account_folders.iter().map(|(account,names)|(account.clone(),names.iter().cloned().collect())).collect();
             for pair in c
-                .prepare("SELECT DISTINCT account,folder FROM recovered_mail ORDER BY folder")?
+                .prepare("SELECT DISTINCT account,folder FROM recovered_mail m WHERE NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=m.account) ORDER BY folder")?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
             {
                 let (account, folder) = pair?;
@@ -439,7 +452,9 @@ impl Store {
             let folder_trees = catalogs.into_iter().map(|(account, catalog)| (account, Arc::new(crate::folders::Tree::new(&catalog)))).collect();
             let drafts = drafts::snapshot(c)?;
             Ok(Workspace {
+                removals: connections::pending_removals(c)?,
                 folder_creations: folder_creation::pending(c)?,
+                creation_jobs: creation_jobs.into_iter().filter(|job|!removed.contains(&job.account)).collect(),
                 accounts: get(c, "accounts")?,
                 account_reconnect: get(c,crate::profile_sync::join::RECONNECT_KEY)?,
                 calendars: get(c, "calendars")?,
@@ -455,7 +470,7 @@ impl Store {
                 move_pending_total: move_journal::pending(c)?,
                 outgoing_revision: get(c, "outgoing_revision")?,
                 google_archived: get(c, "google_archived")?,
-                outgoing_drafts:c.prepare("SELECT draft FROM outgoing WHERE stage IN ('Queued','Submitting','Uncertain','Accepted')")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
+                outgoing_drafts:c.prepare("SELECT draft FROM outgoing o WHERE stage IN ('Preparing','Queued','Submitting','Uncertain','Accepted') AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=o.account)")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
                 credential_cleanup: c.query_row(
                     "SELECT COUNT(*) FROM credential_cleanup",
                     [],
@@ -537,13 +552,13 @@ fn read_page(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let source = read_moves::source(c)?;
-    let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} WHERE folder='INBOX' AND unread=1 GROUP BY account"))?
+    let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} m WHERE folder='INBOX' AND unread=1 AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND (t.id=m.account OR t.id=(SELECT physical.account FROM main.messages physical WHERE physical.id=m.id))) GROUP BY account"))?
                 .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
                 .collect::<rusqlite::Result<_>>()?;
     let mut observed = std::collections::HashMap::new();
     let mut relocated = std::collections::HashMap::new();
     let mut statement = c.prepare(&format!(
-        "SELECT account,folder,unread,starred FROM {source} WHERE id=?"
+        "SELECT account,folder,unread,starred FROM {source} m WHERE id=? AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND (t.id=m.account OR t.id=(SELECT physical.account FROM main.messages physical WHERE physical.id=m.id)))"
     ))?;
     for id in query.observe {
         use rusqlite::OptionalExtension;
@@ -669,10 +684,12 @@ impl Store {
                     |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
                 )?;
             let mut summary: Mail = serde_json::from_str(&data)?;
+            connections::allow(c, ConnectionKind::Account, &summary.account_id)?;
             summary.unread = unread;
             summary.starred = starred;
             summary.folder = folder;
             move_journal::project_detail(c, &mut summary)?;
+            connections::allow(c, ConnectionKind::Account, &summary.account_id)?;
             let mut parsed = shep_mail_core::mime::parse_paged(&raw)?;
             let source_truncated = raw.len() > crate::model::MAX_MESSAGE_BYTES
                 && shep_mail_core::providers::mail::staging::bound_reader_preview(&mut parsed, body_chars)?;
@@ -763,7 +780,7 @@ impl Store {
     }
     pub async fn raw_message(&self, id: String) -> anyhow::Result<Vec<u8>> {
         self.run(move |c| {
-            Ok(c.query_row("SELECT raw FROM messages WHERE id=?", [id], |r| r.get(0))?)
+            Ok(c.query_row("SELECT raw FROM messages m WHERE id=? AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=m.account)", [id], |r| r.get(0))?)
         })
         .await
     }
@@ -1008,7 +1025,7 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             anyhow::ensure!(!id.is_empty() && id.len() <= 256, "Invalid draft identity.");
-            let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft=? AND stage IN ('Queued','Submitting','Uncertain','Accepted'))", [&id], |r| r.get(0))?;
+            let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft=? AND stage IN ('Preparing','Queued','Submitting','Uncertain','Accepted'))", [&id], |r| r.get(0))?;
             anyhow::ensure!(!pending, "Review this message in Outbox before discarding its draft.");
             // A discarded identity is retired permanently, including revisions
             // captured by a file picker or autosave before the delete committed.
@@ -1135,7 +1152,7 @@ impl Store {
     pub async fn calendar_snapshot(&self) -> anyhow::Result<(u64, Vec<CalendarEvent>)> {
         self.run(|c| {
             let events = c
-                .prepare("SELECT data FROM events ORDER BY start LIMIT 5000")?
+                .prepare("SELECT data FROM events WHERE NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='calendar' AND t.id=events.source) ORDER BY start LIMIT 5000")?
                 .query_map([], |r| r.get::<_, String>(0))?
                 .map(|r| Ok(serde_json::from_str(&r?)?))
                 .collect::<anyhow::Result<Vec<_>>>()?;
@@ -1145,17 +1162,19 @@ impl Store {
     }
     pub async fn export(&self) -> anyhow::Result<Vec<StoredMail>> {
         self.run(|c| {
-            let size: i64=c.query_row("SELECT COALESCE(SUM(length(raw)),0) FROM messages",[],|r|r.get(0))?;
+            let size: i64=c.query_row("SELECT COALESCE(SUM(length(raw)),0) FROM messages m WHERE NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=m.account)",[],|r|r.get(0))?;
             anyhow::ensure!(size <= 256*1024*1024,"This vault exceeds the current 256 MiB snapshot limit. Export a smaller vault before backing up.");
-            c.prepare("SELECT data,raw,body,folder,unread,starred FROM messages")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?
+            c.prepare("SELECT data,raw,body,folder,unread,starred FROM messages m WHERE NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND t.id=m.account)")?.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?
                 .map(|r|{let(data,raw,text,folder,unread,starred)=r?;let mut summary:Mail=serde_json::from_str(&data)?;summary.folder=folder;summary.unread=unread;summary.starred=starred;Ok(StoredMail{summary,raw,text})}).collect()
         }).await
     }
 }
 
 pub(crate) fn action_schema(c: &Connection) -> anyhow::Result<()> {
+    connections::schema(c)?;
     bulk::schema(c)?;
     calendar_actions::schema(c)?;
+    folder_creation::schema(c)?;
     mail_lineage::schema(c)
 }
 

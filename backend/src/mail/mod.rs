@@ -1,4 +1,5 @@
 //! Authenticated, transient mail operations. Browser storage owns durable state.
+pub mod folders;
 mod outgoing;
 pub mod policy;
 mod sent;
@@ -64,6 +65,12 @@ impl Connection {
 
 #[async_trait]
 pub trait HostedMail: Send + Sync {
+    async fn folders(
+        &self,
+        _connection: &Connection,
+    ) -> anyhow::Result<Box<dyn folders::FolderProvider>> {
+        anyhow::bail!("Folder operations are unavailable.")
+    }
     async fn probe(&self, connection: &Connection, smtp: bool) -> anyhow::Result<()>;
     async fn sync(
         &self,
@@ -122,6 +129,15 @@ impl Servers {
 }
 #[async_trait]
 impl HostedMail for Servers {
+    async fn folders(&self, c: &Connection) -> anyhow::Result<Box<dyn folders::FolderProvider>> {
+        Ok(Box::new(folders::FolderConnection {
+            connection: Mutex::new(
+                self.client(c, false)?
+                    .folders(&c.account, &c.password)
+                    .await?,
+            ),
+        }))
+    }
     async fn probe(&self, c: &Connection, smtp: bool) -> anyhow::Result<()> {
         let client = self.client(c, smtp)?;
         if smtp {
@@ -231,6 +247,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/mail/resolve-move", post(resolve_move))
         .merge(outgoing::routes())
         .merge(sent::routes())
+        .merge(folders::routes())
         // Admission runs before JSON is buffered, bounding body memory as well
         // as connections. Eight global/two identity operations; no waiting queue.
         .layer(axum::extract::DefaultBodyLimit::max(36 * 1024 * 1024))

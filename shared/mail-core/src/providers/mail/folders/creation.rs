@@ -254,6 +254,17 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
         self.ensure_folder_exact(&target.name).await
     }
 
+    pub async fn create_planned_folder(&mut self, target: &Mailbox) -> CreateOutcome {
+        if self.encoding != target.encoding {
+            return CreateOutcome::Rejected(
+                "The server's folder encoding changed. Refresh the saved request.".into(),
+            );
+        }
+        connection(&mut self.session, self.encoding, false)
+            .create(target.name.clone(), None)
+            .await
+    }
+
     pub async fn find_planned_folder(
         &mut self,
         target: &Mailbox,
@@ -394,6 +405,30 @@ mod tests {
             action(&mut folders).await;
         };
         tokio::join!(client, peer);
+    }
+
+    #[tokio::test]
+    async fn planned_create_returns_wire_outcome_without_a_post_write_list() {
+        for (response, expected) in [
+            ("$TAG OK created\r\n", 0),
+            ("$TAG NO denied\r\n", 1),
+            ("EOF", 2),
+        ] {
+            script(vec![("CREATE \"Archive\"", response)], async |folders| {
+                let target = Mailbox {
+                    encoding: NameEncoding::ImapUtf7,
+                    ..Mailbox::flat("Archive".into())
+                };
+                let outcome = folders.create_planned_folder(&target).await;
+                assert!(matches!(
+                    (expected, outcome),
+                    (0, CreateOutcome::Acknowledged)
+                        | (1, CreateOutcome::Rejected(_))
+                        | (2, CreateOutcome::Uncertain(_))
+                ));
+            })
+            .await;
+        }
     }
 
     #[tokio::test]

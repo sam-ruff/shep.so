@@ -39,6 +39,7 @@ class NativeRepository
         PrintRepository,
         MailActivityRepository,
         DurableAccountRepository,
+        DurableCalendarRepository,
         DurableMutationRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
@@ -1081,4 +1082,188 @@ class NativeRepository
   ) async => throw const MailOperationFailure(
     'Calendar providers have not been connected yet. Your event remains open.',
   );
+
+  @override
+  Future<CalendarAdmission> admitCalendarAction(
+    String actionId,
+    CalendarEntry entry,
+    CalendarEntry? before, {
+    required String subject,
+  }) async => CalendarAdmission(
+    Map<String, dynamic>.from(
+      await call({
+            'op': 'admit_calendar_action',
+            'subject': subject,
+            'id': actionId,
+            'mutation': {
+              'save': {
+                'before': before?.toCalendarJson(),
+                'after': entry.toCalendarJson(),
+              },
+            },
+          })
+          as Map,
+    ),
+  );
+
+  @override
+  Future<CalendarAdmission> admitCalendarDelete(
+    String actionId,
+    CalendarEntry entry, {
+    required String subject,
+  }) async => CalendarAdmission(
+    Map<String, dynamic>.from(
+      await call({
+            'op': 'admit_calendar_action',
+            'subject': subject,
+            'id': actionId,
+            'mutation': {
+              'delete': {'before': entry.toCalendarJson()},
+            },
+          })
+          as Map,
+    ),
+  );
+
+  @override
+  Future<CalendarAdmission?> calendarActionAdmission(String actionId) async {
+    final value = await call({
+      'op': 'calendar_action_admission',
+      'id': actionId,
+    });
+    return value == null
+        ? null
+        : CalendarAdmission(Map<String, dynamic>.from(value as Map));
+  }
+
+  @override
+  Future<void> executeCalendarAction(
+    String actionId,
+    String accessToken, {
+    required String subject,
+  }) async => call({
+    'op': 'execute_calendar_action',
+    'subject': subject,
+    'id': actionId,
+    'access_token': accessToken,
+  });
+
+  @override
+  Future<void> repairCalendarAction(String actionId) async =>
+      call({'op': 'repair_calendar_action', 'id': actionId});
+
+  @override
+  Future<void> waitCalendarAction(String actionId, String error) async =>
+      call({'op': 'wait_calendar_action', 'id': actionId, 'error': error});
+
+  @override
+  Future<void> cancelCalendarAction(String actionId) async =>
+      call({'op': 'cancel_calendar_action', 'id': actionId});
+
+  @override
+  Future<void> inspectCalendarAction(
+    String actionId,
+    String accessToken, {
+    required String subject,
+  }) async => call({
+    'op': 'inspect_calendar_action',
+    'subject': subject,
+    'id': actionId,
+    'access_token': accessToken,
+  });
+
+  @override
+  Future<List<CalendarActivity>> calendarActions({int offset = 0}) async =>
+      ((await call({'op': 'calendar_actions', 'offset': offset})) as List)
+          .map(
+            (value) =>
+                CalendarActivity(Map<String, dynamic>.from(value as Map)),
+          )
+          .toList();
+
+  @override
+  Future<List<CalendarEntry>> calendarEvents() async {
+    final sources = ((await call({'op': 'calendar_sources'})) as List)
+        .map(
+          (value) =>
+              CalendarSource.fromJson(Map<String, dynamic>.from(value as Map)),
+        )
+        .toList();
+    final byId = {for (final source in sources) source.id: source};
+    return ((await call({'op': 'calendar_events'})) as List).map((value) {
+      final entry = CalendarEntry.fromCalendarJson(
+        Map<String, dynamic>.from(value as Map),
+      );
+      return entry.withSource(
+        byId[entry.sourceId] ??
+            CalendarSourceView(entry.sourceId, entry.sourceId, true),
+      );
+    }).toList();
+  }
+
+  @override
+  Future<CalendarSnapshot> calendarSnapshot() async {
+    final value = Map<String, dynamic>.from(
+      await call({'op': 'calendar_snapshot'}) as Map,
+    );
+    final sources = (value['sources'] as List)
+        .map(
+          (source) =>
+              CalendarSource.fromJson(Map<String, dynamic>.from(source as Map)),
+        )
+        .toList();
+    final byId = {for (final source in sources) source.id: source};
+    return CalendarSnapshot(
+      sources,
+      (value['events'] as List).map((raw) {
+        final entry = CalendarEntry.fromCalendarJson(
+          Map<String, dynamic>.from(raw as Map),
+        );
+        return entry.withSource(
+          byId[entry.sourceId] ??
+              CalendarSource(entry.sourceId, entry.sourceId, true),
+        );
+      }).toList(),
+      subject: value['subject'] as String?,
+    );
+  }
+
+  @override
+  Future<CalendarSnapshot> syncCalendar(
+    String accessToken,
+    DateTime start,
+    DateTime end, {
+    required String subject,
+  }) async {
+    final value = Map<String, dynamic>.from(
+      await call({
+            'op': 'sync_calendar',
+            'subject': subject,
+            'access_token': accessToken,
+            'start': start.toUtc().toIso8601String(),
+            'end': end.toUtc().toIso8601String(),
+          })
+          as Map,
+    );
+    final sources = (value['sources'] as List)
+        .map(
+          (source) =>
+              CalendarSource.fromJson(Map<String, dynamic>.from(source as Map)),
+        )
+        .toList();
+    final byId = {for (final source in sources) source.id: source};
+    return CalendarSnapshot(
+      sources,
+      (value['events'] as List).map((event) {
+        final entry = CalendarEntry.fromCalendarJson(
+          Map<String, dynamic>.from(event as Map),
+        );
+        return switch (byId[entry.sourceId]) {
+          final source? => entry.withSource(source),
+          null => entry,
+        };
+      }).toList(),
+      subject: value['subject'] as String?,
+    );
+  }
 }

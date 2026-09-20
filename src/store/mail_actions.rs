@@ -11,6 +11,7 @@ impl Store {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )?;
             let mut mail: Mail = serde_json::from_str(&data)?;
+            connections::allow(c, ConnectionKind::Account, &mail.account_id)?;
             mail.unread = unread;
             mail.starred = starred;
             mail.folder = folder;

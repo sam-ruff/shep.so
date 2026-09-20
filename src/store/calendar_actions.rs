@@ -220,7 +220,7 @@ impl Store {
     ) -> anyhow::Result<(u64, u64, Vec<CalendarEvent>, Vec<CalendarJob>)> {
         self.run(|c| {
             let events = c
-                .prepare("SELECT data FROM events ORDER BY start")?
+                .prepare("SELECT data FROM events WHERE NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='calendar' AND t.id=events.source) ORDER BY start")?
                 .query_map([], |r| r.get::<_, String>(0))?
                 .map(|row| Ok(serde_json::from_str(&row?)?))
                 .collect::<anyhow::Result<Vec<_>>>()?;

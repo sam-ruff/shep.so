@@ -1547,6 +1547,7 @@ impl App {
         if self.workspace.credential_cleanup > 0 {
             accounts = accounts.push(self.cleanup_preferences());
         }
+        accounts = accounts.push(self.removal_progress_view(crate::store::ConnectionKind::Account));
         column![
             self.settings_card(
                 "Your accounts",
@@ -1739,6 +1740,7 @@ impl App {
         if self.workspace.credential_cleanup > 0 {
             sources = sources.push(self.cleanup_preferences());
         }
+        sources = sources.push(self.removal_progress_view(crate::store::ConnectionKind::Calendar));
         column![
             self.settings_card(
                 "Connected calendars",
@@ -2423,6 +2425,10 @@ impl App {
     }
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
         let (title, subtitle) = match dialog {
+            Dialog::FolderCreation if self.folder_creation_reviewing() => (
+                "Folder request",
+                "Progress and recovery for your saved request.",
+            ),
             Dialog::FolderCreation => ("New folder", "Choose where to create your folder."),
             Dialog::FolderChange => (self.folder_change_title(), ""),
             Dialog::FolderHistory => ("Folder changes", ""),

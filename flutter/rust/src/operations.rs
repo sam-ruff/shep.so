@@ -1,7 +1,7 @@
 use crate::api::MobileProfile;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shep_action_core::Status;
@@ -39,6 +39,34 @@ pub struct Operations {
     pub(crate) provider: std::sync::Mutex<Option<Arc<dyn shep_mail_core::providers::MailProvider>>>,
     #[cfg(test)]
     pub(crate) mutation_waiting: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+mod calendar_capacity_tests {
+    use super::Operations;
+    use std::{future::Future, task::Poll};
+
+    #[tokio::test]
+    async fn waiting_calendar_work_does_not_occupy_shared_provider_capacity() {
+        let operations = Operations::new();
+        let owner = operations.account("calendar:sync").await;
+        let mut waiting = Box::pin(operations.calendar_capacity());
+        assert!(
+            std::future::poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        assert_eq!(operations.slots.available_permits(), 8);
+        let unrelated = operations
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .expect("unrelated provider work retains capacity");
+        assert_eq!(operations.slots.available_permits(), 7);
+        drop(unrelated);
+        drop(owner);
+        let (_calendar_owner, _calendar_slot) = waiting.await.expect("capacity");
+    }
 }
 impl Operations {
     #[cfg(test)]
@@ -85,6 +113,16 @@ impl Operations {
             .or_default()
             .clone();
         lock.lock_owned().await
+    }
+    async fn calendar_capacity(
+        &self,
+    ) -> Result<(
+        tokio::sync::OwnedMutexGuard<()>,
+        tokio::sync::OwnedSemaphorePermit,
+    )> {
+        let owner = self.account("calendar:sync").await;
+        let slot = self.slots.clone().acquire_owned().await?;
+        Ok((owner, slot))
     }
 }
 impl Operations {
@@ -159,6 +197,47 @@ pub enum Request {
         runnable: bool,
         after_created: Option<i64>,
         after_id: Option<String>,
+    },
+    AdmitCalendarAction {
+        id: String,
+        mutation: shep_calendar_core::Mutation,
+        subject: String,
+    },
+    CalendarActionAdmission {
+        id: String,
+    },
+    CalendarActions {
+        #[serde(default)]
+        offset: u32,
+    },
+    CalendarEvents,
+    CalendarSources,
+    CalendarSnapshot,
+    SyncCalendar {
+        access_token: SecretString,
+        subject: String,
+        start: chrono::DateTime<chrono::Utc>,
+        end: chrono::DateTime<chrono::Utc>,
+    },
+    ExecuteCalendarAction {
+        id: String,
+        access_token: SecretString,
+        subject: String,
+    },
+    RepairCalendarAction {
+        id: String,
+    },
+    InspectCalendarAction {
+        id: String,
+        access_token: SecretString,
+        subject: String,
+    },
+    WaitCalendarAction {
+        id: String,
+        error: String,
+    },
+    CancelCalendarAction {
+        id: String,
     },
     CancelMailAction {
         id: String,
@@ -841,6 +920,42 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             mutate(profile,Mutation{action_id:action_id.unwrap_or_else(||uuid::Uuid::new_v4().to_string()),parent_action:None,observed_lineage,require_observation,credential_slot,id,password,folder,unread,starred,intent:true,report}).await
         }
         Request::Groups{command} => crate::groups::run(profile,command).await,
+        Request::AdmitCalendarAction{id,mutation,subject} => db.write(move|db| {
+            Ok(serde_json::to_value(crate::calendar::admit_bound(db,&id,&mutation,&subject)?)?)
+        }).await,
+        Request::CalendarActionAdmission{id} => db.read(move|db| {
+            Ok(serde_json::to_value(crate::calendar::action_admission(db,&id)?)?)
+        }).await,
+        Request::CalendarActions{offset} => db.read(move|db|Ok(serde_json::to_value(crate::calendar::activities(db,offset)?)?)).await,
+        Request::CalendarEvents => db.read(move|db|Ok(serde_json::to_value(crate::calendar::events(db)?)?)).await,
+        Request::CalendarSources => db.read(move|db|Ok(serde_json::to_value(crate::calendar::sources(db)?)?)).await,
+        Request::CalendarSnapshot => db.read(move|db|Ok(serde_json::to_value(crate::calendar::projected_snapshot(db)?)?)).await,
+        Request::SyncCalendar{access_token,subject,start,end} => {
+            let (_guard,_slot)=profile.operations.calendar_capacity().await?;
+            let provider=crate::calendar::GoogleCalendarProvider::new()?;
+            Ok(serde_json::to_value(crate::calendar::sync_bound(db,&provider,access_token.expose_secret().to_owned(),subject,start,end).await?)?)
+        }
+        Request::WaitCalendarAction{id,error} => db.write(move|db| {
+            crate::calendar::mark_waiting(db,&id,&error)?;
+            Ok(json!({"id":id,"status":"waiting"}))
+        }).await,
+        Request::CancelCalendarAction{id} => db.write(move|db| {
+            crate::calendar::cancel(db,&id)?;
+            Ok(json!({"id":id,"status":"cancelled"}))
+        }).await,
+        Request::ExecuteCalendarAction{id,access_token,subject} => {
+            let (_guard,_slot)=profile.operations.calendar_capacity().await?;
+            let provider=crate::calendar::GoogleCalendarProvider::new()?;
+            crate::calendar::execute_bound(db,&provider,id.clone(),access_token.expose_secret().to_owned(),subject).await?;
+            Ok(json!({"id":id}))
+        }
+        Request::RepairCalendarAction{id} => db.write(move|db|{crate::calendar::repair(db,&id)?;Ok(json!({"id":id}))}).await,
+        Request::InspectCalendarAction{id,access_token,subject} => {
+            let (_guard,_slot)=profile.operations.calendar_capacity().await?;
+            let provider=crate::calendar::GoogleCalendarProvider::new()?;
+            crate::calendar::inspect_bound(db,&provider,id.clone(),access_token.expose_secret().to_owned(),subject).await?;
+            Ok(json!({"id":id}))
+        }
         Request::MailActions{offset,runnable,after_created,after_id} => db.read(move|db| {
             let saved=if runnable {
                 anyhow::ensure!(after_created.is_some()==after_id.is_some(),"The runnable action cursor is incomplete.");

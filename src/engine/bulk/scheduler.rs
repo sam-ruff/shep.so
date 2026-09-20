@@ -12,9 +12,9 @@ impl Engine {
             FuturesUnordered::new();
         let mut leases = std::collections::HashMap::<String, Arc<crate::store::BulkLease>>::new();
         let mut active = Vec::<(usize, ReadyWork)>::new();
-        let mut after: [String; 4] = Default::default();
-        let mut blocked = [false; 4];
-        let mut storage_backoff = [None::<tokio::time::Instant>; 4];
+        let mut after: [String; 6] = Default::default();
+        let mut blocked = [false; 6];
+        let mut storage_backoff = [None::<tokio::time::Instant>; 6];
         let mut next_domain = 0;
         let mut progressed = false;
         let mut scanning = false;
@@ -24,7 +24,7 @@ impl Engine {
             let mut scan_pending = false;
             if !self.bulk_control.stopping.get() {
                 stopped = false;
-                for domain in 0..4 {
+                for domain in 0..6 {
                     if let Some(until) = storage_backoff[domain] {
                         if until <= tokio::time::Instant::now() {
                             storage_backoff[domain] = None;
@@ -39,9 +39,9 @@ impl Engine {
                     match self.store.expire_action_backoff().await {
                         Ok(expired) => progressed |= expired,
                         Err(error) => {
-                            blocked = [true; 4];
+                            blocked = [true; 6];
                             storage_backoff =
-                                [Some(tokio::time::Instant::now() + Duration::from_secs(2)); 4];
+                                [Some(tokio::time::Instant::now() + Duration::from_secs(2)); 6];
                             let _ = output.send(Event::Error(format!("Could not update pending action retries. Refresh their history to retry. {error:#}"))).await;
                         }
                     }
@@ -57,8 +57,8 @@ impl Engine {
                         .into_iter()
                         .filter(|repair| *repair || !cache_only)
                     {
-                        for offset in 0..4 {
-                            let domain = (next_domain + offset) % 4;
+                        for offset in 0..6 {
+                            let domain = (next_domain + offset) % 6;
                             if blocked[domain] {
                                 continue;
                             }
@@ -105,7 +105,7 @@ impl Engine {
                         break;
                     };
                     after[domain].clone_from(&ready.cursor);
-                    next_domain = (domain + 1) % 4;
+                    next_domain = (domain + 1) % 6;
                     let activity = self.bulk_control.active.enter();
                     let lease = if let Work::Mail { id, .. } = &ready.work {
                         match leases.get(id).cloned() {
@@ -207,9 +207,9 @@ impl Engine {
                     Ok(Some(at)) => retry_at = Some(retry_at.map_or(at, |current| current.min(at))),
                     Ok(None) => {}
                     Err(error) => {
-                        blocked = [true; 4];
+                        blocked = [true; 6];
                         storage_backoff =
-                            [Some(tokio::time::Instant::now() + Duration::from_secs(2)); 4];
+                            [Some(tokio::time::Instant::now() + Duration::from_secs(2)); 6];
                         retry_at = None;
                         let _ = output.send(Event::Error(format!("Could not read pending action retries. Refresh their history to retry. {error:#}"))).await;
                     }
@@ -246,7 +246,7 @@ impl Engine {
                 }
                 command = input.recv(), if input_open => {
                     match command {
-                        Some(Command::BulkRun(_)) => { progressed = true; blocked = [false; 4]; }
+                        Some(Command::BulkRun(_)) => { progressed = true; blocked = [false; 6]; }
                         Some(_) => { let _ = output.send(Event::Error("Unexpected action-owner command".into())).await; }
                         None => input_open = false,
                     }
@@ -278,6 +278,8 @@ impl Engine {
                     .await
             }
             Work::Calendar(id) => self.execute_calendar_work(id, &mut output).await,
+            Work::Creation(id) => self.execute_creation_work(id, output).await,
+            Work::Removal(id) => self.execute_removal_work(id, output).await,
             Work::Folder(id) => {
                 let before = self
                     .store

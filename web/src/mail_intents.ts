@@ -1,4 +1,5 @@
 import type { Fields } from "./model";
+import { assertFolderAvailable } from "./folder_fences";
 import type { Change } from "./storage";
 import {
   cacheStores,
@@ -52,6 +53,7 @@ export interface IntentStore {
 }
 const names = [
   "accounts",
+  "folderActions",
   "mailActions",
   "mailIntents",
   "intentState",
@@ -141,6 +143,7 @@ export class BrowserIntents implements IntentStore {
     if (!mail)
       throw Error("This message is no longer cached. Refresh its folder.");
     const account = mail.core.account_id;
+    await assertFolderAvailable(tx, [account]);
     if (await read(tx.objectStore("removedAccounts").get(account)))
       throw Error("This account was removed. Reopen Preferences.");
     const previous = await read<MailIntent | undefined>(

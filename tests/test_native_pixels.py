@@ -4,6 +4,35 @@ from scripts import native_pixels as pixels
 
 
 class PixelMeasurementTests(unittest.TestCase):
+    def test_changed_reference_rejects_background_only_and_unchanged_labels(self):
+        blank = bytearray([255] * 100 * 100 * 3)
+        for after in (blank, bytearray([20] * len(blank))):
+            with self.assertRaisesRegex(ValueError, "foreground edges"):
+                pixels.changed_reference_points(blank, after, 100, 100, [[5, 5, 90, 90]])
+
+    def test_changed_reference_requires_distinct_changed_edges_in_each_region(self):
+        before = bytearray([255] * 100 * 100 * 3)
+        after = before.copy()
+        for y in range(10, 40, 4):
+            for x in range(10, 90, 4):
+                after[(y * 100 + x) * 3:(y * 100 + x) * 3 + 3] = b"\0\0\0"
+        points = pixels.changed_reference_points(before, after, 100, 100, [[5, 5, 90, 40]])
+        self.assertEqual(len(points), 32)
+        self.assertEqual(len({(p[0], p[1]) for p in points}), len(points))
+        self.assertTrue(all(p[2:] == [0, 0, 0] for p in points))
+        with self.assertRaisesRegex(ValueError, "foreground edges"):
+            pixels.changed_reference_points(before, after, 100, 100, [[5, 5, 90, 40], [5, 55, 90, 40]])
+        for bounds in ([], [[-1, 5, 90, 40]], [[5, 5, 100, 40]], [[True, 5, 90, 40]]):
+            with self.assertRaises(ValueError):
+                pixels.changed_reference_points(before, after, 100, 100, bounds)
+
+    def test_changed_reference_does_not_time_an_already_matching_label(self):
+        window = object.__new__(pixels.Window)
+        window.matched, window.xtest = Mock(return_value=.5), Mock()
+        with self.assertRaisesRegex(ValueError, "pre-action"):
+            window.click_until_visible([], require_change=True)
+        window.xtest.XTestFakeButtonEvent.assert_not_called()
+
     def test_rejects_invalid_or_outside_references(self):
         valid = [[10, 20, 30, 40, 50]]*8
         pixels.validate_points(valid, 100, 100)

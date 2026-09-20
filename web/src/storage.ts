@@ -1,4 +1,9 @@
 import { prepareLineage, type IdentityTransition } from "./mail_lineage";
+import { BrowserFolders } from "./folder_actions";
+import { BrowserFolderMutations } from "./folder_mutations";
+import { assertFolderAvailable, folderExclusions, FolderMutationBlocked } from "./folder_fences";
+import { folderConnection } from "./folder_actions";
+import { filingIndexes, filingRetiredIndexes, filingClock, assertFilingAvailable } from "./folder_filing";
 import { cacheStores, mailMetadata, recordCacheChanges } from "./cache_changes";
 import {
   BrowserIntents,
@@ -18,6 +23,9 @@ import {
 export const stores = [
   "accounts",
   "accountConnections",
+  "folderActions",
+  "folderCatalogs",
+  "folderMembers",
   "mail",
   "raw",
   "drafts",
@@ -39,6 +47,8 @@ export interface Change {
   identity?: IdentityTransition;
 }
 export interface LocalStore {
+  readonly folderActions?: BrowserFolders;
+  readonly folderMutations?: BrowserFolderMutations;
   readonly profileId?: string;
   intents?: IntentStore;
   removeAccount?(review: RemovalReview, discard: boolean): Promise<void>;
@@ -55,6 +65,8 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
+    // Version 17 fences cache writers without subtree action ownership.
+    // Version 16 fences account-removal writers without folder action ownership.
     // Version 15 fences draft writers without observed-version conflict checks.
     // Version 14 fences removal writers without connection-attempt ownership.
     // Version 13 fences writers without individual action receipt/removal ownership.
@@ -64,7 +76,7 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     // Version 9 binds the derived persistent index to this source incarnation.
     // Version 8 fences older tabs that remove accounts without group ownership.
     // Version 7 fenced writes lacking atomic cache-applied intent revisions.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 15);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 17);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
@@ -72,6 +84,15 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
       // Seed acknowledged folder roles from the earlier outgoing journal in
       // the same upgrade transaction; failure leaves version 2 intact.
       const tx = request.transaction!;
+      const folderActions = tx.objectStore("folderActions");
+      if (!folderActions.indexNames.contains("active_id")) folderActions.createIndex("active_id", ["active", "id"]);
+      const folderMembers = tx.objectStore("folderMembers");
+      if (!folderMembers.indexNames.contains("jobId")) folderMembers.createIndex("jobId", ["job", "id"]);
+      if (!folderMembers.indexNames.contains("jobFolderId")) folderMembers.createIndex("jobFolderId", ["job", "folder", "id"]);
+      const folderMetadata = tx.objectStore("mailMetadata");
+      if (!folderMetadata.indexNames.contains("accountFolderId")) folderMetadata.createIndex("accountFolderId", ["core.account_id", "core.folder", "id"]);
+      const folderAliases = tx.objectStore("mailAliases");
+      if (!folderAliases.indexNames.contains("target")) folderAliases.createIndex("target", "target");
       if (event.oldVersion < 10) {
         const mail = tx.objectStore("mail");
         mail.createIndex("account", "core.account_id");
@@ -113,6 +134,7 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
         };
       }
       const outgoing = tx.objectStore("outgoing");
+      for (const [name, fields] of [...filingIndexes, ...filingRetiredIndexes]) if (!outgoing.indexNames.contains(name)) outgoing.createIndex(name, [...fields]);
       if (!outgoing.indexNames.contains("submission"))
         outgoing.createIndex("submission", "id");
       // Never replace roles acknowledged after the original v3 migration.
@@ -169,12 +191,16 @@ export class BrowserWriteFailure extends Error {
 }
 
 export class BrowserStore implements LocalStore {
+  readonly folderActions: BrowserFolders;
+  readonly folderMutations: BrowserFolderMutations;
   readonly intents: IntentStore;
   private constructor(
     private db: IDBDatabase,
     readonly profileId: string,
   ) {
     this.intents = new BrowserIntents(db);
+    this.folderActions = new BrowserFolders(db);
+    this.folderMutations = new BrowserFolderMutations(db);
   }
   static async open(user: string): Promise<BrowserStore> {
     return new BrowserStore(await openMailDatabase(user), user);
@@ -260,6 +286,8 @@ export class BrowserStore implements LocalStore {
               if (c.value === undefined) tx.objectStore(c.store).delete(c.key);
               else tx.objectStore(c.store).put(c.value, c.key);
             }
+            for (const job of snapshot.folderActions ?? []) if (job.account === review.id)
+              tx.objectStore("folderMembers").delete(IDBKeyRange.bound([job.id, ""], [job.id, "\uffff"]));
             if (changes.length) recordCacheChanges(tx, changes, true);
           } catch (e) {
             error = e;
@@ -291,6 +319,8 @@ export class BrowserStore implements LocalStore {
             ...(changes.some((c) => c.store === "mail") ? ["mailAliases"] : []),
             ...(intent ? ["mailIntents", "mailAliases", "mailMetadata"] : []),
             "removedAccounts" as const,
+            ...(changes.some(c => c.store === "outgoing") ? ["folderActions" as const, "intentState" as const] : []),
+            ...(changes.some(c => c.store === "mail" || c.store === "accounts" || c.store === "mailAliases" || c.store === "folderCatalogs" || c.store === "mailRoles") ? ["folderActions" as const, "mailMetadata" as const] : []),
           ]),
         ],
         "readwrite",
@@ -309,6 +339,49 @@ export class BrowserStore implements LocalStore {
       removed.onsuccess = async () => {
         try {
           checkRemovedWrites(changes, removed.result);
+          if (changes.some(change => change.store === "outgoing")) {
+            for (const change of changes) if (change.store === "outgoing" && change.value) await assertFilingAvailable(tx, change.value as import("./provider").Outgoing);
+            const clock = await new Promise<number>((resolve, reject) => {
+              const request = tx.objectStore("intentState").get(filingClock);
+              request.onsuccess = () => resolve(request.result ?? 0); request.onerror = () => reject(request.error);
+            });
+            if (!Number.isSafeInteger(clock) || clock >= Number.MAX_SAFE_INTEGER) throw Error("The outgoing review clock is exhausted. Reopen Shep before changing folders.");
+            tx.objectStore("intentState").put(clock + 1, filingClock);
+          }
+          const affectedAccounts = new Set<string>();
+          const observeAccount = async (id: string) => {
+            const prior = await new Promise<any>((resolve, reject) => {
+              const request = tx.objectStore("mailMetadata").get(id);
+              request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+            });
+            if (prior) affectedAccounts.add(prior.core.account_id);
+          };
+          for (const change of changes) {
+            if (change.store === "folderCatalogs" || change.store === "mailRoles") affectedAccounts.add(change.key);
+            if (change.store === "mailAliases") {
+              const prior = await new Promise<{ target: string } | undefined>((resolve, reject) => {
+                const request = tx.objectStore("mailAliases").get(change.key);
+                request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+              });
+              await observeAccount(change.key);
+              if (prior) await observeAccount(prior.target);
+              if (change.value) await observeAccount((change.value as { target: string }).target);
+            }
+            if (change.store !== "mail") continue;
+            const account = (change.value as { core?: { account_id?: string } } | undefined)?.core?.account_id;
+            if (account) affectedAccounts.add(account);
+            await observeAccount(change.key);
+          }
+          if (affectedAccounts.size) await assertFolderAvailable(tx, affectedAccounts);
+          const excluded = changes.some(change => change.store === "accounts") ? await folderExclusions(tx) : new Set<string>();
+          for (const change of changes) if (change.store === "accounts" && excluded.has(change.key)) {
+            const prior = await new Promise<any>((resolve, reject) => {
+              const request = tx.objectStore("accounts").get(change.key);
+              request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+            });
+            const next = change.value as import("./provider").Account | undefined;
+            if (!next || !prior || folderConnection(prior) !== folderConnection(next) || prior.sent_folder !== next.sent_folder || prior.sent_copy !== next.sent_copy) throw new FolderMutationBlocked("Finish or review the saved folder change before changing this account connection or Sent folder.");
+          }
           // Keep derived origin metadata atomic with the raw cache and aliases.
           const prepared = changes.some(
             (c) => c.store === "mail" || c.store === "mailAliases",
@@ -333,7 +406,7 @@ export class BrowserStore implements LocalStore {
           if (intent) await acknowledgeIntentCache(tx, intent, changes);
         } catch (error) {
           cause =
-            error instanceof Error &&
+            error instanceof FolderMutationBlocked || error instanceof Error &&
             error.message.startsWith("This account was removed")
               ? error
               : undefined;

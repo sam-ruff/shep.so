@@ -1,16 +1,16 @@
 import { test, expect } from "@playwright/test";
 
-test("draft conflict upgrade closes older writers and preserves exact saved content", async ({
+for (const previousVersion of [14, 15, 16]) test(`action schema upgrade closes version ${previousVersion} writers and preserves exact saved content`, async ({
   page,
 }) => {
   await page.goto("/preview.html");
-  const evidence = await page.evaluate(async () => {
+  const evidence = await page.evaluate(async previousVersion => {
     const modulePath = "/src/storage.ts";
     const { stores, openMailDatabase } = await import(modulePath);
     const profile = "D".repeat(43),
       name = `shep.mail.v1.${profile}`;
     const old = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(name, 14);
+      const request = indexedDB.open(name, previousVersion);
       request.onupgradeneeded = () => {
         for (const store of stores) request.result.createObjectStore(store);
       };
@@ -60,7 +60,7 @@ test("draft conflict upgrade closes older writers and preserves exact saved cont
     const version = current.version;
     current.close();
     const oldVersion = await new Promise<string>((resolve, reject) => {
-      const request = indexedDB.open(name, 14);
+      const request = indexedDB.open(name, previousVersion);
       request.onerror = () => resolve(request.error?.name ?? "");
       request.onsuccess = () => {
         request.result.close();
@@ -75,7 +75,7 @@ test("draft conflict upgrade closes older writers and preserves exact saved cont
       oldVersion,
       bytes: [...new Uint8Array(await file.blob.arrayBuffer())],
     };
-  });
+  }, previousVersion);
   expect(evidence).toEqual({
     closed: true,
     refused: true,
@@ -85,7 +85,7 @@ test("draft conflict upgrade closes older writers and preserves exact saved cont
       body: "Exact retained text",
       forward: { html: "retained source" },
     },
-    version: 15,
+    version: 17,
     oldVersion: "VersionError",
     bytes: [0, 255],
   });
@@ -193,7 +193,7 @@ test("IndexedDB upgrade preserves mail and seeds Sent roles; failed writes roll 
       version,
     };
   });
-  expect(evidence.version).toBe(15);
+  expect(evidence.version).toBe(17);
   expect(evidence.migrated.mail).toEqual([
     { id: "original", subject: "Storage fixture" },
   ]);

@@ -107,6 +107,7 @@ impl App {
         for info in &self.outbox.page.rows {
             let selected = self.outbox.selected.as_deref() == Some(&info.attempt);
             let status = match info.delivery {
+                DeliveryState::Preparing => "Preparing · saved in Outbox",
                 DeliveryState::Queued => "Queued · waiting to send",
                 DeliveryState::Submitting | DeliveryState::Uncertain => "Delivery not confirmed",
                 DeliveryState::Rejected => "Not sent",
@@ -171,7 +172,7 @@ impl App {
                         .push(row![control("Record as sent",RecoveryAction::MarkSent,self.outbox.confirmed),control("Return to drafts",RecoveryAction::ReturnDraft,self.outbox.confirmed)].spacing(8).wrap());
                 } else if matches!(
                     info.delivery,
-                    DeliveryState::Queued | DeliveryState::Rejected
+                    DeliveryState::Preparing | DeliveryState::Queued | DeliveryState::Rejected
                 ) {
                     item = item.push(control(
                         "Return to drafts",

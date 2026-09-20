@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = {
     "Cargo.toml": "shep",
     "shared/action-core/Cargo.toml": "shep-action-core",
+    "shared/calendar-core/Cargo.toml": "shep-calendar-core",
     "shared/mail-core/Cargo.toml": "shep-mail-core",
     "shared/mail-content/Cargo.toml": "shep-mail-content",
     "shared/profile-core/Cargo.toml": "shep-profile-core",

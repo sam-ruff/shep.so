@@ -34,6 +34,24 @@ pub struct PinnedMail {
     smtp_test_ca: Option<lettre::transport::smtp::client::Certificate>,
 }
 impl PinnedMail {
+    pub async fn folders(
+        &self,
+        account: &Account,
+        password: &SecretString,
+    ) -> anyhow::Result<folders::ImapFolders<Tls>> {
+        anyhow::ensure!(
+            account.protocol == Protocol::Imap,
+            "POP3 folders stay on the device."
+        );
+        tokio::time::timeout(Duration::from_secs(30), async {
+            folders::ImapFolders::from_session(
+                imap_routed(account, password, &self.incoming).await?,
+            )
+            .await
+        })
+        .await
+        .context("The folder connection took too long.")?
+    }
     /// Callers must authorize both exact destinations before constructing this.
     pub fn new(incoming: SocketAddr, smtp: SocketAddr) -> Self {
         Self {

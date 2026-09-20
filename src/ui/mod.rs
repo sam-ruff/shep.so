@@ -203,6 +203,7 @@ pub enum Message {
     SaveCalendar,
     ReviewRemoval(crate::store::ConnectionRef),
     ConfirmRemoval,
+    RetryRemoval(String),
     OpenOutbox,
     OutboxPage(usize),
     SelectOutgoing(String),
@@ -790,7 +791,7 @@ impl App {
     fn try_command(&mut self, command: Command) -> bool {
         let calendar_conflict = match &command {
             Command::Restore(..) => self.calendar_actions.has_changes(),
-            Command::RemoveConnection(_, review, _) => {
+            Command::AdmitRemoval(_, _, review, _) => {
                 review.target.kind == crate::store::ConnectionKind::Calendar
                     && self.calendar_actions.owns_source(&review.target.id)
             }
@@ -1240,6 +1241,10 @@ impl App {
             Message::MailContextAction(action) => return self.choose_mail_context(action),
             Message::Backend(event) => match event {
                 Event::Folder(event) => self.folder_event(event),
+                Event::CreationAdmitted(serial, id, result) => {
+                    self.creation_admitted(serial, id, result)
+                }
+                Event::CreationChanged(job) => self.creation_changed(job),
                 Event::FolderCreated(serial, result) => {
                     let completed = serial == self.folder_creation.serial
                         && self.folder_creation.busy
@@ -1304,6 +1309,8 @@ impl App {
                         workspace.calendars = self.workspace.calendars.clone();
                         workspace.account_folders = self.workspace.account_folders.clone();
                         workspace.folder_trees = self.workspace.folder_trees.clone();
+                        workspace.creation_jobs = self.workspace.creation_jobs.clone();
+                        workspace.removals = self.workspace.removals.clone();
                         workspace.folders = self.workspace.folders.clone();
                         workspace.connections_revision = self.workspace.connections_revision;
                         workspace.credential_cleanup = self.workspace.credential_cleanup;
@@ -1312,6 +1319,7 @@ impl App {
                             self.workspace.removed_google_calendars;
                     }
 
+                    self.reconcile_creation_workspace(&mut workspace);
                     if workspace.outgoing_revision < self.workspace.outgoing_revision {
                         workspace.outgoing_revision = self.workspace.outgoing_revision;
                         workspace.outgoing_pending = self.workspace.outgoing_pending;
@@ -1709,9 +1717,10 @@ impl App {
                     self.account_setups_loaded(request, result)
                 }
                 Event::RemovalPreview(request, result) => self.removal_preview(request, result),
-                Event::ConnectionRemoved(request, result) => {
-                    self.connection_removed(request, result)
+                Event::RemovalAdmitted(request, id, result) => {
+                    self.removal_admitted(request, id, result)
                 }
+                Event::RemovalChanged(job) => self.removal_changed(job),
                 Event::CalendarsDiscovered(request, result) => {
                     self.calendars_discovered(request, result)
                 }
@@ -2831,8 +2840,31 @@ impl App {
             Message::MoveRecovery(message) => self.handle_move_recovery(message),
             Message::ReviewRemoval(target) => self.review_removal(target),
             Message::ConfirmRemoval => self.confirm_removal(),
+            Message::RetryRemoval(id) => {
+                if let Some(job) = self
+                    .workspace
+                    .removals
+                    .iter()
+                    .find(|job| job.id == id)
+                    .cloned()
+                {
+                    self.send(Command::RetryRemoval(job));
+                }
+            }
             Message::CancelPendingTransfers(value) => self.removal.cancel_transfers = value,
             Message::CleanupCredentials => {
+                if !self.workspace.removals.is_empty() {
+                    let failed: Vec<_> = self
+                        .workspace
+                        .removals
+                        .iter()
+                        .filter(|job| job.stage == crate::store::RemovalStage::Failed)
+                        .cloned()
+                        .collect();
+                    for job in failed {
+                        self.send(Command::RetryRemoval(job));
+                    }
+                }
                 if !self.busy.contains("credential-cleanup")
                     && self.try_command(Command::CleanupCredentials)
                 {
@@ -4415,6 +4447,7 @@ impl App {
         data["removal"] = serde_json::json!(self.removal.preview);
         data["removal_error"] = serde_json::json!(self.removal.error);
         data["removing"] = serde_json::json!(self.removal.removing.is_some());
+        data["removal_jobs"] = serde_json::json!(self.workspace.removals);
         data["removal_cancel_transfers"] = serde_json::json!(self.removal.cancel_transfers);
         data["account_reconnect_count"] = serde_json::json!(self.workspace.account_reconnect.len());
         data["account_count"] = serde_json::json!(self.workspace.accounts.len());

@@ -6,7 +6,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(config.bind).await?;
     let verifier = Arc::new(Google::new(config.clone())?);
     let provider = Arc::new(GoogleProfiles::new(config.clone(), verifier.clone())?);
-    let router = app(AppState::new(config, verifier, provider));
+    let calendar = Arc::new(shep_calendar_core::http::GoogleCalendarProvider::new()?);
+    let router = app(AppState::new(config, verifier, provider).with_calendar_provider(calendar));
     // Do not log request URLs, callback codes, cookies, headers or bodies.
     println!("Shep beta gateway listening on configured loopback address");
     axum::serve(listener, router)

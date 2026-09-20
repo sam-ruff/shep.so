@@ -1,8 +1,131 @@
 # Completion audit
 
+## Folder and calendar continuation, integrated 20 September 2026
+
+Final native timing passes both unchanged 100 ms p95 targets in 20 cycles:
+review 32.31 ms (maximum 32.73), confirmation 22.14 ms (maximum 22.74).
+`artifacts/performance/actions.json` records the final binary, held provider
+capacity, 100,000 messages and ten selected rows. Reviewed capture `3f6da406de91`
+shows updated rows/counts and visible Undo. The separate correctness scenario
+keeps StoreTruth enabled and passes with final database agreement (`010a375f4c3c`).
+Flutter's full suite passes 234 tests; the final 29 focused controls/FFI cases
+include closed-request recovery after a failed lookup. Flutter analysis and
+Clippy are clean. Shared HTTP passes eight tests; backend passes 67 tests with
+one configured browser prerequisite ignored and clean Clippy. The common
+Drive/Calendar refresh owner keeps network work outside global grant locks and
+rejects expired sessions or replaced connections before returning credentials.
+The common performance gate now validates the raw paired samples, fixture
+conditions, binary fingerprint and retained bounds; local/Linux quality scripts
+run it. Its focused tests and the final report pass. Checkpoint shipping is next.
+
+The first 20-cycle ten-of-100,000 native pixel run fails the unchanged 100 ms
+review target: p50 147.37 ms, p95 264.86 ms, maximum 270.55 ms. Confirmation
+feedback passes at p95 23.60 ms, maximum 24.54 ms. All 40 measurements start with
+no reference matches and finish with every reference matched; metadata remains
+at most 50 rows and six cached bodies. Agent builds and other tests were stopped;
+ordinary user applications remained running. Evidence is the isolated lane's
+`native-action-latency-quiet.json` and capture `20392cfc8eef`. The review delay
+requires diagnosis, not a completed performance gate.
+
+The follow-up storage trace isolates expensive test-observer contention: the
+ten-row review uses 2,600 SQLite VM steps and about 1.2 ms, while full StoreTruth
+inspection uses 4,903,500 steps and about 227 ms on the same worker. No production
+query change is justified by that trace. A separate pixel run without this
+optional observer is pending; ordinary correctness tests retain the oracle.
+Browser schema 17 also passes all three 100,000-message export/index/selection
+regressions in a quiet window with concurrent draft saves. The shared calendar
+HTTP adapter passes eight model/protocol tests, including exact recovery identity,
+ETag and unknown-role checks. Flutter's full v3 run passes 207 tests but cannot
+load the new lifecycle file because a fixture called a nonexistent Google method;
+that fixture and further admission recovery corrections are being integrated.
+
+The corrected integrated Flutter admission suite passes 29 tests, including the
+actual native bridge and compact recovery golden. Exact request retention now
+covers save/delete, repeated clicks, changed editor content, disposal and a
+background refresh racing admission. Unresolved local requests have their own
+32-entry bound; closing a completed editor retires its request only after a
+coherent cache observation. The shared provider now replaces Flutter's duplicate
+HTTP adapter. The new authenticated Calendar gateway passes 64 backend tests
+(one configured browser prerequisite ignored); six release-client tests pass.
+Grant refresh ownership and full client checks remain in progress.
+
+Native removal passes all ten distinct real controls across the combined run and
+one rerun after a missing Preferences readiness wait was corrected; 47 combined
+bulk/calendar/connection integration tests pass. Reviewed captures show queued
+cleanup (`13753aca0e63`), retained failure/Retry (`bf9466b143f6`) and compact dark
+calendar removal (`f4318e21fba6`). Browser schema 17 checked subtree actions pass
+235 unit tests, 57 backend tests and 22 combined folder/preferences/outgoing/storage
+Chromium scenarios with reviewed compact recovery. Backend Clippy and the
+production build pass. The three original native pending-read/delete/Undo
+regressions pass again, and normal root hooks pass. Flutter schema
+21 adds exact admission input/UUID reconciliation; all 154 Rust tests pass, while
+Dart lost-reply request retention remains in progress. Nothing in this batch is
+shipped yet; final client verification and the shipping hook remain required.
+
+The following extensions are integrated but not shipped: native schema 10 removal
+passes the combined library gate with 1,204 executions and two ignored. Flutter
+schema 20 binds cached calendar snapshots and saved actions to their Google
+subject, admits locally while offline, and checks the SDK grant before dispatch.
+Its full Rust gate passes 148 tests with three separately exercised HTTP tests;
+16 focused Flutter tests pass, including replacement-account refusal and matching
+account Retry. Capacity/receipt ordering and final native controls are still being
+checked. The first schema 20 run found two obsolete schema-version assertions;
+both are updated and the complete Rust rerun passes.
+
+This checkpoint is not shipped yet. Native schema 9 now saves folder creation
+before provider capacity and freezes Send preparation before MIME work. Exact
+identities, cancellation, account removal and imported preparations fence late
+results. Combined native controls pass 14 scenarios, with three further passing
+selection/password regressions, including the original ten-message delete case.
+Reviewed captures show the pending folder row (`1f9ec2ed89de`), compact failure
+recovery (`50f70807497b`), Preparing Outbox (`137241d3a2e8`) and immediate ten-row
+deletion (`cd3384d2010c`). These are functional native checks, not measured latency.
+
+Browser schema 16 adds saved creation and the authenticated pinned gateway.
+Per-candidate scheduling gives folder work a turn before a page of mail drains;
+receipt provenance distinguishes pre-existing folders from acknowledged creation.
+There are 78 distinct passing focused tests, 12 Chromium controls and 49 backend
+tests (one fixture prerequisite ignored), clean TypeScript/backend Clippy and a
+passing production build. The real TLS/STARTTLS folder test rejects a wrong
+hostname before authentication. Desktop-light and compact-dark recovery captures
+are reviewed.
+
+Flutter Google calendar schema 19 and shared calendar contracts pass initial
+141 Rust and 210 Flutter tests, four focused recovery/golden controls, clean
+analysis/Clippy and eight final HTTP-policy tests. Review then found gaps in real
+Delete activity decoding, source-scoped identities, empty-cache retirement and
+newer-intent projection; corrections and stronger FFI tests are required before
+shipping. Further review found editor metadata loss could turn an edit into
+CREATE, normal edit receipts could not replace their exact old cache row, and
+stale sync needed a revision fence. Three explicit owned HTTP contract tests pass
+for stable create identity, exact ETags, retry/refusal policy and lost replies;
+these do not replace the pending lifecycle corrections.
+Correction v2 now passes ten Rust calendar tests and eleven focused Flutter
+tests, including actual FFI Delete/reopen, retained editor identity and stale UI
+snapshot/error rejection. Analysis and Clippy pass; the corrected compact dark
+empty-cache capture is reviewed. FFI reopen uses another repository handle,
+not a process restart. Durable Google subject binding, coherent snapshot reads,
+stale sync/cache-repair ordering and shared capacity gates remain before shipping.
+The integrated v2 full suites pass 144 Rust tests (three separately passing
+ignored HTTP contracts) and 216 Flutter tests. These remain pre-shipping results
+while the outstanding lifecycle corrections are implemented.
+Calendar activity now identifies the event and distinguishes deletion from saving;
+the actual editor preserves all-day events and saves the all-day choice it shows
+for new events. Thirteen final focused Flutter tests and analysis pass, with the
+updated compact dark recovery capture reviewed.
+The new crate participates in both release stamping paths; fixing the
+hard-coded client manifest boundary brings all 46 release tests to passing.
+
+The normal root gate passes 1,568 Rust executions with four ignored and both
+Clippy modes; strict documentation passes. A subsequent completed-folder-history
+correction passes a 100,000-row VM-step regression for pending, admission capacity
+and legacy reads; the final combined gate must include it. Native removal, checked browser
+folder changes, CalDAV and remaining client/platform/latency work remain active.
+
 ## Client conflict and connection continuation, 20 September 2026
 
-The next batch integrates browser schema 15 observed draft revisions and explicit
+Checkpoint `2605ff5`, pushed to main and verified remotely, integrates browser
+schema 15 observed draft revisions and explicit
 conflict review, independent preference failure/Retry, and Flutter schema 18
 account admission through existing credential slots. Browser passes 113 focused
 tests. Its initial eight-worker control run passed 34 of 37; the one-worker
@@ -18,7 +141,8 @@ signals are restored and query failures now use their own fixture field.
 Review also found duplicate execution sharing the raw failed activation reply
 while the first caller reconciled its saved receipt. The shared future now covers
 reconciliation; 26 focused actual-FFI/control tests pass after that correction.
-Normal commit gates and shipping remain required for this batch.
+Normal hooks pass 1,547 Rust executions with four ignored, both Clippy modes and
+strict documentation. Full domain/platform adoption remains active.
 
 ## Bounded resumption and checked activation continuation, 20 September 2026
 

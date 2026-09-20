@@ -18,6 +18,11 @@ pub(super) fn changed(c: &Connection) -> anyhow::Result<()> {
 }
 pub(super) fn snapshot(c: &Connection) -> anyhow::Result<DraftState> {
     let mut drafts: Vec<Draft> = get(c, "drafts")?;
+    let removed = c
+        .prepare("SELECT id FROM connection_tombstones WHERE kind='account'")?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<std::collections::HashSet<_>>>()?;
+    drafts.retain(|draft| !removed.contains(&draft.account_id));
     for draft in &mut drafts {
         draft.attachments = attachments(c, &draft.id)?;
     }
@@ -53,6 +58,10 @@ pub(super) fn sent(c: &Connection, draft: &Draft) -> anyhow::Result<bool> {
 }
 pub(super) fn save(c: &Connection, mut draft: Draft) -> anyhow::Result<()> {
     connections::allow(c, ConnectionKind::Account, &draft.account_id)?;
+    anyhow::ensure!(
+        !super::outgoing::preparing(c, &draft.id)?,
+        "This draft is preparing to send. Return it from Outbox before editing."
+    );
     anyhow::ensure!(
         !draft.id.is_empty() && draft.id.len() <= 256 && draft.revision <= i64::MAX as u64,
         "The draft has an invalid identity or revision."
@@ -104,6 +113,7 @@ impl Store {
     }
     pub async fn ensure_draft_unsent(&self, draft: Draft) -> anyhow::Result<()> {
         self.run(move |c| {
+            connections::allow(c, ConnectionKind::Account, &draft.account_id)?;
             anyhow::ensure!(
                 !sent(c, &draft)?,
                 "This draft was sent or discarded. Compose a new message to send another copy."
@@ -151,6 +161,10 @@ impl Store {
     pub async fn remove_draft_file(&self, draft: String, id: String) -> anyhow::Result<DraftState> {
         self.run(move |c| {
             let tx = c.transaction()?;
+            anyhow::ensure!(
+                !super::outgoing::preparing(&tx, &draft)?,
+                "This draft is preparing to send. Return it from Outbox before editing."
+            );
             if tx.execute(
                 "DELETE FROM draft_attachments WHERE draft=? AND id=?",
                 params![draft, id],
@@ -166,6 +180,7 @@ impl Store {
     }
     pub async fn draft_files(&self, draft: Draft) -> anyhow::Result<Vec<FilePart>> {
         self.run(move |c| {
+            connections::allow(c,ConnectionKind::Account,&draft.account_id)?;
             anyhow::ensure!(draft.attachments.len() <= MAX_ATTACHMENTS, "Too many attachments.");
             let mut files = Vec::new();
             let mut total = 0usize;

@@ -110,6 +110,7 @@ class Desktop:
         self.clipboard = None
         self.xvfb = None
         self.window = None
+        self.pixel_baseline = None
         self.env = os.environ.copy()
         self.directory = None
         self.log = None
@@ -133,6 +134,7 @@ class Desktop:
         atexit.register(self.stop)
 
     def stop(self):
+        self.pixel_baseline = None
         if self.tray_fixture:
             self.tray_fixture.close()
             self.tray_fixture = None
@@ -229,7 +231,7 @@ class Desktop:
             time.sleep(.02)
         self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
 
-    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False, live_imap=False, activation=None, draft_save_failure_once=False, preference_save_failure_once=False):
+    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False, live_imap=False, activation=None, draft_save_failure_once=False, preference_save_failure_once=False, selection_mailbox=False, store_truth=True):
         self.stop()
         if type(draft_save_failure_once) is not bool:
             raise ValueError("Draft save failure fixture must be a boolean.")
@@ -284,6 +286,10 @@ class Desktop:
             raise ValueError("Held account sync fixture must be a boolean.")
         if type(large_incoming) is not bool:
             raise ValueError("Large incoming fixture must be a boolean.")
+        if type(selection_mailbox) is not bool:
+            raise ValueError("Selection mailbox fixture must be a boolean.")
+        if type(store_truth) is not bool:
+            raise ValueError("Store truth observation must be a boolean.")
         if type(reading_mail) is not bool:
             raise ValueError("Reading mail fixture must be a boolean.")
         if type(persistent) is not bool:
@@ -372,6 +378,10 @@ class Desktop:
             self.launch_args.append("--preference-save-failure-once")
         if large_incoming:
             self.launch_args.append("--large-incoming")
+        if selection_mailbox:
+            self.launch_args.append("--selection-mailbox")
+        if not store_truth:
+            self.launch_args.append("--no-store-truth")
         if activation == "hold-restart":
             self.launch_args.append("--hold-restart-requests")
         elif activation == "legacy":
@@ -533,6 +543,7 @@ class Desktop:
         return {"closed": True, "pid": self.app.pid, "returncode": self.app.returncode}
 
     def restart(self, crash=False):
+        self.pixel_baseline = None
         if not self.persistent or not self.launch_args:
             raise RuntimeError("Start an owned persistent fixture before restarting.")
         previous = self.close_app(crash)
@@ -855,7 +866,25 @@ class Desktop:
             kind = action["type"]
             try:
                 result = None
-                if kind == "pixel_reference":
+                if kind in ("pixel_baseline", "changed_pixel_reference"):
+                    from native_pixels import Window, changed_reference_points
+                    probe = Window(self.env["DISPLAY"], self.window)
+                    try:
+                        width, height = probe.dimensions()
+                        identity = (self.env["DISPLAY"], self.window, width, height)
+                        if kind == "pixel_baseline":
+                            token = uuid.uuid4().hex
+                            self.pixel_baseline = (token, identity, probe.rgb(width, height))
+                            result = {"baseline": token, "width": width, "height": height}
+                        else:
+                            baseline = self.pixel_baseline
+                            if not baseline or baseline[:2] != (action.get("baseline"), identity):
+                                raise ValueError("Pixel baseline expired or belongs to another window geometry.")
+                            result = {"points": changed_reference_points(baseline[2], probe.rgb(width, height),
+                                      width, height, action["regions"]), "regions": action["regions"]}
+                    finally:
+                        probe.close()
+                elif kind == "pixel_reference":
                     from native_pixels import Window, reference_points
                     state = self.state()
                     if not state.get("html_ready") or not state.get("html_body_visible"):
@@ -878,7 +907,8 @@ class Desktop:
                         if type(x) is not int or type(y) is not int or not 0 <= x < width or not 0 <= y < height:
                             raise ValueError("The measured click must be inside the owned window.")
                         self.command("xdotool", "mousemove", "--window", self.window, str(x), str(y))
-                        result = probe.click_until_visible(points, action.get("timeout_ms", 5000))
+                        result = probe.click_until_visible(points, action.get("timeout_ms", 5000),
+                                                           action.get("require_change", False))
                     finally:
                         probe.close()
                 elif kind in ("click", "double_click"):
@@ -1049,6 +1079,25 @@ TOOLS = [
     {"name": "desktop.screenshot", "description": "Capture the actual iced window as WebP. Returns image and artifact path.", "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}}}},
     {"name": "desktop.stop", "description": "Stop only the isolated app and Xvfb processes created by this harness.", "inputSchema": {"type": "object", "properties": {}}},
 ]
+
+
+_batch_action = next(tool for tool in TOOLS if tool["name"] == "desktop.batch")["inputSchema"]["properties"]["actions"]["items"]["properties"]
+_batch_action["type"]["enum"].extend(["pixel_baseline", "changed_pixel_reference"])
+_batch_action.update({
+    "baseline": {"type": "string"},
+    "require_change": {"type": "boolean", "default": False},
+    "regions": {"type": "array", "minItems": 1, "maxItems": 4,
+                "items": {"type": "array", "minItems": 4, "maxItems": 4,
+                          "items": {"type": "integer"}}},
+})
+next(tool for tool in TOOLS if tool["name"] == "desktop.start")["inputSchema"]["properties"]["selection_mailbox"] = {
+    "type": "boolean", "default": False,
+    "description": "Seed exactly 100,000 fictional Inbox messages for selection latency tests.",
+}
+next(tool for tool in TOOLS if tool["name"] == "desktop.start")["inputSchema"]["properties"]["store_truth"] = {
+    "type": "boolean", "default": True,
+    "description": "Run the full database comparison oracle; disable only for isolated pixel timing.",
+}
 
 
 def main():

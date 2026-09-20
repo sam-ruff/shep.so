@@ -215,7 +215,13 @@ impl App {
                 depth: 0,
                 section: true,
             });
-            if self.preferences.collapsed_accounts.contains(&account.id) {
+            if self.preferences.collapsed_accounts.contains(&account.id)
+                && !self
+                    .workspace
+                    .creation_jobs
+                    .iter()
+                    .any(|job| job.account == account.id)
+            {
                 continue;
             }
             let fallback =
@@ -224,7 +230,25 @@ impl App {
                 .folder_tree(&account.id)
                 .map(Arc::as_ref)
                 .unwrap_or(&fallback);
-            for (depth, node) in tree.visible(self.preferences.expanded_folders.get(&account.id)) {
+            let mut expanded = self
+                .preferences
+                .expanded_folders
+                .get(&account.id)
+                .cloned()
+                .unwrap_or_default();
+            for job in self
+                .workspace
+                .creation_jobs
+                .iter()
+                .filter(|job| job.account == account.id)
+            {
+                let mut parent = job.parent.as_ref().and_then(|path| tree.node(path));
+                while let Some(node) = parent {
+                    expanded.insert(node.path.clone());
+                    parent = node.parent.map(|index| &tree.nodes[index]);
+                }
+            }
+            for (depth, node) in tree.visible(Some(&expanded)) {
                 let folder = &node.mailbox.name;
                 // Special-use folders such as (\Trash) "Deleted Items" belong
                 // to the unified entries, like their literal counterparts.
@@ -239,6 +263,11 @@ impl App {
                             "INBOX" | "Sent" | "Archive" | "Trash" | "Junk"
                         ))
                     && node.children.is_empty()
+                    && !self
+                        .workspace
+                        .creation_jobs
+                        .iter()
+                        .any(|job| job.account == account.id && job.parent.as_ref() == Some(folder))
                 {
                     continue;
                 }
@@ -260,6 +289,34 @@ impl App {
                     depth: depth + 1,
                     section: false,
                 });
+                for job in
+                    self.workspace.creation_jobs.iter().filter(|job| {
+                        job.account == account.id && job.parent.as_ref() == Some(folder)
+                    })
+                {
+                    items.push(creation_item(job, depth + 2));
+                }
+            }
+            for job in self
+                .workspace
+                .creation_jobs
+                .iter()
+                .filter(|job| job.account == account.id && job.parent.is_none())
+            {
+                items.push(creation_item(job, 1));
+            }
+            for job in self.workspace.creation_jobs.iter().filter(|job| {
+                job.account == account.id
+                    && job
+                        .parent
+                        .as_ref()
+                        .is_some_and(|path| tree.node(path).is_none())
+            }) {
+                let mut parent = creation_item(job, 1);
+                parent.label = job.parent.clone().unwrap_or_default();
+                parent.section = true;
+                items.push(parent);
+                items.push(creation_item(job, 2));
             }
         }
         if !self.workspace.accounts.is_empty() {
@@ -500,6 +557,29 @@ impl App {
             ..Default::default()
         })
         .into()
+    }
+}
+
+fn creation_item(job: &crate::store::CreationJob, depth: usize) -> SidebarItem {
+    use crate::store::CreationStage;
+    let status = match job.stage {
+        CreationStage::Queued => "Saved",
+        CreationStage::Waiting => "Waiting",
+        CreationStage::Running | CreationStage::Checking => "Working",
+        CreationStage::Repair => "Refreshing",
+        CreationStage::Rejected | CreationStage::Uncertain => "Needs attention",
+        CreationStage::Succeeded => "Created",
+        CreationStage::Cancelled => "Cancelled",
+        CreationStage::Dismissed => "Tracking stopped",
+    };
+    SidebarItem {
+        label: format!("{} · {status}", job.name),
+        account_email: None,
+        icon: "folder",
+        action: Message::FolderCreation(folder_creation::Message::Review(job.id.clone())),
+        active: false,
+        depth,
+        section: false,
     }
 }
 

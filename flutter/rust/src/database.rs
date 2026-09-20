@@ -84,7 +84,7 @@ impl Database {
                     .map_err(|_| anyhow::anyhow!("Cache connection failed. Reopen Shep."))?
                     .query_row("PRAGMA user_version", [], |r| r.get(0))?;
                 anyhow::ensure!(
-                    version <= 18,
+                    version <= 21,
                     "This cache requires a newer Shep version. Update before reopening it."
                 );
                 return Ok(profile);
@@ -107,7 +107,7 @@ impl Database {
             )?;
             let version: u32 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             anyhow::ensure!(
-                version <= 18,
+                version <= 21,
                 "This cache requires a newer Shep version. Update before reopening it."
             );
             if version > 0 && version < 17 {
@@ -143,6 +143,36 @@ impl Database {
                     writer.execute("ALTER TABLE credential_slots ADD COLUMN error TEXT", [])?;
                 }
             }
+            if version > 0 && version < 19 {
+                writer.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS calendar_events(source_id TEXT NOT NULL,id TEXT NOT NULL,event TEXT NOT NULL,PRIMARY KEY(source_id,id));
+                     CREATE TABLE IF NOT EXISTS calendar_sources(id TEXT PRIMARY KEY,source TEXT NOT NULL);
+                     CREATE TABLE IF NOT EXISTS calendar_actions(id TEXT PRIMARY KEY,status TEXT NOT NULL CHECK(status IN ('queued','running','waiting','succeeded','rejected','uncertain','repair','cancelled')),error TEXT,created INTEGER NOT NULL,mutation TEXT NOT NULL);
+                     CREATE TABLE IF NOT EXISTS calendar_action_receipts(action TEXT PRIMARY KEY REFERENCES calendar_actions(id) ON DELETE CASCADE,receipt TEXT NOT NULL);
+                     CREATE TABLE IF NOT EXISTS calendar_intents(source_id TEXT NOT NULL,event_id TEXT NOT NULL,action TEXT NOT NULL REFERENCES calendar_actions(id),PRIMARY KEY(source_id,event_id));
+                     CREATE INDEX IF NOT EXISTS calendar_action_status ON calendar_actions(status,created,id);
+                     CREATE INDEX IF NOT EXISTS calendar_action_history ON calendar_actions(created DESC,id);
+                     CREATE INDEX IF NOT EXISTS calendar_action_attention ON calendar_actions(created DESC,id) WHERE status NOT IN ('succeeded','cancelled');",
+                )?;
+            }
+            if version > 0 && version < 20 {
+                let has_subject:bool=writer.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('calendar_actions') WHERE name='subject')",[],|row|row.get(0))?;
+                if !has_subject { writer.execute("ALTER TABLE calendar_actions ADD COLUMN subject TEXT",[])?; }
+                writer.execute_batch("CREATE TABLE IF NOT EXISTS calendar_binding(id INTEGER PRIMARY KEY CHECK(id=1),subject TEXT NOT NULL); CREATE TABLE IF NOT EXISTS calendar_clock(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL); INSERT OR IGNORE INTO calendar_clock VALUES(1,0);")?;
+            }
+            if version > 0 && version < 21 {
+                let has_request: bool = writer.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('calendar_actions') WHERE name='admission_request')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if !has_request {
+                    writer.execute(
+                        "ALTER TABLE calendar_actions ADD COLUMN admission_request TEXT",
+                        [],
+                    )?;
+                }
+            }
             writer.execute_batch(include_str!("schema.sql"))?;
             // Exclusive ownership proves no previous native process can still
             // finish these SMTP operations. They require explicit review.
@@ -160,6 +190,14 @@ impl Database {
             )?;
             writer.execute(
                 "UPDATE individual_mail_actions SET status='uncertain',error='The app closed before the provider result was saved. Refresh the affected folders before retrying.' WHERE status='running'",
+                [],
+            )?;
+            writer.execute(
+                "UPDATE calendar_actions SET status='repair',error='Google saved this event. Finish saving it on this device.' WHERE status='running' AND EXISTS(SELECT 1 FROM calendar_action_receipts WHERE action=calendar_actions.id)",
+                [],
+            )?;
+            writer.execute(
+                "UPDATE calendar_actions SET status='uncertain',error='The app closed before the provider result was saved. Inspect the event before retrying.' WHERE status='running'",
                 [],
             )?;
             crate::groups::restart(&writer)?;

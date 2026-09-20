@@ -9,6 +9,7 @@ mod move_recovery;
 pub mod passwords;
 mod reading_mail;
 mod search_comparison;
+mod selection_mailbox;
 pub use move_recovery::recover_move;
 pub mod workspace;
 
@@ -17,6 +18,9 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         return Ok(());
     }
     seed_demo_contents(store).await?;
+    if std::env::args().any(|arg| arg == "--selection-mailbox") {
+        selection_mailbox::seed(store).await?;
+    }
     if std::env::args().any(|arg| arg == "--large-incoming") {
         large_incoming::seed(store).await?;
     }

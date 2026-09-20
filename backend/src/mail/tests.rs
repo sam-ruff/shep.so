@@ -10,8 +10,12 @@ mod sent;
 #[path = "forward_tests.rs"]
 mod forward;
 
+#[path = "folder_tests.rs"]
+mod folder_tests;
+
 #[derive(Default)]
 struct FakeMail {
+    folder_provider: Mutex<Option<Box<dyn super::folders::FolderProvider>>>,
     sent: Arc<sent::Fixture>,
     calls: AtomicUsize,
     sends: AtomicUsize,
@@ -25,6 +29,17 @@ struct FakeMail {
 }
 #[async_trait]
 impl HostedMail for FakeMail {
+    async fn folders(
+        &self,
+        _: &Connection,
+    ) -> anyhow::Result<Box<dyn super::folders::FolderProvider>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.folder_provider
+            .lock()
+            .await
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Synthetic private folder connection failure"))
+    }
     async fn probe(&self, _: &Connection, _: bool) -> anyhow::Result<()> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         anyhow::ensure!(

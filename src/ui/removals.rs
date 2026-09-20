@@ -1,5 +1,5 @@
 use super::*;
-use crate::store::{ConnectionKind, ConnectionRef, RemovalPreview};
+use crate::store::{ConnectionKind, ConnectionRef, RemovalJob, RemovalPreview, RemovalStage};
 use iced::{
     Alignment, Length,
     widget::{button, checkbox, column, container, row, space, text},
@@ -11,12 +11,126 @@ pub(super) struct Removal {
     pub target: Option<ConnectionRef>,
     pub preview: Option<RemovalPreview>,
     pub removing: Option<u64>,
+    pending: Option<String>,
+    observed: std::collections::HashMap<String, u64>,
     pub loading: bool,
     pub waiting_drafts: bool,
     pub cancel_transfers: bool,
     pub error: Option<String>,
 }
 impl App {
+    pub(super) fn removal_admitted(
+        &mut self,
+        request: u64,
+        id: String,
+        result: Result<RemovalJob, String>,
+    ) {
+        if self.removal.removing != Some(request) || self.removal.pending.as_ref() != Some(&id) {
+            return;
+        }
+        match result {
+            Ok(job) => {
+                self.connection_removed(request, Ok(0));
+                self.removal_changed(job);
+                self.notice(
+                    "Connection removed from view. Local cleanup will finish in the background.",
+                    false,
+                );
+                self.request_page();
+            }
+            Err(error) => {
+                self.pending_close = None;
+                self.connection_removed(request, Err(error));
+            }
+        }
+    }
+
+    pub(super) fn removal_changed(&mut self, job: RemovalJob) {
+        if self
+            .removal
+            .observed
+            .get(&job.id)
+            .is_some_and(|revision| *revision >= job.revision)
+            || self.workspace.connections_revision > job.revision
+                && !self.workspace.removals.iter().any(|row| row.id == job.id)
+        {
+            return;
+        }
+        self.removal.observed.insert(job.id.clone(), job.revision);
+        let workspace = Arc::make_mut(&mut self.workspace);
+        workspace.connections_revision = workspace.connections_revision.max(job.revision);
+        workspace.removals.retain(|row| row.id != job.id);
+        if job.stage != RemovalStage::Succeeded {
+            workspace.removals.push(job.clone());
+        }
+        match job.target.kind {
+            ConnectionKind::Account => {
+                workspace
+                    .accounts
+                    .retain(|account| account.id != job.target.id);
+                workspace.account_folders.remove(&job.target.id);
+                workspace.folder_trees.remove(&job.target.id);
+                workspace
+                    .drafts
+                    .retain(|draft| draft.account_id != job.target.id);
+            }
+            ConnectionKind::Calendar => workspace
+                .calendars
+                .retain(|source| source.id != job.target.id),
+        }
+        if let Some(revision) = job.calendar_revision {
+            self.events_revision = self.events_revision.max(revision);
+            Arc::make_mut(&mut self.calendar_actions.base)
+                .retain(|event| event.source_id != job.target.id);
+            self.project_calendar_actions();
+        }
+        if let Some(error) = job.error {
+            self.notice(error, true);
+        }
+        self.send(Command::BulkRun(String::new()));
+    }
+
+    pub(super) fn removal_progress_view(&self, kind: ConnectionKind) -> Element<'_, Message> {
+        let mut body = column![].spacing(10);
+        for job in self
+            .workspace
+            .removals
+            .iter()
+            .filter(|job| job.target.kind == kind)
+        {
+            let title = if kind == ConnectionKind::Account {
+                "Account removal"
+            } else {
+                "Calendar removal"
+            };
+            body = body
+                .push(text(format!("{title}: {}", job.label)).size(14))
+                .push(
+                    text(match job.stage {
+                        RemovalStage::Queued => {
+                            "Hidden from this device. Waiting for active work before local cleanup."
+                        }
+                        RemovalStage::Cleanup => {
+                            "Local data removed. Cleaning up saved credentials."
+                        }
+                        RemovalStage::Failed => "Local removal needs attention.",
+                        RemovalStage::Succeeded => "Local removal finished.",
+                    })
+                    .size(12),
+                );
+            if let Some(error) = &job.error {
+                body = body.push(text(error).size(12));
+            }
+            if job.stage == RemovalStage::Failed {
+                body = body.push(action(
+                    "Retry local cleanup",
+                    Message::RetryRemoval(job.id.clone()),
+                ));
+            }
+        }
+        body.into()
+    }
+
     pub(super) fn review_removal(&mut self, target: ConnectionRef) {
         if self.removal.removing.is_some() {
             return;
@@ -94,13 +208,27 @@ impl App {
             if preview.transfers > 0 && !self.removal.cancel_transfers {
                 return;
             }
-            if self.try_command(Command::RemoveConnection(
+            let id = uuid::Uuid::new_v4().to_string();
+            self.pending_close = None;
+            self.cancel_account_setup_stop();
+            if self.bulk.stopped || self.bulk.stop_requested {
+                if !self.try_command(Command::BulkResume(String::new())) {
+                    return;
+                }
+                self.bulk.stopped = false;
+                self.bulk.stop_requested = false;
+            }
+            if self.try_command(Command::AdmitRemoval(
                 self.removal.request,
+                id.clone(),
                 preview,
                 self.removal.cancel_transfers,
             )) {
                 self.removal.removing = Some(self.removal.request);
+                self.removal.pending = Some(id);
                 self.removal.error = None;
+            } else {
+                self.removal.error = Some("Could not save this removal. Try again.".into());
             }
         }
     }
@@ -109,6 +237,7 @@ impl App {
             return;
         }
         self.removal.removing = None;
+        self.removal.pending = None;
         match result {
             Ok(failed) => {
                 if self
@@ -120,6 +249,7 @@ impl App {
                     self.profile_sync.connection_removed();
                     if let Some(target) = self.removal.target.clone() {
                         self.account_setup_removed(&target.id);
+                        self.folder_creation_removed(&target.id);
                     }
                     if let Some(target) = &self.removal.target {
                         self.composer
@@ -276,6 +406,79 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn admission_reply_is_correlated_and_late_progress_cannot_hide_reconnected_source() {
+        let (mut app, _) = App::new();
+        let mut job = RemovalJob {
+            id: uuid::Uuid::new_v4().to_string(),
+            target: target("home"),
+            fingerprint: "review".into(),
+            review_epoch: 0,
+            cancel_transfers: false,
+            label: "Home".into(),
+            stage: RemovalStage::Queued,
+            local_done: false,
+            device_credentials: true,
+            calendar_key: true,
+            calendar_revision: Some(1),
+            revision: 1,
+            error: None,
+        };
+        app.removal.request = 3;
+        app.removal.removing = Some(3);
+        app.removal.pending = Some(job.id.clone());
+        app.removal.target = Some(job.target.clone());
+        let start = chrono::Utc::now();
+        let old_events = Arc::new(vec![CalendarEvent {
+            id: "old-event".into(),
+            source_id: "home".into(),
+            title: "Removed event".into(),
+            start,
+            end: start + chrono::Duration::hours(1),
+            all_day: false,
+            remote_url: None,
+            etag: None,
+            location: String::new(),
+            description: String::new(),
+        }]);
+        app.calendar_actions.base = old_events.clone();
+        app.project_calendar_actions();
+        app.removal_admitted(3, "another attempt".into(), Ok(job.clone()));
+        assert_eq!(app.removal.removing, Some(3));
+        app.open(Dialog::Event);
+        let _ = app.handle(Message::Field("title", "New editor".into()));
+        app.removal_admitted(3, job.id.clone(), Ok(job.clone()));
+        assert!(app.removal.removing.is_none());
+        assert_eq!(app.dialog, Some(Dialog::Event));
+        assert_eq!(app.field("title"), "New editor");
+        assert_eq!(app.workspace.removals.len(), 1);
+        assert!(app.events.is_empty());
+        let _ = app.handle(Message::Backend(Event::Calendar(0, old_events)));
+        assert!(
+            app.events.is_empty(),
+            "stale calendar reads cannot undo the admitted removal"
+        );
+        job.revision = 2;
+        job.local_done = true;
+        job.stage = RemovalStage::Succeeded;
+        app.removal_changed(job.clone());
+        assert!(app.workspace.removals.is_empty());
+        let workspace = Arc::make_mut(&mut app.workspace);
+        workspace.connections_revision = 3;
+        workspace.calendars.push(CalendarSource {
+            id: "home".into(),
+            name: "Reconnected".into(),
+            kind: CalendarKind::CalDav,
+            url: "https://calendar.example.test/".into(),
+            username: "alex".into(),
+            access: Default::default(),
+        });
+        job.stage = RemovalStage::Failed;
+        job.error = Some("Old failure".into());
+        app.removal_changed(job);
+        assert!(app.workspace.removals.is_empty());
+        assert_eq!(app.workspace.calendars[0].name, "Reconnected");
+    }
     fn target(id: &str) -> ConnectionRef {
         ConnectionRef {
             kind: ConnectionKind::Calendar,
@@ -284,6 +487,7 @@ mod tests {
     }
     fn preview(id: &str) -> RemovalPreview {
         RemovalPreview {
+            removal_epoch: 0,
             target: target(id),
             name: id.into(),
             address: "https://calendar.example.test/".into(),

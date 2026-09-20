@@ -1114,6 +1114,9 @@ dialog > .field,
   font-size: 12px;
   margin: 10px 0;
 }
+.folder-activity .form-status {
+  color: var(--text);
+}
 .folder-choices {
   display: flex;
   flex-direction: column;
