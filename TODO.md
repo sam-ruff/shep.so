@@ -14,6 +14,42 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   working through durable admission, execution, recovery, activity and lifecycle
   tests until the entire contract is evidenced.
 
+  Current integration review: shared CalDAV/schema 22 prerequisites pass 19
+  parser/HTTP tests, 159 native tests, default-feature checking and Clippy.
+  Collection-scoped discovery, recurring-event write refusal, exact versions and
+  duration/UID preservation are integrated. Native action v3 now passes 163
+  tests plus the root nonmatching-inspection regression, with connection
+  replacement/cleanup fences and provider routing. Finish Flutter controls and
+  verify the complete client path before claiming parity. Browser calendar18
+  is integrated with 250 units, 20 combined controls and 13 final Calendar/storage
+  scenarios passing. Lost save/delete replies preserve current terminal status
+  and newer edits. Native Activity is now in its own schema11 lane; Flutter
+  folders23 and CalDAV controls continue in parallel.
+
+  Native calendar active-action observations and predecessor lookup now use
+  indexed seeks. The 100,000-history VM-step regression and seven calendar
+  lifecycle integration tests pass. Keep the final combined shipping gate open.
+  Browser Calendar's eight final control scenarios and production build pass,
+  including all-day dates west of UTC in the grid, editor and saved request.
+  Flutter checked-state adoption must retain a structured server observation,
+  reject stale reviews and atomically apply that exact state; an error message
+  alone cannot authorise dropping an uncertain intent.
+  Fence browser read-only Calendar inspection from its starting cache revision:
+  a sync or newer intent during the server read must invalidate the observation
+  before it can enable adoption.
+  Native calendar scheduler now seeks indexed runnable statuses; both
+  100,000-history query regressions pass, including blocked children, due retry,
+  independent cache repair and no runnable work.
+  Flutter folder23 v2 is integrated with 178 combined Rust and seven root control
+  tests passing; compact goldens match the reviewed handoff. Final combined
+  shipping remains open; checked mobile rename/move/delete continues in schema24.
+  The complete root Flutter suite passes 243 tests, including actual bridge and
+  bulk/reader controls. Backend all-target Clippy also passes with warnings denied.
+  Native/browser folder planning now uses the shared typed rejection: proven
+  invalid targets need review, while offline discovery stays Waiting without
+  CREATE. Root passes 13 native lifecycle tests, 13 browser units, six backend
+  folder tests and two actual browser planning flows; production build passes.
+
   First migration implemented: common projection outcomes, native bulk review and
   confirmation during pending individual writes, pre-admission Undo, and calendar
   save/delete with exact read-only recovery. Rust and five new native scenarios

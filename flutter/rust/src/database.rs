@@ -84,7 +84,7 @@ impl Database {
                     .map_err(|_| anyhow::anyhow!("Cache connection failed. Reopen Shep."))?
                     .query_row("PRAGMA user_version", [], |r| r.get(0))?;
                 anyhow::ensure!(
-                    version <= 21,
+                    version <= 23,
                     "This cache requires a newer Shep version. Update before reopening it."
                 );
                 return Ok(profile);
@@ -107,7 +107,7 @@ impl Database {
             )?;
             let version: u32 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             anyhow::ensure!(
-                version <= 21,
+                version <= 23,
                 "This cache requires a newer Shep version. Update before reopening it."
             );
             if version > 0 && version < 17 {
@@ -173,7 +173,39 @@ impl Database {
                     )?;
                 }
             }
+            if version > 0 && version < 22 {
+                let has_connection: bool = writer.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('calendar_sources') WHERE name='connection_id')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if !has_connection {
+                    writer.execute(
+                        "ALTER TABLE calendar_sources ADD COLUMN connection_id TEXT REFERENCES calendar_connections(id) ON DELETE CASCADE",
+                        [],
+                    )?;
+                }
+                for (column, kind) in [
+                    ("connection_id", "TEXT"),
+                    ("connection_revision", "INTEGER"),
+                    ("credential_slot", "TEXT"),
+                ] {
+                    let exists: bool = writer.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('calendar_actions') WHERE name=?1)",
+                        [column],
+                        |row| row.get(0),
+                    )?;
+                    if !exists {
+                        writer.execute(
+                            &format!("ALTER TABLE calendar_actions ADD COLUMN {column} {kind}"),
+                            [],
+                        )?;
+                    }
+                }
+            }
             writer.execute_batch(include_str!("schema.sql"))?;
+            writer.execute_batch(include_str!("folders/schema.sql"))?;
+            crate::folders::recover(&writer)?;
             // Exclusive ownership proves no previous native process can still
             // finish these SMTP operations. They require explicit review.
             writer.execute(
@@ -193,7 +225,7 @@ impl Database {
                 [],
             )?;
             writer.execute(
-                "UPDATE calendar_actions SET status='repair',error='Google saved this event. Finish saving it on this device.' WHERE status='running' AND EXISTS(SELECT 1 FROM calendar_action_receipts WHERE action=calendar_actions.id)",
+                "UPDATE calendar_actions SET status='repair',error='The calendar provider saved this event. Finish saving it on this device.' WHERE status='running' AND EXISTS(SELECT 1 FROM calendar_action_receipts WHERE action=calendar_actions.id)",
                 [],
             )?;
             writer.execute(

@@ -1,5 +1,6 @@
 import 'mail_action_banner.dart';
 import 'mail_activity.dart';
+import 'folder_creations.dart';
 import 'mail_error.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -253,6 +254,80 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                           tab == 0 && w.folder == folder && w.account == null,
                       onTap: () => select(() => w.navigate(folder)),
                     ),
+                  if (w.folderCreation case final controller?) ...[
+                    sidebarItem(
+                      'New folder',
+                      icon: 'plus',
+                      onTap: () {
+                        Navigator.pop(context);
+                        unawaited(showNewFolder(context, controller));
+                      },
+                    ),
+                    sidebarItem(
+                      'Folder activity',
+                      icon: 'clock',
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) =>
+                                FolderActivityScreen(controller: controller),
+                          ),
+                        );
+                      },
+                    ),
+                    for (final owner in controller.accounts)
+                      if (controller.entries.any(
+                        (entry) => entry.account == owner.id && entry.pending,
+                      ))
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 12, 8, 4),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                owner.label,
+                                style: Theme.of(context).textTheme.labelLarge,
+                              ),
+                              for (final entry in controller.entries.where(
+                                (entry) =>
+                                    entry.account == owner.id && entry.pending,
+                              ))
+                                Padding(
+                                  padding: const EdgeInsets.only(
+                                    left: 12,
+                                    top: 8,
+                                  ),
+                                  child: Semantics(
+                                    label:
+                                        '${entry.name}, ${entry.label}, ${controller.parentLabel(entry)}',
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (entry.parent != null)
+                                          Text(
+                                            controller.parentLabel(entry),
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.labelSmall,
+                                          ),
+                                        Text(entry.name),
+                                        Text(
+                                          entry.label,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.labelSmall,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                  ],
                   if (w.repository is OutgoingRepository)
                     sidebarItem(
                       'Outbox',

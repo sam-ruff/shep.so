@@ -1,5 +1,6 @@
 import { prepareLineage, type IdentityTransition } from "./mail_lineage";
 import { BrowserFolders } from "./folder_actions";
+import { BrowserCalendar } from "./calendar_actions";
 import { BrowserFolderMutations } from "./folder_mutations";
 import { assertFolderAvailable, folderExclusions, FolderMutationBlocked } from "./folder_fences";
 import { folderConnection } from "./folder_actions";
@@ -21,6 +22,7 @@ import {
 // Mail and drafts stay on this browser. Passwords and OAuth grants never enter
 // this database. A committed transaction is required before any SMTP request.
 export const stores = [
+  "calendarSources", "calendarEvents", "calendarActions", "calendarState",
   "accounts",
   "accountConnections",
   "folderActions",
@@ -47,6 +49,7 @@ export interface Change {
   identity?: IdentityTransition;
 }
 export interface LocalStore {
+  readonly calendar?: BrowserCalendar;
   readonly folderActions?: BrowserFolders;
   readonly folderMutations?: BrowserFolderMutations;
   readonly profileId?: string;
@@ -65,6 +68,7 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
+    // Version 18 adds Calendar receipt/cache ownership and fences older writers.
     // Version 17 fences cache writers without subtree action ownership.
     // Version 16 fences account-removal writers without folder action ownership.
     // Version 15 fences draft writers without observed-version conflict checks.
@@ -76,7 +80,7 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     // Version 9 binds the derived persistent index to this source incarnation.
     // Version 8 fences older tabs that remove accounts without group ownership.
     // Version 7 fenced writes lacking atomic cache-applied intent revisions.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 17);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 18);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
@@ -84,6 +88,12 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
       // Seed acknowledged folder roles from the earlier outgoing journal in
       // the same upgrade transaction; failure leaves version 2 intact.
       const tx = request.transaction!;
+      const calendarEvents = tx.objectStore("calendarEvents");
+      if (!calendarEvents.indexNames.contains("source")) calendarEvents.createIndex("source", "event.source_id");
+      const calendarActions = tx.objectStore("calendarActions");
+      if (!calendarActions.indexNames.contains("activeId")) calendarActions.createIndex("activeId", ["active", "id"]);
+      if (!calendarActions.indexNames.contains("status")) calendarActions.createIndex("status", "status");
+      if (!calendarActions.indexNames.contains("eventSequence")) calendarActions.createIndex("eventSequence", ["key", "sequence"]);
       const folderActions = tx.objectStore("folderActions");
       if (!folderActions.indexNames.contains("active_id")) folderActions.createIndex("active_id", ["active", "id"]);
       const folderMembers = tx.objectStore("folderMembers");
@@ -191,6 +201,7 @@ export class BrowserWriteFailure extends Error {
 }
 
 export class BrowserStore implements LocalStore {
+  readonly calendar: BrowserCalendar;
   readonly folderActions: BrowserFolders;
   readonly folderMutations: BrowserFolderMutations;
   readonly intents: IntentStore;
@@ -199,6 +210,7 @@ export class BrowserStore implements LocalStore {
     readonly profileId: string,
   ) {
     this.intents = new BrowserIntents(db);
+    this.calendar = new BrowserCalendar(db);
     this.folderActions = new BrowserFolders(db);
     this.folderMutations = new BrowserFolderMutations(db);
   }

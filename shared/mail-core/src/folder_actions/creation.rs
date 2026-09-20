@@ -21,6 +21,15 @@ impl std::fmt::Display for CreationRejected {
 }
 impl std::error::Error for CreationRejected {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanRejected(pub String);
+impl std::fmt::Display for PlanRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for PlanRejected {}
+
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub trait Connection: Send + Sync {
@@ -50,7 +59,7 @@ pub async fn discover_namespace(
     if let Some(root) = connection.namespaces().await? {
         return Ok(root);
     }
-    anyhow::bail!("The server did not report its folder namespace.")
+    Err(PlanRejected("The server did not report its folder namespace.".into()).into())
 }
 
 pub fn valid_path(path: &str) -> anyhow::Result<()> {

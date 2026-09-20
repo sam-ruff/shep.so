@@ -19,6 +19,8 @@ pub struct Removal {
     pub groups: u64,
     #[serde(default)]
     pub actions: u64,
+    #[serde(default)]
+    pub folder_requests: u64,
     pub fingerprint: String,
 }
 
@@ -53,6 +55,7 @@ pub fn preview(db: &Connection, id: &str) -> Result<Removal> {
         "SELECT json_array(p.id,p.destination) FROM pending_moves p JOIN mail m ON m.id=p.id WHERE m.account_id=?1 ORDER BY p.id",
         "SELECT json_array(job,position,state) FROM group_items WHERE account=?1 ORDER BY job,position",
         "SELECT json_array(id,mail,fields,status,error) FROM individual_mail_actions WHERE account=?1 ORDER BY id",
+        "SELECT json_array(id,revision,status,target,receipt,acknowledged) FROM folder_creations WHERE account_id=?1 ORDER BY id",
     ] {
         let mut statement = db.prepare(query)?;
         let mut rows = statement.query([id])?;
@@ -88,6 +91,9 @@ pub fn preview(db: &Connection, id: &str) -> Result<Removal> {
         actions: count(
             "SELECT COUNT(*) FROM individual_mail_actions WHERE account=?1 AND status NOT IN ('succeeded','rejected','cancelled')",
         )?,
+        folder_requests: count(
+            "SELECT count(*) FROM folder_creations WHERE account_id=?1 AND status IN ('queued','waiting','planning','running','checking','repair','rejected','uncertain')",
+        )?,
         fingerprint: format!("{:x}", digest.finalize()),
     })
 }
@@ -120,12 +126,15 @@ pub fn remove(db: &mut Connection, expected: Removal, discard_unresolved: bool) 
             || (current.unresolved == 0
                 && current.moves == 0
                 && current.groups == 0
-                && current.actions == 0),
+                && current.actions == 0
+                && current.folder_requests == 0),
         "Review and confirm discarding unfinished delivery, move and group action records first. Removal cannot undo a server operation."
     );
     let id = &expected.id;
     crate::groups::fence_account(&tx, id)?;
     tx.execute("DELETE FROM individual_mail_actions WHERE account=?1", [id])?;
+    tx.execute("DELETE FROM folder_creations WHERE account_id=?1", [id])?;
+    tx.execute("DELETE FROM folder_catalogues WHERE account_id=?1", [id])?;
     tx.execute("INSERT INTO discarded_drafts SELECT id,9223372036854775807 FROM drafts WHERE json_extract(content,'$.account_id')=?1 ON CONFLICT(id) DO UPDATE SET revision=excluded.revision",[id])?;
     tx.execute("INSERT INTO discarded_drafts SELECT draft_id,9223372036854775807 FROM outgoing WHERE account_id=?1 ON CONFLICT(id) DO UPDATE SET revision=excluded.revision",[id])?;
     tx.execute(

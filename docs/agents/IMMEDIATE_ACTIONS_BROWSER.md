@@ -22,13 +22,33 @@ folders require a separate reviewed migration; folder Undo is not offered.
 | Account connect/reconnect | `accounts.ts`, `GatewayRepository` account methods and `accountConnections` metadata | Form closes after saving a nonsecret attempt. Probes and checked activation run in the background; saved failure/interruption has Retry and Dismiss controls. Passwords remain in tab memory. Newer decisions, dismissal, profile close and account removal fence late activation. |
 | Account removal | `account_removal.ts`, browser mail transaction and group removal journal | Reviewed local deletion is authoritative; no provider deletion. Reviews and the transaction now include individual action records, including records whose field intent already finished. Late result writes cannot recreate removed records. |
 | Preferences and portable settings | `Workspace.savePreferences`, `profile_settings.ts`, `profile_publication.ts`, `profile_enrollment.ts` | Local values and field revisions commit in one authoritative settings envelope; the old settings key is a compatibility mirror. Publication retains its existing durable stopped/error/Resume controls. Failed local application cannot produce an enrollment receipt. Activity links to Accounts and profile sync. |
-| Calendar edits | `ui.ts` event form and `Repository.saveEvent` | Preview has fixture saving; production gateway rejects unsupported calendar writes. Desktop optimistic calendar behaviour must not be claimed as browser provider parity. |
-| Folder changes | Schema 16 folder journal through the existing account action owner | Creation admits locally, freezes exact provider targets and retains receipts before cache repair. Unknown CREATE requires inspection. Checked rename/move/delete remains in progress. |
+| Calendar edits | `calendar_actions.ts`, `calendar_repository.ts` and the event form | Schema 18 saves exact Google Calendar requests before background dispatch, retains receipts and checked recovery, and cancels unsent work locally. CalDAV, acknowledged Undo and final performance remain open. |
+| Folder changes | Schema 17 folder journal through the existing account action owner | Creation and checked rename/move/delete admit locally, freeze exact provider targets and retain receipts before cache repair. Unknown results require inspection. Folder Undo and cross-account moves remain open. |
 | Profile publication/import | Profile controllers, worker-owned shared history and local profile store | Exact staged requests and independent device history remain authoritative. Account application and credential activation retain their checked boundaries. |
 | Print and downloaded attachments | Printing/attachment controllers and workers | Preparation and external browser/download completion retain their existing lifetimes. These operations must show progress without claiming provider or external success. |
 | Backup/restore | No complete production browser equivalent | Remains a parity gap; no optimistic success is presented. |
 
 ## Individual action ownership
+
+Folder planning distinguishes confirmed target refusal from unavailable discovery.
+The gateway returns a tagged rejected plan for shared `PlanRejected`; the browser
+retains it for review. Transport errors and malformed observations remain Waiting.
+Both paths retain the saved request and cannot issue CREATE. Unit, backend and
+real control regressions cover this distinction.
+
+Schema 18 Calendar work shares the existing fair owner. The event form retains
+an immutable save or delete request across a lost local reply; retry returns its
+current saved status before deciding whether the editor may close. A completed
+create supplies the physical identity for newer edits. Local cancellation cannot
+wait for an earlier provider request, and cancelled predecessors leave newer
+saved edits available for review. Refresh, projected events and summary counts
+have independent stale-result fences.
+
+Integrated verification passes 250 unit tests and 20 Calendar/folder/Preferences
+Chromium scenarios. The final Calendar/storage gate passes 13, including the
+root lost-delete-reply rejection test and schema 14/15/16/17 upgrades. These are
+fixture controls, not live Google or input-to-pixel measurements. Browser CalDAV,
+timed creation, recurrence editing and acknowledged Calendar Undo remain open.
 
 Mail database schema 13 adds `mailActions`, owned by `BrowserIntents`; schema 14
 adds connection-attempt removal ownership. Ordinary

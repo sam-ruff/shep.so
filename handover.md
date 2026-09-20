@@ -2,6 +2,81 @@
 
 ## Current immediate-action continuation
 
+Flutter folder23 v2 is integrated from the `action-flutter-folders` artifact
+`folder23-v2.apply.patch` (SHA
+`b7d307efee60d114ddf4354d9c4365f6023797a238745f9f92f5f9e790fd7a1c`).
+Root gates use `actions-folder23-*`; all 178 combined Rust tests and seven folder
+controls pass. Generated goldens match the frozen hashes and root reviewed the
+light form/sidebar and compact dark recovery images. Root native Clippy and strict
+docs pass. All nine ordinary folder controls/actual FFI tests and 13 native
+folder lifecycle tests pass. Root also routes typed plan rejection through the
+gateway/browser while keeping failed discovery Waiting. Six backend folder tests,
+13 browser units, two actual planning controls and production build pass
+(`actions-folder23-{backend-plan,browser-plan,browser-plan-controls,browser-build}.log`).
+The combined root full Flutter suite and backend all-target Clippy also pass
+(`actions-folder23-root-all-flutter.log`, `actions-folder23-backend-clippy.log`).
+Preserve existing CalDAV root corrections. CalDAV controls
+v1 remains unapplied while bulk_trace fixes checked observations and credential
+lifecycle races. action_scope continues checked folder changes with schema24
+reserved in its isolated lane.
+
+Native calendar scheduler now uses an explicit positive status index seek.
+Both 100,000-history query tests pass, including scheduler retry/dependency and
+cache-repair eligibility (`actions-native-calendar-scheduler-bound.log`).
+
+Browser Calendar18 v2 is now integrated from
+`action-calendar-durable/artifacts/mail-handoff/browser-calendar-ui-v2-apply.patch`
+(SHA `4094d585d5b469de74b5f15ad7ef8fda7d85ae837ee2893528896e169bffb75a`).
+Root passes 250 units, production build, 20 Calendar/folder/Preferences Chromium
+flows and 13 final Calendar/storage flows. Root additionally returns the exact
+delete admission status and retains the editor after terminal refusal on a lost
+reply; its saved actual-control regression and light capture pass. Preserve
+`artifacts/web/calendar-delete-refused-light.png` and the pending light/checked
+compact dark captures. Browser CalDAV, acknowledged Calendar Undo, timed creation,
+recurrence editing and final performance remain active gaps. review_ordering now
+owns native Activity in a fresh detached worktree `action-native-activity`, with
+native schema11 reserved for bounded domain-attention indices.
+
+Root also fixes all-day dates west of UTC in the browser grid/editor. All eight
+Calendar controls and the production build pass (`actions-browser-calendar18-date-*`).
+The 13 Calendar journal tests also pass, including two root regressions proving
+checked changed/absent state survives restart and adoption never writes to the
+provider or converts an unknown outcome into success
+(`actions-browser-calendar18-recovery-restart.log`).
+Root now fences browser server inspections with the calendar revision captured
+before the provider read. A newer intent, sync or permission change rejects the
+late result before adoption is enabled. The 20 Calendar journal/repository tests,
+production build and actual lost-reply/check/adopt Chromium flow pass; logs use
+`actions-browser-calendar18-inspection-*`.
+CalDAV controls v1 is not integrated: its checked-state adoption used an error
+string and discarded intent without applying the observed server state.
+bulk_trace is correcting this with a durable structured observation, freshness
+checks and atomic adoption; preserve the root nonmatching-inspection regression.
+Native/browser offline folder planning already stays Waiting with regression
+coverage. action_scope is correcting the equivalent Flutter classification.
+
+Root native calendar queries now use indexed active reads and two one-row
+predecessor seeks. The 100,000-history regression, seven lifecycle integration
+tests and all-target/all-feature Clippy pass; logs use
+`actions-native-calendar-history-*`. This has no input-to-pixel timing claim.
+
+Checkpoint `3f7cb60` is pushed; documentation CI passed and desktop quality is
+running. Root now has the uncommitted CalDAV22 v2 prerequisite integrated from
+`artifacts/caldav22-native-journal-v2-apply.patch`. The root provider review adds
+exact collection/propstat discovery, strong ETags and recurring write guards,
+UID decoding, desktop-equivalent duration/default ends, and rejection of partial
+reports. Default-feature shared tests, 159 Flutter Rust tests and strict docs
+pass. Shared HTTP/parser tests and Clippy logs use `actions-caldav22-root-*`.
+The native actions v3 delta is also integrated, with 163 full Rust tests passing:
+connection revision fences, durable replaced/cancelled-slot cleanup, pending-intent
+reconnect checks, provider dispatch/inspection and Google/CalDAV source separation.
+Nonmatching inspection now retains uncertainty; root added a direct regression
+for missing and changed server events. Do not ship this as complete parity:
+bulk_trace still owns Dart secure-store routing, controls and checked recovery.
+Its next handoff must be a delta from actions v3 and preserve root shared provider
+changes and the new root inspection regression. action_scope continues
+Flutter folders23 on the CalDAV22 prerequisite; its final handoff is pending.
+
 Implementation checkpoint `8db87f1` is verified for shipping with this evidence
 update. Normal hooks pass 1,586 Rust executions, ten ignored; owned calendar HTTP
 tests run explicitly. Native removal (schema 10) passes 1,204 combined

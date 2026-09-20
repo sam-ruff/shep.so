@@ -29,6 +29,8 @@ export interface Mail {
   accountId?: string;
 }
 export interface CalendarEntry {
+  localKey?: string;
+  provider?: import("./calendar_actions").ProviderEvent;
   id: string;
   title: string;
   start: string;
@@ -106,7 +108,7 @@ export interface Repository {
   saveDraft(draft: Draft, expected?: import("./draft_revision").DraftObservation | null): Promise<void>;
   send(draft: Draft): Promise<void>;
   queueSend?(draft: Draft): Promise<void>;
-  saveEvent(event: CalendarEntry): Promise<void>;
+  saveEvent(event: CalendarEntry, before?: CalendarEntry | null, requestId?: string): Promise<void | import("./calendar_actions").CalendarAction>;
 }
 export interface Preferences {
   appearance: "system" | "light" | "dark";

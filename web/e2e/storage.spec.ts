@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-for (const previousVersion of [14, 15, 16]) test(`action schema upgrade closes version ${previousVersion} writers and preserves exact saved content`, async ({
+for (const previousVersion of [14, 15, 16, 17]) test(`action schema upgrade closes version ${previousVersion} writers and preserves exact saved content`, async ({
   page,
 }) => {
   await page.goto("/preview.html");
@@ -85,7 +85,7 @@ for (const previousVersion of [14, 15, 16]) test(`action schema upgrade closes v
       body: "Exact retained text",
       forward: { html: "retained source" },
     },
-    version: 17,
+    version: 18,
     oldVersion: "VersionError",
     bytes: [0, 255],
   });
@@ -193,7 +193,7 @@ test("IndexedDB upgrade preserves mail and seeds Sent roles; failed writes roll 
       version,
     };
   });
-  expect(evidence.version).toBe(17);
+  expect(evidence.version).toBe(18);
   expect(evidence.migrated.mail).toEqual([
     { id: "original", subject: "Storage fixture" },
   ]);

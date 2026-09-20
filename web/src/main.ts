@@ -24,7 +24,7 @@ async function start() {
       `shep.profile-preferences.v1.${session.user_id}`,
     );
     const workspace = new Workspace(repository, settings);
-    repository.startActions(() => { void workspace.retryPage(); workspace.changed(); });
+    repository.startActions(() => { workspace.events = structuredClone(repository.events); void workspace.retryPage(); workspace.changed(); });
     workspace.error = repository.warning;
     const port = new WorkerHistoryPort(
       () =>

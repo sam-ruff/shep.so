@@ -271,7 +271,12 @@ capacity. Namespace planning freezes an exact target before CREATE; a durable
 receipt precedes catalog repair. Unknown results require read-only inspection.
 Pending names cannot be used as physical Move destinations. Browser checked
 subtree changes now retain exact reviews, outgoing-target fences and receipts
-through bounded repair. Mobile folder adoption remains a separate migration.
+through bounded repair. Flutter schema23 uses the same creation contract
+through its existing local writer and account/provider ownership, with a
+logical pending sidebar entry and bounded recovery controls. See
+[Mobile folder creation](MOBILE_FOLDERS.md) for evidence and remaining
+platform execution. Checked folder changes beyond creation remain separate
+mobile work.
 
 Native group flags now persist their receipt before updating the cache. Cache
 repair and its Undo transition commit together; repair cannot repeat STORE or
@@ -291,6 +296,11 @@ bounded cooldown to its group. Candidate discovery uses indexed pages of 50 keys
 and yields between pages. Deferred cursor resets prevent wakeups and completions
 from starving later accounts. The 100,000-row key-seek tests do not bound every
 predecessor-history query or establish input-to-visible latency.
+Native calendar active reads now seek the status index; capacity checks stop at
+33 rows. Two indexed predecessor seeks preserve the newest logical or physical
+match without reading completed history. A separate 100,000-history regression
+bounds those statements to fewer than 1,000 SQLite VM steps and checks source
+isolation and ordering. This is query-work evidence, not a pixel latency result.
 Offline/auth policies and remaining domain
 adapters still need work. Shared scenarios and client parity retain
 those gaps explicitly.

@@ -72,6 +72,28 @@ test("folder admission survives offline reload and a held CREATE finishes throug
   expect(calls).toBe(1);
 });
 
+for (const rejected of [true, false]) test(`folder planning ${rejected ? "rejection needs review" : "disconnection keeps waiting"} without CREATE`, async ({ page }) => {
+  await imap(page);
+  let plans = 0, creates = 0;
+  await page.route("**/api/mail/folders/plan", route => {
+    plans++;
+    return rejected ? route.fulfill({ json: { state: "rejected" } }) : route.abort("connectionreset");
+  });
+  await page.route("**/api/mail/folders/create", route => { creates++; return route.abort(); });
+  const dialog = await create(page);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await reconnect(page);
+  await expect.poll(() => plans).toBeGreaterThan(0);
+  await expect.poll(async () => (await saved(page))[0]?.status).toBe(rejected ? "Rejected" : "Waiting");
+  await page.getByRole("button", { name: /^Activity/ }).click();
+  await page.getByRole("button", { name: "Folder changes", exact: true }).click();
+  const activity = page.getByRole("dialog", { name: "Folder changes", exact: true });
+  await expect(activity).toContainText(rejected ? "Needs review" : "Waiting for the account");
+  expect(creates).toBe(0);
+  const [job] = await saved(page);
+  expect(job.target).toBeUndefined(); expect(job.receipt).toBeUndefined();
+});
+
 test("unknown folder creation requires read-only checking after restart", async ({ page }) => {
   await imap(page);
   let calls = 0, inspections = 0;

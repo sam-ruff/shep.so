@@ -997,9 +997,18 @@ input[type="checkbox"]:focus-visible {
 }
 .calendar-heading {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   align-items: center;
   margin-bottom: 24px;
+}
+.calendar-activity .form-status,
+.calendar-owned-status {
+  color: var(--text);
+}
+.calendar-owned-status {
+  min-height: 2.8em;
+  margin: 0 0 10px;
 }
 .calendar-grid {
   display: grid;

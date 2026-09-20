@@ -1,5 +1,13 @@
 # Conversation request audit
 
+The 21 September continuation implements browser Calendar's durable immediate
+actions, Flutter folder creation and native calendar query bounds. It also adds
+shared CalDAV/native Flutter prerequisites. Root passes 243 Flutter tests,
+178 Flutter Rust tests, 257 browser units and the focused real-control/recovery
+gates recorded in [Completion](COMPLETION.md). CalDAV controls, native Activity,
+checked mobile folder changes and the full architecture audit remain active.
+This is another implementation checkpoint, not completion of the request.
+
 Checkpoint `d7f06b7` ships checked native account admission,
 bounded scheduler seeks, fair Flutter resumption and retained Flutter/browser draft
 failures, plus independent native/Flutter preference Retry. Combined gates and

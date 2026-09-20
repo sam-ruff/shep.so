@@ -193,7 +193,8 @@ class AccountRemoval {
       count('unresolved') > 0 ||
       count('moves') > 0 ||
       count('groups') > 0 ||
-      count('actions') > 0;
+      count('actions') > 0 ||
+      count('folder_requests') > 0;
 }
 
 abstract interface class AccountRemovalRepository {

@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "http")]
+pub mod caldav;
+#[cfg(feature = "http")]
 pub mod http;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
