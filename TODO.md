@@ -11,7 +11,8 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   First migration implemented: common projection outcomes, native bulk review and
   confirmation during pending individual writes, pre-admission Undo, and calendar
   save/delete with exact read-only recovery. Rust and five new native scenarios
-  pass, alongside 38 native regression scenarios; shipping is in progress. Remaining:
+  pass, alongside 38 native regression scenarios. Implementation is `a1049ab`;
+  [completion](docs/COMPLETION.md) records the evidence. Remaining:
   durable deferred admission/calendar recovery, consistent activity and adoption
   across folders, accounts, preferences, drafts/sending, Flutter and browser.
 
@@ -197,7 +198,7 @@ Client request numbers R67 to R80 in this section are the client session's own n
 
 ## Mail reading, search and bulk actions (client parity)
 
-- [ ] **20 September desktop bulk delete responsiveness:** **Owner clarification:** fast review and immediate list feedback are required; actual server deletion may continue in the background. Provider batching is not a completion prerequisite. Review now freezes and summarises in one database-worker transaction without waiting for earlier provider writes. Ten-message native review/confirmation, pre-admission Undo and rejection recovery pass with reviewed images; 38 native regressions pass. The 100,000-membership regression guards selected-row query plans; it is not a latency measurement. Remaining: finish shipping verification, measure the native 100 ms target at mailbox scale and implement Flutter/browser equivalents.
+- [ ] **20 September desktop bulk delete responsiveness:** **Owner clarification:** fast review and immediate list feedback are required; actual server deletion may continue in the background. Provider batching is not a completion prerequisite. `a1049ab` freezes and summarises review in one database-worker transaction without waiting for earlier provider writes. Ten-message native review/confirmation, pre-admission Undo and rejection recovery pass with reviewed images; 38 native regressions pass. The 100,000-membership regression guards selected-row query plans; it is not a latency measurement. Remaining: measure the native 100 ms target at mailbox scale, implement Flutter/browser equivalents and verify the released/installed build.
 
 Desktop delivery of these requests is recorded in the completion log; the entries track the remaining mobile/browser work and any desktop gaps named explicitly.
 

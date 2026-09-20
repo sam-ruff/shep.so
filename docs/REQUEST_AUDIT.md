@@ -13,7 +13,8 @@ confirmation boundaries and the earlier device-only refused-move policy remain.
 The first native migration includes bounded selection review, immediate group
 feedback with ordered admission and Undo, and calendar save/delete with exact
 read-only recovery. The 1,365-test Rust suite and 38 native scenarios pass,
-including five new flows; shipping verification is in progress. App-wide adoption, durable
+including five new flows. Implementation is `a1049ab`; the [completion log](COMPLETION.md)
+records its evidence and limits. App-wide adoption, durable
 session recovery and measured mailbox-scale latency remain active requirements.
 
 **14 September mail sync speed and reliable moves (R100/R101):** Sam reports
