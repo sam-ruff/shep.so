@@ -1,5 +1,44 @@
 # Completion audit
 
+## Recovery and activity continuation, 20 September 2026
+
+The integration after `431fd66` adds concurrent independent-account items under
+one native group lease, position-specific repair and pause-preserving recovery.
+The final native gate passes 24 scenarios with one live-mailbox skip. Its first
+run exposed seven serial-execution assumptions; recovery fixtures now deliberately
+select one account, concurrent flows require two active items, and the test-only
+single Undo failure is claimed atomically. The new concurrent Undo/restart/retry
+flow passes and its light captures are reviewed (`18386259eac5`). Scheduler and
+storage gates pass 21 and 26 tests respectively.
+
+Flutter schema 17 saves individual provider receipts before cache updates,
+preserves newer fields/replaced sources and resolves missing move UIDs without
+repeating the write. Claims persist the still-owned subset for dispatch, repair,
+inspection and Undo. Integrated gates pass 131 Rust and 175 Flutter tests, plus
+Clippy with all targets/features. Mocked providers cover refusal, acknowledged
+cache failure/restart, later moves, same-value newer fields and resolved Undo.
+
+Browser connection attempts now appear in Activity through their existing owner.
+The integrated gate passes 42 unit tests, TypeScript checking and 13 Chromium
+scenarios; one additional saved control test passes for failed progress reads
+and Refresh recovery. Desktop/light and narrow/dark captures are reviewed.
+All 167 Python checks pass, with nine explicit skips.
+
+Draft saving feedback and Retry now belong to each editor/parked session. Queue
+saturation retains automatic deferred saving, and a definite storage failure
+retains its error until a newer edit, explicit retry or forced-close save.
+The final draft recovery and focused Ctrl+, editor regression pass; 31 composer
+unit tests pass. The shortcut no longer inserts a comma while opening Preferences,
+and ordinary text, AltGr and clipboard bindings remain available. Final compact
+dark status and Retry captures are reviewed (`9f6811e2f1e4`); the contrast rerun
+passes. Normal commit hooks and shipping remain required.
+
+Limits: scheduler query cost at mailbox scale is not established; storage-error
+cooldown remains per group; Flutter fair resumption and
+remaining domain adapters are active; native reconnect slot activation is still
+being migrated; fixture success does not establish live-provider, Apple/Windows,
+idle-host latency or installed-release behaviour.
+
 ## Immediate admission integration, 20 September 2026
 
 Implementation `e84f66b` follows `7689ef3`: desktop individual mail now uses

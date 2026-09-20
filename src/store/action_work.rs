@@ -23,6 +23,12 @@ pub(crate) struct ReadyWork {
 }
 
 impl Work {
+    pub fn key(&self) -> String {
+        match self {
+            Self::Mail { id, position } => format!("{id}:{position}"),
+            _ => self.id().to_owned(),
+        }
+    }
     pub fn id(&self) -> &str {
         match self {
             Self::Mail { id, .. } | Self::Folder(id) | Self::Calendar(id) | Self::Outgoing(id) => {
@@ -78,17 +84,18 @@ impl Store {
                 0 => c.query_row(
                     "SELECT j.id,i.position,
                         COALESCE((SELECT m.account FROM bulk_admissions a JOIN mail_lineage l ON l.lineage=a.lineage JOIN messages m ON m.id=l.id WHERE a.job=i.job AND a.position=i.position),json_extract(i.original,'$.account_id'),''),
-                        json_extract(j.action,'$.Move.account'),i.status='repair'
+                        CASE WHEN i.undo=1 THEN json_extract(i.original,'$.account_id') ELSE json_extract(j.action,'$.Move.account') END,i.status='repair'
                      FROM bulk_jobs j JOIN bulk_items i ON i.job=j.id
-                     WHERE j.paused=0 AND (CASE WHEN i.status='repair' THEN '0' ELSE '1' END||j.id)>?1 AND j.id NOT IN (SELECT value FROM json_each(?3))
+                     WHERE j.paused=0 AND (CASE WHEN i.status='repair' THEN '0' ELSE '1' END||j.id||':'||printf('%020d',i.position))>?1 AND (j.id||':'||i.position) NOT IN (SELECT value FROM json_each(?3))
                        AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=0 AND b.id=j.id AND b.until>unixepoch())
                        AND i.status IN ('queued','running','repair') AND (?4=0 OR i.status='repair')
                        AND (i.status IN ('running','repair') OR NOT EXISTS(SELECT 1 FROM bulk_admissions a JOIN bulk_admissions prior ON prior.lineage=a.lineage AND prior.sequence<a.sequence
                            JOIN bulk_items p ON p.job=prior.job AND p.position=prior.position
                            WHERE a.job=i.job AND a.position=i.position AND p.status IN ('queued','running','repair','uncertain')))
                        AND 'mail:'||COALESCE((SELECT m.account FROM bulk_admissions a JOIN mail_lineage l ON l.lineage=a.lineage JOIN messages m ON m.id=l.id WHERE a.job=i.job AND a.position=i.position),json_extract(i.original,'$.account_id'),'') NOT IN (SELECT value FROM json_each(?2))
-                       AND (json_extract(j.action,'$.Move.account') IS NULL OR 'mail:'||json_extract(j.action,'$.Move.account') NOT IN (SELECT value FROM json_each(?2)))
-                     ORDER BY CASE WHEN i.status='repair' THEN '0' ELSE '1' END||j.id,CASE i.status WHEN 'repair' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,i.position LIMIT 1",
+                       AND (CASE WHEN i.undo=1 THEN json_extract(i.original,'$.account_id') ELSE json_extract(j.action,'$.Move.account') END IS NULL
+                         OR 'mail:'||CASE WHEN i.undo=1 THEN json_extract(i.original,'$.account_id') ELSE json_extract(j.action,'$.Move.account') END NOT IN (SELECT value FROM json_each(?2)))
+                     ORDER BY CASE WHEN i.status='repair' THEN '0' ELSE '1' END||j.id||':'||printf('%020d',i.position) LIMIT 1",
                     parameters, |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?,
                 1 => c.query_row(
                     "SELECT id,0,account,NULL,0 FROM folder_jobs j WHERE closed=0 AND id>?1 AND ?4=0
@@ -118,7 +125,11 @@ impl Store {
                 let prefix = if domain == 2 { "calendar:" } else { "mail:" };
                 let mut accounts = vec![format!("{prefix}{source}")];
                 if let Some(destination) = destination.filter(|v| v != &source) { accounts.push(format!("mail:{destination}")); }
-                let cursor = if matches!(domain,0|2) { format!("{}{id}",if repair { '0' } else { '1' }) } else { id.clone() };
+                let cursor = match domain {
+                    0 => format!("{}{id}:{position:020}", if repair { '0' } else { '1' }),
+                    2 => format!("{}{id}", if repair { '0' } else { '1' }),
+                    _ => id.clone(),
+                };
                 let work = match domain { 0 => Work::Mail { id, position: position as u64 }, 1 => Work::Folder(id), 2 => Work::Calendar(id), _ => Work::Outgoing(id) };
                 ReadyWork { work, accounts, cursor }
             }))

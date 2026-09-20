@@ -4257,6 +4257,9 @@ impl App {
             "minimized": self.composer.current.minimized,
             "parked": self.composer.parked.keys().collect::<Vec<_>>(),
             "pending": self.composer.current.pending,
+            "save_error": self.composer.save_error(&self.composer.current.draft.id),
+            "saved_revision": self.composer.current.saved_revision,
+            "save_errors": std::iter::once(&self.composer.current).chain(self.composer.parked.values()).filter_map(|session| session.save_error.as_ref().map(|(_, error)| (&session.draft.id, error))).collect::<std::collections::BTreeMap<_, _>>(),
             "reply": self.composer.current.draft.reply_context,
         });
         self.bulk_test_state(&mut data);

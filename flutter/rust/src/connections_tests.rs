@@ -169,11 +169,22 @@ async fn stale_bindings_refuse_sync_move_and_queued_send_before_dispatch() {
     for stale in [Value::Null, json!("fixture"), json!("obsolete")] {
         for payload in [
             json!({"op":"sync","account":"fixture","password":"fixture-secret","credential_slot":stale}),
-            json!({"op":"mutate","id":"fixture:INBOX:0","folder":"Archive","password":"fixture-secret","credential_slot":stale}),
             json!({"op":"send","attempt":attempt,"password":"fixture-secret","credential_slot":stale}),
         ] {
             assert!(failure(&p, payload).await.contains("credentials changed"));
         }
+        let waiting = request(
+            &p,
+            json!({"op":"mutate","id":"fixture:INBOX:0","folder":"Archive","password":"fixture-secret","credential_slot":stale}),
+        )
+        .await;
+        assert_eq!(waiting["status"], "waiting");
+        assert!(
+            waiting["warning"]
+                .as_str()
+                .unwrap()
+                .contains("credentials changed")
+        );
     }
     p.database
         .read(|db| {
@@ -195,7 +206,7 @@ async fn stale_bindings_refuse_sync_move_and_queued_send_before_dispatch() {
     };
     let old = staged["slot"].clone();
     let task = tokio::spawn(async move {
-        failure(&second,json!({"op":"mutate","id":"fixture:INBOX:0","starred":true,"password":"fixture-secret","credential_slot":old})).await
+        request(&second,json!({"op":"mutate","id":"fixture:INBOX:0","starred":true,"password":"fixture-secret","credential_slot":old})).await
     });
     p.operations.mutation_waiting.notified().await;
     let slot = next["slot"].as_str().unwrap().to_owned();
@@ -204,7 +215,14 @@ async fn stale_bindings_refuse_sync_move_and_queued_send_before_dispatch() {
         .await
         .unwrap();
     drop(guard);
-    assert!(task.await.unwrap().contains("credentials changed"));
+    let waiting = task.await.unwrap();
+    assert_eq!(waiting["status"], "waiting");
+    assert!(
+        waiting["warning"]
+            .as_str()
+            .unwrap()
+            .contains("credentials changed")
+    );
 }
 
 #[tokio::test]

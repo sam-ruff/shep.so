@@ -42,7 +42,7 @@ export interface LocalStore {
   readonly profileId?: string;
   intents?: IntentStore;
   removeAccount?(review: RemovalReview, discard: boolean): Promise<void>;
-  all<T>(store: StoreName): Promise<T[]>;
+  all<T>(store: StoreName, limit?: number): Promise<T[]>;
   get<T>(store: StoreName, key: string): Promise<T | undefined>;
   commit(changes: Change[], intent?: IntentLease): Promise<void>;
   snapshot(
@@ -181,12 +181,12 @@ export class BrowserStore implements LocalStore {
   close() {
     this.db.close();
   }
-  private read<T>(store: StoreName, key?: string): Promise<T> {
+  private read<T>(store: StoreName, key?: string, limit?: number): Promise<T> {
     return new Promise((resolve, reject) => {
       const tx = this.db.transaction(store, "readonly");
       const request =
         key === undefined
-          ? tx.objectStore(store).getAll()
+          ? tx.objectStore(store).getAll(undefined, limit)
           : tx.objectStore(store).get(key);
       tx.oncomplete = () => resolve(request.result as T);
       tx.onabort = () =>
@@ -195,8 +195,8 @@ export class BrowserStore implements LocalStore {
         );
     });
   }
-  all<T>(store: StoreName) {
-    return this.read<T[]>(store);
+  all<T>(store: StoreName, limit?: number) {
+    return this.read<T[]>(store, undefined, limit);
   }
   get<T>(store: StoreName, key: string) {
     return this.read<T | undefined>(store, key);

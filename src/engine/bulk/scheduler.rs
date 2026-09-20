@@ -8,8 +8,9 @@ impl Engine {
         mut input: mpsc::Receiver<Command>,
         mut output: Output,
     ) {
-        let mut running: FuturesUnordered<BoxFuture<'_, (usize, String, bool)>> =
+        let mut running: FuturesUnordered<BoxFuture<'_, (usize, Work, bool)>> =
             FuturesUnordered::new();
+        let mut leases = std::collections::HashMap::<String, Arc<crate::store::BulkLease>>::new();
         let mut active = Vec::<(usize, ReadyWork)>::new();
         let mut after: [String; 4] = Default::default();
         let mut blocked = [false; 4];
@@ -66,7 +67,7 @@ impl Engine {
                             let ids = active
                                 .iter()
                                 .filter(|(d, _)| *d == domain)
-                                .map(|(_, work)| work.work.id().to_owned())
+                                .map(|(_, work)| work.work.key())
                                 .collect();
                             match self
                                 .store
@@ -99,16 +100,60 @@ impl Engine {
                     };
                     after[domain].clone_from(&ready.cursor);
                     next_domain = (domain + 1) % 4;
-                    active.push((domain, ready.clone()));
                     let activity = self.bulk_control.active.enter();
+                    let lease = if let Work::Mail { id, .. } = &ready.work {
+                        match leases.get(id).cloned() {
+                            Some(lease) => Some(lease),
+                            None => {
+                                let acquired = async {
+                                    let lease = Arc::new(self.store.bulk_lease(id.clone()).await?);
+                                    self.store.resume_bulk(&lease).await?;
+                                    Ok::<_, anyhow::Error>(lease)
+                                }
+                                .await;
+                                match acquired {
+                                    Ok(lease) => {
+                                        leases.insert(id.clone(), lease.clone());
+                                        Some(lease)
+                                    }
+                                    Err(error) => {
+                                        // A competing owner must not be mistaken for an abandoned step.
+                                        if self
+                                            .store
+                                            .action_work_progress(domain, id.clone(), false)
+                                            .await
+                                            .is_err()
+                                        {
+                                            blocked[domain] = true;
+                                            storage_backoff[domain] = Some(
+                                                tokio::time::Instant::now()
+                                                    + Duration::from_secs(2),
+                                            );
+                                        }
+                                        let _ = output
+                                            .send(Event::BulkFinished(
+                                                id.clone(),
+                                                Err(format!("{error:#}")),
+                                            ))
+                                            .await;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    active.push((domain, ready.clone()));
                     let engine = &self;
                     let output = output.clone();
                     running.push(
                         async move {
                             let _activity = activity;
-                            let id = ready.work.id().to_owned();
-                            let progressed = engine.execute_ready_work(ready.work, output).await;
-                            (domain, id, progressed)
+                            let work = ready.work.clone();
+                            let progressed =
+                                engine.execute_ready_work(ready.work, lease, output).await;
+                            (domain, work, progressed)
                         }
                         .boxed(),
                     );
@@ -168,8 +213,12 @@ impl Engine {
             };
             tokio::select! {
                 completion = running.next(), if !running.is_empty() => {
-                    if let Some((domain, id, changed)) = completion {
-                        active.retain(|(d, work)| *d != domain || work.work.id() != id);
+                    if let Some((domain, finished, changed)) = completion {
+                        let id = finished.id().to_owned();
+                        active.retain(|(d, work)| *d != domain || work.work.key() != finished.key());
+                        if domain == 0 && !active.iter().any(|(d, work)| *d == 0 && work.work.id() == id) {
+                            leases.remove(&id);
+                        }
                         progressed |= changed;
                         if !self.bulk_control.stopping.get()
                             && let Err(error) = self.store.action_work_progress(domain,id,changed).await
@@ -199,13 +248,18 @@ impl Engine {
         }
     }
 
-    async fn execute_ready_work(&self, work: Work, mut output: Output) -> bool {
+    async fn execute_ready_work(
+        &self,
+        work: Work,
+        lease: Option<Arc<crate::store::BulkLease>>,
+        mut output: Output,
+    ) -> bool {
         if self.bulk_control.stopping.get() {
             return false;
         }
         match work {
             Work::Mail { id, position } => {
-                self.execute_bulk_work(id, Some(position), 1, &mut output)
+                self.execute_bulk_work(id, Some(position), 1, lease, &mut output)
                     .await
             }
             Work::Calendar(id) => self.execute_calendar_work(id, &mut output).await,

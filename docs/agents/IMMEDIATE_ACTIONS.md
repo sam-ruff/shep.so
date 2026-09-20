@@ -275,6 +275,9 @@ individual controls now admit into the existing group journal with observed
 lineage and field ownership; History retains receipt-based Undo across restart.
 The bounded owner shares capacity across mail, folders, calendar and Outbox,
 prioritises cache repair and drains active steps on correlated close requests.
-Offline/auth policies, fairness within a multi-account group and remaining
-domain adapters still need work. Shared scenarios and client parity retain
+Independent accounts within one group now share a retained lease while exact
+item claims and repairs preserve conflicting account order. Automatic recovery
+preserves Pause and newer Undo decisions. A storage failure still applies the
+bounded cooldown to its group. Offline/auth policies and remaining domain
+adapters still need work. Shared scenarios and client parity retain
 those gaps explicitly.

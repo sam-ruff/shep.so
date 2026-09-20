@@ -27,7 +27,7 @@ impl Engine {
 
     #[cfg(test)]
     async fn execute_bulk_job(&self, id: String, mut output: Output) {
-        self.execute_bulk_work(id, None, usize::MAX, &mut output)
+        self.execute_bulk_work(id, None, usize::MAX, None, &mut output)
             .await;
     }
 
@@ -36,6 +36,7 @@ impl Engine {
         id: String,
         position: Option<u64>,
         limit: usize,
+        lease: Option<Arc<crate::store::BulkLease>>,
         output: &mut Output,
     ) -> bool {
         // Publish activity before checking close intent. A close sees either
@@ -60,22 +61,33 @@ impl Engine {
                 j.cancelled,
             )
         });
+        let before_item = match position {
+            Some(position) => self.store.bulk_item_state(id.clone(), position).await.ok(),
+            None => None,
+        };
         let result = self
-            .perform_bulk_job(&id, output, position, limit)
+            .perform_bulk_job(&id, output, position, limit, lease)
             .await
             .map(Arc::new)
             .map_err(|e| format!("{e:#}"));
         let failed = result.is_err();
-        let progressed = result.as_ref().is_ok_and(|j| {
-            Some((
-                j.remaining,
-                j.completed,
-                j.restored,
-                j.failed,
-                j.uncertain,
-                j.cancelled,
-            )) != before
-        });
+        let progressed = if let Some(position) = position {
+            self.store
+                .bulk_item_state(id.clone(), position)
+                .await
+                .is_ok_and(|state| Some(state) != before_item)
+        } else {
+            result.as_ref().is_ok_and(|j| {
+                Some((
+                    j.remaining,
+                    j.completed,
+                    j.restored,
+                    j.failed,
+                    j.uncertain,
+                    j.cancelled,
+                )) != before
+            })
+        };
         if let Ok(job) = &result
             && job.remaining > 0
             && limit != usize::MAX
@@ -99,19 +111,34 @@ impl Engine {
         output: &mut Output,
         position: Option<u64>,
         limit: usize,
+        lease: Option<Arc<crate::store::BulkLease>>,
     ) -> anyhow::Result<Job> {
-        let lease = self.store.bulk_lease(id.to_owned()).await?;
-        let mut job = self.store.resume_bulk(&lease).await?;
+        let (lease, mut job) = match lease {
+            Some(lease) => (lease, self.store.bulk_job(id.to_owned()).await?),
+            None => {
+                let lease = Arc::new(self.store.bulk_lease(id.to_owned()).await?);
+                let job = self.store.resume_bulk(&lease).await?;
+                (lease, job)
+            }
+        };
         output
             .send(Event::BulkUpdate(Arc::new(job.clone())))
             .await?;
         let mut last_progress = None::<std::time::Instant>;
         let mut completed = 0;
         loop {
-            if self.bulk_control.stopping.get() || job.remaining == 0 || completed >= limit {
+            if self.bulk_control.stopping.get()
+                || job.paused
+                || job.remaining == 0
+                || completed >= limit
+            {
                 break;
             }
-            if let Some(item) = self.store.pending_bulk_flag_repair(&lease).await? {
+            if let Some(item) = self
+                .store
+                .pending_bulk_flag_repair_at(&lease, position)
+                .await?
+            {
                 job = self
                     .store
                     .finish_bulk_item(item, Ok(Receipt::Unchanged))
@@ -132,11 +159,11 @@ impl Engine {
             if self.bulk_control.stopping.get() {
                 break;
             }
-            let Some(item) = self
-                .store
-                .claim_bulk_item_at(id.to_owned(), position)
-                .await?
-            else {
+            let item = match position {
+                Some(position) => self.store.claim_owned_bulk_item(&lease, position).await?,
+                None => self.store.claim_bulk_item_at(id.to_owned(), None).await?,
+            };
+            let Some(item) = item else {
                 break;
             };
             job = self.store.bulk_job(id.to_owned()).await?;
@@ -1039,6 +1066,115 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pause_after_selection_survives_recovery_and_continue_preserves_newer_undo() {
+        let engine = fixture(2).await;
+        let flags = crate::mail_actions::Flags {
+            unread: Some(false),
+            starred: None,
+        };
+        start(
+            &engine,
+            "pause-race",
+            MailQuery::default(),
+            Action::Flags(flags),
+        )
+        .await;
+        let selected = engine
+            .store
+            .next_action_work(0, String::new(), vec![], vec![], false)
+            .await
+            .unwrap()
+            .unwrap();
+        let crate::store::Work::Mail { id, position } = selected.work else {
+            panic!("mail work")
+        };
+        engine
+            .store
+            .run(|c| {
+                c.execute("UPDATE bulk_jobs SET paused=1 WHERE id='pause-race'", [])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let mut held = Vec::new();
+        for _ in 0..dispatch::NETWORK_CONCURRENCY {
+            held.push(engine.provider_slots.acquire().await);
+        }
+        let (mut output, _events) = futures::channel::mpsc::channel(16);
+        let changed = tokio::time::timeout(
+            Duration::from_secs(1),
+            engine.execute_bulk_work(id.clone(), Some(position), 1, None, &mut output),
+        )
+        .await
+        .expect("paused recovery never waits for provider capacity");
+        assert!(!changed);
+        let paused = engine.store.bulk_job(id.clone()).await.unwrap();
+        assert!(paused.paused);
+        assert_eq!(
+            (
+                paused.remaining,
+                paused.running,
+                paused.completed,
+                paused.uncertain
+            ),
+            (2, 0, 0, 0)
+        );
+        for item in engine.store.bulk_items(id.clone(), None).await.unwrap() {
+            assert!(engine.store.mail_metadata(item.id).await.unwrap().unread);
+        }
+        drop(held);
+        engine.store.continue_bulk(id.clone()).await.unwrap();
+        assert!(
+            engine
+                .execute_bulk_work(id.clone(), Some(position), 1, None, &mut output)
+                .await
+        );
+        let selected = engine
+            .store
+            .next_action_work(0, String::new(), vec![], vec![], false)
+            .await
+            .unwrap()
+            .unwrap();
+        let crate::store::Work::Mail {
+            position: stale_position,
+            ..
+        } = selected.work
+        else {
+            panic!("mail work")
+        };
+        assert_ne!(stale_position, position);
+        let undo = engine.store.request_bulk_undo(id.clone()).await.unwrap();
+        assert!(undo.undo_requested);
+        let lease = engine.store.bulk_lease(id.clone()).await.unwrap();
+        let recovered = engine.store.resume_bulk(&lease).await.unwrap();
+        assert!(recovered.undo_requested);
+        assert_eq!((recovered.remaining, recovered.cancelled), (1, 1));
+        drop(lease);
+        assert!(
+            !engine
+                .execute_bulk_work(id.clone(), Some(stale_position), 1, None, &mut output)
+                .await
+        );
+        engine.store.continue_bulk(id.clone()).await.unwrap();
+        let finished = execute(&engine, &id).await;
+        assert_eq!(
+            (finished.restored, finished.cancelled, finished.uncertain),
+            (1, 1, 0)
+        );
+        assert!(finished.undo_requested);
+        assert!(
+            engine
+                .store
+                .query(MailQuery::default())
+                .await
+                .unwrap()
+                .rows
+                .iter()
+                .all(|mail| mail.unread)
+        );
+    }
+
+    #[tokio::test]
     async fn continue_makes_a_paused_group_eligible_without_replaying_completed_receipts() {
         let engine = fixture(2).await;
         start(&engine, "paused", MailQuery::default(), movement("Archive")).await;
@@ -1231,6 +1367,254 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((page.total, page.unread), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn independent_items_share_one_group_lease_and_stop_drains_without_recovering_live_siblings()
+     {
+        let engine = fixture(2).await;
+        engine
+            .store
+            .upsert(vec![
+                parse_mail(
+                    "free",
+                    "1",
+                    "INBOX",
+                    b"Subject: Free\r\n\r\nBody".to_vec(),
+                    true,
+                    false,
+                )
+                .unwrap(),
+            ])
+            .await
+            .unwrap();
+        start(
+            &engine,
+            "shared",
+            MailQuery::default(),
+            Action::Flags(crate::mail_actions::Flags {
+                unread: Some(false),
+                starred: None,
+            }),
+        )
+        .await;
+        let held = engine.account_access("fixture").await;
+        let (sender, input) = CommandSender::channel();
+        let (output, mut events) = futures::channel::mpsc::channel(32);
+        let owner = tokio::spawn(engine.clone().run_bulk_queue(input.bulk, output.clone()));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = events.next().await {
+                if let Event::BulkUpdate(job) = event
+                    && job.id == "shared"
+                    && job.completed == 1
+                    && job.running == 1
+                {
+                    assert_eq!((job.remaining, job.uncertain), (2, 0));
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("free sibling finishes while the first account remains held");
+        assert!(
+            engine.store.bulk_lease("shared".into()).await.is_err(),
+            "the shared lease stays owned through the held sibling"
+        );
+        let items = engine
+            .store
+            .bulk_items("shared".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(items.iter().filter(|i| i.status == "running").count(), 1);
+        assert_eq!(
+            items.iter().filter(|i| i.status == "queued").count(),
+            1,
+            "same account does not claim a second provider step"
+        );
+        engine
+            .execute(Command::BulkStop(1), output.clone())
+            .await
+            .unwrap();
+        while let Ok(event) = events.try_recv() {
+            assert!(!matches!(event, Event::BulkStopped(1)));
+        }
+        drop(held);
+        drop(sender);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = events.next().await {
+                if matches!(event, Event::BulkStopped(1)) {
+                    break;
+                }
+            }
+            owner.await.unwrap();
+        })
+        .await
+        .expect("stop observes every accepted receipt");
+        let job = engine.store.bulk_job("shared".into()).await.unwrap();
+        assert_eq!(
+            (job.completed, job.remaining, job.uncertain, job.running),
+            (2, 1, 0, 0)
+        );
+        assert!(!engine.bulk_control.active.get());
+        let lease = engine.store.bulk_lease("shared".into()).await.unwrap();
+        assert_eq!(engine.store.resume_bulk(&lease).await.unwrap().uncertain, 0);
+        drop(lease);
+        engine.bulk_control.stopping.set(false);
+        assert_eq!(execute(&engine, "shared").await.completed, 3);
+    }
+
+    #[tokio::test]
+    async fn leased_item_claims_and_repairs_remain_position_specific() {
+        let engine = fixture(2).await;
+        engine
+            .store
+            .upsert(vec![
+                parse_mail(
+                    "free",
+                    "1",
+                    "INBOX",
+                    b"Subject: Free\r\n\r\nBody".to_vec(),
+                    true,
+                    false,
+                )
+                .unwrap(),
+            ])
+            .await
+            .unwrap();
+        let flags = crate::mail_actions::Flags {
+            unread: Some(false),
+            starred: None,
+        };
+        start(
+            &engine,
+            "shared",
+            MailQuery::default(),
+            Action::Flags(flags),
+        )
+        .await;
+        let lease = engine.store.bulk_lease("shared".into()).await.unwrap();
+        engine.store.resume_bulk(&lease).await.unwrap();
+        let items = engine
+            .store
+            .bulk_items("shared".into(), None)
+            .await
+            .unwrap();
+        let same: Vec<_> = items
+            .iter()
+            .filter(|i| i.original.as_ref().unwrap().account_id == "fixture")
+            .collect();
+        let other = items
+            .iter()
+            .find(|i| i.original.as_ref().unwrap().account_id == "free")
+            .unwrap();
+        let first = engine
+            .store
+            .claim_owned_bulk_item(&lease, same[0].position)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            engine
+                .store
+                .claim_owned_bulk_item(&lease, same[1].position)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let second = engine
+            .store
+            .claim_owned_bulk_item(&lease, other.position)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            engine
+                .store
+                .bulk_job("shared".into())
+                .await
+                .unwrap()
+                .running,
+            2
+        );
+        for item in [first, second] {
+            engine
+                .store
+                .acknowledge_bulk_flags(
+                    item,
+                    Receipt::Flags {
+                        before: crate::mail_actions::Flags {
+                            unread: Some(true),
+                            starred: None,
+                        },
+                        after: flags,
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        assert!(
+            engine
+                .store
+                .pending_bulk_flag_repair_at(&lease, Some(same[1].position))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let selected = engine
+            .store
+            .pending_bulk_flag_repair_at(&lease, Some(other.position))
+            .await
+            .unwrap()
+            .unwrap();
+        engine
+            .store
+            .finish_bulk_item(selected, Ok(Receipt::Unchanged))
+            .await
+            .unwrap();
+        assert!(
+            engine
+                .store
+                .pending_bulk_flag_repair_at(&lease, Some(other.position))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            engine
+                .store
+                .pending_bulk_flag_repair_at(&lease, Some(same[0].position))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            engine
+                .store
+                .claim_owned_bulk_item(&lease, same[1].position)
+                .await
+                .unwrap()
+                .is_none(),
+            "repair retains account priority"
+        );
+        let repair = engine
+            .store
+            .pending_bulk_flag_repair_at(&lease, Some(same[0].position))
+            .await
+            .unwrap()
+            .unwrap();
+        engine
+            .store
+            .finish_bulk_item(repair, Ok(Receipt::Unchanged))
+            .await
+            .unwrap();
+        assert!(
+            engine
+                .store
+                .claim_owned_bulk_item(&lease, same[1].position)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -1518,6 +1902,25 @@ mod tests {
             .request_bulk_undo("transfer".into())
             .await
             .unwrap();
+        let ready = engine
+            .store
+            .next_action_work(0, String::new(), vec![], vec![], false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(ready.accounts.contains(&"mail:fixture".into()));
+        assert!(ready.accounts.contains(&"mail:destination".into()));
+        for occupied in ["mail:fixture", "mail:destination"] {
+            assert!(
+                engine
+                    .store
+                    .next_action_work(0, String::new(), vec![occupied.into()], vec![], false)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "inverse reserves both the current and restored account"
+            );
+        }
         let restored = execute(&engine, "transfer").await;
         assert_eq!(
             (restored.restored, restored.failed, restored.uncertain),

@@ -39,12 +39,27 @@ Bulk mail already has its own authoritative Rust journal in `groups.rs`. Selecti
 freezes exact membership in SQLite and the group executor owns dispatch, receipts,
 Undo and uncertainty. It must not be copied into the individual action table.
 
-Schema 15 preserves per-message lineage through acknowledged moves and proved
+Schema 17 preserves per-message lineage through acknowledged moves and proved
 Sent aliases. Other physical/content replacements invalidate it. Provider claims
 recheck durable status and field ownership under the account lock; duplicate
 requests cannot dispatch twice. Mutable read/star values are not physical
 identity. SQLite applies pending fields to mailbox queries and reader metadata,
 including after reopening, without copying the action journal into Dart.
+
+Individual provider receipts commit before cache work. Acknowledged repairs
+survive restart and apply only to proven physical lineage and still-owned fields;
+they cannot overwrite a replacement or move the cache behind a later confirmed
+move. Cache-only repair requires no credentials and never repeats the provider
+write. An acknowledged move without a destination UID retains Repair until a
+read-only inspection proves the identity, including after cache failure/restart.
+Undo uses that resolved dispatch identity. Definite typed refusals reject once;
+pre-dispatch credential failures remain Waiting.
+
+Claims save the still-owned subset of requested fields atomically with Running.
+Newer choices can supersede one field while the others continue. Receipt repair,
+inspection, Activity and Undo use this accepted subset; the original request
+remains immutable for deduplication. Remote moves combined with flag changes are
+rejected before admission because they require separate provider receipts.
 
 ## Other owners
 
@@ -66,8 +81,7 @@ including after reopening, without copying the action journal into Dart.
   Production input carries the observed lineage token; replacement rejection
   and proven alias acceptance have native and Workspace regressions.
 - Restart scheduling still needs fair progress beyond the first bounded batch,
-  including accounts waiting for credentials. Compound individual requests need
-  per-field acceptance when only part of the request is superseded.
+  including accounts waiting for credentials.
 - Live IMAP verification remains for the bounded flag inspection command. Unit
   coverage uses the provider trait and proves inspection never repeats a write.
 - Add live IMAP, suspension and Apple evidence. Current coverage uses the actual

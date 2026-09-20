@@ -36,6 +36,7 @@ libc = "0.2"
 native-tls = { version = "0.2", features = ["vendored"] }
 
 [dev-dependencies]
+mockall = "0.15.0"
 tempfile = "3"
 
 [lints.rust]

@@ -484,10 +484,40 @@ impl Store {
         id: String,
         position: Option<u64>,
     ) -> anyhow::Result<Option<Item>> {
+        self.claim_bulk_item_inner(id, position, false).await
+    }
+
+    pub(crate) async fn claim_owned_bulk_item(
+        &self,
+        lease: &BulkLease,
+        position: u64,
+    ) -> anyhow::Result<Option<Item>> {
+        anyhow::ensure!(
+            Arc::ptr_eq(&self.0, &lease.store.0),
+            "Use the lease for this mail cache"
+        );
+        self.claim_bulk_item_inner(lease.id.clone(), Some(position), true)
+            .await
+    }
+
+    pub(crate) async fn bulk_item_state(
+        &self,
+        id: String,
+        position: u64,
+    ) -> anyhow::Result<String> {
+        self.run(move |c| Ok(c.query_row("SELECT json_array(status,undo,receipt,error) FROM bulk_items WHERE job=? AND position=?", params![id,position as i64], |r|r.get(0))?)).await
+    }
+
+    async fn claim_bulk_item_inner(
+        &self,
+        id: String,
+        position: Option<u64>,
+        concurrent: bool,
+    ) -> anyhow::Result<Option<Item>> {
         self.run(move |c| {
             let tx=c.transaction()?;
             if job(&tx,&id)?.paused { return Ok(None); }
-            if tx.query_row("SELECT EXISTS(SELECT 1 FROM bulk_items WHERE job=? AND status IN ('running','repair'))", [&id], |r|r.get::<_,bool>(0))? { return Ok(None); }
+            if !concurrent && tx.query_row("SELECT EXISTS(SELECT 1 FROM bulk_items WHERE job=? AND status IN ('running','repair'))", [&id], |r|r.get::<_,bool>(0))? { return Ok(None); }
             for _ in 0..50 {
             let next=tx.query_row("SELECT position,id,original,undo,status,receipt,error FROM bulk_items i WHERE job=?1 AND status='queued' AND (?2 IS NULL OR position=?2)
                 AND NOT EXISTS(SELECT 1 FROM bulk_admissions a JOIN bulk_admissions prior ON prior.lineage=a.lineage AND prior.sequence<a.sequence
@@ -501,6 +531,14 @@ impl Store {
                 intents::refresh_item(&tx, &item)?;
                 bump(&tx)?;
                 continue;
+            }
+            if concurrent && tx.query_row("SELECT EXISTS(SELECT 1 FROM bulk_items i JOIN bulk_jobs j ON j.id=i.job
+                WHERE i.job=?1 AND i.status IN ('running','repair') AND
+                (json_extract(j.action,'$.Move.account') IS NOT NULL OR
+                 COALESCE((SELECT m.account FROM bulk_admissions a JOIN mail_lineage l ON l.lineage=a.lineage JOIN messages m ON m.id=l.id WHERE a.job=i.job AND a.position=i.position),json_extract(i.original,'$.account_id'), '')=?2))",
+                params![id,item.original.as_ref().map(|mail|mail.account_id.as_str()).unwrap_or("")], |r|r.get::<_,bool>(0))? {
+                tx.commit()?;
+                return Ok(None);
             }
             tx.execute("UPDATE bulk_items SET status='running' WHERE job=? AND position=? AND status='queued'",params![id,item.position as i64])?;
             item.status="running".into();
@@ -535,13 +573,21 @@ impl Store {
         &self,
         lease: &BulkLease,
     ) -> anyhow::Result<Option<Item>> {
+        self.pending_bulk_flag_repair_at(lease, None).await
+    }
+
+    pub(crate) async fn pending_bulk_flag_repair_at(
+        &self,
+        lease: &BulkLease,
+        position: Option<u64>,
+    ) -> anyhow::Result<Option<Item>> {
         anyhow::ensure!(
             Arc::ptr_eq(&self.0, &lease.store.0),
             "Use the lease for this mail cache"
         );
         let id = lease.id.clone();
         self.run(move |c| {
-            let row = c.query_row("SELECT i.position,i.id,i.original,i.undo,i.status,i.receipt,i.error FROM bulk_items i JOIN bulk_flag_receipts r ON r.job=i.job AND r.position=i.position AND r.undo=i.undo WHERE i.job=? ORDER BY i.position LIMIT 1", [&id], read_item).optional()?;
+            let row = c.query_row("SELECT i.position,i.id,i.original,i.undo,i.status,i.receipt,i.error FROM bulk_items i JOIN bulk_flag_receipts r ON r.job=i.job AND r.position=i.position AND r.undo=i.undo WHERE i.job=?1 AND (?2 IS NULL OR i.position=?2) ORDER BY i.position LIMIT 1", params![id,position.map(|v|v as i64)], read_item).optional()?;
             row.map(|row| parse_item(&id, row)).transpose()
         }).await
     }
@@ -745,7 +791,7 @@ impl Store {
         })
     }
     /// Called only after obtaining the job lease: a recorded running step now
-    /// has no live executor. Retain it for review; resume only never-started work.
+    /// has no live executor. Retain it for review without changing user decisions.
     pub async fn resume_bulk(&self, lease: &BulkLease) -> anyhow::Result<Job> {
         anyhow::ensure!(
             Arc::ptr_eq(&self.0, &lease.store.0),
@@ -756,9 +802,7 @@ impl Store {
             let tx=c.transaction()?;
             tx.execute("UPDATE bulk_effects SET account=NULL,folder=NULL,unread=NULL,starred=NULL WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status='running' AND NOT EXISTS(SELECT 1 FROM bulk_flag_receipts r WHERE r.job=bulk_items.job AND r.position=bulk_items.position))",params![id,id])?;
             let recovered = tx.execute("UPDATE bulk_items SET status='uncertain',error='Shep closed before this change was acknowledged. Refresh and check the source and destination folders before resolving it.' WHERE job=? AND status='running' AND NOT EXISTS(SELECT 1 FROM bulk_flag_receipts r WHERE r.job=bulk_items.job AND r.position=bulk_items.position)",[&id])?;
-            let paused = job(&tx, &id)?.paused;
-            tx.execute("UPDATE bulk_jobs SET paused=0 WHERE id=?",[&id])?;
-            if recovered > 0 || paused { intents::refresh(&tx, &id)?; bump(&tx)?; }
+            if recovered > 0 { intents::refresh(&tx, &id)?; bump(&tx)?; }
             let result=job(&tx,&id)?;tx.commit()?;Ok(result)
         }).await
     }

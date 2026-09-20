@@ -1,5 +1,40 @@
 use super::*;
 
+#[test]
+fn command_navigation_cannot_insert_text_and_editor_bindings_remain_available() {
+    let shortcuts = crate::shortcuts::Keymap::default();
+    let press = |character: &str, modifiers| text_editor::KeyPress {
+        key: Key::Character(character.into()),
+        modified_key: Key::Character(character.into()),
+        physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Comma),
+        modifiers,
+        text: Some(character.into()),
+        status: text_editor::Status::Focused { is_hovered: false },
+    };
+    let command = keyboard::Modifiers::COMMAND;
+    for character in [",", "1", "2", "k", "f"] {
+        assert!(compose_binding(press(character, command), &shortcuts).is_none());
+    }
+    assert!(matches!(
+        compose_binding(press(",", keyboard::Modifiers::empty()), &shortcuts),
+        Some(text_editor::Binding::Insert(','))
+    ));
+    assert!(matches!(
+        compose_binding(press("@", command | keyboard::Modifiers::ALT), &shortcuts),
+        Some(text_editor::Binding::Insert('@'))
+    ));
+    for (character, expected) in [("c", "copy"), ("x", "cut"), ("v", "paste"), ("a", "select")] {
+        let binding = compose_binding(press(character, command), &shortcuts);
+        assert!(matches!(
+            (binding, expected),
+            (Some(text_editor::Binding::Copy), "copy")
+                | (Some(text_editor::Binding::Cut), "cut")
+                | (Some(text_editor::Binding::Paste), "paste")
+                | (Some(text_editor::Binding::SelectAll), "select")
+        ));
+    }
+}
+
 fn draft(id: &str) -> Draft {
     Draft {
         id: id.into(),
@@ -8,6 +43,167 @@ fn draft(id: &str) -> Draft {
         body: "Keep my words".into(),
         ..Default::default()
     }
+}
+
+#[test]
+fn full_save_queue_retains_latest_edits_and_retries_when_capacity_returns() {
+    let (mut app, _) = App::new();
+    let (sender, mut queue) = crate::engine::CommandSender::persistence_test_channel();
+    let mut filled = 0;
+    while sender
+        .try_send(Command::AutoSaveDraft(draft("other")))
+        .is_ok()
+    {
+        filled += 1;
+        assert!(filled <= 32);
+    }
+    assert!(filled > 0);
+    app.tx = Some(sender);
+    app.load_draft(draft("current"));
+    app.flush_draft_saves(true);
+    assert!(app.composer.current.dirty.is_some());
+    assert!(app.composer.current.pending.is_none());
+    assert!(app.composer.save_error("current").is_none());
+    app.edit_compose_field("subject", "Keep the newest edit".into());
+    while queue.try_recv().is_ok() {}
+    app.composer.current.dirty = Some(Instant::now() - std::time::Duration::from_secs(2));
+    app.autosave_draft();
+    let Command::AutoSaveDraft(saved) = queue.try_recv().unwrap() else {
+        panic!("automatic retry after backpressure")
+    };
+    assert_eq!(saved.subject, "Keep the newest edit");
+    assert_eq!(saved.body.trim(), "Keep my words");
+    assert_eq!(app.composer.current.pending, Some(saved.revision));
+    assert!(app.composer.save_error("current").is_none());
+}
+
+#[test]
+fn save_failure_stays_with_parked_draft_and_retry_uses_a_new_revision() {
+    let (mut app, _) = App::new();
+    let (sender, mut queue) = crate::engine::CommandSender::persistence_test_channel();
+    app.tx = Some(sender);
+    app.load_draft(draft("current"));
+    app.flush_draft_saves(true);
+    let Command::AutoSaveDraft(first) = queue.try_recv().unwrap() else {
+        panic!("autosave")
+    };
+    let _ = app.draft_saved(first.id.clone(), first.revision, Err("Disk full".into()));
+    app.composer.current.dirty = Some(Instant::now() - std::time::Duration::from_secs(2));
+    app.autosave_draft();
+    assert!(
+        queue.try_recv().is_err(),
+        "a failed revision is not retried on every tick"
+    );
+    app.notice("Unrelated action finished", false);
+    assert_eq!(app.composer.save_error("current"), Some("Disk full"));
+    app.load_draft(draft("another"));
+    assert!(
+        queue.try_recv().is_err(),
+        "switching does not retry the failed save"
+    );
+    assert_eq!(app.composer.save_error("current"), Some("Disk full"));
+    app.load_draft(app.owned_draft("current").unwrap());
+    assert!(
+        matches!(queue.try_recv().unwrap(), Command::AutoSaveDraft(saved) if saved.id == "another")
+    );
+    assert!(app.composer.current.pending.is_none());
+    assert_eq!(app.composer.save_error("current"), Some("Disk full"));
+    app.save_current_draft();
+    let Command::SaveDraft(retry) = queue.try_recv().unwrap() else {
+        panic!("explicit retry")
+    };
+    assert!(retry.revision > first.revision);
+    assert_eq!(retry.body, first.body);
+    app.load_draft(draft("another"));
+    let _ = app.draft_saved(
+        first.id.clone(),
+        first.revision,
+        Err("Obsolete failure".into()),
+    );
+    assert_eq!(app.notice.as_ref().unwrap().0, "Unrelated action finished");
+    assert_eq!(app.composer.parked["current"].pending, Some(retry.revision));
+    assert_eq!(app.composer.save_error("current"), Some("Disk full"));
+    let _ = app.draft_saved(
+        retry.id.clone(),
+        retry.revision,
+        Ok(Arc::new(DraftState {
+            revision: 20,
+            drafts: vec![retry.clone()],
+        })),
+    );
+    assert!(app.composer.save_error("current").is_none());
+    assert_eq!(app.composer.current.draft.id, "another");
+    app.load_draft(retry);
+    assert_eq!(
+        app.composer.current.saved_revision,
+        Some(first.revision + 1)
+    );
+}
+
+#[test]
+fn older_save_ack_cannot_clear_newer_error_or_unsaved_edits() {
+    let (mut app, _) = App::new();
+    let (sender, mut queue) = crate::engine::CommandSender::persistence_test_channel();
+    app.tx = Some(sender);
+    app.load_draft(draft("current"));
+    app.flush_draft_saves(true);
+    let Command::AutoSaveDraft(first) = queue.try_recv().unwrap() else {
+        panic!("autosave")
+    };
+    let _ = app.draft_saved(first.id.clone(), first.revision, Err("Disk full".into()));
+    app.edit_compose_field("subject", "Newer words".into());
+    app.composer.current.dirty = Some(Instant::now() - std::time::Duration::from_secs(2));
+    app.autosave_draft();
+    let Command::AutoSaveDraft(newer) = queue.try_recv().unwrap() else {
+        panic!("new edit may retry")
+    };
+    let _ = app.draft_saved(
+        first.id.clone(),
+        first.revision,
+        Ok(Arc::new(DraftState {
+            revision: 10,
+            drafts: vec![first.clone()],
+        })),
+    );
+    assert_eq!(app.composer.current.pending, Some(newer.revision));
+    assert_eq!(app.composer.save_error("current"), Some("Disk full"));
+    app.edit_compose_field("subject", "Newest words".into());
+    let _ = app.draft_saved(
+        newer.id.clone(),
+        newer.revision,
+        Ok(Arc::new(DraftState {
+            revision: 11,
+            drafts: vec![newer],
+        })),
+    );
+    assert_eq!(app.composer.save_error("current"), Some("Disk full"));
+    assert_eq!(app.current_draft().subject, "Newest words");
+    app.save_current_draft();
+    let Command::SaveDraft(latest) = queue.try_recv().unwrap() else {
+        panic!("save latest")
+    };
+    let _ = app.draft_saved(
+        latest.id.clone(),
+        latest.revision,
+        Ok(Arc::new(DraftState {
+            revision: 12,
+            drafts: vec![latest.clone()],
+        })),
+    );
+    assert!(app.composer.save_error("current").is_none());
+    app.save_current_draft();
+    let Command::SaveDraft(repeated) = queue.try_recv().unwrap() else {
+        panic!("repeated explicit save")
+    };
+    assert!(repeated.revision > latest.revision);
+    let _ = app.draft_saved(
+        latest.id,
+        latest.revision,
+        Err("Old duplicate failure".into()),
+    );
+    assert!(app.composer.save_error("current").is_none());
+    assert_eq!(app.composer.current.pending, Some(repeated.revision));
+    assert!(app.composer.current.dirty.is_none());
 }
 
 #[test]
@@ -445,7 +641,17 @@ fn hidden_draft_close_waits_for_pending_save_then_the_newest_revision() {
     assert_eq!(app.dialog, Some(Dialog::Event));
     assert_eq!(app.current_draft().subject, "Newest edit");
     assert!(app.defer_draft_exit(Exit::Window(window)));
-    assert!(matches!(queue.try_recv().unwrap(), Command::AutoSaveDraft(saved) if saved == newest));
+    let Command::AutoSaveDraft(saved) = queue.try_recv().unwrap() else {
+        panic!("close retries latest draft")
+    };
+    assert!(saved.revision > newest.revision);
+    assert_eq!(
+        saved,
+        Draft {
+            revision: saved.revision,
+            ..newest
+        }
+    );
 }
 
 #[test]

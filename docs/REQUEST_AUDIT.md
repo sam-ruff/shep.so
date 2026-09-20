@@ -35,6 +35,13 @@ Send. Integrated verification passes 117 Flutter Rust and 175 Flutter tests,
 live-mailbox skip. Input-lineage, failed Undo/restart and held-provider controls
 are included. Full architecture adoption and measured latency remain open.
 
+The continuation integrates native within-group account concurrency and preserved
+Pause/Undo, Flutter receipt-before-cache recovery and accepted-field ownership,
+connection attempts in browser Activity and session-owned native draft errors.
+Exact gates and remaining shipping
+work are recorded in the completion log. Native staged credential activation,
+Flutter scheduling fairness and the remaining domain adapters stay active.
+
 **14 September mail sync speed and reliable moves (R100/R101):** Sam reports
 the related-messages notice after archiving (fixed, `3dabf16`) and a failed
 move whose notice names a missing folder namespace on `sam@shep.so`. Sam's

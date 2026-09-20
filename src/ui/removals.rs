@@ -439,13 +439,17 @@ mod inline_draft_tests {
         assert!(!app.removal.loading);
         assert!(app.removal.error.as_ref().unwrap().contains("Disk full"));
         app.review_removal(target);
-        assert!(matches!(rx.try_recv().unwrap(), Command::AutoSaveDraft(_)));
+        let Command::AutoSaveDraft(retry) = rx.try_recv().unwrap() else {
+            panic!("retry owned draft")
+        };
+        assert!(retry.revision > draft.revision);
+        assert_eq!(retry.body, draft.body);
         let _ = app.draft_saved(
-            draft.id.clone(),
-            draft.revision,
+            retry.id.clone(),
+            retry.revision,
             Ok(Arc::new(crate::store::DraftState {
                 revision: 1,
-                drafts: vec![draft],
+                drafts: vec![retry],
             })),
         );
         assert!(matches!(
