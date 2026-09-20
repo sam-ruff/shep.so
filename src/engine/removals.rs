@@ -13,6 +13,27 @@ impl SecretRemover for OsSecretRemover {
         self.0.delete(key).await
     }
 }
+struct EmptySecretRemover;
+#[async_trait::async_trait]
+impl SecretRemover for EmptySecretRemover {
+    async fn remove(&self, _: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+pub(super) fn secret_remover(
+    demo: bool,
+    credentials: crate::credentials::Credentials,
+) -> Arc<dyn SecretRemover> {
+    #[cfg(feature = "test-support")]
+    if demo && (crate::test_support::passwords::active() || crate::test_support::backups::active())
+    {
+        return Arc::new(OsSecretRemover(credentials));
+    }
+    if demo {
+        return Arc::new(EmptySecretRemover);
+    }
+    Arc::new(OsSecretRemover(credentials))
+}
 impl Engine {
     pub(super) async fn connection_access(&self, target: &ConnectionRef) -> account_work::Access {
         match target.kind {
@@ -30,7 +51,7 @@ impl Engine {
             .filter(|job| job.target == *target)
         {
             let in_use = self.store.credential_in_use(job.key.clone()).await?;
-            if in_use || self.demo || self.secret_remover.remove(&job.key).await.is_ok() {
+            if in_use || self.secret_remover.remove(&job.key).await.is_ok() {
                 self.store.finish_credential_cleanup(job).await?;
             } else {
                 failed += 1;
@@ -162,7 +183,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("connections.sqlite");
         let mut engine = super::super::calendar_tests::engine();
-        engine.demo = false;
         engine.store = Store::open(&path).unwrap();
         let fake = Arc::new(FakeRemover::default());
         fake.fail.store(true, Ordering::SeqCst);
@@ -179,7 +199,6 @@ mod tests {
         assert!(engine.store.workspace().await.unwrap().calendars.is_empty());
         drop(engine);
         let mut restarted = super::super::calendar_tests::engine();
-        restarted.demo = false;
         restarted.store = Store::open(path).unwrap();
         restarted.secret_remover = fake.clone();
         assert_eq!(restarted.store.cleanup_jobs().await.unwrap().len(), 1);

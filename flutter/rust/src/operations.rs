@@ -17,6 +17,9 @@ use std::{
 };
 use tokio::sync::{Mutex, Semaphore, mpsc};
 
+pub(crate) const RUNNABLE_ACTIONS_FIRST: &str = "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions INDEXED BY individual_mail_action_runnable WHERE status IN ('queued','waiting') ORDER BY created,id LIMIT 50";
+pub(crate) const RUNNABLE_ACTIONS_AFTER: &str = "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions INDEXED BY individual_mail_action_runnable WHERE status IN ('queued','waiting') AND (created,id)>(?1,?2) ORDER BY created,id LIMIT 50";
+
 pub struct Operations {
     profile_history: crate::profile_history::Runtime,
     profile_discovery: crate::profile_discovery::Runtime,
@@ -154,6 +157,8 @@ pub enum Request {
         offset: u32,
         #[serde(default)]
         runnable: bool,
+        after_created: Option<i64>,
+        after_id: Option<String>,
     },
     CancelMailAction {
         id: String,
@@ -803,15 +808,23 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             mutate(profile,Mutation{action_id:action_id.unwrap_or_else(||uuid::Uuid::new_v4().to_string()),parent_action:None,observed_lineage,require_observation,credential_slot,id,password,folder,unread,starred,intent:true,report}).await
         }
         Request::Groups{command} => crate::groups::run(profile,command).await,
-        Request::MailActions{offset,runnable} => db.read(move|db| {
-            let query=if runnable {
-                "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions WHERE status IN ('queued','waiting') ORDER BY created,id LIMIT 50 OFFSET ?1"
+        Request::MailActions{offset,runnable,after_created,after_id} => db.read(move|db| {
+            let saved=if runnable {
+                anyhow::ensure!(after_created.is_some()==after_id.is_some(),"The runnable action cursor is incomplete.");
+                if let (Some(created),Some(id))=(after_created,after_id) {
+                    db.prepare(RUNNABLE_ACTIONS_AFTER)?
+                        .query_map(params![created,id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,i64>(6)?)))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                } else {
+                    db.prepare(RUNNABLE_ACTIONS_FIRST)?
+                        .query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,i64>(6)?)))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                }
             } else {
-                "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions ORDER BY created DESC,id LIMIT 50 OFFSET ?1"
+                db.prepare("SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions ORDER BY created DESC,id LIMIT 50 OFFSET ?1")?
+                    .query_map([offset],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,i64>(6)?)))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
             };
-            let saved=db.prepare(query)?
-                .query_map([offset],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,i64>(6)?)))?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
             let rows=saved.into_iter().map(|(id,mail,account,fields,status,error,created)|{
                 anyhow::ensure!(Status::parse(&status).is_some(),"This action status requires a newer Shep version.");
                 Ok(json!({"id":id,"mail":mail,"account":account,"fields":serde_json::from_str::<Value>(&fields)?,"status":status,"error":error,"created":created}))

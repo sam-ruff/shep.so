@@ -1,7 +1,8 @@
+pub mod account_setup;
 mod action_work;
 pub(crate) mod backup_history;
 mod bulk;
-pub(crate) use action_work::{ReadyWork, Work};
+pub(crate) use action_work::{ReadyWork, Work, WorkPage};
 pub(crate) mod calendar_actions;
 mod mail_lineage;
 pub use calendar_actions::CalendarJob;
@@ -52,7 +53,7 @@ pub struct Store(
     Option<Arc<crate::cache_cipher::ownership::Guard>>,
 );
 
-pub(crate) const DATABASE_VERSION: u32 = 7;
+pub(crate) const DATABASE_VERSION: u32 = 8;
 /// Plain-text characters the reader loads per page of a long message.
 pub const READER_BODY_PAGE: usize = 32_000;
 
@@ -784,16 +785,7 @@ impl Store {
             let c = &tx;
             connections::allow(c, ConnectionKind::Account, &account.id)?;
             folder_actions::idle(c, &account.id)?;
-            let mut accounts: Vec<Account> = get(c, "accounts")?;
-            let previous = accounts.iter().find(|a| a.id == account.id).cloned();
-            accounts.retain(|a| a.id != account.id);
-            if !account.sent_folder.is_empty() {c.execute("INSERT INTO sent_folders(account,folder) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET folder=excluded.folder",params![account.id,account.sent_folder])?;}
-            else {c.execute("DELETE FROM sent_folders WHERE account=?",[&account.id])?;}
-            profile_sync::join::reconnected(c, &account.id)?;
-            accounts.push(account.clone());
-            put(c, "accounts", &accounts)?;
-            connections::changed(c)?;
-            profile_sync::state::record_native_account_fields(c, &account, previous.as_ref())?;
+            account_setup::save_account_fields(c, &account)?;
             tx.commit()?;
             Ok(())
         })

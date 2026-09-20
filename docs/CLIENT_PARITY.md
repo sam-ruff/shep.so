@@ -17,8 +17,26 @@ without a UID retain read-only identity recovery through restart. Native groups
 now share one lease across independent account items, retaining exact item repair,
 Pause and Undo ownership. Other domain/lifecycle adapters remain unfinished.
 Desktop draft feedback now stays with each editor or parked session, including
-Retry and newer-revision ownership. Flutter/browser draft status adapters still
-need the same lifecycle review; native storage failure is not a remote-sync error.
+Retry and newer-revision ownership. Flutter/browser now retain parked draft text,
+owned failures and Retry, with stale-result and Send/removal fences. Browser file
+retries preserve exact identities after lost replies. Cross-tab browser text
+conflicts and wider suspension/platform evidence remain active.
+Native Preferences now retains revision-owned local save errors and Retry after
+notice dismissal/navigation, without reverting the current choice. Focused unit
+and desktop/compact native gates pass; the combined account build still needs
+its final native run. Flutter Preferences also retains owned status and Retry
+through unrelated notices; compact light/dark screenshots are reviewed. Browser
+preference feedback remains part of the audit; publication keeps its separate owner.
+
+Native schema 8 stages checked account credential slots and activates them with
+settings atomically; provider, vault and backup readers resolve the binding.
+Incoming identity edits with cached mail require a reviewed migration. The account
+UI now admits locally, closes its matching form and exposes Connection activity;
+the isolated native held-capacity/close/restart/rejection controls pass. Final
+integrated native execution remains required. Native candidate discovery and Flutter runnable
+actions now use indexed 50-row pages, with 100,000-row database-step tests. Flutter
+resumption retains per-account exclusion across failed reads and an explicit
+Activity Retry. These gates do not establish whole-app latency or platform parity.
 
 Desktop Send now admits prepared MIME to a durable Queued Outbox before provider
 capacity and supports local cancellation before dispatch. Browser now saves

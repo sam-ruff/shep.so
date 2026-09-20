@@ -271,19 +271,27 @@ pub fn save_text(db: &mut Connection, mut draft: Draft) -> Result<()> {
         !locked,
         "This draft has been submitted or discarded. Its delivery/discard record was preserved."
     );
-    let current: Option<String> = tx
-        .query_row("SELECT content FROM drafts WHERE id=?1", [&draft.id], |r| {
-            r.get(0)
+    let current: Option<(i64, String)> = tx
+        .query_row("SELECT revision,content FROM drafts WHERE id=?1", [&draft.id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
         })
         .optional()?;
     // Creation owns the immutable original quote. Text autosave can change its
     // displayed body but cannot replace or erase the hidden formatting source.
     draft.forward = current
-        .map(|s| serde_json::from_str::<Draft>(&s))
+        .as_ref()
+        .map(|(_, s)| serde_json::from_str::<Draft>(s))
         .transpose()?
         .and_then(|d| d.forward);
     draft.attachments = attachments(&tx, &draft.id)?;
-    tx.execute("INSERT INTO drafts(id,revision,content) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,content=excluded.content WHERE excluded.revision>=drafts.revision",params![draft.id,revision,serde_json::to_string(&draft)?])?;
+    let encoded = serde_json::to_string(&draft)?;
+    if let Some((saved_revision, saved)) = current
+        && saved_revision == revision
+    {
+        let saved = serde_json::to_string(&serde_json::from_str::<Draft>(&saved)?)?;
+        anyhow::ensure!(saved == encoded,"A newer editor owns this draft revision. Reopen the saved draft before retrying.");
+    }
+    tx.execute("INSERT INTO drafts(id,revision,content) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,content=excluded.content WHERE excluded.revision>drafts.revision",params![draft.id,revision,encoded])?;
     tx.commit()?;
     Ok(())
 }

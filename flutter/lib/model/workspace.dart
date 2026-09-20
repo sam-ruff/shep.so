@@ -36,6 +36,15 @@ class Workspace extends ChangeNotifier {
   final MailRepository repository;
   List<MailActivity> mailActivities = const [];
   final Set<String> _resumingMailActivity = {};
+  final Set<String> _resumingMailAccounts = {};
+  final Set<String> _seenMailResumeAccounts = {};
+  final Set<String> _blockedMailResumeAccounts = {};
+  bool _mailResumeSweep = false, _mailResumePump = false;
+  bool _mailResumeProgressed = false;
+  int? _mailResumeAfterCreated;
+  String? _mailResumeAfterId;
+  String? _mailResumeQueryError;
+  String? get mailResumeQueryError => _mailResumeQueryError;
   Iterable<MailActivity> get mailActivityReview =>
       mailActivities.where((action) => action.needsReview);
   Iterable<MailActivity> get mailActivityPending => mailActivities.where(
@@ -48,12 +57,47 @@ class Workspace extends ChangeNotifier {
   final Map<String, Future<void>> _queues = {};
   final Map<String, Map<String, Object>> _projection = {};
   final Map<String, Draft> drafts = {};
+  final Map<String, Draft> _pendingDrafts = {};
+  final Map<String, String> _draftSaveErrors = {};
+  final Map<String, int> _draftGenerations = {};
+  int _draftGeneration = 0;
+  String? draftSaveError(String id) => _draftSaveErrors[id];
+  bool draftNeedsRetry(String id) => _draftSaveErrors.containsKey(id);
+
+  int _stageDraft(Draft draft) {
+    final generation = ++_draftGeneration;
+    final current = _pendingDrafts[draft.id] ?? drafts[draft.id];
+    if (current != null && current.revision > draft.revision) return generation;
+    _pendingDrafts[draft.id] = draft;
+    drafts[draft.id] = draft;
+    _draftGenerations[draft.id] = generation;
+    _changed();
+    return generation;
+  }
+
+  void stageDraft(Draft draft) => _stageDraft(draft);
+
+  Future<bool> retryDraft(String id) async {
+    final draft = _pendingDrafts[id] ?? drafts[id];
+    if (draft == null) return false;
+    return saveDraft(draft);
+  }
+
+  void _forgetDraft(String id) {
+    _draftGenerations[id] = ++_draftGeneration;
+    drafts.remove(id);
+    _pendingDrafts.remove(id);
+    _draftSaveErrors.remove(id);
+  }
+
   final Set<String> _removedAccounts = {};
   List<CalendarEntry> events;
   Preferences preferences = const Preferences();
   String folder = 'Inbox', query = '', filter = 'All';
   String? account;
   bool newestFirst = true, syncing = false, savingPreferences = false;
+  String? preferenceSaveError;
+  VoidCallback? _preferenceRetry;
   bool _refreshAgain = false, _disposed = false;
   String? _error, notice;
   MoveRecord? _undoErrorOwner;
@@ -387,7 +431,13 @@ class Workspace extends ChangeNotifier {
     if (native != null) {
       try {
         await native.initialize();
-        drafts.addEntries(native.savedDrafts.map((d) => MapEntry(d.id, d)));
+        for (final draft in native.savedDrafts) {
+          final current = drafts[draft.id];
+          if (!_pendingDrafts.containsKey(draft.id) &&
+              (current == null || current.revision <= draft.revision)) {
+            drafts[draft.id] = draft;
+          }
+        }
         await loadPage();
         await refreshMailActivity(resume: true);
       } catch (e) {
@@ -430,13 +480,80 @@ class Workspace extends ChangeNotifier {
   }
 
   Future<void> _resumeQueuedMailActivity(MailActivityRepository source) async {
-    final runnable = await source.runnableMailActions();
-    for (final action
-        in runnable
-            .where((action) => !_resumingMailActivity.contains(action.id))
-            .take(32 - _resumingMailActivity.length)) {
-      _resumingMailActivity.add(action.id);
-      unawaited(_resumeMailActivity(source, action));
+    if (_disposed) return;
+    if (!_mailResumeSweep) {
+      _mailResumeSweep = true;
+      _mailResumeProgressed = false;
+      _mailResumeAfterCreated = null;
+      _mailResumeAfterId = null;
+      _blockedMailResumeAccounts.clear();
+      _seenMailResumeAccounts.clear();
+    }
+    if (_mailResumePump) return;
+    _mailResumePump = true;
+    try {
+      while (_resumingMailActivity.length < 32) {
+        final List<MailActivity> runnable;
+        try {
+          runnable = await source.runnableMailActions(
+            afterCreated: _mailResumeAfterCreated,
+            afterId: _mailResumeAfterId,
+          );
+        } catch (e) {
+          if (!_disposed) {
+            _mailResumeQueryError =
+                'Could not resume saved mail actions. Retry Activity. $e';
+            error = _mailResumeQueryError;
+            _changed();
+          }
+          _mailResumeSweep = false;
+          _mailResumeAfterCreated = null;
+          _mailResumeAfterId = null;
+          return;
+        }
+        if (_disposed) {
+          _mailResumeSweep = false;
+          return;
+        }
+        if (_mailResumeQueryError case final previous?) {
+          _mailResumeQueryError = null;
+          if (error == previous) error = null;
+          _changed();
+        }
+        if (runnable.isEmpty) {
+          if (_resumingMailActivity.isEmpty) {
+            _mailResumeAfterCreated = null;
+            _mailResumeAfterId = null;
+            if (_mailResumeProgressed) {
+              _mailResumeProgressed = false;
+              _seenMailResumeAccounts.clear();
+              continue;
+            }
+            _mailResumeSweep = false;
+          }
+          return;
+        }
+        for (final action in runnable) {
+          if (_resumingMailActivity.length >= 32) return;
+          _mailResumeAfterCreated = action.created;
+          _mailResumeAfterId = action.id;
+          if (_resumingMailActivity.contains(action.id) ||
+              _resumingMailAccounts.contains(action.account) ||
+              _seenMailResumeAccounts.contains(action.account) ||
+              _blockedMailResumeAccounts.contains(action.account)) {
+            continue;
+          }
+          _resumingMailActivity.add(action.id);
+          _resumingMailAccounts.add(action.account);
+          _seenMailResumeAccounts.add(action.account);
+          unawaited(_resumeMailActivity(source, action));
+        }
+      }
+    } finally {
+      _mailResumePump = false;
+      if (!_disposed && _mailResumeSweep && _resumingMailActivity.isEmpty) {
+        unawaited(Future.microtask(() => _resumeQueuedMailActivity(source)));
+      }
     }
   }
 
@@ -466,12 +583,17 @@ class Workspace extends ChangeNotifier {
   ) async {
     try {
       await source.resumeMailAction(action);
+      _mailResumeProgressed = true;
     } catch (e) {
       error = '$e';
+      _blockedMailResumeAccounts.add(action.account);
     } finally {
       _resumingMailActivity.remove(action.id);
-      await refreshMailActivity();
-      unawaited(_resumeQueuedMailActivity(source));
+      _resumingMailAccounts.remove(action.account);
+      if (!_disposed) await refreshMailActivity();
+      if (!_disposed && _mailResumeSweep) {
+        unawaited(_resumeQueuedMailActivity(source));
+      }
     }
   }
 
@@ -711,7 +833,13 @@ class Workspace extends ChangeNotifier {
     moves.removeAccount(id);
     undoFailures.removeWhere((r) => r.account == id);
     if (_readCandidate?.accountId == id) _readCandidate = null;
-    drafts.removeWhere((_, draft) => draft.accountId == id);
+    final removedDrafts = drafts.values
+        .where((draft) => draft.accountId == id)
+        .map((draft) => draft.id)
+        .toList();
+    for (final draft in removedDrafts) {
+      _forgetDraft(draft);
+    }
     if (_confirmed[_undoId]?.accountId == id) {
       _flagUndo = null;
       _undoId = null;
@@ -762,15 +890,23 @@ class Workspace extends ChangeNotifier {
         );
         if (revision == _settingsRevision) {
           notice = 'Preferences saved';
-          error = null;
+          if (error == preferenceSaveError) error = null;
+          if (identical(retry, _preferenceRetry)) retry = null;
+          preferenceSaveError = null;
+          _preferenceRetry = null;
         }
       } catch (_) {
         if (revision == _settingsRevision) {
-          error =
+          final previousError = preferenceSaveError;
+          preferenceSaveError =
               'Could not save preferences. Retry to keep these changes after restarting.';
-          retry = () {
+          _preferenceRetry = () {
             unawaited(savePreferences(preferences));
           };
+          if (error == null || error == previousError) {
+            error = preferenceSaveError;
+            retry = _preferenceRetry;
+          }
         }
       } finally {
         if (revision == _settingsRevision) savingPreferences = false;
@@ -1265,6 +1401,7 @@ class Workspace extends ChangeNotifier {
   }
 
   Future<bool> saveDraft(Draft draft) async {
+    final generation = _stageDraft(draft);
     try {
       await repository.saveDraft(draft);
       if (_removedAccounts.contains(draft.accountId)) {
@@ -1273,14 +1410,26 @@ class Workspace extends ChangeNotifier {
         _changed();
         return false;
       }
-      drafts[draft.id] = draft;
+      final owns = _draftGenerations[draft.id] == generation;
+      final current = drafts[draft.id];
+      if (owns && (current == null || current.revision <= draft.revision)) {
+        drafts[draft.id] = draft;
+      }
+      if (owns) {
+        _pendingDrafts.remove(draft.id);
+        _draftSaveErrors.remove(draft.id);
+      }
       notice = 'Draft saved';
       _changed();
       return true;
     } catch (e) {
-      error = e is MailOperationFailure
+      final message = e is MailOperationFailure
           ? e.message
-          : 'Draft could not be saved. Keep this editor open and retry.';
+          : 'Draft could not be saved. Retry here or from Drafts.';
+      if (_draftGenerations[draft.id] == generation) {
+        error = message;
+        _draftSaveErrors[draft.id] = message;
+      }
       _changed();
       return false;
     }
@@ -1291,7 +1440,7 @@ class Workspace extends ChangeNotifier {
     if (native == null) return false;
     try {
       await native.discard(draft.id, draft.revision);
-      drafts.remove(draft.id);
+      _forgetDraft(draft.id);
       notice = 'Draft discarded';
       _changed();
       return true;
@@ -1317,7 +1466,7 @@ class Workspace extends ChangeNotifier {
         result.state == 'delivered' ||
         result.sent == 'saved' ||
         result.sent == 'local') {
-      drafts.remove(entry.draftId);
+      _forgetDraft(entry.draftId);
     }
     if (result.draftId case final String id) {
       final recovered = accountRepository?.savedDrafts
@@ -1345,9 +1494,10 @@ class Workspace extends ChangeNotifier {
   Future<bool> send(Draft draft) async {
     try {
       await repository.send(draft);
-      drafts.remove(draft.id);
-      if (repository is OutgoingRepository)
+      _forgetDraft(draft.id);
+      if (repository is OutgoingRepository) {
         notice = 'Message queued in Outbox.';
+      }
       _changed();
       return true;
     } catch (e) {
@@ -1383,6 +1533,7 @@ class Workspace extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _mailResumeSweep = false;
     profileDiscovery?.dispose();
     google?.dispose();
     moves.dispose();

@@ -1824,6 +1824,9 @@ export class GatewayRepository implements Repository, SelectionRepository {
   async attachments(id: string) {
     return (await this.files(id)).map((f) => f.info);
   }
+  async reviewDraftFiles(id: string) {
+    return this.exclusive(`draft.${id}`, () => this.attachments(id));
+  }
   private async editable(id: string) {
     if (await this.store.get("outgoing", id))
       throw new Error(
@@ -1832,20 +1835,40 @@ export class GatewayRepository implements Repository, SelectionRepository {
     if (!(await this.store.get("drafts", id)))
       throw new Error("Save the draft before attaching files.");
   }
-  async addFiles(id: string, files: File[]): Promise<DraftAttachment[]> {
+  async addFiles(id: string, files: File[], ids: string[] = files.map(() => crypto.randomUUID())): Promise<DraftAttachment[]> {
     return this.exclusive(`draft.${id}`, async () => {
       await this.editable(id);
       const current = await this.files(id);
-      if (current.length + files.length > 32)
+      if (ids.length !== files.length || new Set(ids).size !== ids.length)
+        throw new Error("The attachment request changed. Choose the files again.");
+      const pending: { file: File; id: string }[] = [];
+      for (const [index, file] of files.entries()) {
+        const saved = current.find((entry) => entry.info.id === ids[index]);
+        if (!saved) {
+          if (await this.store.get("draftFiles", ids[index]))
+            throw new Error("This attachment identity belongs to another draft.");
+          pending.push({ file, id: ids[index] });
+          continue;
+        }
+        if (saved.info.name !== file.name || saved.info.size !== file.size ||
+            saved.info.media_type !== (file.type || "application/octet-stream"))
+          throw new Error("The saved attachment differs from this request. Reopen the draft.");
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const previous = new Uint8Array(await saved.blob.arrayBuffer());
+        if (bytes.length !== previous.length || bytes.some((byte, i) => byte !== previous[i]))
+          throw new Error("The saved attachment differs from this request. Reopen the draft.");
+      }
+      if (!pending.length) return current.map((file) => file.info);
+      if (current.length + pending.length > 32)
         throw new Error("Attach at most 32 files to one message.");
       if (
         current.reduce((n, f) => n + f.info.size, 0) +
-          files.reduce((n, f) => n + f.size, 0) >
+          pending.reduce((n, entry) => n + entry.file.size, 0) >
         18 * 1024 * 1024
       )
         throw new Error("Attachments must total 18 MiB or less.");
       const start = Math.max(-1, ...current.map((f) => f.order)) + 1;
-      const incoming = files.map((file, index) => {
+      const incoming = pending.map(({ file, id: fileId }, index) => {
         if (
           !file.name ||
           file.name.length > 1024 ||
@@ -1857,7 +1880,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
           order: start + index,
           blob: file,
           info: {
-            id: crypto.randomUUID(),
+            id: fileId,
             name: file.name,
             media_type: file.type || "application/octet-stream",
             size: file.size,

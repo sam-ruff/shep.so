@@ -1,5 +1,5 @@
 use super::*;
-use crate::store::{ReadyWork, Work};
+use crate::store::{ReadyWork, Work, WorkPage};
 use futures::{FutureExt, future::BoxFuture, stream::FuturesUnordered};
 
 impl Engine {
@@ -17,9 +17,11 @@ impl Engine {
         let mut storage_backoff = [None::<tokio::time::Instant>; 4];
         let mut next_domain = 0;
         let mut progressed = false;
+        let mut scanning = false;
         let mut input_open = true;
         let mut stopped = false;
         loop {
+            let mut scan_pending = false;
             if !self.bulk_control.stopping.get() {
                 stopped = false;
                 for domain in 0..4 {
@@ -44,7 +46,7 @@ impl Engine {
                         }
                     }
                 }
-                if progressed {
+                if progressed && !scanning {
                     after = Default::default();
                     progressed = false;
                 }
@@ -71,7 +73,7 @@ impl Engine {
                                 .collect();
                             match self
                                 .store
-                                .next_action_work(
+                                .scan_action_work(
                                     domain,
                                     after[domain].clone(),
                                     occupied,
@@ -80,18 +82,22 @@ impl Engine {
                                 )
                                 .await
                             {
-                                Ok(Some(work)) => {
+                                Ok(WorkPage::Ready(work)) => {
                                     found = Some((domain, work));
                                     break;
                                 }
-                                Ok(None) => {}
+                                Ok(WorkPage::More(cursor)) => {
+                                    after[domain] = cursor;
+                                    scan_pending = true;
+                                }
+                                Ok(WorkPage::Done) => {}
                                 Err(error) => {
                                     blocked[domain] = true;
                                     let _ = output.send(Event::Error(format!("Could not read pending actions. Refresh their history to retry. {error:#}"))).await;
                                 }
                             }
                         }
-                        if found.is_some() {
+                        if found.is_some() || scan_pending {
                             break;
                         }
                     }
@@ -166,7 +172,10 @@ impl Engine {
                 stopped = true;
                 let _ = output.send(event).await;
             }
-            if running.is_empty() && !input_open {
+            if running.is_empty()
+                && !input_open
+                && (self.bulk_control.stopping.get() || !scan_pending && !progressed)
+            {
                 break;
             }
             let mut retry_at = if self.bulk_control.stopping.get()
@@ -211,7 +220,13 @@ impl Engine {
             } else {
                 storage_backoff.into_iter().flatten().min()
             };
+            if scan_pending {
+                scanning = true;
+            } else if running.len() < dispatch::NETWORK_CONCURRENCY {
+                scanning = false;
+            }
             tokio::select! {
+                _ = tokio::task::yield_now(), if (scan_pending || progressed && !scanning) && !self.bulk_control.stopping.get() => {}
                 completion = running.next(), if !running.is_empty() => {
                     if let Some((domain, finished, changed)) = completion {
                         let id = finished.id().to_owned();
@@ -231,7 +246,7 @@ impl Engine {
                 }
                 command = input.recv(), if input_open => {
                     match command {
-                        Some(Command::BulkRun(_)) => { after = Default::default(); blocked = [false; 4]; }
+                        Some(Command::BulkRun(_)) => { progressed = true; blocked = [false; 4]; }
                         Some(_) => { let _ = output.send(Event::Error("Unexpected action-owner command".into())).await; }
                         None => input_open = false,
                     }
@@ -243,7 +258,7 @@ impl Engine {
                         Some(at) => tokio::time::sleep_until(at).await,
                         None => std::future::pending::<()>().await,
                     }
-                } => { after = Default::default(); }
+                } => { progressed = true; }
             }
         }
     }

@@ -33,9 +33,12 @@ impl MoveConnections for ImapMoveConnections {
         source: Account,
         destination: Option<Account>,
     ) -> anyhow::Result<Box<dyn Connection>> {
-        let source_secret = self.credentials.read(&source.id).await?;
+        let source_secret = self.credentials.account_password(&source, false).await?;
         let destination = match destination {
-            Some(account) => Some((account.clone(), self.credentials.read(&account.id).await?)),
+            Some(account) => Some((
+                account.clone(),
+                self.credentials.account_password(&account, false).await?,
+            )),
             None => None,
         };
         Ok(Box::new(ImapMoveConnection::new(

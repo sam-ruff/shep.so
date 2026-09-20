@@ -47,6 +47,7 @@ pub(super) fn apply(
         return Ok(());
     }
 
+    crate::store::account_setup::fence_import(&tx, &import_id)?;
     tx.execute("INSERT INTO imported_operations SELECT ?,'preferences',key,value FROM kv WHERE key='preferences'", [&import_id])?;
     tx.execute(
         "INSERT INTO imported_operations SELECT ?,'profile-marker',key,value FROM kv WHERE key=?",

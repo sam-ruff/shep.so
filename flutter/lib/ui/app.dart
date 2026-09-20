@@ -390,7 +390,17 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                       title: Text(
                         d.subject.isEmpty ? 'Untitled draft' : d.subject,
                       ),
-                      subtitle: Text(d.to),
+                      subtitle: Text(
+                        w.draftNeedsRetry(d.id)
+                            ? 'Not saved. Open or retry this draft.'
+                            : d.to,
+                      ),
+                      trailing: w.draftNeedsRetry(d.id)
+                          ? TextButton(
+                              onPressed: () => unawaited(w.retryDraft(d.id)),
+                              child: const Text('Retry'),
+                            )
+                          : null,
                       onTap: () => compose(d),
                     ),
                   )

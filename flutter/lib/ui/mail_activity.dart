@@ -48,6 +48,7 @@ class _MailActivityScreenState extends State<MailActivityScreen> {
         rows = page;
         offset = nextOffset;
         hasMore = page.length == pageSize;
+        error = widget.workspace.mailResumeQueryError;
       });
     } catch (e) {
       if (!mounted || current != request) return;
@@ -55,6 +56,12 @@ class _MailActivityScreenState extends State<MailActivityScreen> {
     } finally {
       if (mounted && current == request) setState(() => loading = false);
     }
+  }
+
+  Future<void> resumeSaved() async {
+    await widget.workspace.refreshMailActivity(resume: true);
+    if (!mounted) return;
+    await load();
   }
 
   Future<void> cancel(MailActivity action) async {
@@ -156,7 +163,9 @@ class _MailActivityScreenState extends State<MailActivityScreen> {
                 ListTile(
                   title: Text(error!),
                   trailing: TextButton(
-                    onPressed: load,
+                    onPressed: error == widget.workspace.mailResumeQueryError
+                        ? resumeSaved
+                        : load,
                     child: const Text('Retry'),
                   ),
                 ),

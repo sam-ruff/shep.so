@@ -26,6 +26,7 @@ impl App {
             || !self.move_recovery.pending.is_empty()
             || self.removal.removing.is_some()
             || self.calendar_setup.saving.is_some()
+            || self.account_setup_needs_flush()
             || self.calendar_actions.needs_flush()
             || self.composer.discard_pending
             || self.composer.forward_pending.is_some()

@@ -1,5 +1,27 @@
 # Shep handover
 
+## Current immediate-action continuation
+
+The next source checkpoint after `48cd150` integrates native schema 8 checked
+credential slots/account admission, bounded candidate seeks, group failure
+cooldown and preference Retry; Flutter fair resumption, retained draft sessions
+and preference Retry; and browser retained draft/file recovery. Combined library
+checks pass 1,169 native and 132 Flutter Rust executions. Flutter passes 196 tests,
+browser passes 51 focused unit and 11 control scenarios, and Python passes 168
+tests with nine skips. Strict docs and both client analysis/build checks pass.
+The combined native run passed 26 of 27 flows. Rejected synced credentials exposed
+missing journal cleanup and a demo shortcut bypassing the injected keychain.
+Both are corrected; four rebuilt password/backup flows pass, covering the final
+failure and restart, with reviewed capture `a9b0b41a59b3`. Normal commit hooks and
+push remain required. Use the frozen handoffs and evidence under `artifacts/`.
+
+Active isolated follow-ups are native folder creation admission through its
+existing owner (schema 9, after the current schema 8 checkpoint), browser checked
+concurrent-draft review (schema 15), and Flutter account lifecycle presentation
+through credential slots. Do not combine their unverified working sources with
+this checkpoint. Preserve `handover-fable.md` without reading or staging it.
+TODO remains authoritative and the full action architecture is unfinished.
+
 ## Immediate actions checkpoint, 20 September
 
 Checkpoint `7689ef3`, pushed to `main`, adds durable calendar admission/Waiting,
@@ -30,12 +52,13 @@ save/delete uses shared projection outcomes and exact read-only recovery.
 The completion log records 1,365 passing Rust tests and 38 native scenarios.
 Normal hooks pass, with reviewed light and compact dark captures.
 
-The next integration adds Flutter schema 17 receipt-before-cache repair and
+Implementation `48cd150`, pushed to main, adds Flutter schema 17 receipt-before-cache repair and
 accepted-field ownership (131 Rust and 175 Flutter tests), native within-group
 account concurrency (21 scheduler, 26 store and 24 native scenarios, one skip),
 browser connection Activity (42 unit and 14 Chromium scenarios) and native
 draft-owned errors/Retry plus a focused editor-shortcut regression. Final compact
-visual review passes; normal commit hooks remain before shipping this continuation.
+visual review passes; normal hooks pass 1,516 Rust executions with four ignored,
+both Clippy configurations and strict docs. The personal installation is unchanged.
 
 Next: checked native credential-slot activation, indexed bounded native scheduler
 claims and fair Flutter resumption, then remaining domain adapters. Keep one durable

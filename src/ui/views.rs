@@ -1186,7 +1186,15 @@ impl App {
     fn preferences_view(&self) -> Element<'_, Message> {
         let header = self.page_header(
             "Preferences",
-            "Make Shep feel like home.",
+            if self.preference_sync.error().is_some() {
+                "Changes have not been saved. Retry when ready."
+            } else if self.preference_sync.dirty() {
+                "Saving changes on this device…"
+            } else if self.preference_sync.generation() > 0 {
+                "Changes saved on this device."
+            } else {
+                "Make Shep feel like home."
+            },
             row![
                 input(
                     "Search settings…",
@@ -1195,7 +1203,14 @@ impl App {
                 )
                 .id("settings-search")
                 .width(if self.size.width < 1100. { 170 } else { 230 }),
-                action("Save changes", Message::SavePreferences)
+                action(
+                    if self.preference_sync.error().is_some() {
+                        "Retry save"
+                    } else {
+                        "Save changes"
+                    },
+                    Message::SavePreferences
+                )
             ]
             .spacing(10)
             .align_y(Alignment::Center)
@@ -1239,6 +1254,16 @@ impl App {
             column![action("All settings", Message::ShowAllSettings), content]
                 .spacing(12)
                 .into()
+        } else {
+            content
+        };
+        let content: Element<'_, Message> = if let Some(error) = self.preference_sync.error() {
+            column![
+                text(format!("Changes not saved. {error}")).size(12),
+                content
+            ]
+            .spacing(12)
+            .into()
         } else {
             content
         };
@@ -1502,6 +1527,7 @@ impl App {
                 .push(line());
         }
         accounts = accounts.push(action("Add mail account", Message::Open(Dialog::Account)));
+        accounts = accounts.push(self.account_setup_activity());
         if self.workspace.move_pending_total > 0 {
             accounts = accounts.push(
                 button(

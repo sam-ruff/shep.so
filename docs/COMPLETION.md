@@ -1,8 +1,84 @@
 # Completion audit
 
+## Bounded resumption and checked activation continuation, 20 September 2026
+
+The continuation after `48cd150` integrates native schema 8 staged account
+credentials, checked provider/vault/backup readers and atomic activation. Logical
+credential backups remain portable; database imports discard device slot bindings.
+Incoming connection edits with cached mail require a separate reviewed migration.
+The account UI admits exact nonsecret requests on the local writer, closes only
+its matching form and exposes bounded Connection activity. Its isolated native
+held-capacity, close/re-entry/activation and compact dark failure flows pass with
+reviewed captures `7c4cda23f3f0`, `1cd76bf4e589` and `c0894f32e792`. Removal during
+a held incoming probe cannot activate or start the SMTP probe. The final combined
+native run passes all three account scenarios with removal fencing integrated.
+The 27-scenario combined run passed 26 and found rejected imported passwords
+remaining in staged keychain slots (`4579a82e42fc`). Vault completion now invokes
+the existing cleanup owner. The first rerun (`b7061d63cb77`) exposed a demo shortcut
+that completed cleanup without calling the injected keychain. The no-op is now
+selected at adapter construction so injected cleanup runs through the normal
+owner. All four rebuilt password/backup controls pass, including the formerly
+failing scenario and restart; the final `a9b0b41a59b3` capture is reviewed. The
+27 combined scenarios are covered across these runs. All three cleanup-owner
+unit tests and all-target/all-feature Clippy pass after the adapter correction.
+
+Native mail candidate discovery now seeks at most 50 indexed keys and yields
+between pages. Cursor resets wait for a completed sweep. The 100,000-row tests
+prove indexed seeks without full scans or sorting; the owner test preserves
+independent-account progress and stop/drain beyond blocked pages. The combined
+library gate passes 1,158 executions (two ignored), and all-target/all-feature
+Clippy passes. These counts include the credential adapters and preference owner.
+
+Native Preferences keeps local choices and revision-owned save errors through
+notice dismissal and navigation, with visible Retry and stale-failure rejection.
+Seven layout and nine preference-owner tests pass. The desktop/compact native
+flow passes on both the initial and combined builds, with reviewed final captures
+`00820d69e226` and `16a0e69bcb76`. The original ten-message delete regression also
+passes on the combined build: `8fabd2c316d2` shows the ten rows removed and Undo
+available while the earlier read request still runs, then confirms completion.
+
+Flutter resumption now uses indexed 50-row cursor pages and at most 32 active
+requests, with per-account exclusion and complete sweeps before revisiting early
+accounts. Query failure stops pumping, retains Activity Retry and does not erase
+unrelated errors. Disposal fences late reads. V1/v2 review found and corrected a
+query-error loop, cursor-reset starvation and missing UI Retry wiring before
+integration. The integrated gates pass 132 Rust and 182 Flutter tests, plus
+Clippy; all three Activity visual tests pass, including the reviewed new compact
+dark query-error/Retry golden. The new golden test is additional to the 182 run.
+
+Flutter drafts now retain pending text and owned errors across editor disposal,
+with actual Drafts Retry/reopen controls, revision-zero suspension saves and
+revision/attempt fencing after Send, discard, removal and refresh. Exact same
+revision text retries are idempotent; different content is refused, without
+changing backend-owned files/forward data. Preferences retains an independent
+save error and Retry through navigation and unrelated mail notices. The combined
+gate passes 132 Rust and 196 Flutter tests; compact light/dark preference and draft
+failure goldens are reviewed. Four initial Flutter failures exposed test teardown
+leaving new disposal saves pending; fixtures now unmount and drain those accepted
+saves before disposing their workspace. Production save behaviour is unchanged.
+
+Browser parked drafts retain text/file errors and Retry through close/navigation;
+stable Drafts rows preserve a held pointer press. File retries reuse exact bytes
+and identities after lost replies, with authoritative saved-file recovery for a
+refused batch. Integrated TypeScript, 51 unit/provider tests and 11 Chromium
+draft/Forward/queued-Send scenarios pass. The broader isolated gate passes 29
+scenarios. Compact dark draft recovery is reviewed. Cross-tab text conflict review
+remains an active follow-up. Python passes 168 tests with nine explicit skips.
+
+Two focused native regressions pass for group storage-error cooldown: successful
+siblings cannot erase an unexpired delay, and a failed receipt completion requests
+cooldown even after changing its claim. Retained receipt recovery completes after
+storage is restored; unrelated groups remain eligible.
+
+Limits: full app timing is unmeasured; predecessor-history queries and other
+domain schedules still need bounds;
+Flutter account and browser concurrent-draft adapters remain active; fixture
+results do not establish live-provider, suspension, Apple/Windows or installation
+behaviour. Normal commit gates and shipping remain required for this continuation.
+
 ## Recovery and activity continuation, 20 September 2026
 
-The integration after `431fd66` adds concurrent independent-account items under
+Implementation `48cd150`, pushed to main after `431fd66`, adds concurrent independent-account items under
 one native group lease, position-specific repair and pause-preserving recovery.
 The final native gate passes 24 scenarios with one live-mailbox skip. Its first
 run exposed seven serial-execution assumptions; recovery fixtures now deliberately
@@ -31,7 +107,9 @@ The final draft recovery and focused Ctrl+, editor regression pass; 31 composer
 unit tests pass. The shortcut no longer inserts a comma while opening Preferences,
 and ordinary text, AltGr and clipboard bindings remain available. Final compact
 dark status and Retry captures are reviewed (`9f6811e2f1e4`); the contrast rerun
-passes. Normal commit hooks and shipping remain required.
+passes. Normal hooks pass 1,516 Rust test executions with four ignored, including
+both Clippy configurations, renderer and profile checks. Strict documentation
+passes. The personal installation was not replaced.
 
 Limits: scheduler query cost at mailbox scale is not established; storage-error
 cooldown remains per group; Flutter fair resumption and

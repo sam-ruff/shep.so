@@ -5069,6 +5069,32 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), check("reader_split", .44, "gte"),
                        shot("latest-resize-preserved"))
 
+    def test_preference_save_failure_retains_local_choice_and_retry_status(self):
+        for compact in (False, True):
+            started = self.mcp.call("desktop.start", persistent=True,
+                                    preference_save_failure_once=True,
+                                    width=900 if compact else 1440,
+                                    height=640 if compact else 920)
+            print(f"Preference save evidence: {started['artifacts']}", flush=True)
+            label = "compact" if compact else "desktop"
+            self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                           click(563 if compact else 690, 366), check("dark", True),
+                           check("preferences_saved", False), shot(f"preferences-saving-{label}"),
+                           check("preferences_save_error", "Preview storage failure", "contains"),
+                           check("dark", True), shot(f"preferences-save-failed-{label}"),
+                           click(870 if compact else 1410, 618 if compact else 898),
+                           check("notice", None), key("ctrl+1"), check("tab", "Mail"),
+                           key("ctrl+comma"), check("tab", "Preferences"),
+                           check("preferences_save_error", "Preview storage failure", "contains"),
+                           shot(f"preferences-error-after-navigation-{label}"),
+                           click(812 if compact else 1353, 79),
+                           check("preferences_saved", True), check("preferences_save_error", None),
+                           check("saved_appearance", "Dark"), shot(f"preferences-retry-saved-{label}"))
+            self.mcp.call("desktop.restart")
+            self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                           check("dark", True), check("preferences_save_error", None),
+                           check("saved_appearance", "Dark"), shot(f"preferences-save-restart-{label}"))
+
     def test_inline_reply_pages_the_original_without_replacing_its_text(self):
         started = self.mcp.call("desktop.start",conversation_mail=True)
         print(f"Inline conversation paging: {started['artifacts']}", flush=True)
@@ -6071,6 +6097,105 @@ class NativeFlows(unittest.TestCase):
                        click(923, 788), check("notice", "Account changes are disabled in preview", "contains"),
                        check("dialog", "Account"), check("fields.sent_copy", "LocalOnly"),
                        check("fields.sent_folder", "Sent Mail"), check("account_count", 2))
+
+    def fill_saved_connection(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(383, 156),
+                       check("settings_tab", "Accounts"), click(354, 474), check("dialog", "Account"),
+                       click(674, 444), type_text("Saved connection"), click(664, 524), type_text("fixture@example.test"),
+                       click(936, 635), check("fields.setup_step", "1"),
+                       click(650, 352), type_text("imap.example.test"), click(650, 668), type_text("fixture-cloud-incoming"),
+                       click(935, 780), check("fields.setup_step", "2"), click(650, 268), type_text("smtp.example.test"),
+                       click(472, 550), check("fields.smtp_separate", "true"), click(650, 591), type_text("fixture-cloud-smtp"),
+                       click(923, 861), check("dialog", None), check("account_count", 2))
+
+    def saved_connection_attempts(self, started):
+        database = Path(started["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as cache:
+            return [json.loads(row[0]) for row in cache.execute("SELECT data FROM account_setup_attempts ORDER BY id")]
+
+    def wait_saved_connection_stage(self, started, stage):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            attempts = self.saved_connection_attempts(started)
+            if any(item["stage"] == stage for item in attempts):
+                return next(item for item in attempts if item["stage"] == stage)
+            self.mcp.batch(wait(25))
+        self.fail(f"Connection did not reach {stage}: {attempts}")
+
+    def test_account_setup_admission_and_close_with_all_provider_slots_held(self):
+        started = self.mcp.call("desktop.start", profile_sync="empty", profile_passwords="ready",
+                                persistent=True, held_provider_slots=True)
+        print(f"Account admission evidence: {started['artifacts']}", flush=True)
+        self.fill_saved_connection()
+        attempts = self.saved_connection_attempts(started)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["stage"], "Admitted")
+        self.mcp.batch(shot("account-admitted-before-provider-capacity"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        saved = self.saved_connection_attempts(started)
+        self.assertEqual(saved[0]["id"], attempts[0]["id"])
+        self.assertEqual(saved[0]["stage"], "Interrupted")
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(383, 156),
+                       check("settings_tab", "Accounts"), check("account_count", 2), shot("account-interrupted-after-restart"),
+                       click(350, 657), check("dialog", "Account"), check("fields.name", "Saved connection"),
+                       check("fields.host", "imap.example.test"), shot("account-interrupted-review"))
+        self.assertEqual(self.saved_connection_attempts(started)[0]["stage"], "Interrupted")
+
+    def test_account_setup_probe_close_recovery_and_checked_activation(self):
+        started = self.mcp.call("desktop.start", profile_sync="empty", profile_passwords="ready",
+                                persistent=True, mail_actions="slow")
+        print(f"Account checked activation evidence: {started['artifacts']}", flush=True)
+        self.fill_saved_connection()
+        first = self.wait_saved_connection_stage(started, "Staged")
+        self.assertEqual(first["stage"], "Staged")
+        self.mcp.batch(shot("account-probing-with-old-accounts-active"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.assertEqual(self.saved_connection_attempts(started)[0]["stage"], "Interrupted")
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(383, 156),
+                       check("settings_tab", "Accounts"), click(350, 657), check("dialog", "Account"),
+                       check("fields.name", "Saved connection"), click(936, 635), check("fields.setup_step", "1"),
+                       shot("account-recovery-requires-credentials"), click(650, 668), type_text("fixture-cloud-incoming"),
+                       click(935, 780), check("fields.setup_step", "2"), click(650, 591), type_text("fixture-cloud-smtp"),
+                       click(923, 861), check("dialog", None), check("account_count", 2),
+                       {**check("account_count", 3), "timeout_ms": 8000}, shot("account-checked-activation"))
+        attempts = self.saved_connection_attempts(started)
+        self.assertEqual(len(attempts), 2)
+        active = next(item for item in attempts if item["stage"] == "Activated")
+        self.assertNotEqual(active["id"], first["id"])
+        self.assertEqual(next(item for item in attempts if item["id"] == first["id"])["stage"], "Cancelled")
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("account_count", 3), key("ctrl+comma"), check("tab", "Preferences"),
+                       click(383, 156), check("settings_tab", "Accounts"), shot("account-active-after-restart"))
+        database = Path(started["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as cache:
+            binding = cache.execute("SELECT attempt,data FROM account_credential_slots WHERE account=?", (active["account"]["id"],)).fetchone()
+        self.assertEqual(binding[0], active["id"])
+        self.assertEqual(json.loads(binding[1]), active["slots"])
+
+    def test_account_setup_rejection_remains_actionable_in_compact_dark_preferences(self):
+        started = self.mcp.call("desktop.start", profile_sync="empty", profile_passwords="reject",
+                                persistent=True, mail_actions="slow")
+        print(f"Account rejection evidence: {started['artifacts']}", flush=True)
+        self.fill_saved_connection()
+        self.mcp.batch(key("ctrl+1"), check("tab", "Mail"),
+                       {**check("notice", "Account setup needs attention", "contains"), "timeout_ms": 8000},
+                       check("account_count", 2), key("ctrl+comma"), check("tab", "Preferences"),
+                       click(290, 156), check("settings_tab", "General"), click(690, 366), check("dark", True),
+                       click(383, 156), check("settings_tab", "Accounts"),
+                       {"type": "resize", "width": 980, "height": 760}, check("window_size", [980, 760]),
+                       shot("account-failed-compact-dark"))
+        self.assertEqual(self.saved_connection_attempts(started)[0]["stage"], "Failed")
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("account_count", 2), check("dark", True),
+                       {"type": "resize", "width": 1440, "height": 920}, check("window_size", [1440, 920]),
+                       key("ctrl+comma"), check("tab", "Preferences"), click(383, 156), check("settings_tab", "Accounts"),
+                       shot("account-failure-after-restart"), click(350, 657), check("dialog", "Account"),
+                       check("fields.name", "Saved connection"), check("fields.host", "imap.example.test"))
+        self.assertEqual(self.saved_connection_attempts(started)[0]["stage"], "Failed")
 
     def test_background_sync_keeps_navigation_responsive(self):
         for appearance in ("light", "dark"):

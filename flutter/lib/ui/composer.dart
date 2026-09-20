@@ -17,7 +17,9 @@ class Composer extends StatefulWidget {
   State<Composer> createState() => _ComposerState();
 }
 
-class _ComposerState extends State<Composer> {
+enum _DraftSavePhase { idle, pending, saving, saved, failed }
+
+class _ComposerState extends State<Composer> with WidgetsBindingObserver {
   late final to = TextEditingController(text: widget.draft.to);
   late final cc = TextEditingController(text: widget.draft.cc);
   late final bcc = TextEditingController(text: widget.draft.bcc);
@@ -35,10 +37,16 @@ class _ComposerState extends State<Composer> {
       widget.workspace.repository is DraftRepository
       ? widget.workspace.repository as DraftRepository
       : null;
-  bool busy = false, saving = false, showCopy = false, checking = false;
+  bool busy = false, showCopy = false, checking = false;
   String? error, delivery;
+  _DraftSavePhase savePhase = _DraftSavePhase.idle;
+  int statusRevision = -1;
+  late int queuedRevision = widget.workspace.drafts.containsKey(widget.draft.id)
+      ? widget.draft.revision
+      : -1;
   Timer? autosave;
   Future<void> writes = Future.value();
+  late Draft latestDraft;
   bool get locked => busy || checking || delivery != null;
   Draft get draft => Draft(
     id: widget.draft.id,
@@ -59,9 +67,13 @@ class _ComposerState extends State<Composer> {
   @override
   void initState() {
     super.initState();
+    latestDraft = draft;
+    WidgetsBinding.instance.addObserver(this);
     showCopy = cc.text.isNotEmpty || bcc.text.isNotEmpty;
-    for (final c in [to, cc, bcc, subject, body]) {
-      c.addListener(edited);
+    if (widget.workspace.draftSaveError(widget.draft.id) case final saved?) {
+      savePhase = _DraftSavePhase.failed;
+      statusRevision = revision;
+      error = saved;
     }
     checkDelivery();
   }
@@ -69,9 +81,15 @@ class _ComposerState extends State<Composer> {
   void edited() {
     if (locked) return;
     revision++;
+    latestDraft = draft;
+    widget.workspace.stageDraft(latestDraft);
+    setState(() {
+      savePhase = _DraftSavePhase.pending;
+      statusRevision = revision;
+    });
     autosave?.cancel();
     autosave = Timer(const Duration(milliseconds: 500), () {
-      unawaited(saveSnapshot(draft));
+      unawaited(saveSnapshot(latestDraft));
     });
   }
 
@@ -101,18 +119,43 @@ class _ComposerState extends State<Composer> {
     }
   }
 
-  Future<void> saveSnapshot(Draft snapshot) async {
-    if (mounted) setState(() => saving = true);
+  Future<void> saveSnapshot(Draft snapshot, {bool updateUi = true}) async {
+    if (snapshot.revision < queuedRevision ||
+        (snapshot.revision == queuedRevision &&
+            savePhase != _DraftSavePhase.failed)) {
+      return;
+    }
+    queuedRevision = snapshot.revision;
+    if (mounted && updateUi) {
+      setState(() {
+        savePhase = _DraftSavePhase.saving;
+        statusRevision = snapshot.revision;
+      });
+    }
     writes = writes.then((_) async {
       final ok = await widget.workspace.saveDraft(snapshot);
-      if (mounted && snapshot.revision == revision) {
+      if (mounted && snapshot.revision >= statusRevision) {
         setState(() {
-          saving = false;
+          statusRevision = snapshot.revision;
+          savePhase = ok && snapshot.revision == revision
+              ? _DraftSavePhase.saved
+              : ok
+              ? _DraftSavePhase.pending
+              : _DraftSavePhase.failed;
           error = ok ? null : widget.workspace.error;
         });
       }
     });
     await writes;
+  }
+
+  Future<void> retrySave() => saveSnapshot(draft);
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed || locked) return;
+    autosave?.cancel();
+    unawaited(saveSnapshot(latestDraft));
   }
 
   Future<void> finish(bool send) async {
@@ -264,6 +307,10 @@ class _ComposerState extends State<Composer> {
   @override
   void dispose() {
     autosave?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    if (!locked && revision > queuedRevision) {
+      unawaited(saveSnapshot(latestDraft, updateUi: false));
+    }
     for (final c in [to, cc, bcc, subject, body]) {
       c.dispose();
     }
@@ -276,6 +323,7 @@ class _ComposerState extends State<Composer> {
     bool multiline = false,
   }) => TextField(
     controller: controller,
+    onChanged: (_) => edited(),
     readOnly: locked,
     minLines: multiline ? 10 : 1,
     maxLines: multiline ? null : 1,
@@ -295,6 +343,24 @@ class _ComposerState extends State<Composer> {
       alignLabelWithHint: multiline,
     ),
   );
+
+  Widget saveStatus(BuildContext context) => switch (savePhase) {
+    _DraftSavePhase.pending => const Text('Unsaved changes'),
+    _DraftSavePhase.saving => const Text('Saving draft…'),
+    _DraftSavePhase.saved => const Text('Saved'),
+    _DraftSavePhase.failed => Row(
+      children: [
+        Expanded(
+          child: Text(
+            'Draft not saved',
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ),
+        TextButton(onPressed: retrySave, child: const Text('Retry')),
+      ],
+    ),
+    _DraftSavePhase.idle => const SizedBox.shrink(),
+  };
 
   @override
   Widget build(BuildContext context) => PopScope(
@@ -336,6 +402,10 @@ class _ComposerState extends State<Composer> {
               padding: EdgeInsets.only(bottom: 16),
               child: Text('Preview • sending is disabled'),
             ),
+          if (savePhase != _DraftSavePhase.idle) ...[
+            saveStatus(context),
+            const SizedBox(height: 12),
+          ],
           if (error != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
@@ -440,7 +510,6 @@ class _ComposerState extends State<Composer> {
           ],
           field(body, 'Message', multiline: true),
           const SizedBox(height: 18),
-          if (saving) const Text('Saving draft…'),
         ],
       ),
     ),

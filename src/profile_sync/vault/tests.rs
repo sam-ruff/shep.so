@@ -204,8 +204,12 @@ pub(crate) struct Device {
     pub(crate) credentials: Credentials,
 }
 impl Device {
-    pub(crate) fn secret(&self, key: &str) -> Option<String> {
-        self.keychain.0.lock().unwrap().get(key).cloned()
+    pub(crate) async fn secret(&self, key: &str) -> Option<String> {
+        self.credentials
+            .read_optional(key)
+            .await
+            .expect("credential lookup")
+            .map(|secret| secret.expose_secret().to_owned())
     }
     pub(crate) async fn local(&self) -> Local {
         self.store.get(STORAGE_KEY).await.unwrap()
@@ -291,7 +295,8 @@ pub(crate) async fn device(
             .unwrap()
             .insert((*key).into(), (*value).into());
     }
-    let credentials = Credentials::with_backend(CredentialScope::Legacy, keychain.clone());
+    let credentials = Credentials::with_backend(CredentialScope::Legacy, keychain.clone())
+        .with_account_store(store.clone());
     Device {
         store,
         keychain,
@@ -369,6 +374,118 @@ fn secret_in(key: &Key, vault: &Vault, account: Uuid, field: Field) -> Option<St
 }
 
 #[tokio::test]
+async fn credential_binding_and_synced_revisions_commit_together_and_replay_lost_reply() {
+    let shared = shared(77);
+    let account = account("atomic-native", "imap.atomic.test", true);
+    let device = device(
+        None,
+        &[(account.clone(), shared)],
+        true,
+        &[
+            ("atomic-native", "old-incoming"),
+            ("atomic-native:smtp", "old-smtp"),
+        ],
+    )
+    .await;
+    let cloud = Cloud::default();
+    let servers = accepting(&[INCOMING, SMTP]);
+    let history = History::default();
+    let control = Control::default();
+    let ctx = Context {
+        store: &device.store,
+        credentials: &device.credentials,
+        remote: &cloud,
+        tester: &servers,
+        history: &history,
+        control: &control,
+        retry_failed: false,
+    };
+    let import = Import {
+        setup: Uuid::new_v4().to_string(),
+        local: account.id.clone(),
+        shared,
+        account,
+        pair: vec![
+            (Field::Incoming, INCOMING.into()),
+            (Field::Smtp, SMTP.into()),
+        ],
+        revisions: vec![(Field::Incoming, 7), (Field::Smtp, 8)],
+    };
+    stage(&ctx, &import).await.expect("stage");
+    test(&ctx, &import).await.expect("checked");
+    device.store.run(|c| {
+        c.execute_batch("CREATE TRIGGER reject_vault_revision BEFORE UPDATE OF value ON kv WHEN NEW.key='profile_credentials_v1' BEGIN SELECT RAISE(ABORT, 'revision unavailable'); END;")?;
+        Ok(())
+    }).await.expect("failure fixture");
+    assert!(activate(&ctx, &import).await.is_err());
+    assert_eq!(
+        device.secret("atomic-native").await.as_deref(),
+        Some("old-incoming")
+    );
+    assert_eq!(
+        device.secret("atomic-native:smtp").await.as_deref(),
+        Some("old-smtp")
+    );
+    assert_eq!(
+        device
+            .store
+            .account_setup(import.setup.clone())
+            .await
+            .expect("attempt")
+            .stage,
+        crate::store::account_setup::Stage::Checked
+    );
+    assert!(
+        device
+            .store
+            .require_account_reconnected(import.local.clone())
+            .await
+            .is_err()
+    );
+    device
+        .store
+        .run(|c| {
+            c.execute_batch("DROP TRIGGER reject_vault_revision")?;
+            Ok(())
+        })
+        .await
+        .expect("remove failure");
+    activate(&ctx, &import).await.expect("commit");
+    activate(&ctx, &import).await.expect("lost response replay");
+    unstage(&ctx, &import).await.expect("cleanup");
+    assert_eq!(
+        device.secret("atomic-native").await.as_deref(),
+        Some(INCOMING)
+    );
+    assert_eq!(
+        device.secret("atomic-native:smtp").await.as_deref(),
+        Some(SMTP)
+    );
+    let local = device.local().await;
+    assert_eq!(local.synced(shared, Field::Incoming).revision, 7);
+    assert_eq!(local.synced(shared, Field::Smtp).revision, 8);
+    assert!(device.reconnecting().await.is_empty());
+    assert_eq!(servers.attempts.lock().expect("attempts").len(), 2);
+    device
+        .store
+        .admit_account_setup(
+            Uuid::new_v4().to_string(),
+            import.account.clone(),
+            Some(import.account.clone()),
+        )
+        .await
+        .expect("newer request");
+    assert!(
+        activate(&ctx, &import).await.is_err(),
+        "old activation cannot acknowledge a newer setup"
+    );
+    assert_eq!(
+        device.secret("atomic-native").await.as_deref(),
+        Some(INCOMING)
+    );
+}
+
+#[tokio::test]
 async fn profile_vault_publishes_then_a_reconnecting_device_imports_after_testing() {
     let cloud = Cloud::default();
     let studio = shared(1);
@@ -422,10 +539,11 @@ async fn profile_vault_publishes_then_a_reconnecting_device_imports_after_testin
         (report.imported, report.failed, report.published),
         (1, 0, 0)
     );
-    assert_eq!(b.secret("b-native").as_deref(), Some(INCOMING));
-    assert_eq!(b.secret("b-native:smtp").as_deref(), Some(SMTP));
+    assert_eq!(b.secret("b-native").await.as_deref(), Some(INCOMING));
+    assert_eq!(b.secret("b-native:smtp").await.as_deref(), Some(SMTP));
     assert!(
-        b.secret("b-native:vault-incoming").is_none() && b.secret("b-native:vault-smtp").is_none()
+        b.secret("b-native:vault-incoming").await.is_none()
+            && b.secret("b-native:vault-smtp").await.is_none()
     );
     assert!(b.reconnecting().await.is_empty());
     assert!(
@@ -504,8 +622,8 @@ async fn profile_vault_failed_test_keeps_the_active_pair_until_an_explicit_retry
         .await
         .unwrap();
     assert_eq!((report.imported, report.failed), (0, 1));
-    assert_eq!(b.secret("b-native").as_deref(), Some("old password"));
-    assert!(b.secret("b-native:vault-incoming").is_none());
+    assert_eq!(b.secret("b-native").await.as_deref(), Some("old password"));
+    assert!(b.secret("b-native:vault-incoming").await.is_none());
     assert_eq!(b.local().await.synced(studio, Field::Incoming).failed, 2);
     // The failed revision is neither retried automatically nor overwritten,
     // and later passes keep reporting it as held for an explicit retry.
@@ -536,7 +654,7 @@ async fn profile_vault_failed_test_keeps_the_active_pair_until_an_explicit_retry
     .await
     .unwrap();
     assert_eq!(report.imported, 1);
-    assert_eq!(b.secret("b-native").as_deref(), Some(INCOMING));
+    assert_eq!(b.secret("b-native").await.as_deref(), Some(INCOMING));
 }
 
 #[tokio::test]
@@ -614,7 +732,7 @@ async fn profile_vault_removal_rotates_the_key_and_keeps_other_accounts() {
     assert!(report.rotated);
     // Nothing sealed remains, so every credential file is gone.
     assert!(cloud.files().is_empty());
-    assert_eq!(b.secret("b-native").as_deref(), Some(INCOMING));
+    assert_eq!(b.secret("b-native").await.as_deref(), Some(INCOMING));
 }
 
 #[tokio::test]
@@ -661,7 +779,10 @@ async fn profile_vault_toggle_off_removes_this_devices_entries_even_while_paused
     let local = a.local().await;
     assert!(!local.withdraw && local.slots.is_empty());
     // The keychain keeps this device's own passwords.
-    assert_eq!(a.secret(&studio.to_string()).as_deref(), Some(INCOMING));
+    assert_eq!(
+        a.secret(&studio.to_string()).await.as_deref(),
+        Some(INCOMING)
+    );
     // Turning it back on after a removal cancels any pending withdrawal.
     a.store
         .change_profile_sync_options(Changes {
@@ -703,8 +824,9 @@ async fn profile_vault_restart_keeps_revisions_and_does_not_republish() {
     drop(a);
     let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
     let reopened = Device {
+        credentials: Credentials::with_backend(CredentialScope::Legacy, keychain.clone())
+            .with_account_store(store.clone()),
         store,
-        credentials: Credentials::with_backend(CredentialScope::Legacy, keychain.clone()),
         keychain,
     };
     assert_eq!(reopened.local().await, saved);
@@ -932,7 +1054,7 @@ async fn profile_vault_wrong_key_or_other_endpoint_is_never_imported_or_tested()
         .unwrap();
     assert!(report.unreadable > 0 && report.imported == 0);
     assert!(servers.attempts.lock().unwrap().is_empty());
-    assert!(b.secret("b-native").is_none());
+    assert!(b.secret("b-native").await.is_none());
     assert_eq!(b.reconnecting().await.len(), 1);
     // The publishing device writes its password again under a usable key.
     pass(&a, &cloud, &Servers::default(), &History::default(), false)
@@ -958,7 +1080,7 @@ async fn profile_vault_wrong_key_or_other_endpoint_is_never_imported_or_tested()
         .unwrap();
     assert_eq!((report.imported, report.waiting), (0, 1));
     assert!(servers.attempts.lock().unwrap().is_empty());
-    assert!(c.secret("c-native").is_none());
+    assert!(c.secret("c-native").await.is_none());
 }
 
 #[tokio::test]

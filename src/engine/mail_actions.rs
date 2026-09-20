@@ -22,7 +22,7 @@ impl Engine {
         let refresh = async {
             use crate::folder_actions::Connection;
             let account = self.account(&record.receipt.account).await?;
-            let password = self.credentials.read(&account.id).await?;
+            let password = self.credentials.account_password(&account, false).await?;
             let mut connection =
                 providers::mail::folders::ImapFolders::open(&account, &password).await?;
             let catalogue = connection.catalog().await?;
@@ -502,7 +502,7 @@ impl Engine {
                     .context("The account is still busy. Retry Undo.")?;
             self.store.ensure_folder_idle(account.id.clone()).await?;
             let mut resolved = tokio::time::timeout(Duration::from_secs(120), async {
-                let secret = self.credentials.read(&account.id).await?;
+                let secret = self.credentials.account_password(&account, false).await?;
                 providers::mail::recovery::resolve(&account, &secret, receipt).await
             })
             .await
@@ -682,7 +682,7 @@ impl Engine {
             let account = self.account(&mail.account_id).await?;
             if account.protocol == Protocol::Imap {
                 tokio::time::timeout(Duration::from_secs(45), async {
-                    let password = self.credentials.read(&account.id).await?;
+                    let password = self.credentials.account_password(&account, false).await?;
                     providers::mail::provider(account.protocol)
                         .set_flags(&account, &password, mail, changes)
                         .await

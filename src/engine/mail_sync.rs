@@ -101,7 +101,7 @@ impl Engine {
         if account.protocol != Protocol::Imap {
             return Ok(WatchEnd::Unsupported);
         }
-        let password = self.credentials.read(&account.id).await?;
+        let password = self.credentials.account_password(&account, false).await?;
         providers::mail::push::watch_inbox(
             &account,
             &password,

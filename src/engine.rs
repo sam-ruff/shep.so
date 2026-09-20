@@ -86,6 +86,10 @@ pub enum Command {
         body_chars: usize,
     },
     SaveAccount(Account, SecretString, SecretString),
+    AdmitAccount(String, Account, Option<Account>),
+    ConnectAccount(String, SecretString, SecretString),
+    AccountSetups(u64, Option<String>),
+    InterruptAccountSetups(u64),
     TestConnection(Account, SecretString, SecretString, ConnectionTarget),
     SavePreferences(u64, crate::preference_edits::Write),
     Sync,
@@ -151,6 +155,7 @@ impl Command {
         match self {
             Self::RecoverPendingMoves => Some("pending-move-recovery".into()),
             Self::SaveAccount(account, ..) => Some(format!("account:{}", account.id)),
+            Self::ConnectAccount(id, ..) => Some(format!("account:{id}")),
             Self::RecoverMailMove(request, record, ..) => {
                 Some(format!("move-recovery:{}:{request}", record.token))
             }
@@ -288,6 +293,13 @@ pub enum Event {
     GoogleStatus(u64, bool),
     GoogleDisconnected(u64, Result<(), String>),
     AccountSaved(String),
+    AccountSetupAdmitted(String, Result<crate::store::account_setup::Attempt, String>),
+    AccountSetupChanged(crate::store::account_setup::Attempt),
+    AccountSetupsStopped(u64, Result<(), String>),
+    AccountSetups(
+        u64,
+        Result<Vec<crate::store::account_setup::Attempt>, String>,
+    ),
     RemovalPreview(u64, Result<crate::store::RemovalPreview, String>),
     ConnectionRemoved(u64, Result<usize, String>),
     CalendarsDiscovered(
@@ -340,12 +352,14 @@ pub enum CalendarActionResult {
 struct Engine {
     profiles: Option<crate::profiles::Session>,
     credentials: crate::credentials::Credentials,
+    account_tester: Arc<dyn crate::profile_sync::vault::Tester>,
     store: Store,
     google: providers::google::Google,
     demo: bool,
     account_work: account_work::Accounts,
     calendar_work: account_work::Accounts,
     calendar_setup: lifecycle_work::Lane,
+    account_setup_writes: lifecycle_work::Lane,
     connection_lifecycle: lifecycle_work::Lane,
     secret_remover: Arc<dyn removals::SecretRemover>,
     outbound: Arc<dyn providers::outgoing::Outbound>,
@@ -444,17 +458,28 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
                 }
             }
         };
+        let credentials = credentials.with_account_store(store.clone());
+        if let Err(error) = store.interrupt_account_setups().await {
+            let _ = output
+                .send(Event::Error(format!(
+                    "Could not recover account setup: {error:#}"
+                )))
+                .await;
+            return;
+        }
         let engine = Engine {
             profiles,
             credentials: credentials.clone(),
+            account_tester: account_setup::tester(demo),
             store,
             google: providers::google::Google::with_credentials(credentials.clone()),
             demo,
             account_work: Default::default(),
             calendar_work: Default::default(),
             calendar_setup: Default::default(),
+            account_setup_writes: Default::default(),
             connection_lifecycle: Default::default(),
-            secret_remover: Arc::new(removals::OsSecretRemover(credentials.clone())),
+            secret_remover: removals::secret_remover(demo, credentials.clone()),
             outbound: Arc::new(providers::outgoing::Servers {
                 credentials: credentials.clone(),
             }),
@@ -709,6 +734,50 @@ impl Engine {
             _ => None,
         };
         match command {
+            Command::InterruptAccountSetups(generation) => {
+                let _writes = self.account_setup_writes.write().await;
+                let result = self
+                    .store
+                    .interrupt_account_setups()
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| format!("{e:#}"));
+                output
+                    .send(Event::AccountSetupsStopped(generation, result))
+                    .await?;
+            }
+            Command::AdmitAccount(id, account, previous) => {
+                let result = if !self.account_setup_allowed() {
+                    Err("Account changes are disabled in preview.".into())
+                } else {
+                    self.store
+                        .admit_account_setup(id.clone(), account, previous)
+                        .await
+                        .map_err(|e| format!("{e:#}"))
+                };
+                output.send(Event::AccountSetupAdmitted(id, result)).await?;
+            }
+            Command::AccountSetups(request, after) => {
+                let result = self
+                    .store
+                    .account_setup_page(after)
+                    .await
+                    .map_err(|e| format!("{e:#}"));
+                output.send(Event::AccountSetups(request, result)).await?;
+            }
+            Command::ConnectAccount(id, password, smtp) => {
+                let result = self
+                    .connect_admitted_account(id.clone(), password, smtp, output.clone())
+                    .await;
+                if let Err(error) = result {
+                    self.store
+                        .fail_account_setup(id.clone(), format!("{error:#}"))
+                        .await?;
+                }
+                if let Ok(attempt) = self.store.account_setup(id).await {
+                    output.send(Event::AccountSetupChanged(attempt)).await?;
+                }
+            }
             Command::AdmitCalendarAction(request, id, event, deleting) => {
                 let result = self
                     .store
@@ -978,6 +1047,11 @@ impl Engine {
                 account.validate()?;
                 let _lifecycle = self.connection_lifecycle.write().await;
                 let _guard = self.account_exclusive(&account.id).await;
+                let writes = self.account_setup_writes.read().await;
+                anyhow::ensure!(
+                    !self.bulk_control.stopping.get(),
+                    "Account setup was interrupted by close."
+                );
                 self.store.ensure_folder_idle(account.id.clone()).await?;
                 self.store
                     .check_connection(crate::store::ConnectionRef {
@@ -986,6 +1060,9 @@ impl Engine {
                     })
                     .await?;
                 let saved_id = account.id.clone();
+                self.store
+                    .check_account_mailbox_identity(account.clone())
+                    .await?;
                 // Resolve all required credentials before writing any of them.
                 // Downloaded endpoint changes cannot reuse a saved old secret.
                 let password = self
@@ -1010,16 +1087,38 @@ impl Engine {
                     } else {
                         None
                     };
-                if let Some(smtp_password) = separate {
-                    self.credentials
-                        .write(&format!("{}:smtp", account.id), smtp_password)
-                        .await?;
-                }
+                let previous = self
+                    .store
+                    .get::<Vec<Account>>("accounts")
+                    .await?
+                    .into_iter()
+                    .find(|a| a.id == account.id);
+                let attempt = self
+                    .store
+                    .admit_account_setup(uuid::Uuid::new_v4().to_string(), account, previous)
+                    .await?;
                 self.credentials
-                    .write(&account.id, password)
-                    .await
-                    .context("Could not save the account credential")?;
-                self.store.save_account(account).await?;
+                    .stage_account_setup(&self.store, attempt.id.clone(), password, separate)
+                    .await?;
+                drop(_guard);
+                drop(_lifecycle);
+                drop(writes);
+                tokio::select! {
+                    biased;
+                    _ = self.bulk_control.stopping.requested() => {
+                        self.store.interrupt_account_setup(attempt.id).await?;
+                        anyhow::bail!("Account setup was saved but its connection check was interrupted. Re-enter credentials to retry.");
+                    }
+                    checked = self.credentials.check_account_setup(&self.store, attempt.id.clone(), self.account_tester.as_ref()) => { checked?; }
+                }
+                let _lifecycle = self.connection_lifecycle.write().await;
+                let _guard = self.account_exclusive(&saved_id).await;
+                let _writes = self.account_setup_writes.read().await;
+                anyhow::ensure!(
+                    !self.bulk_control.stopping.get(),
+                    "Account setup was interrupted by close."
+                );
+                self.store.activate_account_setup(attempt.id).await?;
                 self.workspace(&mut output).await?;
                 output.send(Event::AccountSaved(saved_id)).await?;
                 output
@@ -1029,6 +1128,16 @@ impl Engine {
                     .await?;
             }
             Command::SavePreferences(request, prefs) => {
+                #[cfg(feature = "test-support")]
+                if self.demo
+                    && prefs.appearance == crate::model::Appearance::Dark
+                    && std::env::args().any(|arg| arg == "--preference-save-failure-once")
+                    && self.store.run(|c| Ok(c.execute("INSERT OR IGNORE INTO kv(key,value) VALUES('preview_preference_save_failed','true')", [])? == 1)).await?
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+                    output.send(Event::PreferencesSaveFailed(request, "Preview storage failure. Retry saving your changes.".into())).await?;
+                    return Ok(());
+                }
                 let event = match self.store.save_preferences(prefs).await {
                     Ok(snapshot) => {
                         self.mail_sync_settings
@@ -1374,7 +1483,7 @@ impl Engine {
             Command::CleanupCredentials => {
                 let failed = self.cleanup_credentials().await?;
                 if failed > 0 {
-                    output.send(Event::Error("A removed connection still has saved credentials. Unlock your credential store and choose Retry credential cleanup in Preferences.".into())).await?;
+                    output.send(Event::Error("Unused saved credentials still need cleanup. Unlock your credential store and choose Retry credential cleanup in Preferences.".into())).await?;
                 }
                 self.workspace(&mut output).await?;
             }
@@ -1731,14 +1840,16 @@ mod calendar_tests {
         Engine {
             profiles: None,
             credentials: Default::default(),
+            account_tester: Arc::new(crate::profile_sync::vault::MailTester),
             store: Store::memory().unwrap(),
             google: Default::default(),
             demo: true,
             account_work: Default::default(),
             calendar_work: Default::default(),
             calendar_setup: Default::default(),
+            account_setup_writes: Default::default(),
             connection_lifecycle: Default::default(),
-            secret_remover: Arc::new(removals::OsSecretRemover::default()),
+            secret_remover: removals::secret_remover(true, Default::default()),
             outbound: Arc::new(providers::outgoing::Servers::default()),
             move_connections: Arc::new(providers::mail::moves::ImapMoveConnections {
                 credentials: Default::default(),

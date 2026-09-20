@@ -64,6 +64,7 @@ pub trait Remote: Send + Sync {
 }
 
 /// Mail server login check used before an imported password is activated.
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait Tester: Send + Sync {
     async fn test(

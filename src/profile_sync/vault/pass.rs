@@ -529,6 +529,7 @@ pub async fn reconcile(ctx: &Context<'_>) -> anyhow::Result<Outcome> {
         if !revisions.is_empty() {
             if complete {
                 imports.push(Import {
+                    setup: Uuid::new_v4().to_string(),
                     local: local.clone(),
                     shared: *shared,
                     account: account.clone(),

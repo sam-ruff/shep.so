@@ -104,6 +104,15 @@ save. No credential or mail action is imported through preference state.
 
 ## Verification and remaining rollout
 
+Drafts retain a session-owned latest revision, save status and file request through
+closing and navigation. Failed storage retains editable text and Retry; sign-out
+waits for accepted saves and page leave warns about uncommitted work. Stable Drafts
+rows preserve held pointer input through late failure. Attachment retry reuses
+exact identities/bytes after a lost reply, while Use saved attachments reads the
+current files before retiring a refused request. Successful Send and account
+removal retire the session. Unadmitted text remains tab-local; checked cross-tab
+text conflict review is still being implemented.
+
 Focused tests cover atomic admission failure, restart retention, replay refusal,
 receipt dominance, independent group ownership, bounded pages/admission and
 account removal. Browser scenarios exercise actual Activity controls and retained

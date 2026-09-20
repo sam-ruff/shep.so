@@ -839,6 +839,26 @@ describe("real browser provider/cache contract", () => {
 });
 
 describe("persistent draft files and cached replies", () => {
+  it("reuses exact attachment identities after a committed write loses its reply", async () => {
+    const s = setup();
+    await s.repo.saveDraft(draft);
+    const commit = s.db.commit.bind(s.db);
+    vi.spyOn(s.db, "commit").mockImplementationOnce(async changes => {
+      await commit(changes);
+      throw Error("Lost local receipt");
+    });
+    const files = [new File(["Exact file"], "exact.txt", { type: "text/plain" })];
+    const ids = [crypto.randomUUID()];
+    await expect(s.repo.addFiles(draft.id, files, ids)).rejects.toThrow("Lost local receipt");
+    const result = await s.repo.addFiles(draft.id, files, ids);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe(ids[0]);
+    expect(await s.db.all("draftFiles")).toHaveLength(1);
+    await expect(s.repo.addFiles(draft.id, [new File(["different"], "other.txt")], ids)).rejects.toThrow("differs");
+    await expect(s.repo.addFiles(draft.id, [new File(["Other file"], "exact.txt", { type: "text/plain" })], ids)).rejects.toThrow("differs");
+    await s.repo.saveDraft({ ...draft, id: "another" });
+    await expect(s.repo.addFiles("another", files, ids)).rejects.toThrow("another draft");
+  });
   it("keeps blobs across reopening, excludes removed files despite late text saves and sends exact metadata/bytes/headers", async () => {
     const s = setup();
     await s.repo.connect(account, "incoming", "smtp");

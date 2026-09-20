@@ -65,10 +65,10 @@ rejected before admission because they require separate provider receipts.
 
 | Domain | Current owner | Adoption gap |
 | --- | --- | --- |
-| Draft text, files and discard | Rust draft tables and revision checks | Expose common saving and failure activity without duplicating draft ownership. |
+| Draft text, files and discard | Rust draft tables and revision checks | Session-owned text/error and Retry survive navigation; revision and attempt ownership reject late saves after Send/discard/removal. Suspension flushes pending text. Forced process loss before local admission remains uncommitted. |
 | Send and Sent filing | `outgoing`, `outgoing_meta` and `outgoing_sent` | Queued admission returns before delivery, freezes account/credential binding and retains the draft on queued cancellation. Resume reuses its attempt; silent bounded Outbox refresh preserves review choices and errors. Common attention and scheduling fairness remain open. |
 | Accounts and reconnect | Credential-slot journal, account FIFO and removal tombstone | Surface preparation, activation and cleanup activity while preserving checked activation. |
-| Preferences | Dart `SettingsStore`, then profile history | Add field-level common status while retaining unsaved edits and publication ownership. |
+| Preferences | Dart `SettingsStore`, then profile history | Owned save error/status and visible Retry retain local values through navigation and unrelated mail failures. Field intent and profile publication keep their existing owners. |
 | Calendar | Dart repository calls | Add durable native admission, ETag conflict ownership and uncertain-result review. |
 | Folder changes | No complete Flutter physical-folder owner | Implement provider-backed folder journals before projecting these actions. |
 | Profile publication and sync | Dedicated Rust publication, history and sync journals | Adapt their existing phases; never create a second runnable queue. |
@@ -80,8 +80,11 @@ rejected before admission because they require separate provider receipts.
   Activity returns at most 50 records per page and retains recovery errors.
   Production input carries the observed lineage token; replacement rejection
   and proven alias acceptance have native and Workspace regressions.
-- Restart scheduling still needs fair progress beyond the first bounded batch,
-  including accounts waiting for credentials.
+- Restart scheduling uses indexed 50-row cursor pages and at most 32 requests,
+  with one action per account in a complete sweep. Waiting accounts do not block
+  later accounts. Failed page reads stop automatic pumping and expose Activity
+  Retry; disposal fences a delayed page. A 100,000-row database-step test verifies
+  late-page seeks without sorting. Broader scheduling and suspension remain open.
 - Live IMAP verification remains for the bounded flag inspection command. Unit
   coverage uses the provider trait and proves inspection never repeats a write.
 - Add live IMAP, suspension and Apple evidence. Current coverage uses the actual

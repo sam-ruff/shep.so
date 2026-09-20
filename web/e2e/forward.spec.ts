@@ -133,7 +133,7 @@ test.beforeEach(async ({ page }) => {
   await seed(page);
 });
 
-test("Forward keeps exact files and complete text through autosave, removal, restart and Send refusal", async ({
+test("Forward keeps exact files and complete text through autosave, removal, restart and queued Send recovery", async ({
   page,
 }) => {
   await open(page);
@@ -190,9 +190,17 @@ test("Forward keeps exact files and complete text through autosave, removal, res
     before.draftFiles.map((f: any) => f.info),
   );
   await dialog.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(dialog.getByRole("status")).toContainText("Reconnect");
-  await expect(dialog.getByLabel("Message")).toBeEditable();
-  await dialog.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", { name: "Outbox", exact: true }).click();
+  const outbox = page.getByRole("dialog", { name: "Outbox", exact: true });
+  await expect(outbox).toContainText("Queued on this browser");
+  await outbox.getByRole("button", { name: "Return to drafts", exact: true }).click();
+  await expect(outbox).toContainText("No outgoing messages need attention");
+  await outbox.getByRole("button", { name: "Close", exact: true }).click();
+  const recovered: any = await drafts(page);
+  expect(recovered.drafts[0].body).toBe("Please review <this>.\n" + body);
+  expect(recovered.drafts[0].forward).toEqual(before.drafts[0].forward);
+  expect(recovered.draftFiles.filter((f: any) => f.draftId === recovered.drafts[0].id).sort((a: any, b: any) => a.order - b.order).map((f: any) => ({ ...f.info, id: undefined }))).toEqual(before.draftFiles.sort((a: any, b: any) => a.order - b.order).map((f: any) => ({ ...f.info, id: undefined })));
   await page.getByRole("button", { name: "Inbox", exact: true }).click();
   await open(page, "Long forward source");
   await page.getByRole("button", { name: "Forward", exact: true }).click();

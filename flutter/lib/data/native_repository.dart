@@ -635,8 +635,16 @@ class NativeRepository
           .toList();
 
   @override
-  Future<List<MailActivity>> runnableMailActions() async =>
-      ((await call({'op': 'mail_actions', 'runnable': true}))['actions']
+  Future<List<MailActivity>> runnableMailActions({
+    int? afterCreated,
+    String? afterId,
+  }) async =>
+      ((await call({
+                'op': 'mail_actions',
+                'runnable': true,
+                'after_created': ?afterCreated,
+                'after_id': ?afterId,
+              }))['actions']
               as List)
           .cast<Map<String, dynamic>>()
           .map(MailActivity.new)

@@ -1,4 +1,5 @@
 mod account;
+mod account_setup;
 mod action_toasts;
 mod backups;
 mod bulk;
@@ -192,6 +193,9 @@ pub enum Message {
     Field(&'static str, String),
     Protocol(Protocol),
     SaveAccount,
+    AccountSetupPage(Option<String>),
+    RetryAccountSetup(String),
+    DismissAccountSetupError(String),
     FastmailPreset,
     TestConnection(ConnectionTarget),
     ConnectCalendarFromEvent,
@@ -427,6 +431,7 @@ pub struct App {
     theme_cache: palette::ThemeCache,
     palette_editor: palette::Editor,
     preference_sync: preference_sync::PreferenceSync,
+    account_setup: account_setup::State,
     pending_google_login: Option<(u64, Preferences, bool)>,
     pending_backup: Option<backups::PendingBackup>,
     pending_backup_all: Option<u64>,
@@ -615,6 +620,7 @@ impl App {
                 workspace: Arc::new(Workspace::default()),
                 preferences: Preferences::default(),
                 preference_sync: Default::default(),
+                account_setup: Default::default(),
                 pending_google_login: None,
                 pending_backup: None,
                 pending_backup_all: None,
@@ -801,6 +807,7 @@ impl App {
         // starts it. Close must not race the worker's later Busy notification.
         let close_key = match &command {
             Command::SaveAccount(..)
+            | Command::ConnectAccount(..)
             | Command::RecoverPendingMoves
             | Command::InspectCalendarAction(..)
             | Command::GoogleLogin(..)
@@ -1044,6 +1051,7 @@ impl App {
         let previous_notice = self.notice.as_ref().map(|(_, _, at)| *at);
         let task = self.handle(message);
         self.pump_bulk();
+        self.pump_account_setup_close();
         let close = self.continue_pending_close();
         let reopen = self.reopen_after_failed_close(
             hidden_write && self.new_error_since(previous_notice),
@@ -1251,6 +1259,7 @@ impl App {
                 }
                 Event::Ready(tx, workspace, google) => {
                     self.tx = Some(tx);
+                    self.load_account_setups(None);
                     self.send(Command::BulkJobs(0, 0));
                     self.send(Command::Folder(engine::folders::Request::History(0, 0)));
                     self.preferences = workspace.preferences.clone();
@@ -1363,6 +1372,9 @@ impl App {
                     ),
                 },
                 Event::PreferencesSaveFailed(request, error) => {
+                    if !self.preference_sync.failed(request, error.clone()) {
+                        return Task::none();
+                    }
                     self.database_preferences_failed(request, &error);
                     if self
                         .pending_google_login
@@ -1377,7 +1389,9 @@ impl App {
                     }
                     self.pending_close = None;
                     self.notice(
-                        format!("Changes could not be saved: {error}. Try Save changes again."),
+                        format!(
+                            "Changes could not be saved. Use Retry save in Preferences. {error}"
+                        ),
                         true,
                     );
                     self.preference_notice = self.notice.as_ref().map(|notice| notice.2);
@@ -1391,14 +1405,14 @@ impl App {
                     );
                     self.update_saved_preferences();
                     if !self.preference_sync.dirty() {
+                        if self.preference_notice.take().is_some_and(|at| {
+                            self.notice.as_ref().is_some_and(|notice| notice.2 == at)
+                        }) {
+                            self.notice = None;
+                        }
                         if self.confirm_save.is_some_and(|id| request >= id) {
                             self.confirm_save = None;
                             self.saved_toast = Some(Instant::now());
-                            if self.preference_notice.take().is_some_and(|at| {
-                                self.notice.as_ref().is_some_and(|notice| notice.2 == at)
-                            }) {
-                                self.notice = None;
-                            }
                         }
                         if let Some(window) = self.pending_close.take() {
                             return self.handle(Message::WindowClose(window));
@@ -1641,7 +1655,7 @@ impl App {
                     if key == "google" && !busy {
                         self.google_sign_in = None;
                     }
-                    if busy {
+                    if busy && !self.stale_account_busy(&key) {
                         self.busy.insert(key);
                     } else {
                         self.busy.remove(&key);
@@ -1685,6 +1699,14 @@ impl App {
                         }
                     }
                     self.send(Command::Sync);
+                }
+                Event::AccountSetupAdmitted(id, result) => self.account_setup_admitted(id, result),
+                Event::AccountSetupChanged(attempt) => self.account_setup_changed(attempt),
+                Event::AccountSetupsStopped(generation, result) => {
+                    self.account_setups_stopped(generation, result)
+                }
+                Event::AccountSetups(request, result) => {
+                    self.account_setups_loaded(request, result)
                 }
                 Event::RemovalPreview(request, result) => self.removal_preview(request, result),
                 Event::ConnectionRemoved(request, result) => {
@@ -2763,18 +2785,10 @@ impl App {
                     self.notice(error.to_string(), true);
                 }
             },
-            Message::SaveAccount => match self.account_form() {
-                Ok(account) => {
-                    self.fields.insert("id", account.id.clone());
-                    let password = self.field("password").to_string();
-                    self.send(Command::SaveAccount(
-                        account,
-                        secrecy::SecretString::from(password),
-                        self.field("smtp_password").to_string().into(),
-                    ));
-                }
-                Err(e) => self.notice(e.to_string(), true),
-            },
+            Message::SaveAccount => self.admit_account_setup(),
+            Message::AccountSetupPage(after) => self.load_account_setups(after),
+            Message::RetryAccountSetup(id) => self.retry_account_setup(id),
+            Message::DismissAccountSetupError(id) => self.dismiss_account_setup_error(id),
             Message::EditAccount(id) => {
                 if let Some(a) = self.workspace.accounts.iter().find(|a| a.id == id).cloned() {
                     self.open(Dialog::Account);
@@ -4493,6 +4507,7 @@ impl App {
             "error": self.palette_editor.error,
         });
         data["preferences_saved"] = serde_json::json!(!self.preference_sync.dirty());
+        data["preferences_save_error"] = serde_json::json!(self.preference_sync.error());
         data["saved_preferences_revision"] = serde_json::json!(self.workspace.preferences_revision);
         data["saved_appearance"] =
             serde_json::json!(format!("{:?}", self.workspace.preferences.appearance));

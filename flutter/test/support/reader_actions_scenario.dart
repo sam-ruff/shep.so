@@ -201,7 +201,8 @@ Future<void> readerActionsScenario(
     }
     await tester.pumpAndSettle();
   } finally {
-    workspace.dispose();
     await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    workspace.dispose();
   }
 }

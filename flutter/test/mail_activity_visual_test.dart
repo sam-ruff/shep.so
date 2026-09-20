@@ -34,7 +34,10 @@ class VisualSettings implements SettingsStore {
 
 class ActivityPreviewRepository extends PreviewRepository
     implements MailActivityRepository {
-  ActivityPreviewRepository() : super(delay: Duration.zero);
+  ActivityPreviewRepository({this.failRunnable = false})
+    : super(delay: Duration.zero);
+
+  bool failRunnable;
 
   final actions = <MailActivity>[
     MailActivity({
@@ -67,7 +70,13 @@ class ActivityPreviewRepository extends PreviewRepository
       actions.skip(offset).take(50).toList();
 
   @override
-  Future<List<MailActivity>> runnableMailActions() async => const [];
+  Future<List<MailActivity>> runnableMailActions({
+    int? afterCreated,
+    String? afterId,
+  }) async {
+    if (failRunnable) throw StateError('The local activity read failed.');
+    return const [];
+  }
 
   @override
   Future<void> resumeMailAction(MailActivity action) async {}
@@ -89,13 +98,20 @@ class ActivityPreviewRepository extends PreviewRepository
   Future<void> inspectMailAction(MailActivity action) async {}
 }
 
-Future<void> renderActivity(WidgetTester tester, ThemeMode mode) async {
+Future<void> renderActivity(
+  WidgetTester tester,
+  ThemeMode mode, {
+  ActivityPreviewRepository? repository,
+}) async {
   await loadPreviewFonts();
   tester.view.physicalSize = const Size(390, 700);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final workspace = Workspace(ActivityPreviewRepository(), VisualSettings());
+  final workspace = Workspace(
+    repository ?? ActivityPreviewRepository(),
+    VisualSettings(),
+  );
   addTearDown(workspace.dispose);
   await workspace.initialize();
   await tester.pumpWidget(
@@ -111,6 +127,23 @@ Future<void> renderActivity(WidgetTester tester, ThemeMode mode) async {
 }
 
 void main() {
+  testWidgets('compact Activity query failure has visible Retry', (
+    tester,
+  ) async {
+    final repository = ActivityPreviewRepository(failRunnable: true);
+    await renderActivity(tester, ThemeMode.dark, repository: repository);
+    expect(find.widgetWithText(TextButton, 'Retry'), findsOneWidget);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/mail_activity_query_retry_dark.png'),
+    );
+    repository.failRunnable = false;
+    await tester.tap(find.widgetWithText(TextButton, 'Retry'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextButton, 'Retry'), findsNothing);
+    expect(find.text('Reconnect Personal to continue.'), findsOneWidget);
+  });
+
   testWidgets('compact Mail Activity visual evidence', (tester) async {
     await renderActivity(tester, ThemeMode.light);
     expect(find.text('Cancel'), findsOneWidget);

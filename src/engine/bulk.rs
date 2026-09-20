@@ -103,7 +103,7 @@ impl Engine {
         } else if let Some(event) = self.bulk_control.stopped_event() {
             let _ = output.send(event).await;
         }
-        progressed
+        progressed && !failed
     }
     async fn perform_bulk_job(
         &self,
@@ -400,6 +400,70 @@ mod tests {
             account: None,
             folder: folder.into(),
         }
+    }
+
+    #[tokio::test]
+    async fn failed_receipt_completion_requests_backoff_even_after_claim_progress() {
+        let engine = fixture(1).await;
+        start(
+            &engine,
+            "receipt-failure",
+            MailQuery::default(),
+            Action::Flags(crate::mail_actions::Flags {
+                unread: Some(false),
+                starred: None,
+            }),
+        )
+        .await;
+        engine
+            .store
+            .run(|c| {
+                c.execute_batch(
+                    "CREATE TEMP TRIGGER fail_receipt_completion BEFORE UPDATE ON bulk_items
+                     WHEN old.job='receipt-failure' AND new.status='done'
+                     BEGIN SELECT RAISE(ABORT,'Fixture receipt failure'); END;",
+                )?;
+                Ok(())
+            })
+            .await
+            .expect("inject receipt failure");
+        let (mut output, _events) = futures::channel::mpsc::channel(32);
+        assert!(
+            !engine
+                .execute_bulk_work("receipt-failure".into(), Some(0), 1, None, &mut output)
+                .await,
+            "a failed step must request cooldown even when its claim changed state"
+        );
+        let job = engine
+            .store
+            .bulk_job("receipt-failure".into())
+            .await
+            .expect("retained journal");
+        assert_eq!(job.completed, 0);
+        assert_eq!(job.remaining, 1);
+        engine
+            .store
+            .run(|c| {
+                c.execute_batch("DROP TRIGGER fail_receipt_completion")?;
+                Ok(())
+            })
+            .await
+            .expect("restore storage");
+        assert!(
+            engine
+                .execute_bulk_work("receipt-failure".into(), Some(0), 1, None, &mut output)
+                .await,
+            "the retained receipt can finish after storage recovers"
+        );
+        assert_eq!(
+            engine
+                .store
+                .bulk_job("receipt-failure".into())
+                .await
+                .expect("completed receipt")
+                .completed,
+            1
+        );
     }
 
     #[tokio::test]
@@ -1461,6 +1525,79 @@ mod tests {
         drop(lease);
         engine.bulk_control.stopping.set(false);
         assert_eq!(execute(&engine, "shared").await.completed, 3);
+    }
+
+    #[tokio::test]
+    async fn blocked_candidate_pages_reach_later_accounts_and_stop_preserves_skipped_work() {
+        let engine = fixture(120).await;
+        let mut free = parse_mail(
+            "free",
+            "1",
+            "INBOX",
+            b"Subject: Free\r\n\r\nBody".to_vec(),
+            true,
+            false,
+        )
+        .unwrap();
+        free.summary.timestamp = -1;
+        engine.store.upsert(vec![free]).await.unwrap();
+        start(
+            &engine,
+            "pages",
+            MailQuery::default(),
+            Action::Flags(crate::mail_actions::Flags {
+                unread: Some(false),
+                starred: None,
+            }),
+        )
+        .await;
+        engine.store.run(|c| {
+            assert_eq!(c.query_row("SELECT position FROM bulk_items WHERE job='pages' AND json_extract(original,'$.account_id')='free'", [], |r|r.get::<_,i64>(0))?, 120);
+            Ok(())
+        }).await.unwrap();
+        let held = engine.account_access("fixture").await;
+        let (sender, input) = CommandSender::channel();
+        let (output, mut events) = futures::channel::mpsc::channel(32);
+        let owner = tokio::spawn(engine.clone().run_bulk_queue(input.bulk, output.clone()));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match events.next().await.unwrap() {
+                    Event::BulkUpdate(job) if job.id == "pages" && job.completed == 1 => {
+                        assert_eq!((job.running, job.remaining, job.uncertain), (1, 120, 0));
+                        break;
+                    }
+                    Event::Error(error) => panic!("{error}"),
+                    _ => {
+                        sender.try_send(Command::BulkRun(String::new())).unwrap();
+                    }
+                }
+            }
+        })
+        .await
+        .expect("wakeups cannot keep the scan at the first blocked page");
+        engine
+            .execute(Command::BulkStop(1), output.clone())
+            .await
+            .unwrap();
+        drop(held);
+        drop(sender);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = events.next().await {
+                if matches!(event, Event::BulkStopped(1)) {
+                    break;
+                }
+            }
+            owner.await.unwrap();
+        })
+        .await
+        .expect("stop drains the accepted work without scanning or claiming skipped rows");
+        let job = engine.store.bulk_job("pages".into()).await.unwrap();
+        assert_eq!(
+            (job.completed, job.remaining, job.running, job.uncertain),
+            (2, 119, 0, 0)
+        );
+        engine.bulk_control.stopping.set(false);
+        assert_eq!(execute(&engine, "pages").await.completed, 121);
     }
 
     #[tokio::test]

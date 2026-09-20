@@ -174,10 +174,17 @@ impl Store {
         shared: uuid::Uuid,
         tested: Account,
         revisions: Vec<(Field, u64)>,
+        setup: String,
     ) -> anyhow::Result<()> {
         self.run(move |c| {
             let tx = c.transaction()?;
             let binding = check_import(&tx, &id, shared, &tested)?;
+            let attempt = super::super::account_setup::activate(&tx, &setup)?;
+            anyhow::ensure!(
+                attempt.account.id == id
+                    && serde_json::to_value(&attempt.account)? == serde_json::to_value(&tested)?,
+                "The credential setup belongs to another account revision."
+            );
             let mut state = local(&tx, &binding)?;
             for (field, revision) in revisions {
                 state.slots.insert(

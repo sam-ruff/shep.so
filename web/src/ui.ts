@@ -1,4 +1,5 @@
 import { GroupUI } from "./bulk_ui";
+import { DraftSession } from "./draft_session";
 import { connectionActivity, connectionStatus } from "./connection_activity";
 import {
   dialogShortcuts,
@@ -915,6 +916,13 @@ export function mount(
   }
   const forwardRequests = new Map<string, string>();
   const forwarding = new Set<string>();
+  const draftSessions = new Map<string, DraftSession>();
+  let signingOut = false;
+  window.addEventListener("beforeunload", (event) => {
+    if (![...draftSessions.values()].some((session) => session.pending || session.saving)) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
   async function forward(original: Mail) {
     if (forwarding.has(original.id)) return;
     const startingError = w.error;
@@ -975,7 +983,7 @@ export function mount(
         return;
       }
     }
-    const draft: Draft = existing
+    const initial: Draft = existing
       ? structuredClone(existing)
       : {
           id: crypto.randomUUID(),
@@ -992,33 +1000,28 @@ export function mount(
             ? `\n\n> ${original.body.replaceAll("\n", "\n> ")}`
             : "",
         };
+    const retained = draftSessions.get(initial.id);
+    if (retained && !retained.pending && !retained.saving) retained.retire();
+    const session = retained && (retained.pending || retained.saving) ? retained : new DraftSession(
+      initial,
+      !!existing,
+      (snapshot) => w.repository.saveDraft(snapshot),
+      () => {
+        if (!session.draft.accountId || !gateway?.removedAccounts.has(session.draft.accountId))
+          w.rememberDraft(session.draft);
+        if (!document.querySelector("dialog.composer[open]")) w.changed();
+      },
+    );
+    draftSessions.set(initial.id, session);
+    const draft = session.draft;
     const d = modal(draft.forward ? "Forward message" : "New message");
     d.classList.add("composer");
     const fields = el("div", "composer-fields");
     const status = el("p", "form-status");
     status.setAttribute("role", "status");
-    let autosave: ReturnType<typeof setTimeout> | undefined;
-    let writes: Promise<void> = Promise.resolve();
     function edited() {
-      draft.revision = (draft.revision ?? 0) + 1;
-      clearTimeout(autosave);
-      autosave = setTimeout(() => {
-        const snapshot = structuredClone(draft);
-        writes = writes.then(async () => {
-          try {
-            await w.repository.saveDraft(snapshot);
-            w.rememberDraft(snapshot);
-          } catch (error) {
-            if (d.isConnected)
-              status.textContent =
-                error instanceof Error
-                  ? error.message
-                  : "Could not save. Keep the editor open and retry.";
-          }
-        });
-      }, 500);
+      session.edited();
     }
-    d.addEventListener("close", () => clearTimeout(autosave));
     if (w.repository.preview)
       fields.append(el("p", "muted", "Preview • sending is disabled"));
     if (gateway) {
@@ -1081,41 +1084,17 @@ export function mount(
           "close",
           true,
         );
-        remove.disabled = busy || deliveryLocked;
+        remove.disabled = busy || deliveryLocked || session.filesPending;
         row.append(remove);
         filePanel.append(row);
       }
     }
     async function changeFiles(files: File[], remove?: string) {
-      if (!gateway || busy || deliveryLocked) return;
-      const previous = draft.attachments;
-      clearTimeout(autosave);
-      busy = true;
-      if (remove)
-        draft.attachments = (draft.attachments ?? []).filter(
-          (f) => f.id !== remove,
-        );
-      renderFiles();
-      setControls(true);
-      try {
-        await writes;
-        await w.repository.saveDraft(draft);
-        draft.attachments = remove
-          ? await gateway.removeFile(draft.id, remove)
-          : await gateway.addFiles(draft.id, files);
-        w.rememberDraft(draft);
-        status.textContent = "";
-      } catch (error) {
-        draft.attachments = previous;
-        status.textContent =
-          error instanceof Error
-            ? error.message
-            : "Could not save attachments. Retry.";
-      } finally {
-        busy = false;
-        renderFiles();
-        setControls(false);
-      }
+      if (!gateway || busy || deliveryLocked || session.filesPending) return;
+      const ids = files.map(() => crypto.randomUUID());
+      await session.changeFiles(() => remove
+        ? gateway.removeFile(draft.id, remove)
+        : gateway.addFiles(draft.id, files, ids));
     }
     fileInput.onchange = () => {
       const files = [...(fileInput.files ?? [])];
@@ -1126,6 +1105,30 @@ export function mount(
     const actions = el("div", "dialog-actions");
     let busy = false,
       deliveryLocked = false;
+    const retry = button("Retry save", () => void session.flush(true));
+    const savedFiles = button("Use saved attachments", () => {
+      if (gateway) void session.useSavedFiles(() => gateway.reviewDraftFiles(draft.id));
+    });
+    const savedStatus = el("span", "draft-save-status");
+    d.querySelector(".dialog-heading")!.insertBefore(savedStatus, d.querySelector('[aria-label="Close"]'));
+    let shownAttachments = draft.attachments;
+    function showSaveStatus() {
+      savedStatus.textContent = w.repository.preview ? "Preview" : session.error ? "Not saved" : session.pending || session.saving ? "Saving…" : "Saved";
+      status.textContent = session.error ? `${session.status}. ${session.error}` : w.repository.preview ? "Preview draft" : session.status;
+      retry.hidden = !session.error;
+      retry.disabled = session.saving || busy || deliveryLocked;
+      savedFiles.hidden = !session.fileError;
+      savedFiles.disabled = session.saving || busy || deliveryLocked;
+      attach.disabled = busy || deliveryLocked || session.filesPending;
+      if (shownAttachments !== draft.attachments) {
+        shownAttachments = draft.attachments;
+        renderFiles();
+      }
+      for (const b of filePanel.querySelectorAll<HTMLButtonElement>("button"))
+        b.disabled = busy || deliveryLocked || session.filesPending;
+    }
+    const unsubscribe = session.subscribe(showSaveStatus);
+    d.addEventListener("close", unsubscribe);
     function setControls(disabled: boolean) {
       for (const input of d.querySelectorAll<
         HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
@@ -1133,12 +1136,20 @@ export function mount(
         input.disabled = disabled || deliveryLocked;
       for (const b of d.querySelectorAll<HTMLButtonElement>("button"))
         b.disabled = disabled;
-      attach.disabled = disabled || deliveryLocked;
+      attach.disabled = disabled || deliveryLocked || session.filesPending;
       for (const b of filePanel.querySelectorAll<HTMLButtonElement>("button"))
-        b.disabled = disabled || deliveryLocked;
+        b.disabled = disabled || deliveryLocked || session.filesPending;
+      retry.disabled = disabled || deliveryLocked || session.saving;
+      savedFiles.disabled = disabled || deliveryLocked || session.saving;
     }
-    async function save(send: boolean) {
+    async function save(send: boolean, retrySave = false) {
       if (busy) return;
+      if (!send) {
+        void session.flush(retrySave);
+        d.close();
+        w.changed();
+        return;
+      }
       if (
         send &&
         (!(draft.to.trim() || draft.cc.trim() || draft.bcc.trim()) ||
@@ -1147,7 +1158,6 @@ export function mount(
         status.textContent = "Add a recipient and subject before sending.";
         return;
       }
-      clearTimeout(autosave);
       busy = true;
       setControls(true);
       for (const b of actions.querySelectorAll("button")) b.disabled = true;
@@ -1156,10 +1166,14 @@ export function mount(
       >("input,textarea,select"))
         input.disabled = true;
       try {
-        await writes;
+        if (!await session.flush()) return;
         if (send) await (deliveryLocked ? w.repository.send(draft) : (w.repository.queueSend?.(draft) ?? w.repository.send(draft)));
         else await w.repository.saveDraft(draft);
-        if (send) w.drafts.delete(draft.id);
+        if (send) {
+          session.retire();
+          draftSessions.delete(draft.id);
+          w.drafts.delete(draft.id);
+        }
         else w.rememberDraft(draft);
         if (send) {
           if (gateway) w.addCachedMail(gateway.cached);
@@ -1196,7 +1210,11 @@ export function mount(
       setControls(true);
       let delivery;
       try {
-        draft.attachments = await gateway.attachments(draft.id);
+        if (!session.filesPending) {
+          const previous = draft.attachments;
+          const files = await gateway.attachments(draft.id);
+          if (!session.filesPending && draft.attachments === previous) draft.attachments = files;
+        }
         renderFiles();
         delivery = await gateway.delivery(draft);
       } catch {
@@ -1229,11 +1247,14 @@ export function mount(
     send.classList.add("primary");
     actions.append(
       send,
-      button("Save draft", () => void save(false)),
+      button("Save draft", () => void save(false, true)),
+      retry,
+      savedFiles,
     );
     actions.classList.add("composer-actions");
     d.append(fields, status, actions);
     renderFiles();
+    showSaveStatus();
     setControls(!!gateway);
     void updateDelivery();
   }
@@ -1411,13 +1432,27 @@ export function mount(
         identity,
         button(
           "Sign out",
-          () => {
-            void w.finishReading().then(() => {
+          async () => {
+            if (signingOut) return;
+            signingOut = true;
+            try {
+              const saved = await Promise.all([...draftSessions.values()]
+                .filter(session => session.pending || session.saving)
+                .map(session => session.flush(true)));
+              if (saved.some(result => !result)) {
+                w.error = "Some drafts are not saved. Open Drafts and retry before signing out.";
+                tab = "Mail";
+                go("Drafts");
+                return;
+              }
+              await w.finishReading();
               find.dispose();
               searchWorker.dispose();
               printer?.dispose();
               login.signOut();
-            });
+            } finally {
+              signingOut = false;
+            }
           },
           "lock",
         ),
@@ -1483,14 +1518,19 @@ export function mount(
     box.setAttribute("aria-label", "Mail workspace");
     if (w.folder === "Drafts") {
       box.classList.add("draft-list");
-      for (const d of w.drafts.values())
-        box.append(
-          button(
+      for (const d of w.drafts.values()) {
+        const row = el("div", "draft-row");
+        const open = button(
             d.subject || "Untitled draft",
             () => composer(undefined, d),
             "edit",
-          ),
-        );
+          );
+        open.dataset.stable = `draft:${d.id}`;
+        row.append(open);
+        const session = draftSessions.get(d.id);
+        if (session) row.append(el("span", "draft-save-status", session.status));
+        box.append(row);
+      }
       if (!w.drafts.size) box.append(el("p", "empty", "No saved drafts"));
       return box;
     }
@@ -2415,6 +2455,14 @@ export function mount(
     return panel;
   }
   function render() {
+    for (const [id, session] of draftSessions) {
+      if (session.draft.accountId && gateway?.removedAccounts.has(session.draft.accountId)) {
+        session.retire();
+        draftSessions.delete(id);
+      } else if (session.pending || session.saving) {
+        w.rememberDraft(session.draft);
+      }
+    }
     if (formattedState && formattedState.id !== w.readerMessage?.id)
       clearFormatted();
     const active = document.activeElement as HTMLInputElement | null;
