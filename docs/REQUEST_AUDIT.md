@@ -1,10 +1,11 @@
 # Conversation request audit
 
-The 21 September continuation implements browser Calendar's durable immediate
+Checkpoint `8044f22`, pushed on 21 September, implements browser Calendar's durable immediate
 actions, Flutter folder creation and native calendar query bounds. It also adds
 shared CalDAV/native Flutter prerequisites. Root passes 243 Flutter tests,
 178 Flutter Rust tests, 257 browser units and the focused real-control/recovery
-gates recorded in [Completion](COMPLETION.md). CalDAV controls, native Activity,
+gates recorded in [Completion](COMPLETION.md). Normal hooks pass 1,597 Rust
+executions with 15 ignored. CalDAV controls, native Activity,
 checked mobile folder changes and the full architecture audit remain active.
 This is another implementation checkpoint, not completion of the request.
 

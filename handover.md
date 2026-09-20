@@ -2,6 +2,14 @@
 
 ## Current immediate-action continuation
 
+Checkpoint `8044f22bb2f158818f2e70c352f98ba1296646b2` is pushed to main.
+Normal hooks pass 1,597 Rust executions, 15 ignored. Browser final units pass257;
+backend passes68 with one configured integration prerequisite ignored.
+bulk_trace is consolidating Flutter CalDAV controls v2 against this exact commit,
+then owns browser CalDAV schema19. review_ordering continues native Activity
+schema11 and action_scope checked Flutter folder changes schema24. The full goal
+remains active; do not stop at this shipping checkpoint.
+
 Flutter folder23 v2 is integrated from the `action-flutter-folders` artifact
 `folder23-v2.apply.patch` (SHA
 `b7d307efee60d114ddf4354d9c4365f6023797a238745f9f92f5f9e790fd7a1c`).
