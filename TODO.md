@@ -49,6 +49,9 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   invalid targets need review, while offline discovery stays Waiting without
   CREATE. Root passes 13 native lifecycle tests, 13 browser units, six backend
   folder tests and two actual browser planning flows; production build passes.
+  Checkpoint `8044f22` is pushed to main. Normal hooks pass 1,597 Rust executions,
+  15 ignored; separately run owned calendar HTTP tests retain their evidence.
+  The remaining architecture migrations and full completion audit stay active.
 
   First migration implemented: common projection outcomes, native bulk review and
   confirmation during pending individual writes, pre-admission Undo, and calendar

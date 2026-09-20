@@ -6,7 +6,9 @@ This checkpoint adds browser Calendar admission, background execution, durable
 receipts, cancellation and checked recovery; Flutter folder creation with
 immediate local admission; shared CalDAV transport and Flutter native journal
 prerequisites; and indexed desktop calendar admission/scheduling queries.
-The implementation commit and normal-hook result are recorded after shipping.
+Implementation [`8044f22`](https://github.com/sam-ruff/shep.so/commit/8044f22bb2f158818f2e70c352f98ba1296646b2)
+is pushed to main. Normal hooks pass 1,597 Rust test executions with 15 ignored;
+owned calendar HTTP cases were exercised separately in the shared provider gate.
 The full immediate-actions request remains active.
 
 ### Verification
@@ -25,7 +27,7 @@ The full immediate-actions request remains active.
   The complete backend suite passes 68 tests, one configured browser integration
   prerequisite ignored. Backend/Flutter Clippy, focused Dart analysis and strict
   docs pass.
-- Shared CalDAV passes 19 parser/owned HTTP tests, including exact collection
+- Shared calendar passes 19 parser/owned HTTP tests, including exact CalDAV collection
   discovery, strong ETags, recurrence write refusal, duration/UID preservation
   and uncertain lost-write replies. Desktop calendar's two 100,000-history query
   tests and seven lifecycle integrations pass. These query bounds are not a
