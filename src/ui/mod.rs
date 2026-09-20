@@ -116,6 +116,7 @@ pub enum Dialog {
 #[derive(Clone, Debug)]
 struct MoveConfirm {
     mail_id: String,
+    lineage: Option<String>,
     account: String,
     folder: String,
     label: String,
@@ -977,6 +978,13 @@ impl App {
         self.restore_reply();
     }
     fn open(&mut self, dialog: Dialog) {
+        let target = (dialog == Dialog::Move)
+            .then(|| self.move_action_mail().cloned())
+            .flatten();
+        self.mail_actions.move_review = target.map(|mail| {
+            let lineage = self.mail_input_lineage(&mail);
+            (mail, lineage)
+        });
         self.pending_focus = None;
         self.focused_input = None;
         self.move_confirm = None;
@@ -1212,6 +1220,7 @@ impl App {
                     && let Some(mail) = self.page.rows.iter().find(|m| m.id == id).cloned()
                 {
                     self.context_menu = Some(context_menu::Menu {
+                        lineage: self.page.lineages.get(&mail.id).cloned(),
                         mail,
                         position,
                         index: 0,
@@ -1406,7 +1415,9 @@ impl App {
                     }
                 }
                 Event::BulkResumed(id) => self.send(Command::BulkRun(id)),
-                Event::BulkStopped => {
+                Event::BulkStopped(generation)
+                    if self.bulk.stop_requested && generation == self.bulk.stop_generation =>
+                {
                     self.bulk.stopped = true;
                     if let Some(window) = self.pending_close.take() {
                         return self.handle(Message::WindowClose(window));
@@ -1419,6 +1430,7 @@ impl App {
                 | Event::BulkFinished(..)
                 | Event::BulkJobs(..)
                 | Event::BulkItems(..)) => self.bulk_event(event),
+                Event::MailAdmitted(id, result) => self.mail_admitted(id, result),
                 Event::Selection(serial, result) => self.selection_finished(serial, result),
                 Event::Page(g, page, prefetch) if g == self.generation => {
                     if prefetch {
@@ -1445,6 +1457,7 @@ impl App {
                         if let Some(menu) = &mut self.context_menu
                             && let Some(current) =
                                 self.page.rows.iter().find(|mail| mail.id == menu.mail.id)
+                            && self.page.lineages.get(&current.id) == menu.lineage.as_ref()
                         {
                             menu.mail = current.clone();
                         }
@@ -2430,6 +2443,7 @@ impl App {
                     .into_owned();
                 self.move_confirm = Some(MoveConfirm {
                     mail_id: mail.id.clone(),
+                    lineage: self.mail_input_lineage(mail),
                     account,
                     folder,
                     label,
@@ -2466,7 +2480,7 @@ impl App {
                     );
                     return widget::operation::focus("unfocused");
                 };
-                self.transfer_mail(mail, confirm.account, confirm.folder);
+                self.admit_mail_move(mail, Some(confirm.account), confirm.folder, confirm.lineage);
                 if self.dialog.is_some() {
                     self.dialog = None;
                     self.focused_input = None;
@@ -3440,7 +3454,8 @@ impl App {
                     .find(|mail| mail.id == id)
                     .cloned()
                 {
-                    self.toggle_mail_flag(mail, false);
+                    let lineage = self.conversation.page.lineages.get(&mail.id).cloned();
+                    self.toggle_mail_flag_with_lineage(mail, false, lineage);
                 }
             }
             Message::ConversationPage(next) => {
@@ -3503,7 +3518,8 @@ impl App {
             }
             Message::FlagRow(id) => {
                 if let Some(mail) = self.page.rows.iter().find(|m| m.id == id).cloned() {
-                    self.toggle_mail_flag(mail, false);
+                    let lineage = self.page.lineages.get(&mail.id).cloned();
+                    self.toggle_mail_flag_with_lineage(mail, false, lineage);
                 }
             }
             Message::InboxScroll(offset) => self.inbox_scroll = offset,
@@ -4343,7 +4359,7 @@ impl App {
         });
         data["background_sync"] = serde_json::json!(self.busy.contains("background-sync"));
         data["mail_check_seconds"] = serde_json::json!(self.preferences.mail_check_seconds);
-        data["mail_pending"] = serde_json::json!(self.mail_actions.pending());
+        data["mail_pending"] = serde_json::json!(self.individual_pending());
         data["read_candidate"] = serde_json::json!(
             self.mail_actions
                 .read_candidate

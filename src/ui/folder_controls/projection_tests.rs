@@ -251,12 +251,76 @@ async fn combined_delete_excludes_exact_account_folders_in_search_and_capture() 
 async fn receive_page(app: &mut App, store: &Store) {
     let mut query = app.query.clone();
     query.observe = app.selected.iter().cloned().collect();
+    query.observe_bulk = app.bulk_observed_ids();
     let page = Arc::new(store.query(query).await.unwrap());
     let _ = app.handle(super::super::super::Message::Backend(engine::Event::Page(
         app.generation,
         page,
         false,
     )));
+}
+
+async fn admit_mail(
+    app: &mut App,
+    store: &Store,
+    commands: &mut tokio::sync::mpsc::Receiver<Command>,
+) -> String {
+    let command = loop {
+        let command = commands.try_recv().expect("mail admission");
+        if !matches!(command, Command::BulkRun(_)) {
+            break command;
+        }
+    };
+    let Command::AdmitMail(id, original, action, lineage) = command else {
+        panic!("Expected durable mail admission")
+    };
+    let job = store
+        .start_observed_mail_action(
+            id.clone(),
+            original,
+            action,
+            lineage.expect("observed identity"),
+        )
+        .await
+        .unwrap();
+    app.mail_admitted(id.clone(), Ok(Arc::new(job)));
+    id
+}
+
+async fn complete_mail(app: &mut App, store: &Store, id: String) {
+    use crate::bulk::{Action, Receipt};
+    let item = store
+        .claim_bulk_item(id.clone())
+        .await
+        .unwrap()
+        .expect("dispatch");
+    let source = item.original.as_ref().expect("source");
+    let receipt = match store.bulk_job(id).await.unwrap().action {
+        Action::Flags(after) => {
+            let before = crate::mail_actions::Flags {
+                unread: after.unread.map(|_| source.unread),
+                starred: after.starred.map(|_| source.starred),
+            };
+            store
+                .acknowledge_bulk_flags(item.clone(), Receipt::Flags { before, after })
+                .await
+                .unwrap();
+            Receipt::Unchanged
+        }
+        Action::Move { folder, .. } => {
+            let receipt = crate::mail_actions::MoveReceipt::local(source, &folder);
+            store
+                .relocate_mail(
+                    source.clone(),
+                    receipt.current.clone().expect("destination"),
+                )
+                .await
+                .unwrap();
+            Receipt::Move(Box::new(receipt))
+        }
+    };
+    let job = store.finish_bulk_item(item, Ok(receipt)).await.unwrap();
+    app.bulk_event(engine::Event::BulkUpdate(Arc::new(job)));
 }
 
 #[tokio::test]
@@ -377,11 +441,9 @@ async fn combined_delete_after_flag_and_move_receipts_uses_updated_group_counts(
         .unwrap()
         .clone();
     app.toggle_mail_flag(original.clone(), true);
-    let Command::Flags(request, sent, _) = network.try_recv().unwrap() else {
-        panic!()
-    };
-    store.flags(sent.clone()).await.unwrap();
-    let _ = app.flags_finished(request, sent, Ok(()));
+    let request = admit_mail(&mut app, &store, &mut network).await;
+    complete_mail(&mut app, &store, request).await;
+    receive_page(&mut app, &store).await;
     assert_eq!(app.mail_actions.base_page.unread, 41);
     // Reconcile an acknowledged source row into another selected folder before
     // the next cache page arrives, just as move/Undo receipts do.
@@ -393,24 +455,11 @@ async fn combined_delete_after_flag_and_move_receipts_uses_updated_group_counts(
         .unwrap()
         .clone();
     let mut current = original.clone();
-    store
-        .move_local(original.id.clone(), "Teams".into())
-        .await
-        .unwrap();
     current.folder = "Teams".into();
     app.move_mail(original.clone(), "Teams".into());
-    let Command::Move(request, sent, destination) = network.try_recv().unwrap() else {
-        panic!()
-    };
-    let _ = app.move_receipt(
-        request,
-        sent,
-        destination,
-        Ok(Arc::new(crate::mail_actions::MoveReceipt {
-            current: Some(current.clone()),
-            ..crate::mail_actions::MoveReceipt::local(&original, "Teams")
-        })),
-    );
+    let request = admit_mail(&mut app, &store, &mut network).await;
+    complete_mail(&mut app, &store, request).await;
+    receive_page(&mut app, &store).await;
     let (tx, _folder_commands) = engine::CommandSender::selection_test_channel();
     app.tx = Some(tx);
     prepare(&mut app, &store, Change::Delete).await;
@@ -466,21 +515,8 @@ async fn combined_delete_rejection_does_not_restore_newer_removed_unaffected_mem
     let (tx, mut network) = engine::CommandSender::network_test_channel();
     app.tx = Some(tx);
     app.move_mail(original.clone(), "Archive".into());
-    let Command::Move(request, sent, destination) = network.try_recv().unwrap() else {
-        panic!()
-    };
-    store
-        .move_local(original.id.clone(), "Archive".into())
-        .await
-        .unwrap();
-    let _ = app.move_receipt(
-        request,
-        sent,
-        destination,
-        Ok(Arc::new(crate::mail_actions::MoveReceipt::local(
-            &original, "Archive",
-        ))),
-    );
+    let request = admit_mail(&mut app, &store, &mut network).await;
+    complete_mail(&mut app, &store, request).await;
     assert_eq!((app.page.total, app.page.unread), (1, 0));
     app.folder_event(FolderEvent::Started(id, Err("Definite rejection".into())));
     assert_eq!((app.page.total, app.page.unread), (82, 41));
@@ -502,13 +538,10 @@ async fn combined_delete_refreshes_scalar_when_a_flag_receipt_follows_review() {
     let (tx, mut network) = engine::CommandSender::network_test_channel();
     app.tx = Some(tx);
     app.toggle_mail_flag(original, true);
-    let Command::Flags(request, sent, _) = network.try_recv().unwrap() else {
-        panic!()
-    };
     let old = prepare(&mut app, &store, Change::Delete).await;
     assert_eq!(app.mail_actions.base_page.folder_count, Some((81, 41)));
-    store.flags(sent.clone()).await.unwrap();
-    let _ = app.flags_finished(request, sent, Ok(()));
+    let request = admit_mail(&mut app, &store, &mut network).await;
+    complete_mail(&mut app, &store, request).await;
     assert_eq!(app.mail_actions.base_page.folder_count, None);
     let (tx, mut reads) = engine::CommandSender::foreground_test_channel();
     app.tx = Some(tx);

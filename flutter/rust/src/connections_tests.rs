@@ -140,7 +140,7 @@ async fn changed_settings_or_another_activation_cannot_commit_a_stale_pair() {
     drop(hold);
 }
 #[tokio::test]
-async fn stale_bindings_refuse_sync_move_and_send_before_journaling() {
+async fn stale_bindings_refuse_sync_move_and_queued_send_before_dispatch() {
     let (_dir, p) = profile().await;
     seed(&p, 1).await;
     p.database
@@ -160,22 +160,27 @@ async fn stale_bindings_refuse_sync_move_and_send_before_journaling() {
     .await;
     let staged = prepare(&p).await;
     request(&p, json!({"op":"activate_account","slot":staged["slot"]})).await;
+    let attempt = "00000000-0000-4000-8000-000000000022";
+    request(
+        &p,
+        json!({"op":"admit_send","attempt":attempt,"id":"draft-one","revision":1}),
+    )
+    .await;
     for stale in [Value::Null, json!("fixture"), json!("obsolete")] {
         for payload in [
             json!({"op":"sync","account":"fixture","password":"fixture-secret","credential_slot":stale}),
             json!({"op":"mutate","id":"fixture:INBOX:0","folder":"Archive","password":"fixture-secret","credential_slot":stale}),
-            json!({"op":"send","id":"draft-one","revision":1,"password":"fixture-secret","credential_slot":stale}),
+            json!({"op":"send","attempt":attempt,"password":"fixture-secret","credential_slot":stale}),
         ] {
             assert!(failure(&p, payload).await.contains("credentials changed"));
         }
     }
     p.database
         .read(|db| {
-            for table in ["pending_moves", "outgoing"] {
-                let n: i64 =
-                    db.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?;
-                assert_eq!(n, 0);
-            }
+            let n: i64 = db.query_row("SELECT COUNT(*) FROM pending_moves", [], |r| r.get(0))?;
+            assert_eq!(n, 0);
+            let state: String = db.query_row("SELECT state FROM outgoing", [], |row| row.get(0))?;
+            assert_eq!(state, "queued");
             Ok(())
         })
         .await

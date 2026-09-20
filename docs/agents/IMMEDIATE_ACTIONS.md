@@ -29,14 +29,16 @@ intent and render projected state; they do not orchestrate provider calls.
 | Reconciliation | Combine confirmed data with current local intent; handle failures, Undo and incoming sync | `src/store/write_ledger.rs`, `src/mail_actions/runner.rs`, browser field intents |
 | Activity and recovery | Present pending work, grouped errors and applicable recovery actions | Existing toasts, bulk History, Outbox and recovery controls |
 
-The desktop retains individual-action overlays and bulk journal projections.
-The first migration removes the foreground review's wait for individual writes,
-while keeping ordered bulk admission behind those writes. Confirmation paints
-the requested rows and counts immediately, and Undo can cancel before admission.
-Bounded selection observations reconcile pending read changes with group counts.
+Desktop individual controls now submit observed message identities through the
+local selection writer into the existing group journal. Their temporary overlays
+retire when a page observes the saved revision. Bulk reviews and confirmations
+use bounded local observations, independently of provider waits. Calendar and
+prepared Send requests also have durable admission. A bounded shared owner
+schedules mail, folders, calendar and Outbox, with account reservations and
+priority for acknowledged cache repair. Stop acknowledgements identify their
+close request. The client inventories record remaining domain and recovery gaps.
 `shared/action-core` defines common projection retirement, rejection, uncertainty
-and cache-repair states. This shared policy is not a durable queue: deferred mail
-admission and the calendar UI recovery records still need restart-safe ownership.
+and cache-repair states; domain journals remain the durable owners.
 
 ## Action lifecycle
 

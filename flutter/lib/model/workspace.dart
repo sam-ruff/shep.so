@@ -35,6 +35,7 @@ class Workspace extends ChangeNotifier {
   final ProfileDiscovery? profileDiscovery;
   final MailRepository repository;
   List<MailActivity> mailActivities = const [];
+  final Set<String> _resumingMailActivity = {};
   Iterable<MailActivity> get mailActivityReview =>
       mailActivities.where((action) => action.needsReview);
   Iterable<MailActivity> get mailActivityPending => mailActivities.where(
@@ -420,15 +421,42 @@ class Workspace extends ChangeNotifier {
       mailActivities = await source.mailActions();
       _changed();
       if (resume) {
-        for (final action in mailActivities.where(
-          (action) => action.canResume,
-        )) {
-          unawaited(_resumeMailActivity(source, action));
-        }
+        await _resumeQueuedMailActivity(source);
       }
     } catch (e) {
       error = 'Could not load mail activity. $e';
       _changed();
+    }
+  }
+
+  Future<void> _resumeQueuedMailActivity(MailActivityRepository source) async {
+    final runnable = await source.runnableMailActions();
+    for (final action
+        in runnable
+            .where((action) => !_resumingMailActivity.contains(action.id))
+            .take(32 - _resumingMailActivity.length)) {
+      _resumingMailActivity.add(action.id);
+      unawaited(_resumeMailActivity(source, action));
+    }
+  }
+
+  Future<void> _refreshMailProjection() async {
+    if (accountRepository == null) return;
+    await loadPage();
+    final current = _reader;
+    final native = accountRepository;
+    if (current == null || native == null) return;
+    final revision = _revision;
+    try {
+      final detail = await native.detail(current.id);
+      if (revision == _revision && _reader?.id == current.id) {
+        _reader = detail;
+        _bodies.remove(current.id);
+        _bodies[current.id] = detail;
+        _changed();
+      }
+    } catch (_) {
+      // The page refresh remains authoritative when the body is unavailable.
     }
   }
 
@@ -441,17 +469,35 @@ class Workspace extends ChangeNotifier {
     } catch (e) {
       error = '$e';
     } finally {
+      _resumingMailActivity.remove(action.id);
       await refreshMailActivity();
+      unawaited(_resumeQueuedMailActivity(source));
     }
   }
 
-  void retryMailActivity(MailActivity action) {
+  Future<void> retryMailActivity(MailActivity action) async {
     if (action.status == 'rejected') {
-      unawaited(change(action.mail, action.fields, force: true));
+      await change(action.mail, action.fields, force: true);
     } else {
-      retry = () => unawaited(refresh());
-      unawaited(refresh());
+      final source = switch (repository) {
+        MailActivityRepository value => value,
+        _ => null,
+      };
+      if (source != null) await _inspectMailActivity(source, action);
     }
+  }
+
+  Future<void> _inspectMailActivity(
+    MailActivityRepository source,
+    MailActivity action,
+  ) async {
+    try {
+      await source.inspectMailAction(action);
+    } catch (e) {
+      error = '$e';
+    }
+    await refreshMailActivity();
+    await _refreshMailProjection();
   }
 
   Future<void> cancelMailActivity(MailActivity action) async {
@@ -467,6 +513,31 @@ class Workspace extends ChangeNotifier {
       error = '$e';
     }
     await refreshMailActivity();
+    await _refreshMailProjection();
+  }
+
+  Future<void> undoMailActivity(
+    MailActivity action, {
+    void Function()? onAdmitted,
+  }) async {
+    final source = switch (repository) {
+      MailActivityRepository value => value,
+      _ => null,
+    };
+    if (source == null || !action.canUndo) return;
+    try {
+      await source.undoMailAction(
+        action,
+        onAdmitted: () {
+          unawaited(_refreshMailProjection());
+          onAdmitted?.call();
+        },
+      );
+    } catch (e) {
+      error = '$e';
+    }
+    await refreshMailActivity();
+    await _refreshMailProjection();
   }
 
   Future<void> loadPage({bool append = false}) async {
@@ -852,6 +923,7 @@ class Workspace extends ChangeNotifier {
         mail(id) ??
         (!offerUndo ? _confirmed[id]?.patch(_projection[id] ?? {}) : null);
     if (current == null || fields.isEmpty) return;
+    final observedLineage = current.lineage;
     if (!force &&
         fields.entries.every((e) => current.field(e.key) == e.value)) {
       return;
@@ -890,21 +962,99 @@ class Workspace extends ChangeNotifier {
       error = null;
       retry = null;
     }
+    final durable = switch (repository) {
+      DurableMutationRepository value => value,
+      _ => null,
+    };
+    final cancelOnly =
+        durable != null &&
+        restoring?.cancelled == true &&
+        restoring?.actionId != null;
+    final actionId = durable == null
+        ? null
+        : cancelOnly
+        ? restoring!.actionId
+        : newDraftIdentity();
+    if (move != null) move.actionId = actionId;
+    var admissionFailed = false;
+    final admission = durable == null
+        ? Future<Object?>.value()
+        : (cancelOnly
+                  ? (restoring!.admitted ?? Future<Object?>.value())
+                        .then((failure) {
+                          if (failure != null) throw failure;
+                          return durable.cancelAdmittedMutation(actionId!);
+                        })
+                        .then((_) {
+                          restoring.admissionCancelled = true;
+                        })
+                  : observedLineage == null
+                  ? Future<void>.error(
+                      const MailOperationFailure(
+                        'This message changed since it was shown. Refresh the folder and retry.',
+                      ),
+                    )
+                  : durable.admitMutation(
+                      id,
+                      fields,
+                      actionId!,
+                      observedLineage,
+                    ))
+              .then<Object?>(
+                (_) => null,
+                onError: (Object failure, StackTrace _) {
+                  admissionFailed = true;
+                  final target = _canonical(id);
+                  final rollback = <String, Object>{};
+                  for (final key in fields.keys) {
+                    if (_versions['$target:$key'] == revision &&
+                        _confirmed.containsKey(target)) {
+                      rollback[key] = _confirmed[target]!.field(key);
+                    }
+                  }
+                  _patchMail(target, rollback);
+                  if (rollback.isNotEmpty) {
+                    error =
+                        'Could not update ${current.subject}. The affected display was restored. ${failure is MailOperationFailure ? failure.message : 'Retry.'}';
+                  }
+                  if (move != null && !move.undoRequested) moves.failed(move);
+                  _changed();
+                  return failure;
+                },
+              );
+    if (move != null) {
+      move.admitted = admission;
+    }
     final before = Future.wait(
       _queues.entries
           .where((entry) => _canonical(entry.key) == id)
           .map((entry) => entry.value),
     );
-    final job = before.then((_) async {
+    final job = admission.then((admissionFailure) async {
+      if (admissionFailure != null) return;
+      await before;
       var target = _canonical(id);
       if (!_confirmed.containsKey(target)) return;
+      if (cancelOnly) return;
       if (move?.cancelled == true ||
           (restoring != null && !restoring.committed)) {
+        if (durable != null && move?.admissionCancelled != true) {
+          try {
+            await durable.cancelAdmittedMutation(actionId!);
+          } catch (e) {
+            error = '$e';
+            _changed();
+          }
+        }
         return;
       }
       if (move != null) move.started = true;
       try {
-        await repository.mutate(target, fields);
+        if (durable != null) {
+          await durable.executeMutation(target, fields, actionId!);
+        } else {
+          await repository.mutate(target, fields);
+        }
         if (move != null) move.committed = true;
         if (restoring != null) {
           undoFailures.remove(restoring);
@@ -985,7 +1135,21 @@ class Workspace extends ChangeNotifier {
     }
     if (projection?.isEmpty == true) _projection.remove(target);
     ++_revision; // A page captured before this acknowledgment must be retried.
-    if (identical(_queues[id], job)) _queues.remove(id);
+    if (identical(_queues[id], job)) {
+      if (admissionFailed) {
+        _queues[id] = before;
+        unawaited(
+          before.whenComplete(() {
+            if (identical(_queues[id], before)) {
+              _queues.remove(id);
+              _changed();
+            }
+          }),
+        );
+      } else {
+        _queues.remove(id);
+      }
+    }
     if (accountRepository != null) {
       unawaited(loadPage());
     }
@@ -1182,6 +1346,8 @@ class Workspace extends ChangeNotifier {
     try {
       await repository.send(draft);
       drafts.remove(draft.id);
+      if (repository is OutgoingRepository)
+        notice = 'Message queued in Outbox.';
       _changed();
       return true;
     } catch (e) {
@@ -1191,6 +1357,13 @@ class Workspace extends ChangeNotifier {
       _changed();
       return false;
     }
+  }
+
+  Future<void> cancelOutgoing(OutgoingEntry entry) async {
+    final outbox = repository as OutgoingRepository;
+    await outbox.cancelOutgoing(entry.id);
+    notice = 'Delivery cancelled. The draft was kept.';
+    _changed();
   }
 
   Future<bool> saveEvent(CalendarEntry entry) async {

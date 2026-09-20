@@ -19,6 +19,7 @@ impl App {
                 && self.mail_actions.effective(&mail).unread
             {
                 self.mail_actions.read_candidate = Some(mail);
+                self.mail_actions.read_candidate_lineage = self.page.lineages.get(&id).cloned();
             }
         }
         self.select(id);
@@ -28,6 +29,7 @@ impl App {
         let Some(candidate) = self.mail_actions.read_candidate.take() else {
             return true;
         };
+        let lineage = self.mail_actions.read_candidate_lineage.take();
         let mail = self
             .page
             .rows
@@ -41,11 +43,9 @@ impl App {
             })
             .cloned()
             .unwrap_or(candidate);
-        if self.mail_actions.effective(&mail).unread {
-            // Uses the same immediate projection, coalescing and failure rollback
-            // as the explicit read control. No body load is required.
-            self.toggle_mail_flag(mail.clone(), true);
-            return !self.mail_actions.effective(&mail).unread;
+        if self.displayed_mail_flags(&mail).0 {
+            self.toggle_mail_flag_with_lineage(mail.clone(), true, lineage);
+            return !self.displayed_mail_flags(&mail).0;
         }
         true
     }
@@ -116,7 +116,7 @@ mod tests {
             })
             .collect();
         store.upsert(messages).await.unwrap();
-        let (sender, receiver) = engine::CommandSender::network_test_channel();
+        let (sender, receiver) = engine::CommandSender::selection_test_channel();
         let (mut app, _) = App::new();
         app.tx = Some(sender);
         app.query.folder = "INBOX".into();
@@ -126,11 +126,32 @@ mod tests {
         app.select(messages[0].id.clone());
         (app, receiver, messages)
     }
-    fn flags(receiver: &mut tokio::sync::mpsc::Receiver<Command>) -> (u64, Mail, Flags) {
+    fn flags(receiver: &mut tokio::sync::mpsc::Receiver<Command>) -> (String, Mail, Flags) {
         match receiver.try_recv().unwrap() {
-            Command::Flags(request, mail, flags) => (request, mail, flags),
+            Command::AdmitMail(request, mail, crate::bulk::Action::Flags(flags), _) => {
+                (request, mail, flags)
+            }
             other => panic!("Expected read write, got {other:?}"),
         }
+    }
+
+    async fn admit(app: &mut App, id: String, mail: Mail, flags: Flags) {
+        let store = crate::store::Store::memory().unwrap();
+        let parsed = parse_mail(
+            &mail.account_id,
+            &mail.remote_id,
+            &mail.folder,
+            b"From: friend@example.test\r\nSubject: Read fixture\r\n\r\nRead me".to_vec(),
+            mail.unread,
+            mail.starred,
+        )
+        .unwrap();
+        store.upsert(vec![parsed]).await.unwrap();
+        let job = store
+            .start_individual_mail_action(id.clone(), mail, crate::bulk::Action::Flags(flags))
+            .await
+            .unwrap();
+        app.mail_admitted(id, Ok(Arc::new(job)));
     }
 
     #[tokio::test]
@@ -170,7 +191,7 @@ mod tests {
         assert!(app.page.rows[1].unread);
         assert_eq!(app.page.unread, 2);
         assert_eq!(app.page.rows[0].starred, mails[0].starred);
-        let _ = app.flags_finished(request, mail, Ok(()));
+        admit(&mut app, request, mail, changes).await;
         assert!(receiver.try_recv().is_err());
         let _ = app.handle(Message::WindowUnfocused);
         let (_, mail, changes) = flags(&mut receiver);
@@ -184,11 +205,11 @@ mod tests {
         let (mut app, mut receiver, mails) = fixture().await;
         app.select_for_read(mails[0].id.clone());
         app.toggle_mail_flag(mails[0].clone(), true);
-        let (request, sent, _) = flags(&mut receiver);
+        let (request, sent, changes) = flags(&mut receiver);
         app.toggle_mail_flag(mails[0].clone(), true);
         assert!(app.mail_actions.read_candidate.is_none());
         app.select_for_read(mails[1].id.clone());
-        let _ = app.flags_finished(request, sent, Ok(()));
+        admit(&mut app, request, sent, changes).await;
         let (_, sent, change) = flags(&mut receiver);
         assert_eq!(sent.id, mails[0].id);
         assert_eq!(change.unread, Some(true));
@@ -200,8 +221,8 @@ mod tests {
         let (mut app, mut receiver, mails) = fixture().await;
         app.select_for_read(mails[0].id.clone());
         app.select_for_read(mails[1].id.clone());
-        let (request, sent, _) = flags(&mut receiver);
-        let _ = app.flags_finished(request, sent, Err("Fixture save failed".into()));
+        let (request, _, _) = flags(&mut receiver);
+        app.mail_admitted(request, Err("Fixture save failed".into()));
         assert!(app.page.rows[0].unread);
         assert_eq!(app.page.unread, 3);
         assert_eq!(app.selected.as_deref(), Some(mails[1].id.as_str()));
@@ -215,61 +236,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn move_waits_for_read_and_uses_its_confirmed_flags_even_after_read_failure() {
+    async fn move_is_admitted_after_read_without_waiting_for_its_result() {
         for success in [true, false] {
             let (mut app, mut receiver, mails) = fixture().await;
             app.select_for_read(mails[0].id.clone());
             app.move_mail(mails[0].clone(), "Archive".into());
-            let (request, sent, _) = flags(&mut receiver);
+            let (request, sent, changes) = flags(&mut receiver);
             assert!(!app.page.rows.iter().any(|m| m.id == mails[0].id));
-            assert!(
-                receiver.try_recv().is_err(),
-                "Read must finish before the UID moves"
-            );
-            let _ = app.flags_finished(
-                request,
-                sent,
-                if success {
-                    Ok(())
-                } else {
-                    Err("Read rejected".into())
-                },
-            );
-            let Command::Move(_, mail, folder) = receiver.try_recv().unwrap() else {
-                panic!("Move not dispatched")
+            let Command::AdmitMail(_, mail, crate::bulk::Action::Move { account, folder }, _) =
+                receiver.try_recv().unwrap()
+            else {
+                panic!("Move not admitted")
             };
             assert_eq!(mail.id, mails[0].id);
             assert_eq!(folder, "Archive");
-            assert_eq!(mail.unread, !success);
+            assert_eq!(account, None);
+            if success {
+                admit(&mut app, request, sent, changes).await;
+            } else {
+                app.mail_admitted(request, Err("Read rejected".into()));
+            }
+            assert!(!app.page.rows.iter().any(|m| m.id == mails[0].id));
+            assert!(receiver.try_recv().is_err());
         }
     }
 
     #[tokio::test]
-    async fn cross_account_move_waits_for_read_without_reusing_the_old_uid_after_transfer() {
+    async fn cross_account_move_admission_keeps_the_source_identity_after_read_result() {
         for success in [true, false] {
             let (mut app, mut receiver, mails) = fixture().await;
             app.select_for_read(mails[0].id.clone());
             app.transfer_mail(mails[0].clone(), "personal".into(), "INBOX".into());
-            let (request, sent, _) = flags(&mut receiver);
+            let (request, sent, changes) = flags(&mut receiver);
             assert!(app.mail_actions.read_candidate.is_none());
             assert_ne!(app.selected.as_ref(), Some(&mails[0].id));
-            assert!(receiver.try_recv().is_err());
-            let _ = app.flags_finished(
-                request,
-                sent,
-                if success {
-                    Ok(())
-                } else {
-                    Err("Read rejected".into())
-                },
-            );
-            let Command::Transfer(_, mail, account, folder) = receiver.try_recv().unwrap() else {
+            let Command::AdmitMail(_, mail, crate::bulk::Action::Move { account, folder }, _) =
+                receiver.try_recv().unwrap()
+            else {
                 panic!("Expected transfer")
             };
-            assert_eq!(account, "personal");
+            assert_eq!(account.as_deref(), Some("personal"));
             assert_eq!(folder, "INBOX");
             assert_eq!(mail.id, mails[0].id);
-            assert_eq!(mail.unread, !success);
+            assert_eq!(mail.remote_id, mails[0].remote_id);
+            if success {
+                admit(&mut app, request, sent, changes).await;
+            } else {
+                app.mail_admitted(request, Err("Read rejected".into()));
+            }
+            assert!(!app.page.rows.iter().any(|m| m.id == mails[0].id));
             assert!(receiver.try_recv().is_err());
         }
     }
@@ -281,7 +296,15 @@ mod tests {
             app.tx
                 .as_ref()
                 .unwrap()
-                .try_send(Command::LoadImages(vec![]))
+                .try_send(Command::AdmitMail(
+                    uuid::Uuid::new_v4().to_string(),
+                    mails[0].clone(),
+                    crate::bulk::Action::Flags(Flags {
+                        unread: Some(false),
+                        starred: None,
+                    }),
+                    None,
+                ))
                 .unwrap();
         }
         app.select_for_read(mails[0].id.clone());
@@ -298,8 +321,8 @@ mod tests {
         let (mut app, mut receiver, mails) = fixture().await;
         app.select_for_read(mails[0].id.clone());
         app.toggle_mail_flag(mails[0].clone(), false);
-        let (request, sent, _) = flags(&mut receiver);
-        let _ = app.flags_finished(request, sent, Ok(()));
+        let (request, sent, changes) = flags(&mut receiver);
+        admit(&mut app, request, sent, changes).await;
         let latest = app.page.rows[0].clone();
         assert_ne!(latest.starred, mails[0].starred);
         app.mail_actions.observe_detail(&latest);

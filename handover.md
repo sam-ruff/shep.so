@@ -2,20 +2,24 @@
 
 ## Immediate actions checkpoint, 20 September
 
-Current uncommitted continuation adds durable calendar admission/Waiting,
+Checkpoint `7689ef3`, pushed to `main`, adds durable calendar admission/Waiting,
 native flag receipt repair, browser individual Activity/offline cancellation/Undo,
 Flutter durable individual admission, and native prepared-message queued Send.
 The integrated browser gate passes 90 unit tests and 18 Chromium controls;
 Flutter's actual admission FFI and 21 workspace tests pass. Native bulk/calendar/
 rapid scenarios pass 40 tests plus the authentication-wait scenario, with one
 live mailbox skip. The latest library run passes 1,110 tests and queued Outbox
-storage passes 13; final native Send controls and shipping hooks are pending.
+storage passes 13. Native Send queue/restart/cancellation controls pass. Normal
+hooks pass 1,479 Rust test executions; browser v3 passes 94 unit and 31
+control/storage/profile scenarios. Strict docs pass.
 
-Active isolated lanes own native field ownership/scheduling, Flutter checked
-recovery/Activity, and browser Send/account/preferences. Their frozen handoffs
-live under ignored `artifacts/`; integrate only reviewed, tested snapshots.
-Preserve the user-owned untracked `handover-fable.md`. No continuation checkpoint
-has been committed or pushed yet. Full domain adoption and measured mailbox-scale
+The current uncommitted integration adds native individual observed admission,
+field ownership and a shared bounded background scheduler. Flutter Activity,
+conditional rollback, checked Undo and queued Send pass 116 Rust and 167 Flutter
+tests before the latest input-lineage check. Native combined verification and a
+calendar retry-deadline fix are running; Flutter Outbox retry/refresh follows.
+Frozen lane handoffs and logs live under ignored `artifacts/`.
+Preserve the user-owned untracked `handover-fable.md`. Full domain adoption and measured mailbox-scale
 latency remain open; TODO is authoritative.
 
 `a1049ab` implements the first native mail/calendar migration requested by Sam.

@@ -1,6 +1,9 @@
+mod action_work;
 pub(crate) mod backup_history;
 mod bulk;
+pub(crate) use action_work::{ReadyWork, Work};
 pub(crate) mod calendar_actions;
+mod mail_lineage;
 pub use calendar_actions::CalendarJob;
 mod folder_actions;
 mod folder_creation;
@@ -49,7 +52,7 @@ pub struct Store(
     Option<Arc<crate::cache_cipher::ownership::Guard>>,
 );
 
-pub(crate) const DATABASE_VERSION: u32 = 6;
+pub(crate) const DATABASE_VERSION: u32 = 7;
 /// Plain-text characters the reader loads per page of a long message.
 pub const READER_BODY_PAGE: usize = 32_000;
 
@@ -207,6 +210,7 @@ impl Store {
         connections::schema(&conn)?;
         outgoing::schema(&conn)?;
         selection::schema(&conn)?;
+        action_work::schema(&conn)?;
         folder_projection::schema(&conn)?;
         bulk::schema(&conn)?;
         move_journal::schema(&conn)?;
@@ -253,6 +257,7 @@ impl Store {
         }
         let tx = conn.transaction()?;
         calendar_actions::schema(&tx)?;
+        mail_lineage::schema(&tx)?;
         tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
         tx.commit()?;
         Ok(conn)
@@ -586,17 +591,39 @@ fn read_page(
         }
     }
     let mut bulk_pending = std::collections::HashSet::new();
-    for mail in &rows {
-        let pending: bool = c.query_row(
-            "SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?)",
+    let mut bulk_placeholders = std::collections::HashSet::new();
+    for mail in &mut rows {
+        let (pending, moved): (bool, bool) = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bulk_effects WHERE id=?1),
+                EXISTS(SELECT 1 FROM bulk_effects e JOIN messages m ON m.id=e.id WHERE e.id=?1
+                    AND (COALESCE(e.account,m.account)!=m.account OR COALESCE(e.folder,m.folder)!=m.folder))
+                OR EXISTS(SELECT 1 FROM bulk_items i JOIN bulk_jobs j ON j.id=i.job WHERE i.id=?1
+                    AND i.status IN ('running','uncertain') AND json_type(j.action,'$.Move') IS NOT NULL)",
             [&mail.id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         if pending {
             bulk_pending.insert(mail.id.clone());
         }
+        if moved {
+            bulk_placeholders.insert(mail.id.clone());
+            mail.remote_id.clear();
+        }
+    }
+    let mut lineages = std::collections::HashMap::new();
+    for id in rows
+        .iter()
+        .map(|m| &m.id)
+        .chain(observed.keys())
+        .take(PAGE_SIZE * 2)
+    {
+        let actual = relocated.get(id).map_or(id, |m| &m.id);
+        if let Ok(lineage) = mail_lineage::get(c, actual) {
+            lineages.insert(id.clone(), lineage);
+        }
     }
     let page = MailPage {
+        lineages,
         move_pending_total: move_journal::pending(c)?,
         relocated,
         move_recovery,
@@ -609,7 +636,7 @@ fn read_page(
         observed,
         bulk_pending,
         bulk_observed,
-        bulk_placeholders: Default::default(),
+        bulk_placeholders,
         bulk_revision: get(c, "bulk_revision")?,
     };
     drop(statement);
@@ -658,7 +685,8 @@ impl Store {
                 .as_ref()
                 .map(|h| h.remote_images.clone())
                 .unwrap_or_default();
-            Ok(MailDetail {
+            let lineage = Some(mail_lineage::get(c, &summary.id)?);
+            Ok(MailDetail { lineage, content: shep_mail_core::model::MailDetail {
                 html: content.html.map(Arc::new),
                 latest_body,
                 replies,
@@ -669,7 +697,7 @@ impl Store {
                 remote_images,
                 attachments: Arc::new(attachments),
                 reply: crate::compose::ReplyHeaders::parse(&parsed),
-            })
+            } })
         })
         .await
     }
@@ -1135,7 +1163,8 @@ impl Store {
 
 pub(crate) fn action_schema(c: &Connection) -> anyhow::Result<()> {
     bulk::schema(c)?;
-    calendar_actions::schema(c)
+    calendar_actions::schema(c)?;
+    mail_lineage::schema(c)
 }
 
 pub(crate) fn import_archive_schema(c: &Connection) -> anyhow::Result<()> {

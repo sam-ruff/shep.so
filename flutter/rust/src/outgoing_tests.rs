@@ -72,9 +72,22 @@ pub(crate) fn smtp(
     s
 }
 pub(crate) async fn send(p: &MobileProfile) -> Value {
+    let prior = request(p, json!({"op":"delivery","id":"draft-one"})).await;
+    if !prior.is_null() {
+        return prior;
+    }
+    let attempt = "00000000-0000-4000-8000-000000000001";
+    let admitted = request(
+        p,
+        json!({"op":"admit_send","attempt":attempt,"id":"draft-one","revision":1}),
+    )
+    .await;
+    if admitted["state"] != "queued" && admitted["state"] != "waiting" {
+        return admitted;
+    }
     request(
         p,
-        json!({"op":"send","id":"draft-one","revision":1,"password":"synthetic-only","incoming_password":"synthetic-incoming"}),
+        json!({"op":"send","attempt":attempt,"password":"synthetic-only","incoming_password":"synthetic-incoming"}),
     )
     .await
 }
@@ -100,6 +113,74 @@ pub(crate) async fn setup(p: &MobileProfile) {
         json!({"op":"save_draft","draft":draft(1,"Immutable outgoing body")}),
     )
     .await;
+}
+
+#[tokio::test]
+async fn queued_delivery_refuses_changed_account_without_smtp() {
+    let (_dir, p) = profile().await;
+    setup(&p).await;
+    let script = smtp(&p, Ok(()), false);
+    let attempt = "00000000-0000-4000-8000-000000000023";
+    request(
+        &p,
+        json!({"op":"admit_send","attempt":attempt,"id":"draft-one","revision":1}),
+    )
+    .await;
+    p.database.write(|db| {
+        db.execute("UPDATE accounts SET settings=json_set(settings,'$.smtp_host','replacement.example.test')",[])?;
+        Ok(())
+    }).await.unwrap();
+    let error = failed(
+        &p,
+        json!({"op":"send","attempt":attempt,"password":"synthetic-only"}),
+    )
+    .await;
+    assert!(error.contains("delivery account changed"));
+    assert_eq!(script.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        request(&p, json!({"op":"delivery","id":"draft-one"})).await["state"],
+        "queued"
+    );
+}
+
+#[tokio::test]
+async fn queued_delivery_survives_restart_and_can_cancel_without_smtp() {
+    let (dir, p) = profile().await;
+    setup(&p).await;
+    let script = smtp(&p, Ok(()), false);
+    let attempt = "00000000-0000-4000-8000-000000000010";
+    let admitted = request(
+        &p,
+        json!({"op":"admit_send","attempt":attempt,"id":"draft-one","revision":1}),
+    )
+    .await;
+    assert_eq!(admitted["state"], "queued");
+    assert_eq!(script.calls.load(Ordering::SeqCst), 0);
+    drop(p);
+    let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_str().unwrap().into())
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&reopened, json!({"op":"runnable_outgoing"})).await["rows"][0]["id"],
+        attempt
+    );
+    assert_eq!(
+        request(&reopened, json!({"op":"cancel_outgoing","id":attempt})).await["state"],
+        "cancelled"
+    );
+    assert!(
+        request(&reopened, json!({"op":"delivery","id":"draft-one"}))
+            .await
+            .is_null()
+    );
+    assert_eq!(
+        request(&reopened, json!({"op":"drafts"}))
+            .await
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 async fn enter(s: &Script) {
     tokio::time::timeout(Duration::from_secs(5), s.entered.notified())
@@ -289,7 +370,7 @@ async fn accepted_smtp_survives_sent_cache_failure_and_preserves_newer_local_edi
 async fn pending_terminal_acknowledgement_is_retried_without_resending() {
     let (_dir, p) = profile().await;
     setup(&p).await;
-    p.database.write(|db|{db.execute_batch("CREATE TRIGGER fail_receipt BEFORE UPDATE ON outgoing BEGIN SELECT RAISE(FAIL,'Synthetic receipt failure'); END;")?;Ok(())}).await.unwrap();
+    p.database.write(|db|{db.execute_batch("CREATE TRIGGER fail_receipt BEFORE UPDATE ON outgoing WHEN OLD.state='submitting' BEGIN SELECT RAISE(FAIL,'Synthetic receipt failure'); END;")?;Ok(())}).await.unwrap();
     let s = smtp(&p, Ok(()), false);
     s.release.notify_one();
     let sent = send(&p).await;
@@ -353,7 +434,13 @@ async fn rejected_and_reviewed_uncertain_recovery_clones_files_once_and_cannot_r
             false,
         );
         s.release.notify_one();
-        let sent=request(&p,json!({"op":"send","id":"draft-one","revision":1,"file_revision":files["file_revision"],"password":"synthetic"})).await;
+        let attempt = "00000000-0000-4000-8000-000000000002";
+        request(&p,json!({"op":"admit_send","attempt":attempt,"id":"draft-one","revision":1,"file_revision":files["file_revision"]})).await;
+        let sent = request(
+            &p,
+            json!({"op":"send","attempt":attempt,"password":"synthetic"}),
+        )
+        .await;
         let id = sent["id"].as_str().unwrap();
         if uncertain {
             assert!(

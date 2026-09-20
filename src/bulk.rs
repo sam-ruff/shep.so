@@ -79,7 +79,17 @@ pub enum Receipt {
     Move(Box<MoveReceipt>),
     Flags { before: Flags, after: Flags },
     Unchanged,
+    Superseded,
 }
+
+#[derive(Debug)]
+pub(crate) struct Superseded;
+impl std::fmt::Display for Superseded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("A newer decision owns this field. This change was not sent.")
+    }
+}
+impl std::error::Error for Superseded {}
 #[derive(Debug, Clone)]
 pub struct Job {
     pub id: String,

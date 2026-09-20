@@ -98,6 +98,9 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
         id TEXT NOT NULL, position INTEGER NOT NULL, selected INTEGER NOT NULL,
         PRIMARY KEY(selection,id), UNIQUE(selection,position));
         CREATE INDEX scratch.mail_selection_chosen ON mail_selection_rows(selection,selected,position);
+        CREATE TABLE scratch.mail_review_lineage(
+        selection TEXT NOT NULL REFERENCES mail_selections(id) ON DELETE CASCADE,
+        id TEXT NOT NULL,lineage TEXT NOT NULL,PRIMARY KEY(selection,id));
         CREATE TABLE scratch.mail_selection_order(id TEXT PRIMARY KEY,priority INTEGER,missing INTEGER,score REAL,label TEXT,time INTEGER);
         CREATE INDEX scratch.selection_order_desc ON mail_selection_order(priority,missing,score,label COLLATE NOCASE,time DESC,id);
         CREATE INDEX scratch.selection_order_asc ON mail_selection_order(priority,missing,score,label COLLATE NOCASE,time ASC,id);")?;
@@ -439,6 +442,12 @@ impl Store {
             tx.execute(
                 FREEZE_SELECTION_SQL,
                 params![id.to_string(), source.to_string()],
+            )?;
+            tx.execute(
+                "INSERT INTO scratch.mail_review_lineage
+                SELECT s.selection,s.id,l.lineage FROM scratch.mail_selection_rows s
+                JOIN mail_lineage l ON l.id=s.id WHERE s.selection=?",
+                [id.to_string()],
             )?;
             let result = snapshot(&tx, id, &visible)?;
             tx.commit()?;

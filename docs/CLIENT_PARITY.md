@@ -13,9 +13,13 @@ complete domain, Undo, offline-policy or platform parity.
 Desktop Send now admits prepared MIME to a durable Queued Outbox before provider
 capacity and supports local cancellation before dispatch. Browser now saves
 queued Send before provider reservation, retains connection-attempt recovery and
-atomically saves preference values with intent revisions. Flutter still needs
-the sending admission/UI migration. MIME
-preparation before native admission remains a responsiveness limitation.
+atomically saves preference values with intent revisions. Flutter now saves the
+exact message and delivery identity before returning from Send; delivery runs in
+the background and queued cancellation retains the draft. Account and credential
+changes are checked before SMTP. Outbox resumes the same saved attempt and
+refreshes its bounded page without clearing errors or review choices. Wider
+activity adoption remains open. MIME preparation before native admission remains a
+responsiveness limitation.
 
 20 September immediate actions: the approved common lifecycle is being adopted
 on desktop, starting with bulk review during pending mail writes and calendar

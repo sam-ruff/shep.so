@@ -1,5 +1,6 @@
 use super::*;
 use crate::mail_actions::{Flags, MoveReceipt};
+mod admission;
 mod counts;
 mod navigation;
 mod projection;
@@ -9,6 +10,8 @@ pub(super) use counts::badge_total;
 #[derive(Default)]
 pub(super) struct Actions {
     pub(super) read_candidate: Option<Mail>,
+    pub(super) read_candidate_lineage: Option<String>,
+    pub(super) move_review: Option<(Mail, Option<String>)>,
     pub base_page: Arc<MailPage>,
     flags: HashMap<String, PendingFlags>,
     sequence: u64,
@@ -16,6 +19,8 @@ pub(super) struct Actions {
     moves: HashMap<String, PendingMove>,
     transfers: HashMap<String, PendingTransfer>,
     undo: HashMap<u64, undo::Record>,
+    admissions: VecDeque<admission::Admission>,
+    journal_jobs: HashSet<String>,
 }
 
 struct PendingTransfer {
@@ -71,6 +76,28 @@ impl Actions {
             state.account = account.into();
             state.folder = folder.into();
         }
+        for entry in self
+            .admissions
+            .iter()
+            .filter(|entry| entry.original.id == id)
+        {
+            match &entry.action {
+                crate::bulk::Action::Flags(flags) => {
+                    if let Some(unread) = flags.unread {
+                        state.unread = unread;
+                    }
+                    if let Some(starred) = flags.starred {
+                        state.starred = starred;
+                    }
+                }
+                crate::bulk::Action::Move { account, folder } => {
+                    if let Some(account) = account {
+                        state.account.clone_from(account);
+                    }
+                    state.folder.clone_from(folder);
+                }
+            }
+        }
         state
     }
 
@@ -82,17 +109,30 @@ impl Actions {
     }
 
     pub(super) fn flag_ids(&self) -> Vec<String> {
-        self.flags.keys().cloned().collect()
+        self.flags
+            .keys()
+            .cloned()
+            .chain(
+                self.admissions
+                    .iter()
+                    .map(|entry| entry.original.id.clone()),
+            )
+            .collect()
     }
 
     pub fn moving(&self, id: &str) -> bool {
         self.move_target(id).is_some()
     }
     pub fn pending(&self) -> usize {
-        self.flags
-            .values()
-            .filter(|entry| entry.request.is_some())
+        self.admissions
+            .iter()
+            .filter(|entry| entry.revision.is_none())
             .count()
+            + self
+                .flags
+                .values()
+                .filter(|entry| entry.request.is_some())
+                .count()
             + self.moves.len()
             + self.transfers.len()
             + self.undo.values().filter(|entry| entry.pending()).count()
@@ -130,6 +170,11 @@ impl App {
     }
 
     pub(super) fn move_action_mail(&self) -> Option<&Mail> {
+        if matches!(self.dialog, Some(Dialog::Move | Dialog::MoveConfirm))
+            && let Some((mail, _)) = &self.mail_actions.move_review
+        {
+            return Some(mail);
+        }
         if let Some(mail) = self.action_mail() {
             return Some(mail);
         }
@@ -160,6 +205,16 @@ impl App {
     }
 
     pub(super) fn set_mail_page(&mut self, page: Arc<MailPage>) {
+        if let Some(record) = page.move_recovery.values().find(|record| {
+            record.stage == crate::mail_actions::journal::MoveStage::Local
+                && !self
+                    .mail_actions
+                    .base_page
+                    .move_recovery
+                    .contains_key(&record.original.id)
+        }) {
+            self.notice(local_only_notice(&record.original.folder), true);
+        }
         Arc::make_mut(&mut self.workspace).move_pending_total = page.move_pending_total;
         if let Some(id) = self.selected.clone()
             && let Some(current) = page.relocated.get(&id)
@@ -186,6 +241,19 @@ impl App {
             .retain(|id, entry| entry.request.is_some() || reader.as_ref() == Some(id));
         self.mail_actions.base_page = page;
         self.project_mail_flags();
+        if let Some(detail) = &mut self.detail
+            && self.page.lineages.get(&detail.summary.id) == detail.lineage.as_ref()
+            && let Some(mail) = self
+                .page
+                .rows
+                .iter()
+                .find(|mail| mail.id == detail.summary.id)
+            && (mail.account_id != detail.summary.account_id
+                || mail.folder != detail.summary.folder
+                || mail.remote_id != detail.summary.remote_id)
+        {
+            Arc::make_mut(detail).summary = mail.clone();
+        }
         self.selection_page_changed();
     }
 
@@ -200,6 +268,7 @@ impl App {
                 .any(|entry| entry.restoring())
         {
             self.page = self.mail_actions.base_page.clone();
+            self.project_mail_admissions();
             self.project_bulk();
             return;
         }
@@ -265,11 +334,21 @@ impl App {
         self.project_undo(&mut page);
         page.inbox_unread = self.project_inbox_counts();
         self.page = Arc::new(page);
+        self.project_mail_admissions();
         self.project_bulk();
     }
 
     pub(super) fn toggle_mail_flag(&mut self, mail: Mail, unread: bool) {
-        if self.mail_actions.restoring(&mail.id) || self.bulk_owns_mail(&mail.id) {
+        let lineage = self.mail_input_lineage(&mail);
+        self.toggle_mail_flag_with_lineage(mail, unread, lineage);
+    }
+    pub(super) fn toggle_mail_flag_with_lineage(
+        &mut self,
+        mail: Mail,
+        unread: bool,
+        lineage: Option<String>,
+    ) {
+        if self.mail_actions.restoring(&mail.id) || self.page.is_placeholder(&mail.id) {
             return;
         }
         if unread
@@ -277,34 +356,17 @@ impl App {
                 .mail_actions
                 .read_candidate
                 .as_ref()
-                .is_some_and(|candidate| candidate.id == mail.id)
+                .is_some_and(|m| m.id == mail.id)
         {
             self.mail_actions.read_candidate = None;
+            self.mail_actions.read_candidate_lineage = None;
         }
-        let id = mail.id.clone();
-        let current = self.mail_actions.effective(&mail).clone();
-        let entry = self
-            .mail_actions
-            .flags
-            .entry(id.clone())
-            .or_insert_with(|| PendingFlags {
-                confirmed: current.clone(),
-                desired: current.clone(),
-                sent: current,
-                request: None,
-                edits: (0, 0),
-                sent_edits: (0, 0),
-            });
-        if unread {
-            entry.desired.unread = !entry.desired.unread;
-            entry.edits.0 += 1;
-        } else {
-            entry.desired.starred = !entry.desired.starred;
-            entry.edits.1 += 1;
-        }
-        self.dispatch_flags(&id);
-        self.invalidate_action_snapshot();
-        self.project_mail_flags();
+        let (read_state, flag_state) = self.displayed_mail_flags(&mail);
+        let flags = Flags {
+            unread: unread.then_some(!read_state),
+            starred: (!unread).then_some(!flag_state),
+        };
+        self.admit_mail_action_with_lineage(mail, crate::bulk::Action::Flags(flags), lineage);
     }
 
     fn dispatch_flags(&mut self, id: &str) {
@@ -331,49 +393,8 @@ impl App {
     }
 
     pub(super) fn transfer_mail(&mut self, mail: Mail, account: String, folder: String) {
-        if self.move_is_blocked(&mail.id) {
-            return;
-        }
-        let id = mail.id.clone();
-        if self.mail_actions.restoring(&id)
-            || self.mail_actions.transfers.contains_key(&id)
-            || self.mail_actions.moves.contains_key(&id)
-        {
-            return;
-        }
-        let neighbors = self.removal_neighbors(&mail.id);
-        if self
-            .mail_actions
-            .read_candidate
-            .as_ref()
-            .is_some_and(|m| m.id == id)
-        {
-            self.finish_read();
-        }
-        let mail = self.mail_actions.effective(&mail).clone();
-        let toast = self.action_toasts.add(&account, &folder, Instant::now());
-        self.remember_move(toast, &mail);
-        self.mail_actions.transfers.insert(
-            id.clone(),
-            PendingTransfer {
-                mail,
-                recovered: None,
-                account,
-                folder,
-                request: None,
-                toast,
-            },
-        );
-        self.dispatch_transfer(&id);
-        if self.mail_actions.transfers.contains_key(&id) {
-            self.invalidate_action_snapshot();
-            self.dialog = None;
-            self.focused_input = None;
-            self.pending_focus = None;
-            self.project_mail_flags();
-            self.select_after_removal(&id, neighbors);
-            self.refill_short_page();
-        }
+        let lineage = self.mail_input_lineage(&mail);
+        self.admit_mail_move(mail, Some(account), folder, lineage);
     }
 
     /// A hidden source row leaves a full page short until its receipt refreshes
@@ -452,50 +473,8 @@ impl App {
     }
 
     pub(super) fn move_mail(&mut self, mail: Mail, destination: String) {
-        if self.mail_actions.restoring(&mail.id)
-            || self.move_is_blocked(&mail.id)
-            || mail.folder == destination
-            || self.mail_actions.moves.contains_key(&mail.id)
-            || self.mail_actions.transfers.contains_key(&mail.id)
-        {
-            return;
-        }
-        let neighbors = self.removal_neighbors(&mail.id);
-        if self
-            .mail_actions
-            .read_candidate
-            .as_ref()
-            .is_some_and(|candidate| candidate.id == mail.id)
-        {
-            self.finish_read();
-        }
-        let mail = self.mail_actions.effective(&mail).clone();
-        let id = mail.id.clone();
-        let toast = self
-            .action_toasts
-            .add(&mail.account_id, &destination, Instant::now());
-        self.remember_move(toast, &mail);
-        self.mail_actions.moves.insert(
-            id.clone(),
-            PendingMove {
-                toast,
-                mail,
-                recovered: None,
-                destination,
-                request: None,
-            },
-        );
-        self.dispatch_move(&id);
-        if !self.mail_actions.moves.contains_key(&id) {
-            return;
-        }
-        self.invalidate_action_snapshot();
-        self.dialog = None;
-        self.focused_input = None;
-        self.pending_focus = None;
-        self.project_mail_flags();
-        self.select_after_removal(&id, neighbors);
-        self.refill_short_page();
+        let lineage = self.mail_input_lineage(&mail);
+        self.admit_mail_move(mail, None, destination, lineage);
     }
 
     fn dispatch_move(&mut self, id: &str) {
@@ -600,34 +579,6 @@ impl App {
         refresh
     }
 
-    #[cfg(test)]
-    fn move_finished(
-        &mut self,
-        request: u64,
-        mail: Mail,
-        folder: String,
-        result: Result<(), String>,
-    ) -> Task<Message> {
-        let result = result.map(|()| Arc::new(MoveReceipt::local(&mail, &folder)));
-        self.move_receipt(request, mail, folder, result)
-    }
-    #[cfg(test)]
-    fn transfer_finished(
-        &mut self,
-        request: u64,
-        mail: Mail,
-        result: Result<(), String>,
-    ) -> Task<Message> {
-        let folder = self
-            .mail_actions
-            .transfers
-            .get(&mail.id)
-            .map(|e| e.folder.as_str())
-            .unwrap_or("Archive");
-        let result = result.map(|()| Arc::new(MoveReceipt::local(&mail, folder)));
-        self.transfer_receipt(request, mail, result)
-    }
-
     pub(super) fn flags_finished(
         &mut self,
         request: u64,
@@ -716,7 +667,7 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     #[tokio::test]
     async fn reader_flags_follow_projected_rows_and_offscreen_observations() {
@@ -755,11 +706,13 @@ mod tests {
             };
             let _ = app.handle(Message::ToggleRead);
             assert!(!app.page.rows[0].unread);
-            let Command::Flags(request, mail, _) = commands.try_recv().unwrap() else {
+            let Command::AdmitMail(request, mail, crate::bulk::Action::Flags(_), _) =
+                commands.try_recv().unwrap()
+            else {
                 panic!("Expected read change");
             };
             assert_eq!(mail.id, original.summary.id);
-            let _ = app.flags_finished(request, mail, Ok(()));
+            finish(&mut app, request, Ok(())).await;
             let _ = app.key(
                 Key::Character("m".into()),
                 keyboard::Modifiers::empty(),
@@ -768,7 +721,16 @@ mod tests {
             assert_eq!(app.dialog, Some(Dialog::Move));
             app.focused_input = Some("folder-search");
             let _ = app.handle(Message::Move("Archive".into()));
-            let Command::Move(_, mail, destination) = commands.try_recv().unwrap() else {
+            let Command::AdmitMail(
+                _,
+                mail,
+                crate::bulk::Action::Move {
+                    folder: destination,
+                    ..
+                },
+                _,
+            ) = next(&mut commands).unwrap()
+            else {
                 panic!("Expected move");
             };
             assert_eq!(mail.id, original.summary.id);
@@ -788,7 +750,9 @@ mod tests {
         Arc::make_mut(&mut app.conversation.page).rows = vec![older.clone()];
         // The old anchor body is still cached while the expanded reply loads.
         let _ = app.handle(Message::ToggleRead);
-        let Command::Flags(_, mail, _) = commands.try_recv().unwrap() else {
+        let Command::AdmitMail(_, mail, crate::bulk::Action::Flags(_), _) =
+            commands.try_recv().unwrap()
+        else {
             panic!("Expected read change");
         };
         assert_eq!(mail.id, older.id);
@@ -825,7 +789,14 @@ mod tests {
         let first = app.page.rows[0].clone();
         app.selected = Some(first.id.clone());
         app.move_mail(first.clone(), "Archive".into());
-        assert!(matches!(network.try_recv(), Ok(Command::Move(..))));
+        let Command::AdmitMail(id, original, action, _) = network.try_recv().expect("admission")
+        else {
+            panic!("move admission")
+        };
+        store
+            .start_individual_mail_action(id, original, action)
+            .await
+            .expect("saved admission");
         assert_eq!(
             (app.page.rows.len(), app.page.total),
             (PAGE_SIZE - 1, PAGE_SIZE)
@@ -843,9 +814,11 @@ mod tests {
         assert_eq!(refills.len(), 1, "one refill per removal");
         let (generation, query) = refills.remove(0);
         assert_eq!(generation, app.generation);
-        assert_eq!(query.project_moves.len(), 1);
-        assert_eq!(query.project_moves[0].id, first.id);
-        assert_eq!(query.project_moves[0].folder, "Archive");
+        assert!(
+            query.project_moves.is_empty(),
+            "The journal owns saved projections"
+        );
+        assert_eq!(query.observe_bulk.len(), 1);
         // The store answers with the projection applied: a full page again.
         app.set_mail_page(Arc::new(store.query(query).await.unwrap()));
         assert_eq!(
@@ -856,11 +829,28 @@ mod tests {
         // A short final page has nothing to pull in.
         let last = app.page.rows[PAGE_SIZE - 1].clone();
         app.move_mail(last, "Trash".into());
-        assert!(matches!(network.try_recv(), Ok(Command::Move(..))));
+        assert!(matches!(
+            next(&mut network),
+            Ok(Command::AdmitMail(
+                _,
+                _,
+                crate::bulk::Action::Move { .. },
+                _
+            ))
+        ));
         assert!(queries(&mut reads).is_empty());
     }
 
     pub(super) async fn fixture() -> (App, tokio::sync::mpsc::Receiver<Command>, Arc<MailDetail>) {
+        let (app, commands, detail, _) = fixture_store().await;
+        (app, commands, detail)
+    }
+    pub(in crate::ui) async fn fixture_store() -> (
+        App,
+        tokio::sync::mpsc::Receiver<Command>,
+        Arc<MailDetail>,
+        crate::store::Store,
+    ) {
         let store = crate::store::Store::memory().unwrap();
         let mail = parse_mail(
             "fixture",
@@ -882,12 +872,57 @@ mod tests {
         app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
         app.selected = Some(id);
         app.detail = Some(detail.clone());
-        (app, commands, detail)
+        (app, commands, detail, store)
     }
-    fn command(commands: &mut tokio::sync::mpsc::Receiver<Command>) -> (u64, Mail, Flags) {
-        match commands.try_recv().unwrap() {
-            Command::Flags(request, mail, flags) => (request, mail, flags),
+    pub(super) async fn finish(app: &mut App, id: String, result: Result<(), String>) {
+        if let Err(error) = result {
+            app.mail_admitted(id, Err(error));
+            return;
+        }
+        let Some(entry) = app
+            .mail_actions
+            .admissions
+            .iter()
+            .find(|entry| entry.id == id)
+        else {
+            return;
+        };
+        let original = entry.original.clone();
+        let action = entry.action.clone();
+        let store = crate::store::Store::memory().expect("store");
+        let mut parsed = parse_mail(
+            &original.account_id,
+            &original.remote_id,
+            &original.folder,
+            b"From: fixture@example.test\r\nSubject: Actions\r\n\r\nBody".to_vec(),
+            original.unread,
+            original.starred,
+        )
+        .expect("mail");
+        parsed.summary = original.clone();
+        store.upsert(vec![parsed]).await.expect("stored");
+        let job = store
+            .start_individual_mail_action(id.clone(), original, action)
+            .await
+            .expect("admission");
+        app.mail_admitted(id, Ok(Arc::new(job)));
+    }
+    fn command(commands: &mut tokio::sync::mpsc::Receiver<Command>) -> (String, Mail, Flags) {
+        match next(commands).unwrap() {
+            Command::AdmitMail(request, mail, crate::bulk::Action::Flags(flags), _) => {
+                (request, mail, flags)
+            }
             other => panic!("Expected flags, got {other:?}"),
+        }
+    }
+    pub(super) fn next(
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<Command, tokio::sync::mpsc::error::TryRecvError> {
+        loop {
+            match commands.try_recv()? {
+                Command::BulkRun(_) => continue,
+                command => return Ok(command),
+            }
         }
     }
     #[tokio::test]
@@ -900,7 +935,16 @@ mod tests {
         Arc::make_mut(&mut app.workspace).folders = vec!["Archive".into(), "INBOX".into()];
         let _ = app.handle(Message::Field("folder_search", "inbox".into()));
         let _ = app.handle(Message::MoveFirst);
-        let Command::Move(_, _, destination) = commands.try_recv().unwrap() else {
+        let Command::AdmitMail(
+            _,
+            _,
+            crate::bulk::Action::Move {
+                folder: destination,
+                ..
+            },
+            _,
+        ) = commands.try_recv().unwrap()
+        else {
             panic!("Expected current Enter destination");
         };
         assert_eq!(destination, "INBOX");
@@ -984,7 +1028,16 @@ mod tests {
             open_foreign_chooser(&mut app);
             let _ = app.handle(Message::MoveFirst);
             press(&mut app, key);
-            let Command::Transfer(_, mail, account, folder) = commands.try_recv().unwrap() else {
+            let Command::AdmitMail(
+                _,
+                mail,
+                crate::bulk::Action::Move {
+                    account: Some(account),
+                    folder,
+                },
+                _,
+            ) = commands.try_recv().unwrap()
+            else {
                 panic!("Expected a transfer");
             };
             assert_eq!(mail.id, original.summary.id);
@@ -1078,7 +1131,16 @@ mod tests {
             .collect();
         assert_eq!(rows, vec![("Home.Plans".into(), false)]);
         let _ = app.handle(Message::MoveFirst);
-        let Command::Transfer(_, mail, account, folder) = commands.try_recv().unwrap() else {
+        let Command::AdmitMail(
+            _,
+            mail,
+            crate::bulk::Action::Move {
+                account: Some(account),
+                folder,
+            },
+            _,
+        ) = commands.try_recv().unwrap()
+        else {
             panic!("Expected an immediate transfer");
         };
         assert_eq!(mail.id, original.summary.id);
@@ -1092,7 +1154,9 @@ mod tests {
         assert!(app.page.rows.is_empty());
         assert_eq!(app.page.total, 0);
         assert_eq!(app.mail_actions.pending(), 1);
-        let Command::Move(request, mail, folder) = commands.try_recv().unwrap() else {
+        let Command::AdmitMail(request, _mail, crate::bulk::Action::Move { .. }, _) =
+            commands.try_recv().unwrap()
+        else {
             panic!("Expected move");
         };
         let _ = app.handle(Message::Backend(Event::Page(
@@ -1104,18 +1168,26 @@ mod tests {
             app.page.rows.is_empty(),
             "A sync must not restore the pending move"
         );
-        let _ = app.move_finished(request, mail, folder, Err("Read-only folder".into()));
+        finish(&mut app, request, Err("Read-only folder".into())).await;
         assert_eq!(app.page.total, 1);
         assert_eq!(app.page.rows[0].id, original.summary.id);
         assert_eq!(app.mail_actions.pending(), 0);
-        assert!(app.notice.as_ref().unwrap().0.contains("remains in Inbox"));
+        assert!(
+            app.notice
+                .as_ref()
+                .unwrap()
+                .0
+                .contains("This change was not saved. Read-only folder")
+        );
     }
     #[tokio::test]
     async fn refused_move_completes_on_this_device_and_says_so_in_plain_words() {
         use crate::mail_actions::{Fingerprint, journal::MoveStage};
         let (mut app, mut commands, original) = fixture().await;
         let _ = app.handle(Message::Move("Archive".into()));
-        let Command::Move(request, mail, folder) = commands.try_recv().unwrap() else {
+        let Command::AdmitMail(request, mail, crate::bulk::Action::Move { folder, .. }, _) =
+            commands.try_recv().unwrap()
+        else {
             panic!("Expected move");
         };
         let mut receipt = MoveReceipt::server(
@@ -1127,7 +1199,26 @@ mod tests {
         );
         receipt.recovery = Some("device-only-token".into());
         receipt.local_only = true;
-        let _ = app.move_receipt(request, mail, folder, Ok(Arc::new(receipt)));
+        finish(&mut app, request.clone(), Ok(())).await;
+        let mut page = (*app.mail_actions.base_page).clone();
+        page.rows.clear();
+        page.total = 0;
+        page.unread = 0;
+        page.inbox_unread.clear();
+        page.bulk_observed.insert(request, false);
+        page.move_recovery.insert(
+            mail.id.clone(),
+            crate::mail_actions::journal::MoveRecord {
+                token: "device-only-token".into(),
+                original: mail,
+                receipt,
+                stage: MoveStage::Local,
+                error: None,
+                attempted: 0,
+                retained: None,
+            },
+        );
+        app.set_mail_page(Arc::new(page));
         assert_eq!(
             app.page.total, 0,
             "the row leaves Inbox instead of being restored"
@@ -1174,36 +1265,35 @@ mod tests {
             app.action_toasts.current.as_ref().unwrap().label(),
             "Archived 1 message"
         );
-        let Command::Move(request, mail, folder) = commands.try_recv().unwrap() else {
+        let Command::AdmitMail(request, _, crate::bulk::Action::Move { .. }, _) =
+            commands.try_recv().unwrap()
+        else {
             panic!("Expected move")
         };
         let mut another = original.summary.clone();
         another.id = "second".into();
         app.move_mail(another, "Archive".into());
-        let Command::Move(second, other, other_folder) = commands.try_recv().unwrap() else {
+        let Command::AdmitMail(second, _, crate::bulk::Action::Move { .. }, _) =
+            commands.try_recv().unwrap()
+        else {
             panic!("Expected move")
         };
         assert_eq!(
             app.action_toasts.current.as_ref().unwrap().label(),
             "Archived 2 messages"
         );
-        let _ = app.move_finished(
-            request,
-            mail.clone(),
-            folder.clone(),
-            Err("First rejected".into()),
-        );
+        finish(&mut app, request.clone(), Err("First rejected".into())).await;
         assert_eq!(
             app.action_toasts.current.as_ref().unwrap().label(),
             "Archived 1 message"
         );
-        let _ = app.move_finished(request, mail, folder, Err("Stale rejection".into()));
+        finish(&mut app, request, Err("Stale rejection".into())).await;
         assert_eq!(
             app.action_toasts.current.as_ref().unwrap().label(),
             "Archived 1 message"
         );
         let _ = app.handle(Message::DismissActionToast);
-        let _ = app.move_finished(second, other, other_folder, Ok(()));
+        finish(&mut app, second, Ok(())).await;
         assert!(
             app.action_toasts.current.is_none(),
             "Completion must not revive a dismissed toast"
@@ -1221,40 +1311,42 @@ mod tests {
             app.action_toasts.current.as_ref().unwrap().label(),
             "Moved 1 message to Plans"
         );
-        let Command::Transfer(request, mail, _, _) = commands.try_recv().unwrap() else {
+        let Command::AdmitMail(request, _, crate::bulk::Action::Move { .. }, _) =
+            commands.try_recv().unwrap()
+        else {
             panic!("Expected transfer")
         };
         app.project_mail_flags();
         assert_eq!(app.page.total, 0);
-        let _ = app.transfer_finished(request, mail.clone(), Err("Upload rejected".into()));
+        finish(&mut app, request.clone(), Err("Upload rejected".into())).await;
         assert_eq!(app.page.total, 1);
         assert_eq!(app.page.rows[0].id, original.summary.id);
         assert!(app.action_toasts.current.is_none());
         assert!(app.notice.as_ref().unwrap().0.contains("Upload rejected"));
-        let _ = app.transfer_finished(request, mail, Ok(()));
+        finish(&mut app, request, Ok(())).await;
         assert_eq!(app.page.total, 1);
     }
 
     #[tokio::test]
-    async fn archive_waits_for_latest_flags_without_waiting_to_hide_the_row() {
+    async fn archive_is_admitted_after_each_flag_without_waiting_to_hide_the_row() {
         let (mut app, mut commands, _) = fixture().await;
         let _ = app.handle(Message::ToggleRead);
-        let (request, sent, _) = command(&mut commands);
+        let (read, _, _) = command(&mut commands);
         let _ = app.handle(Message::ToggleStar);
         let _ = app.handle(Message::Move("Archive".into()));
         assert!(app.page.rows.is_empty());
-        assert!(commands.try_recv().is_err());
-        let _ = app.flags_finished(request, sent, Ok(()));
-        let (request, sent, _) = command(&mut commands);
-        assert!(commands.try_recv().is_err());
-        let _ = app.flags_finished(request, sent, Ok(()));
-        let Command::Move(request, mail, folder) = commands.try_recv().unwrap() else {
-            panic!("Expected queued move");
+        let (star, _, _) = command(&mut commands);
+        let Command::AdmitMail(request, _, crate::bulk::Action::Move { .. }, _) =
+            commands.try_recv().unwrap()
+        else {
+            panic!("Expected immediately admitted move");
         };
-        let _ = app.move_finished(request, mail.clone(), folder.clone(), Ok(()));
+        finish(&mut app, read, Ok(())).await;
+        finish(&mut app, star, Ok(())).await;
+        finish(&mut app, request.clone(), Ok(())).await;
         assert_eq!(app.page.total, 0);
         assert_eq!(app.mail_actions.pending(), 0);
-        let _ = app.move_finished(request, mail, folder, Err("Stale failure".into()));
+        finish(&mut app, request, Err("Stale failure".into())).await;
         assert_eq!(app.page.total, 0);
     }
     #[tokio::test]
@@ -1274,13 +1366,13 @@ mod tests {
         assert!(app.notice.as_ref().unwrap().1);
     }
     #[tokio::test]
-    async fn immediate_read_and_flag_coalesce_and_preserve_body_and_newer_intent() {
+    async fn immediate_read_and_flag_admissions_preserve_body_and_newer_intent() {
         let (mut app, mut commands, original) = fixture().await;
         let _ = app.handle(Message::ToggleRead);
         assert!(!app.page.rows[0].unread);
         assert_eq!(app.page.inbox_unread["fixture"], 0);
         assert!(Arc::ptr_eq(app.detail.as_ref().unwrap(), &original));
-        let (first, sent, patch) = command(&mut commands);
+        let (first, _, patch) = command(&mut commands);
         assert_eq!(
             patch,
             Flags {
@@ -1290,7 +1382,22 @@ mod tests {
         );
         let _ = app.handle(Message::ToggleStar);
         let _ = app.handle(Message::ToggleRead);
-        assert!(commands.try_recv().is_err());
+        let (second, _, star) = command(&mut commands);
+        let (third, _, read) = command(&mut commands);
+        assert_eq!(
+            star,
+            Flags {
+                unread: None,
+                starred: Some(true)
+            }
+        );
+        assert_eq!(
+            read,
+            Flags {
+                unread: Some(true),
+                starred: None
+            }
+        );
         assert!(app.page.rows[0].unread && app.page.rows[0].starred);
         // A background refresh cannot erase pending changes.
         let _ = app.handle(Message::Backend(Event::Page(
@@ -1299,19 +1406,12 @@ mod tests {
             false,
         )));
         assert!(app.page.rows[0].starred);
-        let _ = app.flags_finished(first, sent.clone(), Ok(()));
-        let (second, latest, patch) = command(&mut commands);
-        assert_eq!(
-            patch,
-            Flags {
-                unread: Some(true),
-                starred: Some(true)
-            }
-        );
+        finish(&mut app, first.clone(), Ok(())).await;
         assert!(app.page.rows[0].unread && app.page.rows[0].starred);
-        let _ = app.flags_finished(first, sent, Err("obsolete result".into()));
-        assert_eq!(app.mail_actions.pending(), 1);
-        let _ = app.flags_finished(second, latest, Ok(()));
+        finish(&mut app, first, Err("obsolete result".into())).await;
+        assert_eq!(app.mail_actions.pending(), 2);
+        finish(&mut app, second, Ok(())).await;
+        finish(&mut app, third, Ok(())).await;
         assert_eq!(app.mail_actions.pending(), 0);
         assert!(app.page.rows[0].unread && app.page.rows[0].starred);
         assert!(Arc::ptr_eq(app.detail.as_ref().unwrap(), &original));
@@ -1323,9 +1423,9 @@ mod tests {
         let _ = app.handle(Message::ToggleRead);
         assert_eq!(app.page.total, 0);
         assert!(app.page.rows.is_empty());
-        let (request, sent, _) = command(&mut commands);
+        let (request, _, _) = command(&mut commands);
         let _ = app.handle(Message::ToggleStar);
-        let _ = app.flags_finished(request, sent, Err("Rejected by server".into()));
+        finish(&mut app, request, Err("Rejected by server".into())).await;
         assert_eq!(app.page.total, 1);
         assert!(app.page.rows[0].unread && app.page.rows[0].starred);
         assert!(app.notice.as_ref().unwrap().1);
@@ -1342,11 +1442,12 @@ mod tests {
     async fn repeated_same_final_intent_survives_an_older_failure() {
         let (mut app, mut commands, _) = fixture().await;
         let _ = app.handle(Message::ToggleStar);
-        let (first, sent, _) = command(&mut commands);
+        let (first, _, _) = command(&mut commands);
         let _ = app.handle(Message::ToggleStar);
         let _ = app.handle(Message::ToggleStar);
-        let _ = app.flags_finished(first, sent, Err("Earlier attempt failed".into()));
+        finish(&mut app, first, Err("Earlier attempt failed".into())).await;
         assert!(app.page.rows[0].starred);
+        assert_eq!(command(&mut commands).2.starred, Some(false));
         assert_eq!(command(&mut commands).2.starred, Some(true));
     }
     #[tokio::test]
@@ -1367,8 +1468,8 @@ mod tests {
         let window = iced::window::Id::unique();
         let _ = app.handle(Message::WindowClose(window));
         assert_eq!(app.pending_close, Some(window));
-        let (request, sent, _) = command(&mut commands);
-        let _ = app.flags_finished(request, sent, Err("Save failed".into()));
+        let (request, _, _) = command(&mut commands);
+        finish(&mut app, request, Err("Save failed".into())).await;
         assert!(app.pending_close.is_none());
         assert!(app.page.rows[0].unread);
     }
@@ -1390,7 +1491,15 @@ mod tests {
                 assert_eq!(app.page.total, 1);
                 assert!(app.action_toasts.current.is_none());
             } else {
-                assert!(matches!(commands.try_recv(), Ok(Command::Move(_, _, _))));
+                assert!(matches!(
+                    commands.try_recv(),
+                    Ok(Command::AdmitMail(
+                        _,
+                        _,
+                        crate::bulk::Action::Move { .. },
+                        _
+                    ))
+                ));
                 assert_eq!(app.page.total, 0);
             }
         }
@@ -1414,7 +1523,15 @@ mod tests {
             false,
             native_input::Focus::default(),
         ));
-        assert!(matches!(commands.try_recv(), Ok(Command::Move(_, _, _))));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(Command::AdmitMail(
+                _,
+                _,
+                crate::bulk::Action::Move { .. },
+                _
+            ))
+        ));
         app.tab = Tab::Preferences;
         let _ = app.handle(Message::Key(
             Key::Character("d".into()),

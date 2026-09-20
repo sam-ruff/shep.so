@@ -116,7 +116,7 @@ async fn folder_worker_resumes_durable_jobs_and_close_stops_before_starting_anot
         .await;
     assert!(matches!(
         events.next().await,
-        Some(super::super::Event::BulkStopped)
+        Some(super::super::Event::BulkStopped(_))
     ));
     assert_eq!(
         engine.store.folder_job("move".into()).await.unwrap().steps[0].status,

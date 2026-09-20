@@ -117,6 +117,11 @@ impl Actions {
             .chain(self.transfers.keys())
             .cloned()
             .collect();
+        ids.extend(
+            self.admissions
+                .iter()
+                .map(|entry| entry.original.id.clone()),
+        );
         for record in self.undo.values().filter(|record| record.restoring()) {
             ids.insert(record.original.id.clone());
             if let Some(current) = record.receipt.as_ref().and_then(|r| r.current.as_ref()) {
@@ -223,55 +228,140 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::tests::fixture;
+pub(super) mod tests {
+    use super::super::tests::next;
     use super::*;
-
-    fn snapshot(app: &App, mail: &Mail, folder: &str, unread: bool, count: usize) -> Arc<MailPage> {
-        let mut page = (*app.mail_actions.base_page).clone();
-        page.rows.clear();
-        page.total = 0;
-        page.unread = 0;
-        page.inbox_unread.insert(mail.account_id.clone(), count);
-        page.observed.insert(
-            mail.id.clone(),
-            Some(MailMembership {
-                account: mail.account_id.clone(),
-                folder: folder.into(),
-                unread,
-                starred: mail.starred,
-            }),
-        );
-        Arc::new(page)
-    }
     fn count(app: &App) -> usize {
         app.page.inbox_unread.values().sum()
+    }
+    pub(in crate::ui::mail_actions) async fn admit(
+        store: &crate::store::Store,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> (String, crate::bulk::Job) {
+        let Command::AdmitMail(id, original, action, lineage) =
+            next(commands).expect("local admission")
+        else {
+            panic!("Expected admission")
+        };
+        let job = store
+            .start_observed_mail_action(
+                id.clone(),
+                original,
+                action,
+                lineage.expect("observed identity"),
+            )
+            .await
+            .expect("durable admission");
+        (id, job)
+    }
+    async fn admit_undo(
+        app: &mut App,
+        store: &crate::store::Store,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> String {
+        let Command::BulkUndo(id) = next(commands).expect("ordered Undo") else {
+            panic!("Expected journal Undo")
+        };
+        let job = store
+            .request_bulk_undo(id.clone())
+            .await
+            .expect("durable Undo");
+        app.bulk_event(Event::BulkUpdate(Arc::new(job)));
+        id
+    }
+    pub(in crate::ui::mail_actions) async fn finish_read(
+        store: &crate::store::Store,
+        id: &str,
+    ) -> crate::bulk::Job {
+        let item = store
+            .claim_bulk_item(id.into())
+            .await
+            .unwrap()
+            .expect("flag item");
+        let crate::bulk::Action::Flags(after) = store.bulk_job(id.into()).await.unwrap().action
+        else {
+            panic!("Expected flags")
+        };
+        let original = item.original.as_ref().expect("source");
+        let before = Flags {
+            unread: after.unread.map(|_| original.unread),
+            starred: after.starred.map(|_| original.starred),
+        };
+        store
+            .acknowledge_bulk_flags(item.clone(), crate::bulk::Receipt::Flags { before, after })
+            .await
+            .unwrap();
+        store
+            .finish_bulk_item(item, Ok(crate::bulk::Receipt::Unchanged))
+            .await
+            .unwrap()
+    }
+    async fn finish_move(
+        store: &crate::store::Store,
+        id: &str,
+        account: &str,
+        folder: &str,
+        uid: &str,
+    ) -> crate::bulk::Job {
+        let item = store
+            .claim_bulk_item(id.into())
+            .await
+            .unwrap()
+            .expect("move item");
+        let source = if item.undo {
+            let Some(crate::bulk::Receipt::Move(receipt)) = &item.receipt else {
+                panic!("forward receipt")
+            };
+            receipt.current.as_ref().expect("physical destination")
+        } else {
+            item.original.as_ref().expect("source")
+        };
+        let receipt = MoveReceipt::server(
+            source,
+            account,
+            folder,
+            Some(uid.into()),
+            store.message_fingerprint(source.id.clone()).await.unwrap(),
+        );
+        store
+            .relocate_mail(
+                source.clone(),
+                receipt.current.clone().expect("destination"),
+            )
+            .await
+            .unwrap();
+        store
+            .finish_bulk_item(item, Ok(crate::bulk::Receipt::Move(Box::new(receipt))))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
     async fn unread_counts_survive_empty_filtered_pages_and_already_saved_snapshots() {
         for saved_before_response in [false, true] {
-            let (mut app, mut commands, detail) = fixture().await;
-            app.toggle_mail_flag(detail.summary.clone(), true);
-            let Command::Flags(request, sent, _) = commands.try_recv().unwrap() else {
-                panic!()
-            };
+            let (mut app, mut commands, store, mail) = badge_fixture("INBOX").await;
+            app.toggle_mail_flag(mail, true);
+            let (request, job) = admit(&store, &mut commands).await;
             assert_eq!(count(&app), 0);
             app.query.folder = "Archive".into();
-            let page = snapshot(
-                &app,
-                &sent,
-                "INBOX",
-                !saved_before_response,
-                usize::from(!saved_before_response),
-            );
-            app.set_mail_page(page);
+            let completed = if saved_before_response {
+                Some(finish_read(&store, &request).await)
+            } else {
+                None
+            };
+            answer_page(&mut app, &store).await;
             assert_eq!(
                 count(&app),
                 0,
                 "The pending read is independent of visible rows"
             );
-            let _ = app.flags_finished(request, sent, Ok(()));
+            app.mail_admitted(request.clone(), Ok(Arc::new(job)));
+            let completed = match completed {
+                Some(job) => job,
+                None => finish_read(&store, &request).await,
+            };
+            app.bulk_event(Event::BulkUpdate(Arc::new(completed)));
+            answer_page(&mut app, &store).await;
             assert_eq!(
                 count(&app),
                 0,
@@ -281,74 +371,65 @@ mod tests {
     }
     #[tokio::test]
     async fn failed_read_restores_count_after_leaving_the_inbox() {
-        let (mut app, mut commands, detail) = fixture().await;
-        app.toggle_mail_flag(detail.summary.clone(), true);
-        let Command::Flags(request, sent, _) = commands.try_recv().unwrap() else {
+        let (mut app, mut commands, store, mail) = badge_fixture("INBOX").await;
+        app.toggle_mail_flag(mail, true);
+        let Command::AdmitMail(request, ..) = next(&mut commands).unwrap() else {
             panic!()
         };
         app.query.folder = "Archive".into();
-        app.set_mail_page(snapshot(&app, &sent, "INBOX", true, 1));
+        answer_page(&mut app, &store).await;
         assert_eq!(count(&app), 0);
-        let _ = app.flags_finished(request, sent, Err("Rejected".into()));
+        app.mail_admitted(request, Err("Rejected".into()));
         assert_eq!(count(&app), 1);
     }
     #[tokio::test]
     async fn inbox_moves_and_undo_count_once_before_and_after_cache_commit() {
         for cached_before_receipt in [false, true] {
-            let (mut app, mut commands, detail) = fixture().await;
-            let mut mail = detail.summary.clone();
+            let (mut app, mut commands, store, original) = badge_fixture("Keep").await;
+            let mut mail = original.clone();
             mail.folder = "Keep".into();
-            app.set_mail_page(snapshot(&app, &mail, "Keep", true, 0));
+            store.relocate_mail(original, mail.clone()).await.unwrap();
+            answer_page(&mut app, &store).await;
+            app.detail = Some(Arc::new(store.detail(mail.id.clone()).await.unwrap()));
             app.move_mail(mail.clone(), "INBOX".into());
             assert_eq!(count(&app), 1);
-            let Command::Move(request, sent, _) = commands.try_recv().unwrap() else {
-                panic!()
-            };
+            let (request, job) = admit(&store, &mut commands).await;
+            let completed = finish_move(&store, &request, "fixture", "INBOX", "91.1").await;
             if cached_before_receipt {
-                app.set_mail_page(snapshot(&app, &mail, "INBOX", true, 1));
+                answer_page(&mut app, &store).await;
                 assert_eq!(count(&app), 1);
             }
-            let _ = app.move_finished(request, sent, "INBOX".into(), Ok(()));
+            app.mail_admitted(request, Ok(Arc::new(job)));
+            app.bulk_event(Event::BulkUpdate(Arc::new(completed)));
+            answer_page(&mut app, &store).await;
             assert_eq!(count(&app), 1);
             let tokens = app.action_toasts.current.as_ref().unwrap().undo_tokens();
-            app.undo_actions(tokens);
+            app.undo_combined_actions(tokens);
             assert_eq!(count(&app), 0);
         }
     }
     #[tokio::test]
     async fn cross_account_inbox_move_and_undo_reconcile_rekeyed_source() {
-        let (mut app, mut commands, detail) = fixture().await;
-        let mail = detail.summary.clone();
+        let (mut app, mut commands, store, mail) = badge_fixture("INBOX").await;
+        connect(&mut app, &["personal"]);
         app.transfer_mail(mail.clone(), "personal".into(), "INBOX".into());
         assert_eq!(app.page.inbox_unread.get("fixture"), Some(&0));
         assert_eq!(app.page.inbox_unread.get("personal"), Some(&1));
-        let Command::Transfer(request, _, _, _) = commands.try_recv().unwrap() else {
-            panic!()
-        };
-        let receipt = Arc::new(MoveReceipt::server(
-            &mail,
-            "personal",
-            "INBOX",
-            Some("91.2".into()),
-            crate::mail_actions::Fingerprint::of(b"fixture"),
-        ));
-        let current = receipt.current.as_ref().unwrap().clone();
-        let mut page = MailPage::default();
-        page.inbox_unread.insert("personal".into(), 1);
-        page.observed.insert(mail.id.clone(), None);
-        app.set_mail_page(Arc::new(page));
+        let (request, job) = admit(&store, &mut commands).await;
+        let completed = finish_move(&store, &request, "personal", "INBOX", "91.2").await;
+        answer_page(&mut app, &store).await;
         assert_eq!(count(&app), 1);
-        let _ = app.transfer_receipt(request, mail.clone(), Ok(receipt));
+        app.mail_admitted(request, Ok(Arc::new(job)));
+        app.bulk_event(Event::BulkUpdate(Arc::new(completed)));
         assert_eq!(count(&app), 1);
         let tokens = app.action_toasts.current.as_ref().unwrap().undo_tokens();
-        app.undo_actions(tokens);
+        app.undo_combined_actions(tokens);
         assert_eq!(app.page.inbox_unread.get("fixture"), Some(&1));
         assert_eq!(app.page.inbox_unread.get("personal"), Some(&0));
-        let mut page = MailPage::default();
-        page.inbox_unread.insert("fixture".into(), 1);
-        page.observed.insert(current.id, None);
-        page.observed.insert(mail.id, None); // Restored mail has yet another server UID.
-        app.set_mail_page(Arc::new(page));
+        let request = admit_undo(&mut app, &store, &mut commands).await;
+        let restored = finish_move(&store, &request, "fixture", "INBOX", "92.3").await;
+        app.bulk_event(Event::BulkUpdate(Arc::new(restored)));
+        answer_page(&mut app, &store).await;
         assert_eq!(
             count(&app),
             1,
@@ -387,6 +468,7 @@ mod tests {
         let mut query = app.query.clone();
         query.project_moves = app.mail_actions.projected_moves();
         query.observe = app.mail_actions.observed_ids();
+        query.observe_bulk = app.bulk_observed_ids();
         if let Some(id) = &app.selected
             && !query.observe.contains(id)
         {
@@ -413,6 +495,7 @@ mod tests {
         connect(&mut app, &["fixture"]);
         app.query.folder = folder.into();
         app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+        app.detail = Some(Arc::new(store.detail(summary.id.clone()).await.unwrap()));
         (app, commands, store, summary)
     }
 
@@ -477,6 +560,7 @@ mod tests {
                     .unwrap();
                 mail.unread = false;
                 app.set_mail_page(Arc::new(store.query(app.query.clone()).await.unwrap()));
+                app.detail = Some(Arc::new(store.detail(mail.id.clone()).await.unwrap()));
             }
             let (before, after) = if initially_unread { (1, 0) } else { (0, 1) };
             assert_eq!(app.unread_badge_count(), before);
@@ -488,23 +572,15 @@ mod tests {
                 after,
                 "Intent applies immediately"
             );
-            let Command::Flags(request, sent, _) = commands.try_recv().unwrap() else {
-                panic!("Expected a flag change")
-            };
-            let _ = app.flags_finished(request, sent.clone(), Ok(()));
+            let (request, job) = admit(&store, &mut commands).await;
+            app.mail_admitted(request.clone(), Ok(Arc::new(job)));
+            let completed = finish_read(&store, &request).await;
+            app.bulk_event(Event::BulkUpdate(Arc::new(completed)));
             assert_eq!(
                 app.unread_badge_count(),
                 after,
                 "The acknowledgement must not restore the pre-write count (initially unread: {initially_unread})"
             );
-            store
-                .apply_sync(MailSyncItem::Flags(vec![(
-                    mail.id.clone(),
-                    sent.unread,
-                    false,
-                )]))
-                .await
-                .unwrap();
             answer_page(&mut app, &store).await;
             assert_eq!(app.unread_badge_count(), after, "The requery agrees");
         }
@@ -530,16 +606,12 @@ mod tests {
         // A snapshot taken after the intent but before its cache write.
         answer_page(&mut app, &store).await;
         assert_eq!(app.unread_badge_count(), 0);
-        let Command::Flags(request, sent, _) = commands.try_recv().unwrap() else {
-            panic!("Expected a flag change")
-        };
-        store
-            .apply_sync(MailSyncItem::Flags(vec![(mail.id.clone(), false, false)]))
-            .await
-            .unwrap();
+        let (request, job) = admit(&store, &mut commands).await;
+        let completed = finish_read(&store, &request).await;
         answer_page(&mut app, &store).await;
         assert_eq!(app.unread_badge_count(), 0, "Snapshot includes the write");
-        let _ = app.flags_finished(request, sent, Ok(()));
+        app.mail_admitted(request, Ok(Arc::new(job)));
+        app.bulk_event(Event::BulkUpdate(Arc::new(completed)));
         assert_eq!(app.unread_badge_count(), 0, "Receipt cannot double-apply");
         // Sync marks Inbox mail unread again while another folder stays open.
         store
@@ -562,30 +634,24 @@ mod tests {
         assert_eq!(app.unread_badge_count(), 1);
         app.move_mail(mail.clone(), "Keep".into());
         assert_eq!(app.unread_badge_count(), 0);
-        let Command::Move(request, sent, folder) = commands.try_recv().unwrap() else {
-            panic!("Expected a move")
-        };
-        let _ = app.move_finished(request, sent.clone(), folder, Ok(()));
+        let (request, job) = admit(&store, &mut commands).await;
+        app.mail_admitted(request.clone(), Ok(Arc::new(job)));
+        let completed = finish_move(&store, &request, "fixture", "Keep", "91.4").await;
+        app.bulk_event(Event::BulkUpdate(Arc::new(completed)));
         assert_eq!(app.unread_badge_count(), 0, "Receipt keeps the archive");
-        let mut kept = sent.clone();
-        kept.folder = "Keep".into();
-        store.relocate_mail(sent, kept.clone()).await.unwrap();
         answer_page(&mut app, &store).await;
         assert_eq!(app.unread_badge_count(), 0);
         let tokens = app.action_toasts.current.as_ref().unwrap().undo_tokens();
-        app.undo_actions(tokens);
+        app.undo_combined_actions(tokens);
         assert_eq!(
             app.unread_badge_count(),
             1,
             "Undo restores the unread Inbox mail"
         );
-        let Command::UndoMove(request, original, _) = commands.try_recv().unwrap() else {
-            panic!("Expected an undo")
-        };
-        let restored = Arc::new(MoveReceipt::local(&original, "INBOX"));
-        let _ = app.undo_finished(request, original, Ok(restored));
+        let request = admit_undo(&mut app, &store, &mut commands).await;
+        let restored = finish_move(&store, &request, "fixture", "INBOX", "92.5").await;
+        app.bulk_event(Event::BulkUpdate(Arc::new(restored)));
         assert_eq!(app.unread_badge_count(), 1);
-        store.relocate_mail(kept, mail).await.unwrap();
         answer_page(&mut app, &store).await;
         assert_eq!(app.unread_badge_count(), 1);
     }

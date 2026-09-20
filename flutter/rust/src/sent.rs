@@ -369,6 +369,7 @@ pub(crate) fn reconcile(db: &rusqlite::Connection, mail: &Mail, raw: &[u8]) -> R
     })?;
     // Move existing aliases before removing the duplicate, otherwise its FK
     // cascade could invalidate an older pending action. Keep every alias direct.
+    crate::operations::adopt_action_alias(db, &mail.id, &local)?;
     db.execute(
         "UPDATE mail_aliases SET id=?2 WHERE id=?1",
         params![mail.id, local],
@@ -378,7 +379,9 @@ pub(crate) fn reconcile(db: &rusqlite::Connection, mail: &Mail, raw: &[u8]) -> R
         "INSERT INTO mail_aliases(alias,id) VALUES(?1,?2)",
         params![mail.id, local],
     )?;
-    db.execute("UPDATE mail SET remote_id=?2,folder=?3,sender=?4,recipient=?5,subject=?6,preview=?7,timestamp=?8,unread=?9,starred=?10,attachment_count=?11,body=?12,raw=?13 WHERE id=?1",params![local,mail.remote_id,mail.folder,mail.sender,mail.recipient,mail.subject,mail.preview,mail.timestamp,mail.unread,mail.starred,u32::try_from(mail.attachment_count)?,body,raw])?;
+    crate::operations::acknowledged_mail_write(db, &local, || {
+        Ok(db.execute("UPDATE mail SET remote_id=?2,folder=?3,sender=?4,recipient=?5,subject=?6,preview=?7,timestamp=?8,unread=?9,starred=?10,attachment_count=?11,body=?12,raw=?13 WHERE id=?1",params![local,mail.remote_id,mail.folder,mail.sender,mail.recipient,mail.subject,mail.preview,mail.timestamp,mail.unread,mail.starred,u32::try_from(mail.attachment_count)?,body,raw])?)
+    })?;
     Ok(())
 }
 fn reconcile_receipt(db: &rusqlite::Connection, id: &str) -> Result<()> {

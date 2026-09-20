@@ -228,6 +228,7 @@ impl Store {
                     tx.execute("DELETE FROM sent_folders WHERE account=?",[&target.id])?;
                     outgoing::changed(&tx)?;
                     bulk::remove_account(&tx,&target.id)?;
+                    tx.execute("DELETE FROM mail_identity_history WHERE account=?", [&target.id])?;
                     move_journal::remove_account(&tx, &target.id)?;
                     tx.execute("DELETE FROM folder_jobs WHERE account=?", [&target.id])?;
                     tx.execute("DELETE FROM folder_creations WHERE account=?", [&target.id])?;

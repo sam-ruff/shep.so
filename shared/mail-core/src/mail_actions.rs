@@ -27,6 +27,16 @@ impl Flags {
     }
 }
 
+/// The server refused a flag write before acknowledging any requested field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlagsRejected(pub String);
+impl std::fmt::Display for FlagsRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for FlagsRejected {}
+
 /// The server definitely did not apply a move and will not on a plain retry:
 /// a tagged NO/BAD without any COPYUID, a refused destination creation, or an
 /// operation the server does not support. Nothing partial happened.

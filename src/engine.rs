@@ -67,8 +67,9 @@ pub enum Command {
     ReviewSelection(u64, crate::store::MailSelectionId, u64, Vec<String>),
     ReleaseSelection(crate::store::MailSelectionId),
     BulkStart(String, crate::store::MailSelectionId, crate::bulk::Action),
+    AdmitMail(String, Mail, crate::bulk::Action, Option<String>),
     BulkRun(String),
-    BulkStop,
+    BulkStop(u64),
     BulkResume(String),
     BulkUndo(String),
     BulkJobs(u64, usize),
@@ -213,9 +214,10 @@ pub enum Event {
     ),
     BulkReview(u64, Result<Arc<crate::store::SelectionSnapshot>, String>),
     BulkStarted(String, Result<Arc<crate::bulk::Job>, String>),
+    MailAdmitted(String, Result<Arc<crate::bulk::Job>, String>),
     BulkUpdate(Arc<crate::bulk::Job>),
     BulkIdentity(String, String, Option<String>),
-    BulkStopped,
+    BulkStopped(u64),
     BulkResumed(String),
     BulkFinished(String, Result<Arc<crate::bulk::Job>, String>),
     BulkJobs(u64, Result<Arc<Vec<crate::bulk::Job>>, String>),
@@ -766,6 +768,20 @@ impl Engine {
                     .map_err(|e| format!("{e:#}"));
                 output.send(Event::BulkStarted(id, result)).await?;
             }
+            Command::AdmitMail(id, original, action, lineage) => {
+                let result = match lineage {
+                    Some(lineage) => self
+                        .store
+                        .start_observed_mail_action(id.clone(), original, action, lineage)
+                        .await
+                        .map(Arc::new)
+                        .map_err(|error| format!("{error:#}")),
+                    None => Err(
+                        "This message needs a fresh observation. Refresh it and try again.".into(),
+                    ),
+                };
+                output.send(Event::MailAdmitted(id, result)).await?;
+            }
             Command::BulkResume(id) => {
                 if !id.is_empty() {
                     self.store.continue_bulk(id.clone()).await?;
@@ -773,10 +789,13 @@ impl Engine {
                 self.bulk_control.stopping.set(false);
                 output.send(Event::BulkResumed(id)).await?;
             }
-            Command::BulkStop => {
+            Command::BulkStop(generation) => {
+                self.bulk_control
+                    .stop_generation
+                    .store(generation, std::sync::atomic::Ordering::Release);
                 self.bulk_control.stopping.set(true);
-                if !self.bulk_control.active.get() {
-                    output.send(Event::BulkStopped).await?;
+                if let Some(event) = self.bulk_control.stopped_event() {
+                    output.send(event).await?;
                 }
             }
             Command::BulkRun(_) => anyhow::bail!("Mail groups use their dedicated execution queue"),

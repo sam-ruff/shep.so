@@ -22,8 +22,17 @@ native flag receipt-before-cache repair, consistent reader flag projections and
 browser individual Activity with safe orphan-queue recovery, offline cancellation
 and durable Undo. Flutter individual admission and native queued Send are also
 implemented. Integrated browser controls, native calendar recovery and focused
-Send storage tests pass; final integration and shipping are in progress. The whole architecture remains active,
+Send storage tests pass. Checkpoint `7689ef3` is pushed with normal hooks,
+31 browser v3 control/storage/profile scenarios and native queued Send evidence.
+The whole architecture remains active,
 including deferred native mail admission and the remaining domain adapters.
+
+The current integration connects native individual controls to durable observed
+admission and the common background owner. Flutter adds bounded Activity, checked
+Undo, admission before provider queues, conditional failure rollback and queued
+Send. The integrated Flutter baseline passes 116 Rust and 167 Flutter tests;
+input-lineage checks and final combined native verification are in progress.
+These changes are not yet a shipped checkpoint or full architecture completion.
 
 **14 September mail sync speed and reliable moves (R100/R101):** Sam reports
 the related-messages notice after archiving (fixed, `3dabf16`) and a failed

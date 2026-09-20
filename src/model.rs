@@ -5,7 +5,22 @@ use std::fmt;
 pub const PAGE_SIZE: usize = 50;
 pub const CHANNEL_CAPACITY: usize = 32;
 pub use shep_mail_core::model::*;
-pub type MailDetail = shep_mail_core::model::MailDetail<crate::email_content::HtmlBody>;
+#[derive(Debug, Clone)]
+pub struct MailDetail {
+    pub content: shep_mail_core::model::MailDetail<crate::email_content::HtmlBody>,
+    pub lineage: Option<String>,
+}
+impl std::ops::Deref for MailDetail {
+    type Target = shep_mail_core::model::MailDetail<crate::email_content::HtmlBody>;
+    fn deref(&self) -> &Self::Target {
+        &self.content
+    }
+}
+impl std::ops::DerefMut for MailDetail {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.content
+    }
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MailSort {
@@ -153,6 +168,7 @@ pub struct FolderSelection {
 
 #[derive(Debug, Clone, Default)]
 pub struct MailPage {
+    pub lineages: std::collections::HashMap<String, String>,
     pub move_pending_total: usize,
     pub relocated: std::collections::HashMap<String, Mail>,
     pub move_recovery: std::collections::HashMap<String, crate::mail_actions::journal::MoveRecord>,

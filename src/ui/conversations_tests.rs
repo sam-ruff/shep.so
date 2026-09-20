@@ -47,6 +47,7 @@ async fn opening_a_related_message_keeps_the_inbox_anchor_and_rejects_late_bodie
         rows: vec![parent.summary.clone(), anchor.summary.clone()],
         total: 2,
         offset: 0,
+        lineages: Default::default(),
     });
     let _ = app.conversation_result(2, anchor.summary.id.clone(), Ok(page));
     let _ = app.handle(Message::ConversationMessage(parent.summary.id.clone()));
@@ -82,6 +83,7 @@ async fn stale_conversations_cannot_replace_current_selection_or_reenable_groupi
         rows: vec![anchor.summary.clone()],
         total: 5,
         offset: 0,
+        lineages: Default::default(),
     });
     let _ = app.conversation_result(3, anchor.summary.id.clone(), Ok(page.clone()));
     assert_eq!(app.conversation.page.total, 0);
@@ -111,6 +113,7 @@ async fn refreshing_the_same_conversation_does_not_schedule_a_scroll_reset() {
         rows: vec![parent.summary.clone(), anchor.summary.clone()],
         total: 2,
         offset: 0,
+        lineages: Default::default(),
     });
     assert!(
         app.conversation_result(2, anchor.summary.id.clone(), Ok(page.clone()))
@@ -158,12 +161,24 @@ async fn moving_an_expanded_reply_preserves_anchor_and_newer_reader_intent() {
                 ],
                 total: 3,
                 offset: 0,
+                lineages: Default::default(),
             };
             app.conversation.page = Arc::new(page.clone());
             app.move_mail(older.summary.clone(), "Projects".into());
-            let Command::Move(request, source, _) = commands.try_recv().unwrap() else {
+            let Command::AdmitMail(request, source, action, proof) = commands.try_recv().unwrap()
+            else {
                 panic!("Expected pending reply move");
             };
+            let job = store
+                .start_observed_mail_action(request.clone(), source.clone(), action, proof.unwrap())
+                .await
+                .unwrap();
+            app.mail_admitted(request.clone(), Ok(Arc::new(job)));
+            let item = store
+                .claim_bulk_item(request.clone())
+                .await
+                .unwrap()
+                .unwrap();
             let (sender, mut reads) = engine::CommandSender::foreground_test_channel();
             app.tx = Some(sender);
             assert_eq!(app.selected.as_ref(), Some(&anchor.summary.id));
@@ -188,11 +203,16 @@ async fn moving_an_expanded_reply_preserves_anchor_and_newer_reader_intent() {
                     crate::mail_actions::Fingerprint::of(b"reply"),
                 );
                 refreshed.rows[1] = receipt.current.as_ref().unwrap().clone();
-                Ok(Arc::new(receipt))
+                store
+                    .relocate_mail(source.clone(), receipt.current.as_ref().unwrap().clone())
+                    .await
+                    .unwrap();
+                Ok(crate::bulk::Receipt::Move(Box::new(receipt)))
             } else {
-                Err("Fixture move rejected".into())
+                Err(("Fixture move rejected".into(), false))
             };
-            let _ = app.move_receipt(request, source, "Projects".into(), result);
+            let completed = store.finish_bulk_item(item, result).await.unwrap();
+            app.bulk_event(Event::BulkFinished(request, Ok(Arc::new(completed))));
             let _ = app.conversation_result(
                 app.conversation.generation,
                 anchor.summary.id.clone(),
@@ -214,7 +234,15 @@ async fn moving_an_expanded_reply_preserves_anchor_and_newer_reader_intent() {
                 requested |= matches!(command, Command::Detail { id, prefetch: false, .. }
                     if id == expected.summary.id);
             }
-            assert!(requested, "Expected the retained reader's body request");
+            assert!(
+                requested,
+                "Expected the retained reader's body request: success={success}, newer_focus={newer_focus}, reader={:?}, cache={:?}",
+                app.reader_id(),
+                app.detail_cache
+                    .iter()
+                    .map(|detail| &detail.summary.id)
+                    .collect::<Vec<_>>()
+            );
             let _ = app.handle(Message::Backend(Event::Detail {
                 revision: app.detail_revision,
                 id: expected.summary.id.clone(),
@@ -226,7 +254,7 @@ async fn moving_an_expanded_reply_preserves_anchor_and_newer_reader_intent() {
                 assert!(
                     app.notice
                         .as_ref()
-                        .is_some_and(|(text, error, _)| *error && text.contains("remains in Inbox"))
+                        .is_some_and(|(text, error, _)| *error && text.contains("Open History"))
                 );
             }
             // An earlier body result cannot displace the resulting reader.
@@ -255,6 +283,7 @@ async fn explicit_conversation_paging_opens_first_row_even_when_anchor_is_on_pag
         rows: vec![previous.summary.clone()],
         total: 25,
         offset: 0,
+        lineages: Default::default(),
     });
     let _ = app.conversation_result(
         0,
@@ -264,6 +293,7 @@ async fn explicit_conversation_paging_opens_first_row_even_when_anchor_is_on_pag
             rows: vec![first.summary.clone(), anchor.summary.clone()],
             total: 25,
             offset: 20,
+            lineages: Default::default(),
         })),
     );
     assert_eq!(app.reader_id(), Some(first.summary.id.as_str()));

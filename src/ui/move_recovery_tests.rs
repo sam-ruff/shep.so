@@ -77,7 +77,16 @@ async fn pending_move_accepts_a_new_destination_but_not_flags_or_group_owned_mai
     let _ = app.handle(super::super::Message::Move("Elsewhere".into()));
     let mut submitted = None;
     while let Ok(command) = commands.try_recv() {
-        if let Command::Move(_, source, destination) = command {
+        if let Command::AdmitMail(
+            _,
+            source,
+            crate::bulk::Action::Move {
+                folder: destination,
+                ..
+            },
+            _,
+        ) = command
+        {
             submitted = Some((source.remote_id, destination));
         }
     }

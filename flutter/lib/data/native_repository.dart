@@ -1,5 +1,6 @@
 import 'selection.dart';
 import 'groups.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'attachments.dart';
 import 'message_search.dart';
@@ -36,7 +37,8 @@ class NativeRepository
         TextSearchRepository,
         FormattedMessageRepository,
         PrintRepository,
-        MailActivityRepository {
+        MailActivityRepository,
+        DurableMutationRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
   final CredentialStore credentials;
@@ -149,6 +151,12 @@ class NativeRepository
     savedDrafts = (await call({'op': 'drafts'}) as List)
         .map((d) => Draft.fromJson(d))
         .toList();
+    unawaited(
+      _resumeQueuedOutgoing().catchError((Object _) {
+        warning =
+            'Queued delivery could not resume. Open Outbox to check its status.';
+      }),
+    );
   }
 
   // Account/credential lifecycle operations share one FIFO across bridge
@@ -337,6 +345,7 @@ class NativeRepository
       folder: m['folder'] == 'INBOX' ? 'Inbox' : m['folder'],
       unread: m['unread'],
       starred: m['starred'],
+      lineage: m['lineage'] as String?,
       attachments:
           attachments ??
           List.generate(
@@ -534,19 +543,64 @@ class NativeRepository
     await _mutate(id, fields, newDraftIdentity());
   }
 
+  Map<String, Object?> _mutationRequest(
+    String id,
+    Map<String, Object> fields,
+    String actionId, {
+    String? observedLineage,
+    bool requireObservation = false,
+  }) => <String, Object?>{
+    'op': 'mutate',
+    'action_id': actionId,
+    if (observedLineage != null) 'observed_lineage': observedLineage,
+    if (requireObservation) 'require_observation': true,
+    'id': id,
+    ...fields.map(
+      (k, v) => MapEntry(k, k == 'folder' && v == 'Inbox' ? 'INBOX' : v),
+    ),
+  };
+
+  @override
+  Future<void> admitMutation(
+    String id,
+    Map<String, Object> fields,
+    String actionId,
+    String observedLineage,
+  ) async {
+    final result = await call(
+      _mutationRequest(
+        id,
+        fields,
+        actionId,
+        observedLineage: observedLineage,
+        requireObservation: true,
+      ),
+    );
+    if (result['warning'] case final String message) {
+      throw MailOperationFailure(
+        message,
+        committed: result['committed'] == true,
+      );
+    }
+  }
+
+  @override
+  Future<void> executeMutation(
+    String id,
+    Map<String, Object> fields,
+    String actionId,
+  ) => _mutate(id, fields, actionId);
+
+  @override
+  Future<void> cancelAdmittedMutation(String actionId) =>
+      cancelMailAction(actionId);
+
   Future<void> _mutate(
     String id,
     Map<String, Object> fields,
     String actionId,
   ) async {
-    final request = <String, Object?>{
-      'op': 'mutate',
-      'action_id': actionId,
-      'id': id,
-      ...fields.map(
-        (k, v) => MapEntry(k, k == 'folder' && v == 'Inbox' ? 'INBOX' : v),
-      ),
-    };
+    final request = _mutationRequest(id, fields, actionId);
     // Rust decides from the current stored message, including a Sent copy that
     // has since synced. Purely local actions never open device credentials.
     var result = await call(request);
@@ -565,11 +619,25 @@ class NativeRepository
         committed: result['committed'] == true,
       );
     }
+    if (result['status'] == 'cancelled') {
+      throw const MailOperationFailure(
+        'A newer mail decision replaced this queued change.',
+      );
+    }
   }
 
   @override
-  Future<List<MailActivity>> mailActions() async =>
-      ((await call({'op': 'mail_actions'}))['actions'] as List)
+  Future<List<MailActivity>> mailActions({int offset = 0}) async =>
+      ((await call({'op': 'mail_actions', 'offset': offset}))['actions']
+              as List)
+          .cast<Map<String, dynamic>>()
+          .map(MailActivity.new)
+          .toList();
+
+  @override
+  Future<List<MailActivity>> runnableMailActions() async =>
+      ((await call({'op': 'mail_actions', 'runnable': true}))['actions']
+              as List)
           .cast<Map<String, dynamic>>()
           .map(MailActivity.new)
           .toList();
@@ -581,6 +649,58 @@ class NativeRepository
   @override
   Future<void> cancelMailAction(String id) async {
     await call({'op': 'cancel_mail_action', 'id': id});
+  }
+
+  @override
+  Future<void> undoMailAction(
+    MailActivity action, {
+    void Function()? onAdmitted,
+  }) async {
+    final request = <String, Object?>{
+      'op': 'undo_mail_action',
+      'id': action.id,
+    };
+    var result = await call(request);
+    onAdmitted?.call();
+    if (result['requires_credentials'] case final String accountId) {
+      final account = mailAccounts.where((a) => a.id == accountId).firstOrNull;
+      if (account == null) {
+        throw const MailOperationFailure(
+          'This account changed. Reopen Preferences and refresh its folders.',
+        );
+      }
+      result = await call({...request, ...await _incoming(account)});
+    }
+    if (result['warning'] case final String message) {
+      throw MailOperationFailure(
+        message,
+        committed: result['committed'] == true,
+      );
+    }
+  }
+
+  @override
+  Future<void> inspectMailAction(MailActivity action) async {
+    final request = <String, Object?>{
+      'op': 'inspect_mail_action',
+      'id': action.id,
+    };
+    var result = await call(request);
+    if (result['requires_credentials'] case final String accountId) {
+      final account = mailAccounts.where((a) => a.id == accountId).firstOrNull;
+      if (account == null) {
+        throw const MailOperationFailure(
+          'This account changed. Reopen Preferences and refresh its folders.',
+        );
+      }
+      result = await call({...request, ...await _incoming(account)});
+    }
+    if (result['warning'] case final String message) {
+      throw MailOperationFailure(
+        message,
+        committed: result['committed'] == true,
+      );
+    }
   }
 
   @override
@@ -683,6 +803,25 @@ class NativeRepository
   }
 
   @override
+  Future<void> cancelOutgoing(String id) async {
+    await call({'op': 'cancel_outgoing', 'id': id});
+  }
+
+  @override
+  Future<void> resumeOutgoing(String id) async {
+    final context = await call({'op': 'outgoing_account', 'id': id});
+    final account = mailAccounts
+        .where((candidate) => candidate.id == context['account_id'])
+        .firstOrNull;
+    if (account == null) {
+      throw const MailOperationFailure(
+        'Reconnect the original account before resuming delivery.',
+      );
+    }
+    unawaited(_runQueuedSend(id, account));
+  }
+
+  @override
   Future<void> saveSentPreferences(
     String account,
     String policy,
@@ -719,6 +858,39 @@ class NativeRepository
       throw const MailOperationFailure('Choose a sending account.');
     }
     await saveDraft(draft);
+    final attempt = newDraftIdentity();
+    final admitted = await call({
+      'op': 'admit_send',
+      'attempt': attempt,
+      'revision': draft.revision,
+      'file_revision': draft.fileRevision,
+      'id': draft.id,
+    });
+    if (admitted['state'] == 'delivered') return;
+    if (!const {'queued', 'waiting'}.contains(admitted['state'])) {
+      throw MailOperationFailure(
+        'Delivery is ${admitted['state']}. Check Outbox before composing another copy.',
+      );
+    }
+    unawaited(_runQueuedSend(admitted['id'] as String, account));
+  }
+
+  Future<void> _runQueuedSend(String attempt, MailAccount account) async {
+    try {
+      await _executeSend(attempt, account);
+    } catch (_) {
+      warning =
+          'A queued delivery needs attention. Open Outbox to check its status.';
+      try {
+        await call({'op': 'wait_outgoing', 'id': attempt});
+      } catch (_) {
+        warning =
+            'Delivery status could not be saved. Open Outbox before sending again.';
+      }
+    }
+  }
+
+  Future<void> _executeSend(String attempt, MailAccount account) async {
     final slot = await _credentialSlot(account);
     String? incoming;
     if (account.protocol == 'Imap' && account.sentCopy != 'LocalOnly') {
@@ -730,10 +902,8 @@ class NativeRepository
     }
     final result = await call({
       'op': 'send',
+      'attempt': attempt,
       'incoming_password': incoming,
-      'revision': draft.revision,
-      'file_revision': draft.fileRevision,
-      'id': draft.id,
       'credential_slot': slot,
       'password': account.smtpAuthentication == 'None'
           ? ''
@@ -746,6 +916,18 @@ class NativeRepository
       throw MailOperationFailure(
         'Delivery is ${result['state']}. Your draft and delivery record were kept. Check Sent before another send.',
       );
+    }
+  }
+
+  Future<void> _resumeQueuedOutgoing() async {
+    final rows = ((await call({'op': 'runnable_outgoing'}))['rows'] as List)
+        .cast<Map<String, dynamic>>();
+    for (final row in rows) {
+      final account = mailAccounts
+          .where((candidate) => candidate.id == row['account_id'])
+          .firstOrNull;
+      if (account == null) continue;
+      unawaited(_runQueuedSend(row['id'] as String, account));
     }
   }
 

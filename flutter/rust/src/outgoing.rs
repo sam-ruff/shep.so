@@ -118,6 +118,22 @@ fn saved_draft(draft: &Draft) -> Result<String> {
     value["attachments"] = serde_json::to_value(&draft.attachments)?;
     Ok(serde_json::to_string(&value)?)
 }
+fn saved_submission_draft(
+    draft: &Draft,
+    envelope: &Envelope,
+    credential_slot: &str,
+) -> Result<String> {
+    let mut value: Value = serde_json::from_str(&saved_draft(draft)?)?;
+    value["_delivery_credential_slot"] = json!(credential_slot);
+    value["_delivery_envelope"] = serde_json::to_value(shep_mail_core::outgoing::EnvelopeData {
+        from: envelope
+            .from()
+            .context("The sending identity is missing.")?
+            .to_string(),
+        to: envelope.to().iter().map(ToString::to_string).collect(),
+    })?;
+    Ok(serde_json::to_string(&value)?)
+}
 pub(crate) fn local_sent(db: &mut Connection, id: &str, recovery: Option<&str>) -> Result<()> {
     let (account, draft, raw): (String, String, Vec<u8>) = db.query_row(
         "SELECT account_id,draft_id,raw FROM outgoing WHERE id=?1",
@@ -252,30 +268,63 @@ pub(crate) async fn recover(
         Ok(json!({"state":state,"recovery":if action==Recovery::Mark{"marked"}else{"local"}}))
     }).await
 }
-pub(crate) async fn send(
+pub(crate) async fn admit(
     profile: &MobileProfile,
+    attempt: String,
     id: String,
     revision: u64,
     file_revision: u64,
+) -> Result<Value> {
+    anyhow::ensure!(
+        uuid::Uuid::parse_str(&attempt).is_ok(),
+        "Choose a new delivery identity before retrying."
+    );
+    let saved_attempt = attempt.clone();
+    profile.database.write(move |db| {
+        if let Some((saved,reviewed)) = db.query_row("SELECT o.state,m.recovery IS NOT NULL FROM outgoing o LEFT JOIN outgoing_meta m ON m.id=o.id WHERE o.id=?1",[&saved_attempt],|r|Ok((r.get::<_,String>(0)?,r.get::<_,bool>(1)?))).optional()? {
+            return Ok(json!({"id":saved_attempt,"state":if reviewed{"reviewed"}else{&saved}}));
+        }
+        let prior = operations::delivery(db, &id)?;
+        if !prior.is_null() {
+            return Ok(prior);
+        }
+        let mut draft = crate::drafts::editable(db, &id)?;
+        let account = operations::stored_account(db, &draft.account_id)?;
+        anyhow::ensure!(draft.revision == revision, "This draft changed before sending. Reopen it and review the latest text.");
+        let snapshot = crate::drafts::snapshot(db, &id)?;
+        anyhow::ensure!(snapshot["file_revision"].as_u64() == Some(file_revision), "The attachments changed before sending. Reopen the draft and review its files.");
+        let files = crate::drafts::files(db, &mut draft)?;
+        let message_id = format!("<{}@shep.so>", uuid::Uuid::new_v4());
+        let message = shep_mail_core::compose::build_with_message_id(&account,&draft,files,&message_id)?;
+        let raw = message.formatted();
+        let tx = db.transaction()?;
+        let credential_slot=crate::connections::stored_slot(&tx,&account.id)?;
+        tx.execute("INSERT INTO outgoing VALUES(?1,?2,'queued',?3,?4,?5,?6)",params![attempt,draft.id,account.id,message_id,raw,saved_submission_draft(&draft,message.envelope(),&credential_slot)?])?;
+        tx.execute("INSERT INTO outgoing_meta(id,created,from_address) VALUES(?1,?2,?3)",params![attempt,chrono::Utc::now().timestamp(),account.email])?;
+        tx.execute("INSERT INTO outgoing_sent(id,account,state) VALUES(?1,?2,'pending')",params![attempt,serde_json::to_string(&account)?])?;
+        tx.commit()?;
+        Ok(json!({"id":attempt,"state":"queued","message_id":message_id}))
+    }).await
+}
+
+pub(crate) async fn send(
+    profile: &MobileProfile,
+    attempt: String,
     passwords: (SecretString, Option<SecretString>, Option<String>),
     slot: OwnedSemaphorePermit,
     admission: OwnedSemaphorePermit,
 ) -> Result<Value> {
     let (password, incoming_password, credential_slot) = passwords;
-    let prior = delivery(profile, id.clone()).await?;
-    if !prior.is_null() {
-        return Ok(prior);
-    }
-    let identity = id.clone();
+    let identity = attempt.clone();
     let account = profile
         .database
         .read(move |db| {
-            let text: String =
-                db.query_row("SELECT content FROM drafts WHERE id=?1", [identity], |r| {
-                    r.get(0)
-                })?;
-            let draft: Draft = serde_json::from_str(&text)?;
-            operations::stored_account(db, &draft.account_id)
+            let account: String = db.query_row(
+                "SELECT account_id FROM outgoing WHERE id=?1",
+                [identity],
+                |r| r.get(0),
+            )?;
+            operations::stored_account(db, &account)
         })
         .await?;
     let guard = profile.operations.account(&account.id).await;
@@ -287,63 +336,31 @@ pub(crate) async fn send(
             operations::stored_account(db, &id_for_binding)
         })
         .await?;
+    let dispatch = attempt.clone();
     let account_copy = account.clone();
-    let reserved = profile
-        .database
-        .write(move |db| {
-            let prior = operations::delivery(db, &id)?;
-            if !prior.is_null() {
-                return Ok((prior, None));
-            }
-            let mut draft = crate::drafts::editable(db, &id)?;
-            anyhow::ensure!(
-                draft.revision == revision && draft.account_id == account_copy.id,
-                "This draft changed before sending. Reopen it and review the latest text."
-            );
-            let snapshot = crate::drafts::snapshot(db, &id)?;
-            anyhow::ensure!(
-                snapshot["file_revision"].as_u64() == Some(file_revision),
-                "The attachments changed before sending. Reopen the draft and review its files."
-            );
-            let files = crate::drafts::files(db, &mut draft)?;
-            let message_id = format!("<{}@shep.so>", uuid::Uuid::new_v4());
-            let message = shep_mail_core::compose::build_with_message_id(
-                &account_copy,
-                &draft,
-                files,
-                &message_id,
-            )?;
-            let raw = message.formatted();
-            let attempt = uuid::Uuid::new_v4().to_string();
-            let tx = db.transaction()?;
-            tx.execute(
-                "INSERT INTO outgoing VALUES(?1,?2,'submitting',?3,?4,?5,?6)",
-                params![
-                    attempt,
-                    draft.id,
-                    account_copy.id,
-                    message_id,
-                    raw,
-                    saved_draft(&draft)?
-                ],
-            )?;
-            tx.execute(
-                "INSERT INTO outgoing_meta(id,created,from_address) VALUES(?1,?2,?3)",
-                params![attempt, chrono::Utc::now().timestamp(), account_copy.email],
-            )?;
-            tx.execute(
-                "INSERT INTO outgoing_sent(id,account,state) VALUES(?1,?2,'pending')",
-                params![attempt, serde_json::to_string(&account_copy)?],
-            )?;
-            tx.commit()?;
-            Ok((
-                json!({"id":attempt,"state":"submitting","message_id":message_id}),
-                Some((message.envelope().clone(), raw, attempt)),
-            ))
-        })
-        .await?;
-    let Some((envelope, raw, attempt)) = reserved.1 else {
-        return Ok(reserved.0);
+    let (envelope,raw,message_id,state)=profile.database.write(move|db|{
+        let tx=db.transaction()?;
+        let (state,raw,message_id,account,draft):(String,Vec<u8>,String,String,String)=tx.query_row("SELECT state,raw,message_id,account_id,draft FROM outgoing WHERE id=?1",[&dispatch],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
+        if state != "queued" && state != "waiting" {
+            let reviewed:bool=tx.query_row("SELECT recovery IS NOT NULL FROM outgoing_meta WHERE id=?1",[&dispatch],|r|r.get(0))?;
+            return Ok((None,raw,message_id,if reviewed{"reviewed".to_owned()}else{state}));
+        }
+        anyhow::ensure!(account==account_copy.id,"This delivery account changed. Review Outbox before retrying.");
+        let frozen:String=tx.query_row("SELECT account FROM outgoing_sent WHERE id=?1",[&dispatch],|row|row.get(0))?;
+        let frozen:Account=serde_json::from_str(&frozen)?;
+        anyhow::ensure!(frozen==account_copy,"This delivery account changed. Cancel the queued delivery and review its draft.");
+        let saved:Value=serde_json::from_str(&draft)?;
+        let active_slot=crate::connections::stored_slot(&tx,&account_copy.id)?;
+        anyhow::ensure!(saved["_delivery_credential_slot"].as_str()==Some(active_slot.as_str()),"This delivery's credentials changed. Cancel the queued delivery and review its draft.");
+        let envelope: shep_mail_core::outgoing::EnvelopeData=serde_json::from_value(saved.get("_delivery_envelope").cloned().context("This older queued delivery has no saved recipient proof.")?)?;
+        let envelope=envelope.envelope()?;
+        tx.execute("UPDATE outgoing SET state='submitting' WHERE id=?1 AND state IN ('queued','waiting')",[&dispatch])?;
+        tx.execute("UPDATE outgoing_sent SET error=NULL WHERE id=?1",[&dispatch])?;
+        tx.commit()?;
+        Ok((Some(envelope),raw,message_id,"submitting".to_owned()))
+    }).await?;
+    let Some(envelope) = envelope else {
+        return Ok(json!({"id":attempt,"state":state,"message_id":message_id}));
     };
     let database = profile.database.clone();
     let operations = profile.operations.clone();
@@ -359,7 +376,7 @@ pub(crate) async fn send(
         .lock()
         .await
         .insert(attempt.clone(), "submitting");
-    let message_id = reserved.0["message_id"].clone();
+    let message_id = json!(message_id);
     let task = tokio::spawn(async move {
         let (_slot, _admission, _guard) = (slot, admission, guard);
         let operation = tokio::spawn(async move {

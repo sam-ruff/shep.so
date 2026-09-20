@@ -294,7 +294,25 @@ impl Store {
     }
 
     pub async fn next_calendar_retry(&self) -> anyhow::Result<Option<i64>> {
-        self.run(|c|Ok(c.query_row("SELECT min(json_extract(data,'$.retry_at')) FROM calendar_actions WHERE status='waiting'",[],|r|r.get(0))?)).await
+        self.next_unreserved_calendar_retry(Vec::new()).await
+    }
+
+    pub(crate) async fn next_unreserved_calendar_retry(
+        &self,
+        occupied: Vec<String>,
+    ) -> anyhow::Result<Option<i64>> {
+        self.run(move |c| {
+            Ok(c.query_row(
+                "SELECT min(json_extract(a.data,'$.retry_at')) FROM calendar_actions a
+            LEFT JOIN calendar_actions p ON p.id=a.previous WHERE a.status='waiting'
+            AND 'calendar:'||a.source NOT IN (SELECT value FROM json_each(?))
+            AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=2 AND b.id=a.id AND b.until>unixepoch())
+            AND (p.id IS NULL OR p.status IN ('succeeded','rejected','cancelled'))",
+                [serde_json::to_string(&occupied)?],
+                |r| r.get(0),
+            )?)
+        })
+        .await
     }
 
     pub async fn wait_calendar_action(

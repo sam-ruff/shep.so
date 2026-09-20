@@ -22,14 +22,35 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   durable deferred admission/calendar recovery, consistent activity and adoption
   across folders, accounts, preferences, drafts/sending, Flutter and browser.
 
-  Current unshipped integration adds durable calendar admission/Waiting, native
+  Checkpoint `7689ef3` is pushed and adds durable calendar admission/Waiting, native
   flag receipt repair, browser individual Activity/offline cancellation/Undo and
   Flutter durable individual admission. Browser's 90 focused unit and 18 real
   control scenarios pass; native's 40 bulk/calendar/rapid scenarios plus the new
   authentication-wait flow pass. Desktop Send now uses local queued admission
-  before provider capacity, with restart/cancellation tests under verification.
-  Deferred native mail ownership, Flutter checked recovery, remaining domain
-  migrations and final timing/platform/shipping evidence remain active.
+  before provider capacity, with passing restart/cancellation and real controls.
+  Normal hooks pass 1,479 Rust test executions; browser v3 adds 94 passing unit
+  tests and 31 control/storage/profile scenarios. See the completion log.
+  Deferred native mail ownership, Flutter checked recovery, admission before its
+  Dart per-message wait, bounded restart projections and immediate Activity Undo
+  remain active. Complete the other domain migrations and final
+  timing/platform/shipping evidence as well.
+
+  Flutter integration passes 117 Rust and 172 Flutter tests, including queued
+  Send returning while delivery is held, pre-dispatch cancellation, conditional
+  rollback, bounded Activity pages and visible recovery errors. Light/dark
+  Activity captures are reviewed. Input-time lineage checks and Outbox retry/
+  refresh are implemented; the eight focused Outbox tests also cover invalidating
+  a review after its Sent phase changes. Native durable individual admission,
+  physical lineage and the common background owner are integrated. Final gates
+  cover correlated close acknowledgements, due calendar retries and cache repair
+  while provider capacity is held.
+  Retain explicit follow-ups for fairness within a multi-account group and
+  automatic retargeting over an unresolved legacy move; the latter currently
+  rejects admission until checked recovery proves its physical source.
+  Flutter still needs receipt-before-cache persistence for individual provider
+  actions, exact dispatch baselines after queued predecessors, per-field compound
+  acceptance and fair resumption beyond the first bounded batch. Preserve typed
+  provider refusals instead of classifying every transport error as uncertain.
 
 Sam reports new mail is slow to arrive and moves failing on `sam@shep.so`
 (Stalwart at `mail.shep.so`). These items outrank everything below. Sam's

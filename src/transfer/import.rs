@@ -276,6 +276,19 @@ fn validate_schema_in(
         "This database version is not supported. Use matching, current Shep versions on both devices."
     );
     let mut expected = expected.clone();
+    if version < 7 {
+        expected.retain(|name, (_, owner, _)| {
+            !matches!(
+                owner.as_str(),
+                "mail_lineage"
+                    | "mail_lineage_alias"
+                    | "mail_identity_history"
+                    | "bulk_admissions"
+                    | "bulk_field_owners"
+            ) && !name.starts_with("mail_lineage_")
+                && name != "bulk_item_unconfirmed_identity"
+        });
+    }
     if version < 6 {
         expected.retain(|_, (_, owner, _)| {
             !matches!(owner.as_str(), "calendar_actions" | "bulk_flag_receipts")

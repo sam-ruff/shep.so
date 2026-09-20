@@ -617,7 +617,7 @@ async fn version_two_exports_migrate_privately_and_future_stores_are_not_modifie
     source
         .run(|c| {
             c.execute_batch(
-                "DROP TABLE backup_history; DROP TABLE imported_operations; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; PRAGMA user_version=2;",
+                "DROP TABLE backup_history; DROP TABLE imported_operations; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; DROP TABLE bulk_field_owners; DROP TABLE bulk_admissions; DROP INDEX bulk_item_unconfirmed_identity; DROP TRIGGER mail_lineage_insert; DROP TRIGGER mail_lineage_replace; DROP TRIGGER mail_lineage_delete; DROP TABLE mail_lineage; DROP TABLE mail_lineage_alias; DROP TABLE mail_identity_history; PRAGMA user_version=2;",
             )?;
             Ok(())
         })
@@ -745,7 +745,7 @@ async fn backup_history_version_three_exports_migrate_without_changing_the_sourc
     let source = super::super::tests::workspace(&path).await;
     source
         .run(|c| {
-            c.execute_batch("DROP TABLE backup_history; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; PRAGMA user_version=3;")?;
+            c.execute_batch("DROP TABLE backup_history; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; DROP TABLE bulk_field_owners; DROP TABLE bulk_admissions; DROP INDEX bulk_item_unconfirmed_identity; DROP TRIGGER mail_lineage_insert; DROP TRIGGER mail_lineage_replace; DROP TRIGGER mail_lineage_delete; DROP TABLE mail_lineage; DROP TABLE mail_lineage_alias; DROP TABLE mail_identity_history; PRAGMA user_version=3;")?;
             Ok(())
         })
         .await
@@ -825,7 +825,7 @@ async fn backup_history_old_import_marker_recovery_migrates_without_repeating_pr
             r.get(0)
         })
         .unwrap();
-    c.execute_batch("DROP TABLE backup_history; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; PRAGMA user_version=3;")
+    c.execute_batch("DROP TABLE backup_history; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; DROP TABLE bulk_field_owners; DROP TABLE bulk_admissions; DROP INDEX bulk_item_unconfirmed_identity; DROP TRIGGER mail_lineage_insert; DROP TRIGGER mail_lineage_replace; DROP TRIGGER mail_lineage_delete; DROP TABLE mail_lineage; DROP TABLE mail_lineage_alias; DROP TABLE mail_identity_history; PRAGMA user_version=3;")
         .unwrap();
     drop(c);
     // An older app already prepared the same profile before an interrupted

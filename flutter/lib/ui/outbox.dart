@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../data/outgoing.dart';
 import '../model/workspace.dart';
@@ -16,6 +17,8 @@ class _OutboxScreenState extends State<OutboxScreen> {
   String? error, notice, recoveredDraft;
   bool loading = true, busy = false;
   int generation = 0;
+  int pollCount = 0;
+  Timer? poller;
   final reviewed = <String>{};
   final copyReviewed = <String>{};
   OutgoingRepository get repository =>
@@ -26,21 +29,43 @@ class _OutboxScreenState extends State<OutboxScreen> {
     load();
   }
 
-  Future<void> load([int? offset]) async {
+  Future<void> load([int? offset, bool polling = false]) async {
+    if (!mounted) return;
+    if (!polling) {
+      pollCount = 0;
+      poller?.cancel();
+    }
     final current = ++generation;
-    setState(() => loading = true);
+    if (!polling) setState(() => loading = true);
     try {
       final result = await repository.outbox(
         offset: offset ?? page?.offset ?? 0,
       );
       if (!mounted || current != generation) return;
+      final previousStates = {
+        for (final entry in page?.rows ?? const <OutgoingEntry>[])
+          entry.id: (entry.state, entry.sent, entry.marked),
+      };
+      final currentStates = {
+        for (final entry in result.rows)
+          entry.id: (entry.state, entry.sent, entry.marked),
+      };
       setState(() {
         page = result;
         loading = false;
-        error = null;
-        reviewed.clear();
-        copyReviewed.clear();
+        if (!polling) {
+          error = null;
+          reviewed.clear();
+          copyReviewed.clear();
+        } else {
+          bool unchanged(String id) =>
+              previousStates[id] != null &&
+              previousStates[id] == currentStates[id];
+          reviewed.retainWhere(unchanged);
+          copyReviewed.retainWhere(unchanged);
+        }
       });
+      _schedulePoll();
     } catch (e) {
       if (mounted && current == generation) {
         setState(() {
@@ -48,6 +73,44 @@ class _OutboxScreenState extends State<OutboxScreen> {
           error = '$e';
         });
       }
+    }
+  }
+
+  void _schedulePoll() {
+    poller?.cancel();
+    if (!mounted || pollCount >= 30) return;
+    if (page?.rows.any((entry) => entry.active || entry.canCancel) != true) {
+      return;
+    }
+    poller = Timer(const Duration(seconds: 3), () {
+      if (!mounted || loading || busy) return;
+      pollCount++;
+      load(page?.offset, true);
+    });
+  }
+
+  @override
+  void dispose() {
+    poller?.cancel();
+    super.dispose();
+  }
+
+  Future<void> resume(OutgoingEntry entry) async {
+    if (busy || loading) return;
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      await repository.resumeOutgoing(entry.id);
+      if (!mounted) return;
+      await load(page?.offset, true);
+    } catch (failure) {
+      if (!mounted) return;
+      await load(page?.offset, true);
+      if (mounted) setState(() => error = '$failure');
+    } finally {
+      if (mounted) setState(() => busy = false);
     }
   }
 
@@ -164,6 +227,28 @@ class _OutboxScreenState extends State<OutboxScreen> {
               spacing: 8,
               runSpacing: 8,
               children: [
+                if (entry.canCancel)
+                  FilledButton(
+                    onPressed: enabled ? () => resume(entry) : null,
+                    child: const Text('Resume delivery'),
+                  ),
+                if (entry.canCancel)
+                  OutlinedButton(
+                    onPressed: enabled
+                        ? () async {
+                            setState(() => busy = true);
+                            try {
+                              await widget.workspace.cancelOutgoing(entry);
+                              await load();
+                            } catch (e) {
+                              if (mounted) setState(() => error = '$e');
+                            } finally {
+                              if (mounted) setState(() => busy = false);
+                            }
+                          }
+                        : null,
+                    child: const Text('Cancel'),
+                  ),
                 if (!entry.delivered || !entry.canCheckSent)
                   OutlinedButton(
                     onPressed: enabled

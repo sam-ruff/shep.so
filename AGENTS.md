@@ -205,13 +205,26 @@ nor uncertainty permits a fresh provider write. Domain owners retain their
 request correlation and journals; include this crate in coordinated releases.
 Native bulk review uses one transactional frozen snapshot and at most 50 observed
 metadata records. Pending individual flags must not block review or confirmation;
-defer ordered admission, reconcile counts once and cancel unsent groups on Undo.
-The deferred command remains session state until journal admission, so preserve
-the close guard and track durable admission separately.
+admit through the local selection FIFO, reconcile counts once and cancel unsent
+groups on Undo. Individual controls carry the lineage observed with their row or
+reader metadata into the same durable journal. Missing or replaced observations
+reject locally. Retire admission overlays only after observing their saved
+revision, and preserve the close guard until local admission settles.
+
+Flutter individual mail actions use the existing Rust mutation dispatcher and
+an atomic claim under the account operation lock. Recheck status, physical
+lineage and field ownership after waiting; a repeated UUID cannot dispatch
+twice. Mail schema 15 retains lineage through acknowledged moves and proven
+Sent aliases, merges the latest field reservations before deleting duplicate
+rows, and invalidates unproven identity/content replacements. Never hash full
+message bodies to admit ordinary flag edits. SQLite projects owned pending
+fields into bounded mailbox pages and reader metadata after restart. Admission
+failures, queued cancellation and Activity recovery errors must remain visible;
+unknown predecessor moves cannot authorise another provider mutation.
 
 Native `store/calendar_actions.rs` owns durable save/delete requests and exact
 read-only recovery, with UUID admission IDs and correlated UI requests. The
-existing serial bulk/folder worker executes calendar jobs; do not add another
+existing shared action owner executes calendar jobs; do not add another
 dispatcher. Persist Running before dispatch and Repair before cache writes.
 Startup recovers abandoned Running as Uncertain and resumes only safe queued or
 cache-only work. Close flushes admission and drains the active step, preserving
@@ -250,7 +263,7 @@ Preference values and field revisions share one authoritative settings write;
 the legacy settings key is only a mirror. A failed local save cannot produce a
 profile application receipt. Reuse existing Outbox and profile recovery owners.
 
-Flutter individual mail admission uses schema 14 and `individual_mail_actions`
+Flutter individual mail admission uses schema 15 and `individual_mail_actions`
 beside the existing field-intent owner. Reserve an action UUID before FFI and
 save exact fields/account identity before credentials or provider capacity.
 Only never-dispatched queued/waiting work may resume; reopen classifies Running
@@ -258,6 +271,13 @@ as Uncertain. Return a saved terminal result before looking up its source mail.
 A changed physical source becomes an explicit rejection and releases only the
 same action's intent revisions. Activity/cancellation must use these records,
 including account-removal review, without adding another provider dispatcher.
+
+Flutter Send saves frozen MIME, envelope, account settings and credential-slot
+identity in the existing Outbox before returning to the UI. Execution uses the
+same attempt UUID, checks its binding under the account lock and claims Submitting
+before SMTP. Only queued/waiting work may be cancelled or resumed; cancellation
+retains the draft. A lost submitting result requires review, never automatic
+replay. Preserve actual FFI tests with delivery held after local admission.
 
 **Optimistic interaction is an app-wide requirement.** For reversible actions, show the expected successful result immediately and reconcile persistence/server state in the background. Archive/move removes a message from the current folder immediately; flags and read/unread indicators update immediately. Do not wait for SQLite, credentials, network requests or account sync before displaying that change. If an operation fails, restore the affected state and show an actionable error. Preserve newer user intent when older results arrive; keep pending changes through background refreshes and test slow success, failure/rollback and rapid repeated input. Responsiveness takes priority over waiting for confirmation, while correctness must converge and failures remain visible. This does not turn a pending operation into a confirmed server success.
 
@@ -577,13 +597,17 @@ Preferences search indexes actual editable sections in `ui/settings_search.rs`; 
 ## Immediate mail actions and command acknowledgments
 
 Native group flag writes persist `bulk_flag_receipts` before updating cached
-flags. The same serial group owner repairs acknowledged cache work before
+flags. The same action owner repairs acknowledged cache work before
 claiming another item; repair never acquires provider capacity or sends STORE.
 The cache patch, receipt retirement and forward/Undo transition commit together.
 Keep exact physical identity checks, per-field patches, account-removal fences
-and the restart/cache-failure/Undo regressions. Schema 6 fences older writers
-which cannot interpret the repair state. Individual durable admission uses the
-existing group journal; connecting all individual controls remains in progress.
+and the restart/cache-failure/Undo regressions. Schema 7 fences older writers
+which cannot interpret field ownership and lineage. Individual durable admission
+uses the existing group journal. The bounded background owner schedules mail,
+folders, calendar and Outbox, reserving affected accounts before dispatch and
+keeping separate cache-repair capacity. Stop drains active steps before its
+acknowledgement. Unresolved legacy moves require checked recovery before new
+admission; inverse moves use their actual acknowledged dispatch source.
 
 `ui/mail_actions.rs` overlays small message metadata while flag/read operations are pending. Coalesce each field per message, retain newer edits after an older acknowledgment/error, and never clone body or attachment buffers on the UI thread. Pending moves hide their source row immediately; hold a move behind that message's outstanding flag changes, and restore rejected actions with a visible error. Background pages must retain pending overlays. Typed request IDs reject obsolete completions; a full command queue must not hide a message or leave a false flag. Window close waits for accepted mail changes, and a failure cancels the pending close.
 

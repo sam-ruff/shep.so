@@ -19,19 +19,19 @@ pub enum Reveal {
 }
 #[derive(Debug, Clone)]
 pub enum Payload {
-    Single(Box<Mail>),
+    Single(Box<Mail>, Option<String>),
     Group(Arc<crate::store::SelectionSnapshot>),
 }
 impl Payload {
     pub fn count(&self) -> usize {
         match self {
-            Self::Single(_) => 1,
+            Self::Single(..) => 1,
             Self::Group(s) => s.selected,
         }
     }
     fn groups(&self) -> impl Iterator<Item = (&str, &str)> {
         let single = match self {
-            Self::Single(m) => Some((m.account_id.as_str(), m.folder.as_str())),
+            Self::Single(m, _) => Some((m.account_id.as_str(), m.folder.as_str())),
             _ => None,
         };
         let group = match self {
@@ -121,7 +121,10 @@ impl App {
                 ))
             })
         } else {
-            Some(Arc::new(Payload::Single(Box::new(mail.clone()))))
+            Some(Arc::new(Payload::Single(
+                Box::new(mail.clone()),
+                self.page.lineages.get(&mail.id).cloned(),
+            )))
         }
     }
     pub(super) fn drop_mail(&mut self, payload: Arc<Payload>, target: Option<Target>) {
@@ -137,14 +140,18 @@ impl App {
             return;
         }
         match payload.as_ref() {
-            Payload::Single(original) => {
+            Payload::Single(original, lineage) => {
                 let Some(mail) = self
                     .page
                     .rows
                     .iter()
                     .find(|m| m.id == original.id)
                     .cloned()
-                    .filter(|m| m.account_id == original.account_id && m.folder == original.folder)
+                    .filter(|m| {
+                        m.account_id == original.account_id
+                            && m.folder == original.folder
+                            && self.page.lineages.get(&m.id) == lineage.as_ref()
+                    })
                 else {
                     self.notice(
                         "This message changed while dragging. Select it and try again.",
@@ -160,9 +167,9 @@ impl App {
                     return;
                 }
                 if let Some(account) = target.account.filter(|a| a != &mail.account_id) {
-                    self.transfer_mail(mail, account, target.folder);
+                    self.admit_mail_move(mail, Some(account), target.folder, lineage.clone());
                 } else {
-                    self.move_mail(mail, target.folder);
+                    self.admit_mail_move(mail, None, target.folder, lineage.clone());
                 }
             }
             Payload::Group(snapshot) => {

@@ -1,6 +1,50 @@
 # Completion audit
 
+## Immediate admission integration, 20 September 2026
+
+Source integration following `7689ef3`: desktop individual mail now uses
+the durable group owner, input-time identity observations and per-field ordering.
+The background owner shares bounded capacity across mail, calendar, folders and
+Outbox. Flutter adds checked Activity Undo, restart projections, conditional
+admission rollback, input lineage checks and queued Send with same-attempt Resume.
+AGENTS.md records the production contracts.
+
+Current integrated evidence: 117 Flutter Rust tests and 172 Flutter tests pass;
+the subsequent eight-test Outbox gate includes invalidating a review after its
+Sent phase changes. Desktop library tests pass before the final scheduler/close
+corrections, and both desktop and Flutter Clippy gates pass at that point.
+All 166 Python checks pass, with nine explicit skips. Packaging now recognises
+the shared action crate in Flutter's consuming lockfile.
+
+The first combined native run passed nine of twelve scenarios. Three assertions
+used earlier handler behaviour: two expected the old error wording instead of
+History, and one read the raw flag instead of the durable projection after close.
+The updated checks retain rejection counts, folder membership and unread state;
+close also verifies the journal and actual restart. The expanded rerun passes
+all 19 native scenarios, including the corrected checks and other forward-failure
+controls. Final scheduler/error-classification gates and shipping remain required.
+Two compact Outbox goldens pass and have been reviewed in light and dark.
+Reviewed integrated WebPs include ten-message deletion
+before a held read finishes (`1b8a044229ca`) and compact dark admission/Undo with
+provider capacity held (`1a461b3cb509`). Evidence is under ignored `artifacts/`.
+
+Assumptions and limits remain explicit:
+
+- Immediate feedback confirms local intent; it does not assert provider success.
+- Undo uses the actual proven dispatch source, including after prior recovery.
+- Unresolved legacy moves need checked recovery before a new destination admits.
+- Flutter receipt-before-cache, compound field acceptance and scheduling fairness
+  still require the next migration; wider action domains remain open.
+- These fixture checks do not establish idle-host latency, live providers,
+  Apple/Windows execution or an installed release.
+
 ## Durable action checkpoint, 20 September 2026
+
+Implementation `7689ef3` is pushed to `main`. Normal commit hooks pass 1,479 Rust
+test executions, with four ignored, both Clippy configurations and formatting.
+The integrated browser v3 gate passes 94 unit tests, 29 control/storage scenarios
+and two publication/enrollment scenarios. Strict Zensical and the parity review
+structure check pass. The installed personal application was not changed.
 
 This continuation implements durable native calendar admission, restart recovery,
 authentication/offline Waiting and receipt-first cache repair through the existing
@@ -36,8 +80,7 @@ are still being migrated; native large MIME preparation precedes queued admissio
 browser newly queued sends can wait behind a held scheduler batch; unsupported
 client domains remain explicit parity gaps; mailbox-scale timing, live providers
 and Apple/other-platform execution are not established by these fixture tests.
-The full architecture goal remains active. Final shipping gates and the source
-commit are recorded with the checkpoint receipt below.
+The full architecture goal remains active.
 
 ## First immediate-actions migration, 20 September 2026
 

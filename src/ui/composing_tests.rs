@@ -763,7 +763,9 @@ fn close_after_attachment_failure_stays_open_but_old_result_keeps_newer_dependen
                 .0
                 .contains("Attachment unavailable")
         );
-        let _ = app.update(Message::Backend(Event::BulkStopped));
+        let _ = app.update(Message::Backend(Event::BulkStopped(
+            app.bulk.stop_generation,
+        )));
         assert_eq!(app.pending_close, (!current).then_some(window));
     }
 }
@@ -797,7 +799,9 @@ fn close_after_discard_failure_stays_open_but_old_result_keeps_newer_dependency(
                 .0
                 .contains("could not be discarded")
         );
-        let _ = app.update(Message::Backend(Event::BulkStopped));
+        let _ = app.update(Message::Backend(Event::BulkStopped(
+            app.bulk.stop_generation,
+        )));
         assert_eq!(app.pending_close, (!current).then_some(window));
     }
 }
@@ -833,7 +837,9 @@ fn close_after_forward_failure_stays_open_but_old_result_keeps_newer_dependency(
                 "Obsolete failure must not replace newer intent"
             );
         }
-        let _ = app.update(Message::Backend(Event::BulkStopped));
+        let _ = app.update(Message::Backend(Event::BulkStopped(
+            app.bulk.stop_generation,
+        )));
         assert_eq!(app.pending_close, (!current).then_some(window));
     }
 }

@@ -12,6 +12,7 @@ class PreviewRepository
   PreviewRepository({
     this.delay = const Duration(milliseconds: 350),
     this.fail = false,
+    this.includeLineage = true,
     String? firstBody,
     List<Mail> extra = const [],
   }) {
@@ -31,6 +32,7 @@ class PreviewRepository
         date: DateTime.parse(m['date']),
         unread: m['unread'],
         starred: m['starred'],
+        lineage: includeLineage ? 'fixture-${m['id']}' : null,
         attachments: List<String>.from(m['attachments']),
       );
     }).toList();
@@ -66,6 +68,7 @@ class PreviewRepository
   @override
   Future<Map<String, dynamic>> groupStep() => groupPreview.groupStep();
   final Duration delay;
+  final bool includeLineage;
   Duration stepDelay = const Duration(milliseconds: 20);
   bool fail;
   late List<Mail> _mail;

@@ -4,9 +4,12 @@ import 'dart:async';
 class MoveRecord {
   MoveRecord(this.id, this.account, this.originalFolder);
   String id;
+  String? actionId;
+  Future<Object?>? admitted;
   final String account, originalFolder;
   bool started = false, cancelled = false, committed = false;
   bool undoRequested = false, blocked = false, restoreCommitted = false;
+  bool admissionCancelled = false;
 }
 
 /// The desktop's six-second, destination-scoped move notification contract.

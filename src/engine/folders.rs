@@ -240,6 +240,7 @@ impl Engine {
         .await?
     }
 
+    #[cfg(test)]
     pub(super) async fn drain_folder_jobs(&self, mut output: Output) {
         let mut after = String::new();
         while !self.bulk_control.stopping.get() {
@@ -259,11 +260,13 @@ impl Engine {
         }
     }
 
-    async fn execute_folder_job(&self, id: String, mut output: Output) {
-        self.bulk_control.active.set(true);
+    pub(super) async fn execute_folder_job(&self, id: String, mut output: Output) {
+        let activity = self.bulk_control.active.enter();
         if self.bulk_control.stopping.get() {
-            self.bulk_control.active.set(false);
-            let _ = output.send(super::Event::BulkStopped).await;
+            drop(activity);
+            if let Some(event) = self.bulk_control.stopped_event() {
+                let _ = output.send(event).await;
+            }
             return;
         }
         let mut result = self.perform_folder_job(&id, &mut output).await;
@@ -297,11 +300,11 @@ impl Engine {
         if let Some(warning) = count_warning {
             let _ = output.send(super::Event::Error(warning)).await;
         }
-        self.bulk_control.active.set(false);
+        drop(activity);
         if failed {
             self.bulk_control.stopping.set(false);
-        } else if self.bulk_control.stopping.get() {
-            let _ = output.send(super::Event::BulkStopped).await;
+        } else if let Some(event) = self.bulk_control.stopped_event() {
+            let _ = output.send(event).await;
         }
     }
 

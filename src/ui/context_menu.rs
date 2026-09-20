@@ -22,6 +22,7 @@ pub enum MailAction {
 #[derive(Debug, Clone)]
 pub(super) struct Menu {
     pub mail: Mail,
+    pub lineage: Option<String>,
     pub position: Point,
     pub index: usize,
 }
@@ -135,6 +136,21 @@ impl App {
         let Some(menu) = self.context_menu.take() else {
             return Task::none();
         };
+        if matches!(
+            action,
+            MailAction::Read
+                | MailAction::Flag
+                | MailAction::Move
+                | MailAction::Archive
+                | MailAction::Trash
+        ) && self.page.lineages.get(&menu.mail.id) != menu.lineage.as_ref()
+        {
+            self.notice(
+                "This message changed while the menu was open. Refresh it and try again.",
+                true,
+            );
+            return Task::none();
+        }
         let mail = self.mail_actions.effective(&menu.mail).clone();
         if self.page.move_placeholders.contains(&mail.id)
             && !matches!(action, MailAction::CopySender | MailAction::Open)
@@ -175,17 +191,19 @@ impl App {
         }
         match action {
             MailAction::Read | MailAction::Flag => {
-                self.toggle_mail_flag(mail, action == MailAction::Read);
+                self.toggle_mail_flag_with_lineage(mail, action == MailAction::Read, menu.lineage);
             }
             MailAction::Archive | MailAction::Trash => {
-                self.move_mail(
+                self.admit_mail_move(
                     mail,
+                    None,
                     if action == MailAction::Archive {
                         "Archive"
                     } else {
                         "Trash"
                     }
                     .into(),
+                    menu.lineage,
                 );
             }
             MailAction::CopySender => {

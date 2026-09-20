@@ -131,7 +131,10 @@ async fn drop_uses_dragged_metadata_while_another_body_is_open_and_projects_imme
     let source = app.page.rows[1].clone();
     let selected = app.selected.clone();
     app.drop_mail(
-        Arc::new(Payload::Single(Box::new(source.clone()))),
+        Arc::new(Payload::Single(
+            Box::new(source.clone()),
+            app.page.lineages.get(&source.id).cloned(),
+        )),
         Some(target(None, "Archive")),
     );
     assert_eq!(app.selected, selected);
@@ -142,7 +145,7 @@ async fn drop_uses_dragged_metadata_while_another_body_is_open_and_projects_imme
         "Archived 1 message"
     );
     assert!(
-        matches!(commands.try_recv().unwrap(),Command::Move(_,mail,folder) if mail.id==source.id && folder=="Archive")
+        matches!(commands.try_recv().unwrap(),Command::AdmitMail(_,mail,crate::bulk::Action::Move { account: None, folder },Some(_)) if mail.id==source.id && folder=="Archive")
     );
 }
 #[tokio::test]
@@ -165,7 +168,7 @@ async fn cancelled_rejected_and_stale_drops_preserve_mail_and_selection() {
         .rows
         .retain(|m| m.id != mail.id);
     app.drop_mail(
-        Arc::new(Payload::Single(Box::new(mail))),
+        Arc::new(Payload::Single(Box::new(mail), None)),
         Some(target(None, "Archive")),
     );
     assert!(app.notice.as_ref().unwrap().0.contains("message changed"));
@@ -264,7 +267,10 @@ fn input(
 #[tokio::test]
 async fn native_widget_drag_survives_redraws_and_does_not_click_the_source_or_destination() {
     let (app, _, _) = fixture().await;
-    let payload = Arc::new(Payload::Single(Box::new(app.page.rows[0].clone())));
+    let payload = Arc::new(Payload::Single(
+        Box::new(app.page.rows[0].clone()),
+        app.page.lineages.get(&app.page.rows[0].id).cloned(),
+    ));
     let handle = Handle::default();
     let mut area = widget_tree(handle.clone(), payload, app.drag_rules());
     let renderer = Renderer::new(iced::Font::DEFAULT, 16.into());
@@ -312,7 +318,10 @@ async fn nested_flag_and_small_pointer_jitter_never_start_a_drag() {
         let handle = Handle::default();
         let mut area = widget_tree(
             handle.clone(),
-            Arc::new(Payload::Single(Box::new(app.page.rows[0].clone()))),
+            Arc::new(Payload::Single(
+                Box::new(app.page.rows[0].clone()),
+                app.page.lineages.get(&app.page.rows[0].id).cloned(),
+            )),
             app.drag_rules(),
         );
         let renderer = Renderer::new(iced::Font::DEFAULT, 16.into());
@@ -354,7 +363,10 @@ async fn cancelling_at_window_edges_focus_loss_or_right_click_does_not_become_a_
         let handle = Handle::default();
         let mut area = widget_tree(
             handle.clone(),
-            Arc::new(Payload::Single(Box::new(app.page.rows[0].clone()))),
+            Arc::new(Payload::Single(
+                Box::new(app.page.rows[0].clone()),
+                app.page.lineages.get(&app.page.rows[0].id).cloned(),
+            )),
             app.drag_rules(),
         );
         let renderer = Renderer::new(iced::Font::DEFAULT, 16.into());

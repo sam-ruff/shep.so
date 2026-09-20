@@ -604,6 +604,13 @@ impl Engine {
         .context("The account is still busy. Try the change again.")?;
         self.authorize_mail_mutation(&original.id, Some(item))
             .await?;
+        let changes = self
+            .store
+            .accepted_bulk_flags(item.clone(), changes)
+            .await?;
+        if changes.is_empty() {
+            return Ok(crate::bulk::Receipt::Superseded);
+        }
         let mail = self.store.mail_metadata(original.id.clone()).await?;
         anyhow::ensure!(
             mail.account_id == original.account_id
@@ -613,8 +620,9 @@ impl Engine {
         );
         if let Some(expected) = expected {
             anyhow::ensure!(
-                expected.unread.is_none_or(|v| v == mail.unread)
-                    && expected.starred.is_none_or(|v| v == mail.starred),
+                (changes.unread.is_none() || expected.unread.is_none_or(|v| v == mail.unread))
+                    && (changes.starred.is_none()
+                        || expected.starred.is_none_or(|v| v == mail.starred)),
                 "This message has a newer read or flag change. It was left unchanged."
             );
         }

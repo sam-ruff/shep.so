@@ -9,6 +9,19 @@ CREATE TABLE IF NOT EXISTS mail (
 );
 CREATE INDEX IF NOT EXISTS mail_page ON mail(folder, timestamp DESC, id);
 CREATE INDEX IF NOT EXISTS mail_account_page ON mail(account_id, folder, timestamp DESC, id);
+CREATE TABLE IF NOT EXISTS mail_lineage(id TEXT PRIMARY KEY REFERENCES mail(id) ON DELETE CASCADE ON UPDATE CASCADE,token TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS mail_lineage_aliases(source TEXT PRIMARY KEY,target TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS mail_lineage_alias_target ON mail_lineage_aliases(target);
+INSERT OR IGNORE INTO mail_lineage(id,token) SELECT id,lower(hex(randomblob(16))) FROM mail WHERE (SELECT user_version FROM pragma_user_version)<15;
+CREATE TRIGGER IF NOT EXISTS mail_lineage_insert AFTER INSERT ON mail BEGIN
+ INSERT INTO mail_lineage(id,token) VALUES(new.id,lower(hex(randomblob(16))));
+END;
+CREATE TRIGGER IF NOT EXISTS mail_lineage_replace AFTER UPDATE OF raw,account_id,folder,remote_id ON mail WHEN old.raw!=new.raw OR old.account_id!=new.account_id OR old.folder!=new.folder OR old.remote_id!=new.remote_id BEGIN
+ UPDATE mail_lineage SET token=lower(hex(randomblob(16))) WHERE id=new.id;
+END;
+CREATE TRIGGER IF NOT EXISTS mail_lineage_delete BEFORE DELETE ON mail_lineage BEGIN
+ DELETE FROM mail_lineage_aliases WHERE target=old.token;
+END;
 CREATE VIRTUAL TABLE IF NOT EXISTS mail_search USING fts5(sender, subject, body, content='mail', content_rowid='rowid', tokenize='unicode61');
 CREATE TRIGGER IF NOT EXISTS mail_insert AFTER INSERT ON mail BEGIN
  INSERT INTO mail_search(rowid,sender,subject,body) VALUES(new.rowid,new.sender,new.subject,new.body);
@@ -69,6 +82,7 @@ INSERT OR IGNORE INTO group_clock VALUES(1,0);
 CREATE TABLE IF NOT EXISTS mail_intents(mail TEXT NOT NULL REFERENCES mail(id) ON DELETE CASCADE,field TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(mail,field));
 CREATE TABLE IF NOT EXISTS individual_mail_actions(id TEXT PRIMARY KEY,mail TEXT NOT NULL,account TEXT NOT NULL,fields TEXT NOT NULL,physical TEXT NOT NULL DEFAULT '{}',intent_revision INTEGER NOT NULL DEFAULT 0,credential_slot TEXT,status TEXT NOT NULL CHECK(status IN ('queued','running','waiting','succeeded','rejected','uncertain','repair','cancelled')),error TEXT,created INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS individual_mail_action_status ON individual_mail_actions(status,created,id);
+CREATE INDEX IF NOT EXISTS individual_mail_action_history ON individual_mail_actions(created DESC,id);
 CREATE TABLE IF NOT EXISTS group_jobs(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,action TEXT NOT NULL,fields TEXT NOT NULL,state TEXT NOT NULL,scope TEXT NOT NULL,created INTEGER NOT NULL,approved INTEGER,undone INTEGER,total INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 0,error TEXT);
 CREATE INDEX IF NOT EXISTS group_job_state ON group_jobs(state,seq);
 CREATE TABLE IF NOT EXISTS group_items(job TEXT NOT NULL REFERENCES group_jobs(id) ON DELETE CASCADE,position INTEGER NOT NULL,mail TEXT NOT NULL,account TEXT NOT NULL,folder TEXT NOT NULL,remote_id TEXT NOT NULL,unread INTEGER NOT NULL,starred INTEGER NOT NULL,state TEXT NOT NULL,fields TEXT,attempt TEXT,receipt TEXT,reason TEXT,PRIMARY KEY(job,position));
@@ -76,5 +90,5 @@ CREATE INDEX IF NOT EXISTS group_item_state ON group_items(job,state,position);
 CREATE INDEX IF NOT EXISTS group_item_mail ON group_items(mail,state);
 CREATE INDEX IF NOT EXISTS group_item_account ON group_items(account,state);
 CREATE INDEX IF NOT EXISTS group_item_active ON group_items(state,job) WHERE state IN ('pending','sending','undoing','reversing');
-PRAGMA user_version=14;
+PRAGMA user_version=15;
 COMMIT;

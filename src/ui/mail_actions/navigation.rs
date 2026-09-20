@@ -179,11 +179,11 @@ mod tests {
         app.inbox_scroll = 120.;
         app.move_mail(app.page.rows[3].clone(), "Trash".into());
         assert_eq!(app.selected.as_deref(), Some("message-4"));
-        let Command::Move(request, mail, folder) = commands.try_recv().unwrap() else {
+        let Command::AdmitMail(request, _, _, _) = commands.try_recv().unwrap() else {
             panic!("expected move");
         };
         app.select("message-1".into());
-        let _ = app.move_finished(request, mail, folder, Err("Fixture rejection".into()));
+        app.mail_admitted(request, Err("Fixture rejection".into()));
         assert_eq!(app.selected.as_deref(), Some("message-1"));
         assert_eq!(app.inbox_scroll, 120.);
         assert!(app.page.rows.iter().any(|mail| mail.id == "message-3"));
