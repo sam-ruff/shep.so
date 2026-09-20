@@ -1,5 +1,20 @@
 # Shep handover
 
+## Immediate actions checkpoint, 20 September
+
+`a1049ab` implements the first native mail/calendar migration requested by Sam.
+Review and confirmation no longer wait for prior provider writes; calendar
+save/delete uses shared projection outcomes and exact read-only recovery.
+The completion log records 1,365 passing Rust tests and 38 native scenarios.
+Normal hooks pass, with reviewed light and compact dark captures.
+
+Next: durable admission for deferred mail and calendar recovery, then consistent
+adoption across the other desktop domains and Flutter/browser. Keep one durable
+owner per action, preserve uncertain receipts and newer intent, and retain
+native 100 ms mailbox-scale timing and release/install verification as open
+work. TODO remains authoritative; this checkpoint does not complete the app-wide
+request or the earlier product requests below.
+
 ## Current delivery, 13 September
 
 Mail recovery, standard HTML/title selection, ordinary-cache large receipt and

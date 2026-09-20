@@ -1,5 +1,39 @@
 # Completion audit
 
+## First immediate-actions migration, 20 September 2026
+
+Implementation: `a1049ab`. Small native selection reviews freeze and summarise
+once on the local worker, without waiting for earlier provider writes. Confirming
+Delete paints rows, counts and Undo immediately; admission remains ordered behind
+earlier writes. Undo before admission releases the capture and removes its group
+state. Read success/rejection and group rejection preserve the correct counts.
+
+`shared/action-core` supplies common projection outcomes. Calendar save/delete
+now projects immediately and correlates completion with its request. Definite
+rejection restores the baseline and retains editable content. Unknown outcomes
+and acknowledged cache failures use exact read-only provider inspection before
+adopting server state, including moved dates, remapped Google identities and
+later server edits. Inspection never repeats the mutation. AGENTS.md records
+the common contract, and client parity/scenarios retain the adoption gaps.
+
+Verification: 1,365 Rust tests pass, four ignored; both Clippy configurations,
+formatting and normal commit hooks pass. The hooks also exercise the renderer
+and profile codec. Client release tests (6), packaging tests (18) and the strict
+Zensical build pass. Native bulk/calendar/rapid-action execution passes 38
+scenarios, including five new flows; one live-mailbox scenario is skipped.
+Reviewed light and compact dark captures are retained under ignored
+`artifacts/e2e/`, including `d1ebae851664` (ten-message feedback),
+`bd92f5327555` (Undo), `1dec7dac753c` (failure/History) and `a56cf5872fc6`
+(calendar). Logs are `artifacts/logs/immediate-actions-*`.
+
+This is the first migration, not app-wide completion. Deferred admission and
+calendar recovery remain session state, protected by close/lifecycle guards;
+crash durability remains open. Other desktop domains and Flutter/browser adoption,
+mailbox-scale native latency, native calendar failure controls, live providers,
+Windows/macOS execution and release/install verification remain unclaimed.
+The 100,000-membership store regression guards production query plans and bounded
+observations; it is not a 100,000-message native performance measurement.
+
 ## Other accounts' folders in the Move dialog, 18 September 2026
 
 With "Search other accounts' folders when moving" on (it needs cross-account
