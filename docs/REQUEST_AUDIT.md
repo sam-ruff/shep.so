@@ -17,6 +17,14 @@ including five new flows. Implementation is `a1049ab`; the [completion log](COMP
 records its evidence and limits. App-wide adoption, durable
 session recovery and measured mailbox-scale latency remain active requirements.
 
+The next implementation slice adds durable native calendar admission/recovery,
+native flag receipt-before-cache repair, consistent reader flag projections and
+browser individual Activity with safe orphan-queue recovery, offline cancellation
+and durable Undo. Flutter individual admission and native queued Send are also
+implemented. Integrated browser controls, native calendar recovery and focused
+Send storage tests pass; final integration and shipping are in progress. The whole architecture remains active,
+including deferred native mail admission and the remaining domain adapters.
+
 **14 September mail sync speed and reliable moves (R100/R101):** Sam reports
 the related-messages notice after archiving (fixed, `3dabf16`) and a failed
 move whose notice names a missing folder namespace on `sam@shep.so`. Sam's

@@ -2,6 +2,22 @@
 
 ## Immediate actions checkpoint, 20 September
 
+Current uncommitted continuation adds durable calendar admission/Waiting,
+native flag receipt repair, browser individual Activity/offline cancellation/Undo,
+Flutter durable individual admission, and native prepared-message queued Send.
+The integrated browser gate passes 90 unit tests and 18 Chromium controls;
+Flutter's actual admission FFI and 21 workspace tests pass. Native bulk/calendar/
+rapid scenarios pass 40 tests plus the authentication-wait scenario, with one
+live mailbox skip. The latest library run passes 1,110 tests and queued Outbox
+storage passes 13; final native Send controls and shipping hooks are pending.
+
+Active isolated lanes own native field ownership/scheduling, Flutter checked
+recovery/Activity, and browser Send/account/preferences. Their frozen handoffs
+live under ignored `artifacts/`; integrate only reviewed, tested snapshots.
+Preserve the user-owned untracked `handover-fable.md`. No continuation checkpoint
+has been committed or pushed yet. Full domain adoption and measured mailbox-scale
+latency remain open; TODO is authoritative.
+
 `a1049ab` implements the first native mail/calendar migration requested by Sam.
 Review and confirmation no longer wait for prior provider writes; calendar
 save/delete uses shared projection outcomes and exact read-only recovery.

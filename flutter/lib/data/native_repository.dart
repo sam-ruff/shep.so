@@ -35,7 +35,8 @@ class NativeRepository
         AccountRemovalRepository,
         TextSearchRepository,
         FormattedMessageRepository,
-        PrintRepository {
+        PrintRepository,
+        MailActivityRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
   final CredentialStore credentials;
@@ -530,8 +531,17 @@ class NativeRepository
 
   @override
   Future<void> mutate(String id, Map<String, Object> fields) async {
+    await _mutate(id, fields, newDraftIdentity());
+  }
+
+  Future<void> _mutate(
+    String id,
+    Map<String, Object> fields,
+    String actionId,
+  ) async {
     final request = <String, Object?>{
       'op': 'mutate',
+      'action_id': actionId,
       'id': id,
       ...fields.map(
         (k, v) => MapEntry(k, k == 'folder' && v == 'Inbox' ? 'INBOX' : v),
@@ -555,6 +565,22 @@ class NativeRepository
         committed: result['committed'] == true,
       );
     }
+  }
+
+  @override
+  Future<List<MailActivity>> mailActions() async =>
+      ((await call({'op': 'mail_actions'}))['actions'] as List)
+          .cast<Map<String, dynamic>>()
+          .map(MailActivity.new)
+          .toList();
+
+  @override
+  Future<void> resumeMailAction(MailActivity action) async =>
+      _mutate(action.mail, action.fields, action.id);
+
+  @override
+  Future<void> cancelMailAction(String id) async {
+    await call({'op': 'cancel_mail_action', 'id': id});
   }
 
   @override

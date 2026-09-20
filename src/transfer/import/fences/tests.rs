@@ -8,6 +8,226 @@ use crate::{
 };
 
 #[tokio::test]
+async fn imported_flag_acknowledgements_keep_cache_only_repair_and_never_become_dispatchable() {
+    use crate::{mail_actions::Flags, model::MailQuery};
+    let original = tempfile::tempdir().expect("source directory");
+    let local = tempfile::tempdir().expect("destination directory");
+    let path = original.path().join("source.sqlite");
+    let source = super::super::tests::workspace(&path).await;
+    let mail = source.query(MailQuery::default()).await.expect("page").rows[0].clone();
+    let changes = Flags {
+        unread: None,
+        starred: Some(!mail.starred),
+    };
+    source
+        .start_individual_mail_action(
+            "acknowledged".into(),
+            mail.clone(),
+            bulk::Action::Flags(changes),
+        )
+        .await
+        .expect("admission");
+    let item = source
+        .claim_bulk_item("acknowledged".into())
+        .await
+        .expect("claim")
+        .expect("item");
+    source
+        .acknowledge_bulk_flags(
+            item,
+            bulk::Receipt::Flags {
+                before: Flags {
+                    unread: None,
+                    starred: Some(mail.starred),
+                },
+                after: changes,
+            },
+        )
+        .await
+        .expect("receipt");
+    let destination = Store::open(local.path().join("shep.sqlite")).expect("destination");
+    let catalog = crate::profiles::Catalog::open(local.path(), "shep.sqlite").expect("catalogue");
+    let prepared = stage(destination, path)
+        .await
+        .expect("stage")
+        .finish()
+        .await
+        .expect("join")
+        .expect("prepared");
+    let saved = prepared
+        .install(catalog, "Another device".into(), Preferences::default())
+        .expect("install")
+        .finish()
+        .await
+        .expect("join")
+        .expect("saved");
+    let imported = Store::open(saved.path).expect("imported");
+    let job = imported.bulk_job("acknowledged".into()).await.expect("job");
+    assert!(job.paused);
+    assert_eq!(job.uncertain, 0);
+    assert!(
+        imported
+            .claim_bulk_item(job.id.clone())
+            .await
+            .expect("no provider replay")
+            .is_none()
+    );
+    let lease = imported.bulk_lease(job.id).await.expect("lease");
+    imported
+        .resume_bulk(&lease)
+        .await
+        .expect("explicit continue");
+    let item = imported
+        .pending_bulk_flag_repair(&lease)
+        .await
+        .expect("repair")
+        .expect("receipt");
+    imported
+        .finish_bulk_item(item, Ok(bulk::Receipt::Unchanged))
+        .await
+        .expect("cache repair");
+    assert_eq!(
+        imported
+            .mail_metadata(mail.id.clone())
+            .await
+            .expect("repaired")
+            .starred,
+        !mail.starred
+    );
+    assert_eq!(
+        source
+            .mail_metadata(mail.id)
+            .await
+            .expect("source unchanged")
+            .starred,
+        mail.starred
+    );
+}
+
+#[tokio::test]
+async fn calendar_import_fences_queued_work_and_preserves_cache_only_receipts() {
+    let original = tempfile::tempdir().expect("original");
+    let local = tempfile::tempdir().expect("local");
+    let path = original.path().join("source.sqlite");
+    let source = super::super::tests::workspace(&path).await;
+    source
+        .put(
+            "calendars",
+            vec![crate::model::CalendarSource {
+                id: "home".into(),
+                name: "Home".into(),
+                kind: crate::model::CalendarKind::CalDav,
+                url: "https://example.test/home/".into(),
+                username: "fixture".into(),
+                access: Default::default(),
+            }],
+        )
+        .await
+        .expect("source");
+    let start = chrono::Utc::now();
+    let mut event = crate::model::CalendarEvent {
+        id: "one".into(),
+        source_id: "home".into(),
+        title: "Retained".into(),
+        start,
+        end: start + chrono::Duration::hours(1),
+        all_day: false,
+        etag: Some("v1".into()),
+        remote_url: None,
+        location: String::new(),
+        description: String::new(),
+    };
+    source
+        .admit_calendar_action("ack".into(), event.clone(), false)
+        .await
+        .expect("admit");
+    let job = source
+        .claim_calendar_action("ack".into())
+        .await
+        .expect("claim");
+    source
+        .record_calendar_receipt("ack".into(), job.revision, event.clone())
+        .await
+        .expect("receipt");
+    event.id = "two".into();
+    source
+        .admit_calendar_action("queued".into(), event, false)
+        .await
+        .expect("queued");
+    let destination = Store::open(local.path().join("shep.sqlite")).expect("destination");
+    let catalog = crate::profiles::Catalog::open(local.path(), "shep.sqlite").expect("catalog");
+    let prepared = stage(destination, path)
+        .await
+        .expect("stage")
+        .finish()
+        .await
+        .expect("finish")
+        .expect("prepared");
+    let saved = prepared
+        .install(catalog, "Other device".into(), Preferences::default())
+        .expect("install")
+        .finish()
+        .await
+        .expect("finish")
+        .expect("saved");
+    let imported = Store::open(saved.path).expect("imported");
+    assert_eq!(
+        imported
+            .calendar_job("queued".into())
+            .await
+            .expect("fenced")
+            .status,
+        "uncertain"
+    );
+    assert!(
+        imported
+            .claim_calendar_action("queued".into())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        imported
+            .calendar_job("ack".into())
+            .await
+            .expect("receipt")
+            .status,
+        "repair"
+    );
+    imported
+        .apply_calendar_receipt("ack".into())
+        .await
+        .expect("cache only");
+    assert!(
+        imported
+            .next_calendar_action()
+            .await
+            .expect("next")
+            .is_none()
+    );
+    imported
+        .run(|c| {
+            assert_eq!(
+                count(
+                    c,
+                    "SELECT count(*) FROM imported_operations WHERE kind='calendar-action'"
+                )?,
+                2
+            );
+            Ok(())
+        })
+        .await
+        .expect("archive");
+    assert_eq!(
+        source
+            .calendar_job("queued".into())
+            .await
+            .expect("original")
+            .status,
+        "queued"
+    );
+}
+
+#[tokio::test]
 async fn profile_enrollment_is_archived_on_database_import_without_replaying_device_sync() {
     use crate::profile_sync::enrollment::{Enrollment, SEED_KEY, STORAGE_KEY};
     let original = tempfile::tempdir().unwrap();
@@ -134,6 +354,7 @@ async fn import_preserves_mail_and_receipts_but_requires_review_of_other_device_
     let account = source.get::<Vec<Account>>("accounts").await.unwrap()[0].clone();
     let mut attempts = Vec::new();
     for (index, delivery) in [
+        DeliveryState::Queued,
         DeliveryState::Submitting,
         DeliveryState::Rejected,
         DeliveryState::Accepted,
@@ -150,15 +371,18 @@ async fn import_preserves_mail_and_receipts_but_requires_review_of_other_device_
             ..Default::default()
         };
         source.save_draft(draft.clone()).await.unwrap();
-        let wire = Submission::new(
+        let mut wire = Submission::new(
             account.clone(),
             &draft,
             crate::compose::build(&account, &draft, vec![]).unwrap(),
         )
         .unwrap();
+        if delivery == DeliveryState::Queued {
+            wire.info.delivery = DeliveryState::Queued;
+        }
         let raw = wire.raw.clone();
         let info = source.begin_outgoing(wire, draft).await.unwrap();
-        if delivery != DeliveryState::Submitting {
+        if !matches!(delivery, DeliveryState::Queued | DeliveryState::Submitting) {
             source
                 .record_delivery(info.attempt.clone(), delivery, None)
                 .await
@@ -255,7 +479,7 @@ async fn import_preserves_mail_and_receipts_but_requires_review_of_other_device_
             prepared.review.pending_outgoing,
             prepared.review.pending_credentials
         ),
-        (1, 1, 3, 1)
+        (1, 1, 4, 1)
     );
     let saved = prepared
         .install(catalog, "Reviewed import".into(), local_preferences.clone())
@@ -341,7 +565,7 @@ async fn import_preserves_mail_and_receipts_but_requires_review_of_other_device_
                     c,
                     "SELECT count(*) FROM imported_operations WHERE kind='outgoing'"
                 )?,
-                3
+                4
             );
             assert_eq!(
                 count(
@@ -393,7 +617,7 @@ async fn version_two_exports_migrate_privately_and_future_stores_are_not_modifie
     source
         .run(|c| {
             c.execute_batch(
-                "DROP TABLE backup_history; DROP TABLE imported_operations; PRAGMA user_version=2;",
+                "DROP TABLE backup_history; DROP TABLE imported_operations; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; PRAGMA user_version=2;",
             )?;
             Ok(())
         })
@@ -415,6 +639,10 @@ async fn version_two_exports_migrate_privately_and_future_stores_are_not_modifie
         .await
         .unwrap()
         .unwrap();
+    {
+        let copy = Connection::open(&saved.path).expect("prepared copy");
+        assert_eq!(count(&copy, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name IN ('bulk_flag_receipts','calendar_actions')").expect("action schemas"), 2);
+    }
     let imported = Store::open(saved.path).unwrap();
     imported
         .run(|c| {
@@ -517,7 +745,7 @@ async fn backup_history_version_three_exports_migrate_without_changing_the_sourc
     let source = super::super::tests::workspace(&path).await;
     source
         .run(|c| {
-            c.execute_batch("DROP TABLE backup_history; PRAGMA user_version=3;")?;
+            c.execute_batch("DROP TABLE backup_history; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; PRAGMA user_version=3;")?;
             Ok(())
         })
         .await
@@ -597,7 +825,7 @@ async fn backup_history_old_import_marker_recovery_migrates_without_repeating_pr
             r.get(0)
         })
         .unwrap();
-    c.execute_batch("DROP TABLE backup_history; PRAGMA user_version=3;")
+    c.execute_batch("DROP TABLE backup_history; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; PRAGMA user_version=3;")
         .unwrap();
     drop(c);
     // An older app already prepared the same profile before an interrupted

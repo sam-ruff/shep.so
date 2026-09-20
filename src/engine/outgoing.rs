@@ -8,8 +8,11 @@ impl Engine {
         output.send(Event::OutgoingChanged).await?;
         Ok(())
     }
-    pub(super) async fn send_draft(&self, draft: Draft, output: &mut Output) -> anyhow::Result<()> {
-        let _guard = self.account_access(&draft.account_id).await;
+    pub(super) async fn queue_draft(
+        &self,
+        draft: Draft,
+        output: &mut Output,
+    ) -> anyhow::Result<()> {
         self.store
             .ensure_folder_idle(draft.account_id.clone())
             .await?;
@@ -38,7 +41,7 @@ impl Engine {
         let account = self.account(&draft.account_id).await?;
         let files = self.store.draft_files(draft.clone()).await?;
         let build_draft = draft.clone();
-        let submission = tokio::task::spawn_blocking(move || {
+        let mut submission = tokio::task::spawn_blocking(move || {
             let message = crate::compose::build(&account, &build_draft, files)?;
             Submission::new(account, &build_draft, message)
         })
@@ -50,14 +53,83 @@ impl Engine {
             tokio::time::sleep(Duration::from_millis(1600)).await;
         }
         anyhow::ensure!(
-            !self.demo,
+            !self.demo
+                || (cfg!(feature = "test-support")
+                    && std::env::args().any(|arg| arg == "--held-provider-slots")),
             "Sending is disabled in preview. Your draft is saved locally."
         );
-        let info = self.store.begin_outgoing(submission, draft.clone()).await?;
-        self.outgoing_changed(output).await?;
+        submission.info.delivery = DeliveryState::Queued;
+        self.store.begin_outgoing(submission, draft.clone()).await?;
         output
             .send(Event::SubmissionQueued(draft.id.clone(), draft.revision))
             .await?;
+        self.outgoing_changed(output).await?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    async fn send_draft(&self, draft: Draft, output: &mut Output) -> anyhow::Result<()> {
+        self.queue_draft(draft.clone(), output).await?;
+        let info = self
+            .store
+            .outgoing_for_draft(draft.id)
+            .await?
+            .context("The queued message is missing.")?;
+        self.submit_outgoing(&info.attempt, output).await
+    }
+
+    pub(super) async fn drain_outgoing(&self, mut output: Output) {
+        while !self.bulk_control.stopping.get() {
+            let attempt = match self.store.next_queued_outgoing().await {
+                Ok(Some(attempt)) => attempt,
+                Ok(None) => break,
+                Err(error) => {
+                    let _ = output
+                        .send(Event::Error(format!(
+                            "Could not load queued messages. Open Outbox. {error:#}"
+                        )))
+                        .await;
+                    break;
+                }
+            };
+            self.bulk_control.active.set(true);
+            let result = self.submit_outgoing(&attempt, &mut output).await;
+            self.bulk_control.active.set(false);
+            if let Err(error) = result {
+                let _ = output
+                    .send(Event::Error(format!(
+                        "An outgoing message needs attention in Outbox. {error:#}"
+                    )))
+                    .await;
+                break;
+            }
+        }
+        if self.bulk_control.stopping.get() {
+            let _ = output.send(Event::BulkStopped).await;
+        }
+    }
+
+    async fn submit_outgoing(&self, attempt: &str, output: &mut Output) -> anyhow::Result<()> {
+        let initial = self.store.outgoing_info(attempt.into()).await?;
+        let _slot = tokio::select! {
+            biased;
+            _ = self.bulk_control.stopping.requested() => return Ok(()),
+            permit = self.provider_slots.acquire() => permit,
+        };
+        let _guard = tokio::select! {
+            biased;
+            _ = self.bulk_control.stopping.requested() => return Ok(()),
+            guard = self.account_access(&initial.account_id) => guard,
+        };
+        anyhow::ensure!(!self.demo, "Sending is disabled in preview.");
+        if self.bulk_control.stopping.get() {
+            return Ok(());
+        }
+        if !self.store.claim_outgoing(attempt.into()).await? {
+            self.outgoing_changed(output).await?;
+            return Ok(());
+        }
+        let info = self.store.outgoing_info(attempt.into()).await?;
         let submission = self.store.outgoing_submission(info.attempt.clone()).await?;
         match self.outbound.submit(&submission).await {
             Ok(()) => {
@@ -65,7 +137,9 @@ impl Engine {
                     .store
                     .record_delivery(info.attempt.clone(), DeliveryState::Accepted, None)
                     .await;
-                output.send(Event::Sent(draft.id, draft.revision)).await?;
+                output
+                    .send(Event::Sent(info.draft_id.clone(), info.draft_revision))
+                    .await?;
                 recorded.context("SMTP accepted this message, but its acknowledgment could not be saved. Review Outbox; do not resend it.")?;
                 self.finish_outgoing_local(&info.attempt, output).await?;
                 let result = self.copy_outgoing(&info.attempt, false, false).await;
@@ -90,7 +164,10 @@ impl Engine {
                 self.outgoing_changed(output).await?;
                 if state == DeliveryState::Uncertain {
                     output
-                        .send(Event::ReviewOutgoing(draft.id.clone(), draft.revision))
+                        .send(Event::ReviewOutgoing(
+                            info.draft_id.clone(),
+                            info.draft_revision,
+                        ))
                         .await?;
                 }
                 return Err(error.into());
@@ -224,6 +301,15 @@ impl Engine {
         output: &mut Output,
     ) -> anyhow::Result<()> {
         let initial = self.store.outgoing_info(attempt.clone()).await?;
+        if action == RecoveryAction::ReturnDraft && initial.delivery == DeliveryState::Queued {
+            self.store.cancel_queued_outgoing(attempt).await?;
+            output
+                .send(Event::Notice(
+                    "Returned to drafts. No message was sent.".into(),
+                ))
+                .await?;
+            return Ok(());
+        }
         let _guard = self.account_access(&initial.account_id).await;
         self.store
             .ensure_folder_idle(initial.account_id.clone())
@@ -232,7 +318,11 @@ impl Engine {
         match action {
             RecoveryAction::ReturnDraft => {
                 anyhow::ensure!(
-                    confirmed || info.delivery == DeliveryState::Rejected,
+                    confirmed
+                        || matches!(
+                            info.delivery,
+                            DeliveryState::Queued | DeliveryState::Rejected
+                        ),
                     "Confirm that you reviewed the uncertain delivery before returning it to drafts."
                 );
                 self.store.release_outgoing(attempt).await?;
@@ -440,6 +530,50 @@ mod tests {
             revision: 1,
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn queued_send_admits_without_account_or_provider_capacity_and_cancels_without_smtp() {
+        let state = Arc::new(State::default());
+        let engine = engine(state.clone()).await;
+        let account_guard = engine.account_access("work").await;
+        let mut permits = Vec::new();
+        for _ in 0..super::super::dispatch::NETWORK_CONCURRENCY {
+            permits.push(engine.provider_slots.acquire().await);
+        }
+        let (mut output, _rx) = futures::channel::mpsc::channel(32);
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            engine.queue_draft(draft(), &mut output),
+        )
+        .await
+        .expect("local admission must not wait for providers")
+        .unwrap();
+        let queued = engine
+            .store
+            .outgoing_for_draft("draft".into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(queued.delivery, DeliveryState::Queued);
+        assert_eq!(state.sends.load(Ordering::SeqCst), 0);
+        engine
+            .resolve_outgoing(
+                queued.attempt,
+                RecoveryAction::ReturnDraft,
+                false,
+                &mut output,
+            )
+            .await
+            .unwrap();
+        drop(account_guard);
+        drop(permits);
+        engine.drain_outgoing(output).await;
+        assert_eq!(state.sends.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            engine.store.draft_state().await.unwrap().drafts[0].body,
+            draft().body
+        );
     }
     async fn engine(state: Arc<State>) -> Engine {
         let mut e = super::super::calendar_tests::engine();

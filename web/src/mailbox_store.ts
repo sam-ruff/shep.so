@@ -28,6 +28,7 @@ const sourceStores = [
   "cacheState",
   "mailChanges",
   "mailIntents",
+  "mailActions",
   "mailMetadata",
 ];
 const triggers = `CREATE TRIGGER IF NOT EXISTS messages_insert AFTER INSERT ON messages BEGIN

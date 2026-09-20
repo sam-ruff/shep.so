@@ -163,15 +163,7 @@ impl Api<'_> {
         if response.status() == reqwest::StatusCode::CONFLICT
             || response.status() == reqwest::StatusCode::PRECONDITION_FAILED
         {
-            let data = super::response_json(
-                self.http
-                    .get(url)
-                    .bearer_auth(self.token)
-                    .send()
-                    .await?
-                    .error_for_status()?,
-            )
-            .await?;
+            let data = super::preflight_json(self.http.get(url).bearer_auth(self.token)).await?;
             let saved = parse_event(&data, source)?;
             anyhow::ensure!(
                 saved.id == id
@@ -325,7 +317,8 @@ impl CalendarProvider for GoogleCalendar {
                 &self.preferences,
                 crate::providers::google::Service::CalendarWrite,
             )
-            .await?;
+            .await
+            .map_err(super::credential_failure)?;
         Api {
             http: &self.google.http,
             base: self.google.api_base.join("calendar/v3/calendars/")?,
@@ -345,7 +338,8 @@ impl CalendarProvider for GoogleCalendar {
                 &self.preferences,
                 crate::providers::google::Service::CalendarWrite,
             )
-            .await?;
+            .await
+            .map_err(super::credential_failure)?;
         Api {
             http: &self.google.http,
             base: self.google.api_base.join("calendar/v3/calendars/")?,

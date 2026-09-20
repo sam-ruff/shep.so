@@ -591,7 +591,7 @@ impl App {
         .into()
     }
     pub(super) fn reader_toolbar<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
-        let summary = self.mail_actions.effective(&detail.summary);
+        let (unread, starred) = self.displayed_mail_flags(&detail.summary);
         let toolbar = row![
             self.icon_action(
                 "archive",
@@ -604,8 +604,8 @@ impl App {
                 Message::Move("Trash".into())
             ),
             self.icon_action(
-                if summary.unread { "mail" } else { "mail-open" },
-                if summary.unread {
+                if unread { "mail" } else { "mail-open" },
+                if unread {
                     "Mark as read"
                 } else {
                     "Mark as unread"
@@ -615,14 +615,14 @@ impl App {
             self.toggle_icon_action(
                 "flag",
                 self.shortcut_hint(
-                    if summary.starred {
+                    if starred {
                         "Remove flag"
                     } else {
                         "Flag message"
                     },
                     Action::Star
                 ),
-                summary.starred,
+                starred,
                 Message::ToggleStar
             ),
             self.icon_action(

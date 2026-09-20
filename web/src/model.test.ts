@@ -67,7 +67,8 @@ it("reserves queued inputs before older work finishes and consumes early reserva
   expect(repo.reservations).toEqual([{ starred: true }, { starred: false }]);
   await tick();
   expect(repo.jobs).toHaveLength(1);
-  expect(w.mail[0].starred).toBe(false);
+  expect(w.mail[0].starred).toBe(true);
+  expect(w.error).toContain("intent storage failure");
   repo.jobs[0].resolve();
   await Promise.all([first, second]);
   expect(repo.jobs).toHaveLength(1);
@@ -89,6 +90,26 @@ it("superseded archive does not report a provider commit or retain its Undo", as
   expect(w.mail[0].folder).toBe("Inbox");
   expect(w.moves.visible).toBe(false);
   expect(w.error).toBeNull();
+  w.dispose();
+});
+
+it("an early admission rollback leaves the earlier provider failure owning its field", async () => {
+  class Reserved extends Controlled {
+    count = 0;
+    async registerMutation(id: string, fields: Fields): Promise<IntentLease> {
+      if (++this.count === 2) throw Error("Fixture admission failure");
+      return { id, account: "work", revision: this.count, fields };
+    }
+  }
+  const repo = new Reserved(), w = new Workspace(repo, new Settings());
+  const first = w.action("1", "star"), second = w.action("1", "star");
+  await tick();
+  expect(w.mail[0].starred).toBe(true);
+  expect(w.error).toContain("admission failure");
+  repo.jobs[0].reject();
+  await Promise.all([first, second]);
+  expect(w.mail[0].starred).toBe(false);
+  expect(repo.jobs).toHaveLength(1);
   w.dispose();
 });
 it("an unsent move and its Undo retire reservations without dispatch", async () => {
@@ -304,6 +325,44 @@ describe("server acknowledgments and recovery", () => {
     await tick();
     expect(calls).toBe(1);
     expect(refreshes).toBe(1);
+  });
+  it("keeps an uncertain durable action projected without offering another mutation", async () => {
+    class Durable extends Controlled {
+      async registerMutation(id: string, fields: Fields) {
+        return { id, fields, account: "work", revision: 1, action: "0000000000000001" };
+      }
+      override async mutate() { throw new MutationFailure("Server outcome is unknown. Check Activity."); }
+    }
+    const w = new Workspace(new Durable(), new Settings());
+    try {
+      await w.action("1", "archive");
+      expect(w.mail.find(m => m.id === "1")?.folder).toBe("Archive");
+      expect(w.error).toContain("outcome is unknown");
+      expect(w.undo).toBeNull();
+    } finally { w.dispose(); }
+  });
+  it("cancelling a saved queued flag restores it before an earlier provider operation finishes", async () => {
+    class Durable extends Controlled {
+      serial = 0;
+      async registerMutation(id: string, fields: Fields) {
+        const revision = ++this.serial;
+        return { id, fields, account: "work", revision, action: String(revision) };
+      }
+    }
+    const repo = new Durable(), w = new Workspace(repo, new Settings());
+    try {
+      const first = w.change("1", { unread: false });
+      await tick();
+      const second = w.change("1", { starred: true });
+      await tick();
+      w.cancelSavedProjection("2");
+      expect(w.mail[0].starred).toBe(false);
+      expect(w.mail[0].unread).toBe(false);
+      expect(repo.jobs).toHaveLength(1);
+      repo.jobs[0].resolve();
+      await Promise.all([first, second]);
+      expect(repo.jobs).toHaveLength(1);
+    } finally { w.dispose(); }
   });
 });
 

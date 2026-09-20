@@ -211,7 +211,7 @@ function connect(
     ].filter((input) => !input.disabled);
     for (const input of editable) input.disabled = true;
     try {
-      await repo.connect(
+      await repo.queueConnection(
         next,
         value("Incoming password"),
         check.checked ? value("SMTP password") : value("Incoming password"),
@@ -427,7 +427,7 @@ function removeAccount(
 }
 export function accountPanel(
   repo: GatewayRepository,
-  changed: (removed?: string) => void,
+  changed: (removed?: string, notice?: string) => void,
 ) {
   const panel = node("section");
   panel.className = "settings-card";
@@ -450,7 +450,7 @@ export function accountPanel(
               : "Reconnect to refresh or send",
         ),
         button(`Reconnect ${account.email}`, () =>
-          connect(repo, endpoints, changed, account),
+          connect(repo, endpoints, () => changed(undefined, "Connection check queued"), account),
         ),
       );
       row.append(
@@ -471,8 +471,24 @@ export function accountPanel(
     }
     if (endpoints.length)
       panel.append(
-        button("Add mail account", () => connect(repo, endpoints, changed)),
+        button("Add mail account", () => connect(repo, endpoints, () => changed(undefined, "Connection check queued"))),
       );
+    void repo.connectionProgress().then(attempts => {
+      if (!panel.isConnected) return;
+      for (const attempt of attempts) {
+        const row = node("section");
+        row.className = "settings-card";
+        row.append(node("h3", `Connection: ${attempt.account.email}`));
+        const progress = node("p", attempt.error ?? "Connection is not yet confirmed. Re-enter the password to replace a pending or interrupted check.");
+        progress.role = "status";
+        row.append(progress,
+          button(`Retry connection for ${attempt.account.email}`, () => connect(repo, endpoints, () => changed(undefined, "Connection check queued"), attempt.account)),
+          button(`Dismiss connection for ${attempt.account.email}`, () => {
+            void repo.dismissConnection(attempt).then(() => changed(undefined, "Connection attempt dismissed"), error => { progress.textContent = error instanceof Error ? error.message : "Could not dismiss this attempt. Retry."; });
+          }));
+        panel.append(row);
+      }
+    }).catch(error => { if (panel.isConnected) status.textContent = error instanceof Error ? error.message : "Saved connection progress could not load. Reopen Preferences."; });
   };
   void repo
     .capabilities()

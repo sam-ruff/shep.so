@@ -20,7 +20,9 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     if std::env::args().any(|arg| arg == "--large-incoming") {
         large_incoming::seed(store).await?;
     }
-    if std::env::args().any(|a| a == "--bulk-history") {
+    if std::env::args().any(|a| a == "--bulk-flag-repair") {
+        bulk_history::seed_flag_repair(store).await?;
+    } else if std::env::args().any(|a| a == "--bulk-history") {
         bulk_history::seed(store).await?;
     }
     move_recovery::seed(store).await?;

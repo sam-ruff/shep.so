@@ -1,6 +1,6 @@
 use super::*;
 
-const NETWORK_CONCURRENCY: usize = 8;
+pub(super) const NETWORK_CONCURRENCY: usize = 8;
 
 #[derive(Clone)]
 pub(super) struct Slots(Arc<tokio::sync::Semaphore>);
@@ -69,6 +69,15 @@ impl CommandSender {
     #[cfg(test)]
     pub(crate) fn network_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
+        (sender, inputs.network)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn calendar_test_channel() -> (Self, mpsc::Receiver<Command>) {
+        let (mut sender, inputs) = Self::channel();
+        sender.persistence = sender.network.clone();
+        sender.bulk = sender.network.clone();
+        sender.selections = sender.network.clone();
         (sender, inputs.network)
     }
 
@@ -201,6 +210,11 @@ impl CommandSender {
             | Command::BulkJobs(..)
             | Command::BulkItems(..) => &self.reads,
             Command::SavePreferences(..)
+            | Command::Send(_)
+            | Command::ResolveOutgoing(_, crate::outgoing::RecoveryAction::ReturnDraft, _)
+            | Command::AdmitCalendarAction(..)
+            | Command::ResolveCalendarJob(..)
+            | Command::RetryCalendarJob(..)
             | Command::SaveDraft(_)
             | Command::AutoSaveDraft(_)
             | Command::DeleteDraft(_)
@@ -243,8 +257,8 @@ async fn network_operation<Fut: std::future::Future<Output = anyhow::Result<()>>
             | Command::RepairOutgoing
             | Command::IndexConversations
             | Command::ConnectCalendars(..)
-            | Command::CalendarAction(..)
             | Command::InspectCalendarAction(..)
+            | Command::CheckCalendarJob(..)
             | Command::SaveAccount(..)
             | Command::RemoveConnection(..)
             | Command::CleanupCredentials
@@ -319,8 +333,14 @@ impl Engine {
     async fn run_persistence(self, mut input: mpsc::Receiver<Command>, mut output: Output) {
         // Settings/draft writes retain FIFO order while reads and providers continue.
         while let Some(command) = input.recv().await {
+            let outgoing_key = matches!(&command, Command::Send(_) | Command::ResolveOutgoing(..))
+                .then(|| command.key())
+                .flatten();
             if let Err(e) = self.execute(command, output.clone()).await {
                 let _ = output.send(Event::Error(format!("{e:#}"))).await;
+            }
+            if let Some(key) = outgoing_key {
+                let _ = output.send(Event::Busy(key, false)).await;
             }
         }
     }
@@ -402,6 +422,29 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn calendar_admission_uses_local_queue_when_provider_queue_is_full() {
+        let (sender, mut inputs) = CommandSender::channel();
+        for _ in 0..CHANNEL_CAPACITY {
+            sender
+                .try_send(Command::LoadImages(vec![]))
+                .expect("fill provider queue");
+        }
+        assert!(sender.try_send(Command::LoadImages(vec![])).is_err());
+        sender
+            .try_send(Command::AdmitCalendarAction(
+                7,
+                "stable".into(),
+                super::super::calendar_tests::event("home"),
+                false,
+            ))
+            .expect("independent admission");
+        assert!(matches!(
+            inputs.persistence.recv().await,
+            Some(Command::AdmitCalendarAction(7, _, _, false))
+        ));
+    }
 
     #[tokio::test(start_paused = true)]
     async fn pending_move_recovery_observes_commit_beyond_read_timeout() {

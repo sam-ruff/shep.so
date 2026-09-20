@@ -185,6 +185,7 @@ pub struct MailMembership {
     pub account: String,
     pub folder: String,
     pub unread: bool,
+    pub starred: bool,
 }
 impl From<&Mail> for MailMembership {
     fn from(mail: &Mail) -> Self {
@@ -192,6 +193,7 @@ impl From<&Mail> for MailMembership {
             account: mail.account_id.clone(),
             folder: mail.folder.clone(),
             unread: mail.unread,
+            starred: mail.starred,
         }
     }
 }

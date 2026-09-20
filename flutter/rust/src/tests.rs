@@ -161,9 +161,14 @@ async fn paging_search_detail_and_pop_flags_persist_across_reopen() {
     assert_eq!(punctuation["total"], 0);
     request(
         &p,
-        json!({"op":"mutate","id":id,"folder":"Archive","unread":false,"starred":true}),
+        json!({"op":"mutate","action_id":"individual-one","id":id,"folder":"Archive","unread":false,"starred":true}),
     )
     .await;
+    let actions = request(&p, json!({"op":"mail_actions"})).await;
+    assert_eq!(actions["actions"].as_array().unwrap().len(), 1);
+    assert_eq!(actions["actions"][0]["id"], "individual-one");
+    assert_eq!(actions["actions"][0]["status"], "succeeded");
+    assert_eq!(actions["actions"][0]["fields"]["folder"], "Archive");
     let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_str().unwrap().into())
         .await
         .unwrap();
@@ -172,6 +177,159 @@ async fn paging_search_detail_and_pop_flags_persist_across_reopen() {
     assert_eq!(archived["mail"][0]["unread"], false);
     assert_eq!(archived["mail"][0]["starred"], true);
     assert_eq!(request(&reopened, page(0)).await["unread"], 62);
+}
+
+#[tokio::test]
+async fn interrupted_individual_action_requires_review_after_reopen() {
+    let (dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database.write(|db| {
+        db.execute("INSERT INTO individual_mail_actions(id,mail,account,fields,status,created) VALUES('held','fixture:INBOX:0','fixture','{\"unread\":false}','running',1)",[])?;
+        Ok(())
+    }).await.unwrap();
+    drop(p);
+    let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_str().unwrap().into())
+        .await
+        .unwrap();
+    let actions = request(&reopened, json!({"op":"mail_actions"})).await;
+    assert_eq!(actions["actions"][0]["status"], "uncertain");
+    assert!(
+        actions["actions"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("Refresh")
+    );
+}
+
+#[tokio::test]
+async fn queued_individual_action_can_cancel_before_provider_dispatch() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        request(
+            &p,
+            json!({"op":"mutate","action_id":"queued","id":"fixture:INBOX:0","folder":"Archive"})
+        )
+        .await["status"],
+        "waiting"
+    );
+    assert_eq!(
+        request(&p, json!({"op":"cancel_mail_action","id":"queued"})).await["status"],
+        "cancelled"
+    );
+    assert_eq!(
+        request(&p, json!({"op":"mail_actions"})).await["actions"][0]["status"],
+        "cancelled"
+    );
+    assert_eq!(request(&p, page(0)).await["total"], 1);
+    assert_eq!(
+        p.database
+            .read(
+                |db| Ok(db.query_row("SELECT COUNT(*) FROM mail_intents", [], |r| r
+                    .get::<_, i64>(0))?),
+            )
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn startup_resume_cancels_an_action_superseded_by_newer_field_intent() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let first =
+        json!({"op":"mutate","action_id":"older","id":"fixture:INBOX:0","folder":"Archive"});
+    assert_eq!(request(&p, first.clone()).await["status"], "waiting");
+    assert_eq!(
+        request(
+            &p,
+            json!({"op":"mutate","action_id":"newer","id":"fixture:INBOX:0","folder":"Trash"})
+        )
+        .await["status"],
+        "waiting"
+    );
+    assert_eq!(request(&p, first).await["status"], "cancelled");
+    assert_eq!(request(&p, page(0)).await["mail"][0]["folder"], "INBOX");
+}
+
+#[tokio::test]
+async fn terminal_individual_action_survives_source_removal() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    let action =
+        json!({"op":"mutate","action_id":"finished","id":"fixture:INBOX:0","unread":false});
+    assert_eq!(request(&p, action.clone()).await["status"], "succeeded");
+    p.database
+        .write(|db| {
+            db.execute("DELETE FROM mail WHERE id='fixture:INBOX:0'", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(request(&p, action).await["status"], "succeeded");
+}
+
+#[tokio::test]
+async fn changed_physical_identity_rejects_waiting_action_once() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let action = json!({"op":"mutate","action_id":"changed","id":"fixture:INBOX:0","unread":false});
+    assert_eq!(request(&p, action.clone()).await["status"], "waiting");
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE mail SET remote_id='replacement' WHERE id='fixture:INBOX:0'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let rejected = request(&p, action.clone()).await;
+    assert_eq!(rejected["status"], "rejected");
+    assert_eq!(rejected["committed"], false);
+    assert_eq!(request(&p, action).await["status"], "rejected");
+    assert_eq!(
+        p.database
+            .read(
+                |db| Ok(db.query_row("SELECT COUNT(*) FROM mail_intents", [], |r| r
+                    .get::<_, i64>(0))?),
+            )
+            .await
+            .unwrap(),
+        0
+    );
 }
 
 #[tokio::test]

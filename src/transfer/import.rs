@@ -276,6 +276,11 @@ fn validate_schema_in(
         "This database version is not supported. Use matching, current Shep versions on both devices."
     );
     let mut expected = expected.clone();
+    if version < 6 {
+        expected.retain(|_, (_, owner, _)| {
+            !matches!(owner.as_str(), "calendar_actions" | "bulk_flag_receipts")
+        });
+    }
     if version < 4 {
         expected.retain(|_, (_, owner, _)| owner != "backup_history");
     }

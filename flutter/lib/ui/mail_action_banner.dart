@@ -40,6 +40,24 @@ class MailActionBanner extends StatelessWidget {
               child: Text(label),
             ),
           ),
+        for (final action in workspace.mailActivityPending.take(1))
+          Semantics(
+            liveRegion: true,
+            child: ToastCard(
+              trailing: [
+                if (action.canResume)
+                  TextButton(
+                    onPressed: () => workspace.cancelMailActivity(action),
+                    child: const Text('Cancel'),
+                  ),
+              ],
+              child: Text(
+                action.status == 'waiting'
+                    ? 'Mail change waiting for connection'
+                    : 'Mail change waiting to sync',
+              ),
+            ),
+          ),
         if (workspace.undoFailures.isNotEmpty)
           Semantics(
             liveRegion: true,
@@ -83,6 +101,32 @@ class MailActionBanner extends StatelessWidget {
                             child: const Text('Refresh restored mail'),
                           ),
                       ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        for (final action in workspace.mailActivityReview.take(3))
+          Semantics(
+            liveRegion: true,
+            child: Material(
+              color: c.errorSurface,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 16, right: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        action.error ?? 'A mail action needs review.',
+                        style: TextStyle(color: c.text),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => workspace.retryMailActivity(action),
+                      child: Text(
+                        action.status == 'rejected' ? 'Retry' : 'Review',
+                      ),
                     ),
                   ],
                 ),

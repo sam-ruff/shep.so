@@ -280,6 +280,59 @@ pub fn mutation_is_uncertain(error: &anyhow::Error) -> bool {
     error.downcast_ref::<MutationUncertain>().is_some()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum WaitReason {
+    Offline,
+    Authentication,
+}
+
+impl std::fmt::Display for WaitReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Offline => "Waiting for the calendar server",
+            Self::Authentication => "Reconnect or unlock this calendar, then retry",
+        })
+    }
+}
+
+impl std::error::Error for WaitReason {}
+
+pub fn mutation_wait_reason(error: &anyhow::Error) -> Option<WaitReason> {
+    if mutation_is_uncertain(error) {
+        return None;
+    }
+    error.downcast_ref::<WaitReason>().copied()
+}
+
+fn before_dispatch(error: anyhow::Error) -> anyhow::Error {
+    let Some(network) = error.downcast_ref::<reqwest::Error>() else {
+        return error;
+    };
+    let reason = match network.status() {
+        Some(reqwest::StatusCode::UNAUTHORIZED) => Some(WaitReason::Authentication),
+        Some(status)
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() =>
+        {
+            Some(WaitReason::Offline)
+        }
+        None if !network.is_builder() => Some(WaitReason::Offline),
+        _ => None,
+    };
+    match reason {
+        Some(reason) => error.context(reason),
+        None => error,
+    }
+}
+
+fn credential_failure(error: anyhow::Error) -> anyhow::Error {
+    let error = before_dispatch(error);
+    if error.downcast_ref::<WaitReason>().is_some() {
+        error
+    } else {
+        error.context(WaitReason::Authentication)
+    }
+}
+
 async fn send_mutation(request: reqwest::RequestBuilder) -> anyhow::Result<reqwest::Response> {
     request.send().await.map_err(|error| {
         if error.is_builder() {
@@ -294,7 +347,7 @@ fn mutation_successful(response: reqwest::Response) -> anyhow::Result<reqwest::R
     let status = response.status();
     successful(response).map_err(|error| {
         if status.is_client_error() && status != reqwest::StatusCode::REQUEST_TIMEOUT {
-            error
+            before_dispatch(error)
         } else {
             error.context(MutationUncertain)
         }
@@ -331,6 +384,11 @@ async fn response_text(response: reqwest::Response) -> anyhow::Result<String> {
 
 async fn response_json(response: reqwest::Response) -> anyhow::Result<serde_json::Value> {
     Ok(serde_json::from_str(&response_text(response).await?)?)
+}
+
+async fn preflight_json(request: reqwest::RequestBuilder) -> anyhow::Result<serde_json::Value> {
+    let result = async { response_json(request.send().await?).await }.await;
+    result.map_err(before_dispatch)
 }
 
 fn same_event_content(a: &CalendarEvent, b: &CalendarEvent) -> bool {

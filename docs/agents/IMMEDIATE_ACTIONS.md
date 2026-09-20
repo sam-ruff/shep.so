@@ -248,9 +248,27 @@ Definite rejection restores the confirmed view while retaining editable recovery
 content. An unknown result needs a read-only server check before adopting its
 state; an acknowledged cache error must never cause another mutation.
 
-This migration does not establish durable admission for deferred individual or
-calendar actions. Those records remain protected session state and normal close
-must wait or require recovery. A process crash still needs a durable journal in
-the next migration. Folders, accounts, preferences, drafts/sending and the
-Flutter/browser adapters retain their current owners and remain on the adoption
-list. Shared scenarios and client parity record those gaps explicitly.
+Calendar actions now have durable admission, startup recovery and receipt-first
+cache repair through the existing serial worker. Normal close flushes admission
+and the active provider step, preserving queued work for reopening. Database
+imports retain acknowledged cache repairs and fence unattempted work for review.
+Pre-dispatch offline/authentication failures remain Waiting with visible Retry
+and Cancel; dispatched timeouts retain uncertain recovery.
+
+Desktop Send saves prepared MIME and its stable identity as Queued through the
+local persistence lane, then closes the composer and wakes the existing durable
+worker. Provider capacity is acquired afterward. Only Queued may dispatch; its
+atomic transition to Submitting prevents automatic replay after a crash. Queued
+cancellation is local and conditional on dispatch not having started. Large MIME
+preparation still precedes admission and needs separate responsiveness work.
+
+Native group flags now persist their receipt before updating the cache. Cache
+repair and its Undo transition commit together; repair cannot repeat STORE or
+wait for provider capacity. Reader controls use the same projected flag metadata
+as rows, including bounded observations for an offscreen reader.
+
+The [browser inventory](IMMEDIATE_ACTIONS_BROWSER.md) records durable individual
+admission, Activity, receipt repair and safe orphan-queue recovery. Deferred native
+individual admission, offline/auth policies, durable individual Undo and the
+remaining domains still need adoption. Shared scenarios and client parity retain
+those gaps explicitly.

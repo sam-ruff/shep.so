@@ -23,9 +23,9 @@ pub(super) fn apply(
     defensive(&c, cancel)?;
     c.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
     let tx = c.transaction()?;
-    // The copy was validated as v2/v3/v4; bring its archive table/version forward
-    // in the same transaction as the device-specific import preparation.
+    // Upgrade only the validated private copy, atomically with import fencing.
     crate::store::import_archive_schema(&tx)?;
+    crate::store::action_schema(&tx)?;
     let import_id = id.to_string();
     let already: Option<String> = tx
         .query_row(
@@ -41,6 +41,7 @@ pub(super) fn apply(
         // Recovered imported copies keep their completed preparation, while
         // still receiving schema migrations added since that preparation.
         crate::store::backup_history::schema(&tx)?;
+        crate::store::calendar_actions::schema(&tx)?;
         tx.pragma_update(None, "user_version", crate::store::DATABASE_VERSION)?;
         tx.commit()?;
         return Ok(());
@@ -64,12 +65,14 @@ pub(super) fn apply(
         FROM bulk_effects", [&import_id])?;
     tx.execute("UPDATE bulk_jobs SET paused=1 WHERE EXISTS(SELECT 1 FROM bulk_items WHERE job=bulk_jobs.id AND status NOT IN ('done','cancelled'))", [])?;
     tx.execute(
-        "UPDATE bulk_items SET status='uncertain',error=? WHERE status NOT IN ('done','cancelled')",
+        "UPDATE bulk_items SET status='uncertain',error=? WHERE status NOT IN ('done','cancelled','repair')",
         [REVIEW_NOTE],
     )?;
-    tx.execute_batch("DELETE FROM bulk_effects;
+    tx.execute_batch("DELETE FROM bulk_effects WHERE NOT EXISTS(SELECT 1 FROM bulk_items i WHERE i.job=bulk_effects.job AND i.position=bulk_effects.position AND i.status='repair');
         DELETE FROM bulk_totals;
         INSERT INTO bulk_totals SELECT job,status,undo,count(*) FROM bulk_items GROUP BY job,status,undo;")?;
+
+    crate::store::calendar_actions::fence_import(&tx, &import_id, REVIEW_NOTE)?;
 
     let uncertain = serde_json::to_string(&crate::folder_actions::Status::Uncertain)?;
     let statuses = [
@@ -115,7 +118,10 @@ pub(super) fn apply(
         let mut changed = false;
         if matches!(
             info.delivery,
-            DeliveryState::Submitting | DeliveryState::Uncertain | DeliveryState::Rejected
+            DeliveryState::Queued
+                | DeliveryState::Submitting
+                | DeliveryState::Uncertain
+                | DeliveryState::Rejected
         ) {
             info.delivery = DeliveryState::Uncertain;
             changed = true;

@@ -17,6 +17,7 @@ import {
 // this database. A committed transaction is required before any SMTP request.
 export const stores = [
   "accounts",
+  "accountConnections",
   "mail",
   "raw",
   "drafts",
@@ -26,6 +27,7 @@ export const stores = [
   "mailRoles",
   "removedAccounts",
   "mailIntents",
+  "mailActions",
   "intentState",
   ...cacheStores,
 ] as const;
@@ -53,13 +55,15 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
+    // Version 14 fences removal writers without connection-attempt ownership.
+    // Version 13 fences writers without individual action receipt/removal ownership.
     // Version 12 tracks acknowledged physical identity continuity in metadata.
     // Version 11 fences writers that omit intent-only query invalidation.
     // Version 10 indexes account/physical identities without a JS body migration.
     // Version 9 binds the derived persistent index to this source incarnation.
     // Version 8 fences older tabs that remove accounts without group ownership.
     // Version 7 fenced writes lacking atomic cache-applied intent revisions.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 12);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 14);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))
@@ -157,6 +161,10 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
       resolve(request.result);
     };
   });
+}
+
+export class BrowserWriteFailure extends Error {
+  constructor() { super("Could not save on this browser. Free storage space and retry; keep the draft open."); }
 }
 
 export class BrowserStore implements LocalStore {
@@ -290,9 +298,7 @@ export class BrowserStore implements LocalStore {
       tx.oncomplete = () => resolve();
       tx.onabort = () =>
         reject(
-          new Error(
-            "Could not save on this browser. Free storage space and retry; keep the draft open.",
-          ),
+          new BrowserWriteFailure(),
         );
       const removed = tx.objectStore("removedAccounts").getAll();
       let cause: unknown;

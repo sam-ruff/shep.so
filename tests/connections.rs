@@ -333,6 +333,87 @@ async fn failed_removal_rolls_back_data_indexes_credentials_and_tombstone() {
 }
 
 #[tokio::test]
+async fn account_removal_reviews_and_retires_acknowledged_flag_repairs() {
+    use shep::{
+        bulk::{Action, Receipt},
+        mail_actions::Flags,
+    };
+    let store = Store::memory().expect("store");
+    store.save_account(account("work")).await.expect("account");
+    store.upsert(vec![mail("work", "1")]).await.expect("mail");
+    let original = store.query(MailQuery::default()).await.expect("page").rows[0].clone();
+    let flags = Flags {
+        unread: Some(true),
+        starred: None,
+    };
+    store
+        .start_individual_mail_action("flags".into(), original.clone(), Action::Flags(flags))
+        .await
+        .expect("admission");
+    let before = store
+        .removal_preview(target(ConnectionKind::Account, "work"))
+        .await
+        .expect("review");
+    let item = store
+        .claim_bulk_item("flags".into())
+        .await
+        .expect("claim")
+        .expect("item");
+    store
+        .acknowledge_bulk_flags(
+            item.clone(),
+            Receipt::Flags {
+                before: Flags {
+                    unread: Some(false),
+                    starred: None,
+                },
+                after: flags,
+            },
+        )
+        .await
+        .expect("acknowledgement");
+    assert!(store.remove_connection(before, true).await.is_err());
+    let review = store
+        .removal_preview(target(ConnectionKind::Account, "work"))
+        .await
+        .expect("current review");
+    assert_eq!((review.mail_history, review.transfers), (1, 1));
+    assert!(
+        store
+            .remove_connection(review.clone(), false)
+            .await
+            .is_err()
+    );
+    store
+        .remove_connection(review, true)
+        .await
+        .expect("confirmed removal");
+    assert!(
+        store
+            .finish_bulk_item(item, Ok(Receipt::Unchanged))
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .start_individual_mail_action("late".into(), original, Action::Flags(flags))
+            .await
+            .is_err()
+    );
+    let receipts = store
+        .run(|c| {
+            Ok(
+                c.query_row("SELECT count(*) FROM bulk_flag_receipts", [], |r| {
+                    r.get::<_, i64>(0)
+                })?,
+            )
+        })
+        .await
+        .expect("receipts");
+    assert_eq!(receipts, 0);
+}
+
+#[tokio::test]
 async fn removing_an_account_reviews_pending_groups_and_cleans_only_its_history() {
     use shep::{bulk::Action, store::MailSelectionId};
     let store = Store::memory().unwrap();

@@ -209,14 +209,55 @@ defer ordered admission, reconcile counts once and cancel unsent groups on Undo.
 The deferred command remains session state until journal admission, so preserve
 the close guard and track durable admission separately.
 
-Native `ui/calendar_actions.rs` correlates save/delete and exact read-only recovery
-by request ID. Keep definite provider rejection separate from dispatched writes
+Native `store/calendar_actions.rs` owns durable save/delete requests and exact
+read-only recovery, with UUID admission IDs and correlated UI requests. The
+existing serial bulk/folder worker executes calendar jobs; do not add another
+dispatcher. Persist Running before dispatch and Repair before cache writes.
+Startup recovers abandoned Running as Uncertain and resumes only safe queued or
+cache-only work. Close flushes admission and drains the active step, preserving
+the remaining queue. Calendar snapshots publish journal and cache revisions
+together. Imported unattempted work requires review rather than automatic replay.
+Keep definite provider rejection separate from dispatched writes
 whose result is unknown. A cache error after acknowledgement must retain the
 projection. Recovery reads one provider identity, atomically reconciles only that
 event and offers explicit adoption; ordinary refresh or cached absence is not
 proof. Preserve remapped Google identities, later server edits and events outside
-the normal sync window. Pending recovery currently lives in session state, so
-close, restore and source removal retain guards until durable recovery is added.
+the normal sync window. Restore and source removal must review durable ownership.
+Pre-dispatch offline/authentication failures stay Waiting with their projection.
+Bound offline retries; authentication needs explicit Retry after reconnect.
+Dispatched timeouts remain Uncertain. Shared Activity adoption remains active.
+
+Desktop Send admits prepared MIME and its stable identity into the existing
+Outbox as Queued on the local persistence lane. Only Queued work may dispatch;
+claim Submitting atomically before SMTP and never replay it after restart.
+The existing durable worker owns execution. Queued cancellation must check its
+state in the same transaction, without waiting for provider capacity. Account
+changes require returning to drafts. Imported queued work needs review.
+Keep MIME preparation off the UI thread; admission before large MIME preparation
+and the final input-to-visible timing checks remain active work.
+
+Browser individual actions extend the existing intent owner in mail schema 14.
+Save admission with field revisions, persist the provider receipt before cache
+work, and keep failures in Activity across reload. A tab-liveness Web Lock fences
+orphan queued recovery; Running and Uncertain cannot be replayed. Account removal
+reviews and removes these records atomically. Preserve the Activity Chromium
+controls and separate remaining adoption in the browser lifecycle inventory.
+Send saves the draft and queued Outbox record atomically before provider
+reservation; only Queued may automatically continue. Account connection attempts
+save nonsecret progress before probes and recheck their attempt identity before
+activation. Dismissal, removal and newer attempts must fence late results.
+Preference values and field revisions share one authoritative settings write;
+the legacy settings key is only a mirror. A failed local save cannot produce a
+profile application receipt. Reuse existing Outbox and profile recovery owners.
+
+Flutter individual mail admission uses schema 14 and `individual_mail_actions`
+beside the existing field-intent owner. Reserve an action UUID before FFI and
+save exact fields/account identity before credentials or provider capacity.
+Only never-dispatched queued/waiting work may resume; reopen classifies Running
+as Uncertain. Return a saved terminal result before looking up its source mail.
+A changed physical source becomes an explicit rejection and releases only the
+same action's intent revisions. Activity/cancellation must use these records,
+including account-removal review, without adding another provider dispatcher.
 
 **Optimistic interaction is an app-wide requirement.** For reversible actions, show the expected successful result immediately and reconcile persistence/server state in the background. Archive/move removes a message from the current folder immediately; flags and read/unread indicators update immediately. Do not wait for SQLite, credentials, network requests or account sync before displaying that change. If an operation fails, restore the affected state and show an actionable error. Preserve newer user intent when older results arrive; keep pending changes through background refreshes and test slow success, failure/rollback and rapid repeated input. Responsiveness takes priority over waiting for confirmation, while correctness must converge and failures remain visible. This does not turn a pending operation into a confirmed server success.
 
@@ -534,6 +575,15 @@ Preferences search indexes actual editable sections in `ui/settings_search.rs`; 
 `move_imap_session` treats the server MOVE acknowledgment as committed even if logout fails. The local protocol test covers a spaced source folder returning to INBOX; it is not evidence of a live personal-account move. The harness starts Xvfb with `-noreset`, checks display readiness and stores `xvfb.log` inside the run artifacts.
 
 ## Immediate mail actions and command acknowledgments
+
+Native group flag writes persist `bulk_flag_receipts` before updating cached
+flags. The same serial group owner repairs acknowledged cache work before
+claiming another item; repair never acquires provider capacity or sends STORE.
+The cache patch, receipt retirement and forward/Undo transition commit together.
+Keep exact physical identity checks, per-field patches, account-removal fences
+and the restart/cache-failure/Undo regressions. Schema 6 fences older writers
+which cannot interpret the repair state. Individual durable admission uses the
+existing group journal; connecting all individual controls remains in progress.
 
 `ui/mail_actions.rs` overlays small message metadata while flag/read operations are pending. Coalesce each field per message, retain newer edits after an older acknowledgment/error, and never clone body or attachment buffers on the UI thread. Pending moves hide their source row immediately; hold a move behind that message's outstanding flag changes, and restore rejected actions with a visible error. Background pages must retain pending overlays. Typed request IDs reject obsolete completions; a full command queue must not hide a message or leave a false flag. Window close waits for accepted mail changes, and a failure cancels the pending close.
 

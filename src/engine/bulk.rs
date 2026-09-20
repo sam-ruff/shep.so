@@ -17,12 +17,33 @@ impl Engine {
     ) {
         self.drain_bulk_jobs(output.clone()).await;
         self.drain_folder_jobs(output.clone()).await;
-        while let Some(command) = input.recv().await {
+        self.drain_calendar_jobs(output.clone()).await;
+        self.drain_outgoing(output.clone()).await;
+        loop {
+            let retry_at = if self.bulk_control.stopping.get() {
+                None
+            } else {
+                self.store.next_calendar_retry().await.ok().flatten()
+            };
+            let command = tokio::select! {
+                command = input.recv() => command,
+                _ = async {
+                    match retry_at {
+                        Some(at) => tokio::time::sleep(Duration::from_secs(at.saturating_sub(chrono::Utc::now().timestamp()).clamp(0,300) as u64)).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => Some(Command::BulkRun(String::new())),
+            };
+            let Some(command) = command else {
+                break;
+            };
             if matches!(command, Command::BulkRun(_)) {
                 // This capacity-one channel is a wake signal. Exact jobs stay
                 // durable in SQLite, including requests coalesced while busy.
                 self.drain_bulk_jobs(output.clone()).await;
                 self.drain_folder_jobs(output.clone()).await;
+                self.drain_calendar_jobs(output.clone()).await;
+                self.drain_outgoing(output.clone()).await;
             } else {
                 let _ = output
                     .send(Event::Error("Unexpected mail-operation command".into()))
@@ -89,8 +110,18 @@ impl Engine {
             .await?;
         let mut last_progress = None::<std::time::Instant>;
         loop {
-            if self.bulk_control.stopping.get() {
+            if self.bulk_control.stopping.get() || job.remaining == 0 {
                 break;
+            }
+            if let Some(item) = self.store.pending_bulk_flag_repair(&lease).await? {
+                job = self
+                    .store
+                    .finish_bulk_item(item, Ok(Receipt::Unchanged))
+                    .await?;
+                output
+                    .send(Event::BulkUpdate(Arc::new(job.clone())))
+                    .await?;
+                continue;
             }
             // Waiting for provider capacity has not changed any server state.
             // A close may abandon this wait without claiming a journal step.
@@ -274,6 +305,58 @@ mod tests {
             account: None,
             folder: folder.into(),
         }
+    }
+
+    #[tokio::test]
+    async fn acknowledged_flags_repair_without_waiting_for_provider_capacity() {
+        let engine = fixture(1).await;
+        let flags = crate::mail_actions::Flags {
+            unread: Some(false),
+            starred: None,
+        };
+        start(
+            &engine,
+            "cache-repair",
+            MailQuery::default(),
+            Action::Flags(flags),
+        )
+        .await;
+        let item = engine
+            .store
+            .claim_bulk_item("cache-repair".into())
+            .await
+            .expect("claim")
+            .expect("item");
+        engine
+            .store
+            .acknowledge_bulk_flags(
+                item,
+                Receipt::Flags {
+                    before: crate::mail_actions::Flags {
+                        unread: Some(true),
+                        starred: None,
+                    },
+                    after: flags,
+                },
+            )
+            .await
+            .expect("acknowledgement");
+        let mut occupied = Vec::new();
+        for _ in 0..8 {
+            occupied.push(engine.provider_slots.acquire().await);
+        }
+        let job = execute(&engine, "cache-repair").await;
+        assert_eq!((job.completed, job.remaining, job.uncertain), (1, 0, 0));
+        assert_eq!(
+            engine
+                .store
+                .query(MailQuery::default())
+                .await
+                .expect("page")
+                .unread,
+            0
+        );
+        drop(occupied);
     }
 
     #[tokio::test]

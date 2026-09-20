@@ -27,6 +27,7 @@ const snapshot = (): RemovalSnapshot => ({
   mailAliases: [{ alias: "old", target: "m" }],
   mailRoles: [],
   removedAccounts: [],
+  accountConnections: [{ id: "attempt", account: { id: "a", email: "a@example.test" }, state: "checking" }],
 });
 it("reviews unfinished operations explicitly and retains only identities in the removal tombstone", () => {
   const s = snapshot(),
@@ -36,6 +37,7 @@ it("reviews unfinished operations explicitly and retains only identities in the 
   expect(review.files).toBe(1);
   expect(() => removalChanges(s, review, false)).toThrow("Confirm");
   const changes = removalChanges(s, review, true);
+  expect(changes).toContainEqual({ store: "accountConnections", key: "a" });
   expect(changes.some((c) => c.key === "b")).toBe(false);
   const removed = changes.find((c) => c.store === "removedAccounts")!
     .value as any;
@@ -43,6 +45,7 @@ it("reviews unfinished operations explicitly and retains only identities in the 
   expect(removed.token).toBe(review.token);
   for (const c of [
     { store: "accounts" as const, key: "a", value: { id: "a" } },
+    { store: "accountConnections" as const, key: "a", value: { account: { id: "a" }, state: "failed" } },
     { store: "drafts" as const, key: "d", value: { accountId: "b" } },
     { store: "drafts" as const, key: "fresh", value: { accountId: "a" } },
     { store: "draftFiles" as const, key: "f", value: { draftId: "d" } },
@@ -63,6 +66,7 @@ it("new mail, a changed draft or changed attachment ownership invalidates the op
       s.mail!.push({ core: { id: "new", account_id: "a" } }),
     (s: RemovalSnapshot) => s.drafts![0].revision++,
     (s: RemovalSnapshot) => s.draftFiles![0].info.size++,
+    (s: RemovalSnapshot) => s.accountConnections![0].state = "failed",
   ]) {
     const s = snapshot(),
       review = removalPreview(s, "a");

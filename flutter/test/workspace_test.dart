@@ -2,9 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shep_mobile/data/settings_store.dart';
+import 'package:shep_mobile/data/repository.dart';
 import 'package:shep_mobile/model/mail.dart';
 import 'package:shep_mobile/model/preferences.dart';
 import 'package:shep_mobile/model/workspace.dart';
+import 'package:shep_mobile/ui/mail_action_banner.dart';
 import 'support/preview_repository.dart';
 import 'support/paged_repository.dart';
 import 'support/sent_handover_repository.dart';
@@ -50,6 +52,54 @@ class ControlledRepository extends PreviewRepository {
   }
 }
 
+class ActivityRepository extends PreviewRepository
+    implements MailActivityRepository {
+  final actions = <MailActivity>[
+    MailActivity({
+      'id': 'queued',
+      'mail': '1',
+      'status': 'queued',
+      'fields': {'unread': false},
+    }),
+    MailActivity({
+      'id': 'uncertain',
+      'mail': '2',
+      'status': 'uncertain',
+      'fields': {'folder': 'Archive'},
+      'error': 'Check Archive before retrying.',
+    }),
+  ];
+  final resumed = <String>[];
+  final cancelled = <String>[];
+  @override
+  Future<List<MailActivity>> mailActions() async => List.of(actions);
+  @override
+  Future<void> resumeMailAction(MailActivity action) async {
+    resumed.add(action.id);
+    actions.removeWhere((saved) => saved.id == action.id);
+  }
+
+  @override
+  Future<void> cancelMailAction(String id) async {
+    cancelled.add(id);
+    actions.removeWhere((saved) => saved.id == id);
+  }
+}
+
+class WaitingActivityRepository extends ActivityRepository {
+  WaitingActivityRepository() {
+    actions.removeWhere((action) => action.status != 'queued');
+  }
+
+  final resumeGate = Completer<void>();
+
+  @override
+  Future<void> resumeMailAction(MailActivity action) async {
+    resumed.add(action.id);
+    await resumeGate.future;
+  }
+}
+
 Future<void> tick() => Future<void>.delayed(Duration.zero);
 Future<void> waitUntil(bool Function() ready) async {
   await (() async {
@@ -61,6 +111,36 @@ Future<void> waitUntil(bool Function() ready) async {
 
 void main() {
   readTrackingTests();
+  test('startup resumes only safely queued mail activity', () async {
+    final repository = ActivityRepository();
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.initialize();
+    await waitUntil(() => repository.resumed.isNotEmpty);
+    expect(repository.resumed, ['queued']);
+    expect(workspace.mailActivityReview.single.id, 'uncertain');
+  });
+  testWidgets('waiting activity exposes a working Cancel control', (
+    tester,
+  ) async {
+    final repository = WaitingActivityRepository();
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.initialize();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ListenableBuilder(
+          listenable: workspace,
+          builder: (_, _) => MailActionBanner(workspace: workspace),
+        ),
+      ),
+    );
+    expect(find.text('Mail change waiting to sync'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pump();
+    expect(repository.cancelled, ['queued']);
+    expect(find.text('Cancel'), findsNothing);
+  });
   test(
     'held read and newer unread survive alias adoption and dispatch in order',
     () async {

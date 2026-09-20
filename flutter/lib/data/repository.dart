@@ -13,6 +13,31 @@ abstract interface class MailRepository {
   Future<void> saveEvent(CalendarEntry event);
 }
 
+class MailActivity {
+  const MailActivity(this.data);
+  final Map<String, dynamic> data;
+  String get id => data['id'] as String;
+  String get mail => data['mail'] as String;
+  String get status => data['status'] as String;
+  String? get error => data['error'] as String?;
+  Map<String, Object> get fields {
+    final fields = Map<String, Object>.from(data['fields'] as Map)
+      ..removeWhere((_, value) => value == null);
+    if (fields['folder'] == 'INBOX') fields['folder'] = 'Inbox';
+    return fields;
+  }
+
+  bool get needsReview =>
+      const {'rejected', 'uncertain', 'repair'}.contains(status);
+  bool get canResume => const {'queued', 'waiting'}.contains(status);
+}
+
+abstract interface class MailActivityRepository {
+  Future<List<MailActivity>> mailActions();
+  Future<void> resumeMailAction(MailActivity action);
+  Future<void> cancelMailAction(String id);
+}
+
 /// Production startup is empty until the native provider adapter is connected.
 /// It cannot turn a button click into a false server acknowledgment.
 class UnconnectedRepository implements MailRepository {
