@@ -15,6 +15,10 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
         position INTEGER NOT NULL, id TEXT NOT NULL, original TEXT, undo INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL, receipt TEXT, error TEXT, PRIMARY KEY(job,position));
         CREATE INDEX IF NOT EXISTS bulk_item_work ON bulk_items(job,status,position);
+        CREATE TABLE IF NOT EXISTS bulk_flag_receipts(
+        job TEXT NOT NULL, position INTEGER NOT NULL, undo INTEGER NOT NULL,
+        receipt TEXT NOT NULL, PRIMARY KEY(job,position),
+        FOREIGN KEY(job,position) REFERENCES bulk_items(job,position) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS bulk_totals(
         job TEXT NOT NULL REFERENCES bulk_jobs(id) ON DELETE CASCADE,status TEXT NOT NULL,
         undo INTEGER NOT NULL,count INTEGER NOT NULL,PRIMARY KEY(job,status,undo));
@@ -81,7 +85,7 @@ fn job(c: &Connection, id: &str) -> anyhow::Result<Job> {
         let (status, undo, count) = row?;
         result.total += count;
         match status.as_str() {
-            "queued" => result.remaining += count,
+            "queued" | "repair" => result.remaining += count,
             "running" => {
                 result.remaining += count;
                 result.running += count;
@@ -187,7 +191,10 @@ pub(super) fn account_review(
         digest.update((value.len() as u64).to_le_bytes());
         digest.update(value);
         count += 1;
-        if matches!(status.as_str(), "queued" | "running" | "uncertain") {
+        if matches!(
+            status.as_str(),
+            "queued" | "running" | "repair" | "uncertain"
+        ) {
             pending += 1;
         }
     }
@@ -210,7 +217,132 @@ pub(super) fn remove_account(c: &Connection, account: &str) -> anyhow::Result<()
     Ok(())
 }
 
+fn validate_action(action: &Action) -> anyhow::Result<()> {
+    match action {
+        Action::Move { folder, .. } => anyhow::ensure!(
+            !folder.trim().is_empty() && !folder.contains(['\r', '\n', '\0']),
+            "Choose a valid destination folder"
+        ),
+        Action::Flags(flags) => anyhow::ensure!(!flags.is_empty(), "Choose a mail action"),
+    }
+    Ok(())
+}
+
+fn existing_admission(
+    c: &Connection,
+    id: &str,
+    source: &str,
+    action: &Action,
+) -> anyhow::Result<Option<Job>> {
+    let saved = c
+        .query_row(
+            "SELECT action,source FROM bulk_jobs WHERE id=?",
+            [id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let Some((saved, origin)) = saved else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        serde_json::from_str::<Action>(&saved)? == *action && origin == source,
+        "This operation ID belongs to another request"
+    );
+    Ok(Some(job(c, id)?))
+}
+
+fn publish_admission(c: &Connection, id: &str, action: &Action) -> anyhow::Result<Job> {
+    let (account, folder, unread, starred) = match action {
+        Action::Move { account, folder } => (account.clone(), Some(folder.clone()), None, None),
+        Action::Flags(flags) => (None, None, flags.unread, flags.starred),
+    };
+    for account in c.prepare("SELECT DISTINCT json_extract(original,'$.account_id') FROM bulk_items WHERE job=? AND original IS NOT NULL")?
+        .query_map([id], |row| row.get::<_, String>(0))? {
+        let account = account?;
+        connections::allow(c, ConnectionKind::Account, &account)?;
+        folder_actions::idle(c, &account)?;
+    }
+    if let Some(account) = &account {
+        connections::allow(c, ConnectionKind::Account, account)?;
+        folder_actions::idle(c, account)?;
+    }
+    c.execute(
+        "INSERT INTO bulk_effects(id,job,position,account,folder,unread,starred)
+         SELECT id,job,position,?,?,?,? FROM bulk_items WHERE job=? AND status='queued'",
+        params![account, folder, unread, starred, id],
+    ).context("Some messages already have pending changes. Wait for them, or review their group in History.")?;
+    bump(c)?;
+    let result = job(c, id)?;
+    anyhow::ensure!(result.total > 0, "Select at least one message");
+    Ok(result)
+}
+
 impl Store {
+    /// Individual and selected mail actions share one journal and provider owner.
+    pub async fn start_individual_mail_action(
+        &self,
+        id: String,
+        original: Mail,
+        action: Action,
+    ) -> anyhow::Result<Job> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let source = serde_json::to_string(&(
+                &original.id,
+                &original.account_id,
+                &original.folder,
+                &original.remote_id,
+            ))?;
+            if let Some(existing) = existing_admission(&tx, &id, &source, &action)? {
+                return Ok(existing);
+            }
+            validate_action(&action)?;
+            connections::allow(&tx, ConnectionKind::Account, &original.account_id)?;
+            if let Action::Move {
+                account: Some(account),
+                ..
+            } = &action
+            {
+                connections::allow(&tx, ConnectionKind::Account, account)?;
+            }
+            let current: Option<String> = tx
+                .query_row(
+                    "SELECT json_set(m.data,'$.account_id',m.account,'$.folder',m.folder,
+                    '$.unread',json(CASE m.unread WHEN 1 THEN 'true' ELSE 'false' END),
+                    '$.starred',json(CASE m.starred WHEN 1 THEN 'true' ELSE 'false' END))
+                 FROM selectable_mail m WHERE m.id=? AND m.account=? AND m.folder=?
+                    AND json_extract(m.data,'$.remote_id')=?",
+                    params![
+                        original.id,
+                        original.account_id,
+                        original.folder,
+                        original.remote_id
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let current = current
+                .context("This message changed or is unavailable. Refresh before trying again.")?;
+            tx.execute(
+                "INSERT INTO bulk_jobs(id,action,source,created) VALUES(?,?,?,?)",
+                params![
+                    id,
+                    serde_json::to_string(&action)?,
+                    source,
+                    chrono::Utc::now().timestamp_millis()
+                ],
+            )?;
+            tx.execute(
+                "INSERT INTO bulk_items(job,position,id,original,status) VALUES(?,0,?,?,'queued')",
+                params![id, original.id, current],
+            )?;
+            let result = publish_admission(&tx, &id, &action)?;
+            tx.commit()?;
+            Ok(result)
+        })
+        .await
+    }
+
     /// Atomically copy reviewed membership and original metadata, then publish
     /// pending effects. Missing members remain explicit failed items. No MIME is
     /// materialized and an overlapping active job rejects the whole transaction.
@@ -222,14 +354,10 @@ impl Store {
     ) -> anyhow::Result<Job> {
         self.run(move |c| {
             let tx = c.transaction()?;
-            if let Some((saved,source)) = tx.query_row("SELECT action,source FROM bulk_jobs WHERE id=?",[&id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).optional()? {
-                anyhow::ensure!(serde_json::from_str::<Action>(&saved)? == action && source == selection.to_string(),"This operation ID belongs to another review");
-                return job(&tx,&id);
+            if let Some(existing) = existing_admission(&tx, &id, &selection.to_string(), &action)? {
+                return Ok(existing);
             }
-            match &action {
-                Action::Move{folder,..}=>anyhow::ensure!(!folder.trim().is_empty() && !folder.contains(['\r','\n','\0']),"Choose a valid destination folder"),
-                Action::Flags(flags)=>anyhow::ensure!(!flags.is_empty(),"Choose a mail action"),
-            }
+            validate_action(&action)?;
             let frozen: bool = tx.query_row("SELECT frozen FROM scratch.mail_selections WHERE id=?",[selection.to_string()],|r|r.get(0))?;
             anyhow::ensure!(frozen,"Review the selected messages before changing them");
             tx.execute("INSERT INTO bulk_jobs(id,action,source,created) VALUES(?,?,?,?)",params![id,serde_json::to_string(&action)?,selection.to_string(),chrono::Utc::now().timestamp_millis()])?;
@@ -241,21 +369,7 @@ impl Store {
                 CASE WHEN m.id IS NULL THEN 'This message is unavailable. Refresh its folder or review its pending move.' END
                 FROM scratch.mail_selection_rows s LEFT JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
                 params![id,selection.to_string()])?;
-            let (account,folder,unread,starred) = match &action {
-                Action::Move{account,folder} => (account.clone(),Some(folder.clone()),None,None),
-                Action::Flags(flags) => (None,None,flags.unread,flags.starred),
-            };
-            for account in tx.prepare("SELECT DISTINCT json_extract(original,'$.account_id') FROM bulk_items WHERE job=? AND original IS NOT NULL")?
-                .query_map([&id], |r| r.get::<_,String>(0))? {
-                folder_actions::idle(&tx, &account?)?;
-            }
-            if let Some(account) = &account { folder_actions::idle(&tx, account)?; }
-            tx.execute("INSERT INTO bulk_effects(id,job,position,account,folder,unread,starred)
-                SELECT id,job,position,?,?,?,? FROM bulk_items WHERE job=? AND status='queued'",
-                params![account,folder,unread,starred, id]).context("Some selected messages already have pending changes. Wait for them, or review their group in History.")?;
-            bump(&tx)?;
-            let result=job(&tx,&id)?;
-            anyhow::ensure!(result.total>0,"Select at least one message");
+            let result = publish_admission(&tx, &id, &action)?;
             tx.execute("DELETE FROM scratch.mail_selections WHERE id=?",[selection.to_string()])?;
             tx.commit()?;
             Ok(result)
@@ -285,12 +399,48 @@ impl Store {
         self.run(move |c| {
             let tx=c.transaction()?;
             if job(&tx,&id)?.paused { return Ok(None); }
+            if tx.query_row("SELECT EXISTS(SELECT 1 FROM bulk_items WHERE job=? AND status IN ('running','repair'))", [&id], |r|r.get::<_,bool>(0))? { return Ok(None); }
             let next=tx.query_row("SELECT position,id,original,undo,status,receipt,error FROM bulk_items WHERE job=? AND status='queued' ORDER BY position LIMIT 1",[&id],read_item).optional()?;
             let Some(next)=next else{return Ok(None)};
             let mut item=parse_item(&id,next)?;
             tx.execute("UPDATE bulk_items SET status='running' WHERE job=? AND position=? AND status='queued'",params![id,item.position as i64])?;
             item.status="running".into();
             tx.commit()?; Ok(Some(item))
+        }).await
+    }
+    /// Persist provider acknowledgement before attempting the cache transaction.
+    pub async fn acknowledge_bulk_flags(&self, item: Item, receipt: Receipt) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            matches!(receipt, Receipt::Flags { .. }),
+            "Expected a flag receipt"
+        );
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let current: (String, bool) = tx.query_row(
+                "SELECT status,undo FROM bulk_items WHERE job=? AND position=?",
+                params![item.job, item.position as i64], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            anyhow::ensure!(current == ("running".into(), item.undo), "This flag acknowledgement is no longer current");
+            tx.execute("INSERT INTO bulk_flag_receipts(job,position,undo,receipt) VALUES(?,?,?,?)",
+                params![item.job, item.position as i64, item.undo, serde_json::to_string(&receipt)?])?;
+            tx.execute("UPDATE bulk_items SET status='repair',error='Server confirmed. Waiting to update the local cache.' WHERE job=? AND position=?", params![item.job, item.position as i64])?;
+            bump(&tx)?;
+            tx.commit()?;
+            Ok(())
+        }).await
+    }
+    /// Read one acknowledged step for cache-only repair under its job lease.
+    pub async fn pending_bulk_flag_repair(
+        &self,
+        lease: &BulkLease,
+    ) -> anyhow::Result<Option<Item>> {
+        anyhow::ensure!(
+            Arc::ptr_eq(&self.0, &lease.store.0),
+            "Use the lease for this mail cache"
+        );
+        let id = lease.id.clone();
+        self.run(move |c| {
+            let row = c.query_row("SELECT i.position,i.id,i.original,i.undo,i.status,i.receipt,i.error FROM bulk_items i JOIN bulk_flag_receipts r ON r.job=i.job AND r.position=i.position AND r.undo=i.undo WHERE i.job=? ORDER BY i.position LIMIT 1", [&id], read_item).optional()?;
+            row.map(|row| parse_item(&id, row)).transpose()
         }).await
     }
     pub async fn finish_bulk_item(
@@ -301,7 +451,22 @@ impl Store {
         self.run(move |c| {
             let tx=c.transaction()?;
             let current: (String,bool)=tx.query_row("SELECT status,undo FROM bulk_items WHERE job=? AND position=?",params![item.job,item.position as i64],|r|Ok((r.get(0)?,r.get(1)?)))?;
-            anyhow::ensure!(current == ("running".into(),item.undo),"This mail-operation result is no longer current");
+            anyhow::ensure!(matches!(current.0.as_str(), "running" | "repair") && current.1 == item.undo,"This mail-operation result is no longer current");
+            let acknowledged: Option<(bool, String)> = tx.query_row(
+                "SELECT undo,receipt FROM bulk_flag_receipts WHERE job=? AND position=?",
+                params![item.job,item.position as i64], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
+            let result = if let Some((undo, receipt)) = acknowledged {
+                anyhow::ensure!(undo == item.undo, "This flag receipt belongs to another phase");
+                let receipt: Receipt = serde_json::from_str(&receipt)?;
+                let Receipt::Flags { after, .. } = &receipt else { anyhow::bail!("Invalid stored flag receipt") };
+                let original = item.original.as_ref().context("The acknowledged message is unavailable")?;
+                let changed = tx.execute("UPDATE messages SET unread=COALESCE(?,unread),starred=COALESCE(?,starred) WHERE id=? AND account=? AND folder=? AND json_extract(data,'$.remote_id') IS ?",
+                    params![after.unread,after.starred,original.id,original.account_id,original.folder,original.remote_id])?;
+                anyhow::ensure!(changed == 1, "The server confirmed this change, but its cached message changed. Refresh History to repair it.");
+                write_ledger::record_acknowledged(&tx, &original.account_id, &original.id, WriteKind::Flags, chrono::Utc::now().timestamp())?;
+                tx.execute("DELETE FROM bulk_flag_receipts WHERE job=? AND position=?",params![item.job,item.position as i64])?;
+                Ok(receipt)
+            } else { result };
             let claimed: Vec<String> = tx.prepare("SELECT id FROM bulk_effects WHERE job=? AND position=?")?
                 .query_map(params![item.job,item.position as i64], |r|r.get(0))?.collect::<rusqlite::Result<_>>()?;
             tx.execute("DELETE FROM bulk_effects WHERE job=? AND position=?",params![item.job,item.position as i64])?;
@@ -344,7 +509,7 @@ impl Store {
             tx.execute("UPDATE bulk_jobs SET undo_requested=1,paused=0 WHERE id=?",[&id])?;
             // The in-flight provider retains ownership, but Undo immediately
             // restores the cached source's display until its receipt arrives.
-            tx.execute("UPDATE bulk_effects SET account=NULL,folder=NULL,unread=NULL,starred=NULL WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status='running' AND undo=0)",params![id,id])?;
+            tx.execute("UPDATE bulk_effects SET account=NULL,folder=NULL,unread=NULL,starred=NULL WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status IN ('running','repair') AND undo=0)",params![id,id])?;
 
             tx.execute("DELETE FROM bulk_effects WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status='queued' AND undo=0)",params![id,id])?;
             tx.execute("UPDATE bulk_items SET status='cancelled' WHERE job=? AND status='queued' AND undo=0",[&id])?;
@@ -455,8 +620,8 @@ impl Store {
         let id = lease.id.clone();
         self.run(move |c| {
             let tx=c.transaction()?;
-            tx.execute("UPDATE bulk_effects SET account=NULL,folder=NULL,unread=NULL,starred=NULL WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status='running')",params![id,id])?;
-            tx.execute("UPDATE bulk_items SET status='uncertain',error='Shep closed before this change was acknowledged. Refresh and check the source and destination folders before resolving it.' WHERE job=? AND status='running'",[&id])?;
+            tx.execute("UPDATE bulk_effects SET account=NULL,folder=NULL,unread=NULL,starred=NULL WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status='running' AND NOT EXISTS(SELECT 1 FROM bulk_flag_receipts r WHERE r.job=bulk_items.job AND r.position=bulk_items.position))",params![id,id])?;
+            tx.execute("UPDATE bulk_items SET status='uncertain',error='Shep closed before this change was acknowledged. Refresh and check the source and destination folders before resolving it.' WHERE job=? AND status='running' AND NOT EXISTS(SELECT 1 FROM bulk_flag_receipts r WHERE r.job=bulk_items.job AND r.position=bulk_items.position)",[&id])?;
             tx.execute("UPDATE bulk_jobs SET paused=0 WHERE id=?",[&id])?;
             bump(&tx)?;let result=job(&tx,&id)?;tx.commit()?;Ok(result)
         }).await
@@ -495,6 +660,6 @@ impl Store {
         .await
     }
     pub async fn next_pending_bulk(&self, after: String) -> anyhow::Result<Option<String>> {
-        self.run(move |c|Ok(c.query_row("SELECT id FROM bulk_jobs WHERE id>? AND paused=0 AND EXISTS(SELECT 1 FROM bulk_items WHERE job=bulk_jobs.id AND status IN ('queued','running')) ORDER BY id LIMIT 1",[after],|r|r.get(0)).optional()?)).await
+        self.run(move |c|Ok(c.query_row("SELECT id FROM bulk_jobs WHERE id>? AND paused=0 AND EXISTS(SELECT 1 FROM bulk_items WHERE job=bulk_jobs.id AND status IN ('queued','running','repair')) ORDER BY id LIMIT 1",[after],|r|r.get(0)).optional()?)).await
     }
 }

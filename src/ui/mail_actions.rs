@@ -114,6 +114,21 @@ impl Actions {
 }
 
 impl App {
+    pub(super) fn displayed_mail_flags(&self, mail: &Mail) -> (bool, bool) {
+        if let Some(row) = self.page.rows.iter().find(|row| row.id == mail.id) {
+            return (row.unread, row.starred);
+        }
+        if !self.bulk_owns_mail(&mail.id)
+            && let Some(entry) = self.mail_actions.flags.get(&mail.id)
+        {
+            return (entry.desired.unread, entry.desired.starred);
+        }
+        if let Some(Some(observed)) = self.page.observed.get(&mail.id) {
+            return (observed.unread, observed.starred);
+        }
+        (mail.unread, mail.starred)
+    }
+
     pub(super) fn move_action_mail(&self) -> Option<&Mail> {
         if let Some(mail) = self.action_mail() {
             return Some(mail);
@@ -703,6 +718,30 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn reader_flags_follow_projected_rows_and_offscreen_observations() {
+        let (mut app, _, original) = fixture().await;
+        let mut projected = original.summary.clone();
+        projected.unread = !projected.unread;
+        projected.starred = !projected.starred;
+        let mut page = (*app.page).clone();
+        page.rows = vec![projected.clone()];
+        app.page = Arc::new(page.clone());
+        assert_eq!(
+            app.displayed_mail_flags(&original.summary),
+            (projected.unread, projected.starred)
+        );
+        page.rows.clear();
+        page.observed
+            .insert(projected.id.clone(), Some(MailMembership::from(&projected)));
+        app.page = Arc::new(page);
+        assert_eq!(
+            app.displayed_mail_flags(&original.summary),
+            (projected.unread, projected.starred)
+        );
+        assert_ne!(original.summary.starred, projected.starred);
+    }
+
     #[tokio::test]
     async fn metadata_actions_work_without_a_body_and_never_target_a_stale_body() {
         for stale in [false, true] {

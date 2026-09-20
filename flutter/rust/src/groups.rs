@@ -1073,6 +1073,10 @@ async fn step(
     let outcome = crate::operations::mutate(
         profile,
         Mutation {
+            action_id: format!(
+                "group:{job}:{position}:{}",
+                if inverse { "undo" } else { "forward" }
+            ),
             credential_slot,
             id: mail.clone(),
             password,
@@ -1080,6 +1084,7 @@ async fn step(
             unread: fields.unread,
             starred: fields.starred,
             intent: false,
+            report: false,
         },
     )
     .await;

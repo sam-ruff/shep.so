@@ -8,6 +8,12 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 - [ ] **20 September app-wide immediate actions architecture:** **Approved for implementation.** Apply the [action lifecycle](docs/agents/IMMEDIATE_ACTIONS.md) consistently across individual/bulk mail, folders, calendar, drafts/sending, accounts and preferences on desktop, Flutter and browser. Update AGENTS.md and deliver production changes with regression/native evidence, not tracking alone. Retain newer intent, durable restart/Undo and conservative uncertain-result recovery. Start with the small-selection delete foreground delay; record each verified migration and keep the remaining domains explicit.
 
+  **Full implementation goal:** Sam now explicitly requests completing and fully
+  testing the architecture. The first migration is progress, not the stopping
+  point. Audit every action domain/client against the approved contract and keep
+  working through durable admission, execution, recovery, activity and lifecycle
+  tests until the entire contract is evidenced.
+
   First migration implemented: common projection outcomes, native bulk review and
   confirmation during pending individual writes, pre-admission Undo, and calendar
   save/delete with exact read-only recovery. Rust and five new native scenarios
@@ -15,6 +21,15 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   [completion](docs/COMPLETION.md) records the evidence. Remaining:
   durable deferred admission/calendar recovery, consistent activity and adoption
   across folders, accounts, preferences, drafts/sending, Flutter and browser.
+
+  Current unshipped integration adds durable calendar admission/Waiting, native
+  flag receipt repair, browser individual Activity/offline cancellation/Undo and
+  Flutter durable individual admission. Browser's 90 focused unit and 18 real
+  control scenarios pass; native's 40 bulk/calendar/rapid scenarios plus the new
+  authentication-wait flow pass. Desktop Send now uses local queued admission
+  before provider capacity, with restart/cancellation tests under verification.
+  Deferred native mail ownership, Flutter checked recovery, remaining domain
+  migrations and final timing/platform/shipping evidence remain active.
 
 Sam reports new mail is slow to arrive and moves failing on `sam@shep.so`
 (Stalwart at `mail.shep.so`). These items outrank everything below. Sam's

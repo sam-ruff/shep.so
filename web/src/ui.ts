@@ -321,6 +321,123 @@ export function mount(
   const gateway =
     w.repository instanceof GatewayRepository ? w.repository : undefined;
   const groupUI = gateway ? new GroupUI(w, gateway) : undefined;
+  let activitySummary = "", activityReading = false, activityAgain = false;
+  async function refreshActivitySummary() {
+    if (!gateway?.actionActivity) return;
+    activityAgain = true;
+    if (activityReading) return;
+    activityReading = true;
+    do {
+      activityAgain = false;
+      let summary: string;
+      try {
+        const page = await gateway.actionActivity.page();
+        summary = page.rows.length ? `${page.rows.length}${page.next ? "+" : ""}` : "";
+      } catch { summary = "!"; }
+      if (summary !== activitySummary) { activitySummary = summary; render(); }
+    } while (activityAgain);
+    activityReading = false;
+  }
+  w.addEventListener("change", () => void refreshActivitySummary());
+  void refreshActivitySummary();
+  async function actionActivity() {
+    if (!gateway?.actionActivity) return;
+    const d = modal("Activity"), content = el("div", "outbox-entries"), status = el("p", "form-status");
+    status.role = "status";
+    let after: string | undefined, next: string | undefined, busy = false, generation = 0, completed = false;
+    const refresh = button("Refresh activity", () => void draw());
+    const older = button("Next actions", () => { after = next; void draw(); });
+    const first = button("First actions", () => { after = undefined; void draw(); });
+    const controls = el("div", "outbox-actions");
+    const recent = button("Recent changes", () => { completed = !completed; after = undefined; recent.textContent = completed ? "Needs attention" : "Recent changes"; void draw(); });
+    controls.append(refresh, first, older, recent);
+    if (groupUI) controls.append(button("Group history", () => { d.close(); groupUI.history(); }));
+    controls.append(button("Outbox", () => { d.close(); void outbox(); }));
+    controls.append(button("Accounts and profile sync", () => { d.close(); tab = "Preferences"; w.changed(); }));
+    d.append(content, status, controls);
+    async function draw() {
+      const request = ++generation;
+      status.textContent = "Loading saved actions…";
+      try {
+        const page = await gateway!.actionActivity!.page(after, completed);
+        if (!d.isConnected || request !== generation) return;
+        next = page.next;
+        content.replaceChildren();
+        if (!page.rows.length) content.append(el("p", "empty", completed ? "No recent completed changes." : "No individual mail changes need attention."));
+        for (const entry of page.rows) {
+          const card = el("section", "settings-card");
+          const operation = entry.lease.fields.folder ? `Move to ${entry.lease.fields.folder}` : "Update message flags";
+          const labels = { Queued: "Saved, not yet confirmed", Waiting: "Waiting for reconnect", Running: "Started, awaiting confirmation", Rejected: "Not applied", Uncertain: "Needs checking", Repair: "Change acknowledged, local progress needs repair", Succeeded: "Change confirmed" };
+          card.append(el("h3", "", operation), el("p", "", labels[entry.status]));
+          const target = el("p", "", "Loading message details…");
+          card.append(target);
+          void gateway!.mailbox?.metadata(entry.lease.id).then(result => {
+            if (request === generation && target.isConnected)
+              target.textContent = result.mail?.subject || "Message unavailable in this cache";
+          }).catch(() => { if (target.isConnected) target.textContent = "Message details could not load. Refresh Activity."; });
+          if (entry.error) card.append(el("p", "form-status", entry.error));
+          card.append(el("p", "muted", `Account: ${entry.account} · Original folder: ${entry.source.folder}`));
+          if (entry.status === "Succeeded") {
+            const undo = button(entry.undoneBy ? "Undo already saved" : "Undo saved change", async () => {
+              if (busy) return;
+              busy = true; undo.disabled = true;
+              try { await gateway!.undoSavedAction(entry); await w.retryPage(); await draw(); }
+              catch (error) { status.textContent = error instanceof Error ? error.message : "Could not undo this change. Refresh Activity."; }
+              finally { busy = false; undo.disabled = !!entry.undoneBy; void refreshActivitySummary(); }
+            });
+            undo.disabled = !!entry.undoneBy || !!(entry.receipt?.recovery && !entry.receipt.after.remoteId);
+            card.append(undo);
+          } else if (entry.status === "Repair" && entry.receipt) {
+            const repair = button("Repair local cache", async () => {
+              if (busy) return;
+              busy = true; repair.disabled = true;
+              try { await gateway!.repairAction(entry.id); await w.retryPage(); await draw(); }
+              catch (error) { status.textContent = error instanceof Error ? error.message : "Could not repair the cache. Retry."; }
+              finally { busy = false; repair.disabled = false; void refreshActivitySummary(); }
+            });
+            card.append(repair);
+          } else if (entry.status === "Rejected") {
+            card.append(button("Dismiss reviewed failure", async () => {
+              try { await gateway!.actionActivity!.dismissRejected(entry.id); await draw(); void refreshActivitySummary(); }
+              catch (error) { status.textContent = error instanceof Error ? error.message : "Could not dismiss the failure. Retry."; }
+            }));
+          } else if (entry.status === "Running" || entry.status === "Uncertain") {
+            const check = el("input"), label = el("label", "selection-checkbox");
+            check.type = "checkbox";
+            check.setAttribute("aria-label", "I checked the source and destination folders");
+            label.append(check, el("span", "", "I checked the source and destination folders"));
+            const accept = button("Accept current state", async () => {
+              if (busy || !check.checked) return;
+              busy = true; accept.disabled = true;
+              try { await gateway!.acceptActionReview(entry, check.checked); await draw(); }
+              catch (error) { status.textContent = error instanceof Error ? error.message : "The saved action changed. Refresh its review."; }
+              finally { busy = false; accept.disabled = !check.checked; void refreshActivitySummary(); }
+            });
+            accept.disabled = true;
+            check.onchange = () => { accept.disabled = !check.checked || busy; };
+            card.append(el("p", "muted", "This retires only the local request. It does not repeat the operation or claim that the server accepted or rejected it."), label, accept);
+          } else {
+            card.append(el("p", "muted", "Saved changes continue after the original tab closes and this account is connected."));
+            card.append(button("Cancel saved change", async () => {
+              if (busy) return;
+              busy = true;
+              try { await gateway!.cancelSavedAction(entry); w.cancelSavedProjection(entry.id); await w.retryPage(); await draw(); }
+              catch (error) { status.textContent = error instanceof Error ? error.message : "The action changed. Refresh Activity."; }
+              finally { busy = false; void refreshActivitySummary(); }
+            }));
+            if (entry.status === "Waiting") card.append(button("Open Preferences", () => { d.close(); tab = "Preferences"; w.changed(); }));
+          }
+          content.append(card);
+        }
+        older.disabled = !next || busy;
+        first.disabled = !after || busy;
+        status.textContent = "";
+      } catch (error) {
+        if (d.isConnected && request === generation) status.textContent = error instanceof Error ? error.message : "Could not load saved actions. Retry.";
+      }
+    }
+    await draw();
+  }
   window.addEventListener("pagehide", () => groupUI?.dispose(), { once: true });
   const printer = gateway
     ? new PrintController(
@@ -554,6 +671,7 @@ export function mount(
         for (const entry of entries) {
           const card = el("section", "settings-card");
           const labels: Record<string, string> = {
+            queued: "Queued on this browser",
             preparing: "Not yet submitted",
             reserved: "Not yet submitted",
             cancelled: "Not sent",
@@ -578,6 +696,7 @@ export function mount(
               `To: ${entry.draft.to || entry.draft.cc || "Recipients in Bcc"}`,
             ),
           );
+          if (entry.queueError) card.append(el("p", "form-status", entry.queueError));
           const actions = el("div", "outbox-actions");
           const review = el("label", "checkbox-field");
           const confirmed = el("input");
@@ -722,9 +841,10 @@ export function mount(
               actions.append(upload);
             }
           }
-          actions.append(
-            button("Check delivery status", () => void recover("check")),
-          );
+          if (entry.state === "queued") {
+            actions.append(button("Continue queued send", () => { void gateway!.resumeOutgoing(); status.textContent = "Queued messages will continue when their accounts are connected."; }));
+            actions.append(button("Open Preferences", () => { d.close(); tab = "Preferences"; w.changed(); }));
+          } else actions.append(button("Check delivery status", () => void recover("check")));
           if (
             entry.state === "delivered" ||
             entry.sent?.state === "saved" ||
@@ -1006,13 +1126,13 @@ export function mount(
         input.disabled = true;
       try {
         await writes;
-        if (send) await w.repository.send(draft);
+        if (send) await (deliveryLocked ? w.repository.send(draft) : (w.repository.queueSend?.(draft) ?? w.repository.send(draft)));
         else await w.repository.saveDraft(draft);
         if (send) w.drafts.delete(draft.id);
         else w.rememberDraft(draft);
         if (send) {
           if (gateway) w.addCachedMail(gateway.cached);
-          w.notice = "Message accepted by SMTP";
+          w.notice = w.repository.queueSend && !deliveryLocked ? "Message queued in Outbox" : "Message accepted by SMTP";
         }
         d.close();
         w.changed();
@@ -2171,15 +2291,15 @@ export function mount(
     );
     if (gateway)
       panel.append(
-        accountPanel(gateway, (removed) => {
+        accountPanel(gateway, (removed, notice) => {
           if (removed) {
             w.accountRemoved(removed);
             gateway.groups.refreshAttention();
             attachmentState = undefined;
           }
-          w.notice = removed
+          w.notice = notice ?? (removed
             ? "Account removed from this browser"
-            : "Account preferences saved";
+            : "Account preferences saved");
           w.error = removed ? gateway.warning : null;
           w.changed();
         }),
@@ -2316,6 +2436,12 @@ export function mount(
         ),
       );
     header.append(el("span", "spacer"));
+    if (gateway?.actionActivity) {
+      const activity = button("Activity", () => void actionActivity());
+      activity.querySelector("span")!.textContent = `Activity${activitySummary ? ` (${activitySummary})` : ""}`;
+      activity.dataset.stable = "action-activity";
+      header.append(activity);
+    }
     if (groupUI) {
       const history = button("Group history", () => groupUI.history());
       history.querySelector("span")!.textContent = "History";

@@ -1496,6 +1496,34 @@ class NativeFlows(unittest.TestCase):
                        {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},check("bulk.jobs.0.restored",1),
                        check("bulk.jobs.0.cancelled",1),check("total",120),shot("bulk-review-retains-other-undo"))
 
+    def test_bulk_flag_receipt_repair_without_provider_capacity(self):
+        started = self.mcp.call("desktop.start", bulk_history="flag-repair",
+                                held_provider_slots=True, persistent=True)
+        print(f"Flag receipt repair evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("bulk.jobs.0.id", "flag-repair-fixture"),
+                       check("starred", False),
+                       click(1330, 36), check("dialog", "BulkHistory"),
+                       wait(80), click(700, 490),
+                       check("bulk.selected_job", "flag-repair-fixture"),
+                       check("bulk.items.0.status", "repair"), wait(80),
+                       shot("bulk-flag-cache-repair-paused"),
+                       {"type": "restart"},
+                       check("bulk.jobs.0.paused", True),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       wait(80), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"),
+                       click(1330, 36), check("dialog", "BulkHistory"),
+                       wait(80), click(700, 490),
+                       check("bulk.items.0.status", "repair"), wait(80),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       shot("bulk-flag-cache-repair-compact-dark"),
+                       {"type": "resize", "width": 1440, "height": 920}, wait(150),
+                       click(640, 486), check("bulk.jobs.0.completed", 1),
+                       check("bulk.jobs.0.remaining", 0),
+                       check("starred", False),
+                       check("bulk.items.0.status", "done"), wait(80),
+                       shot("bulk-flag-cache-repair-completed"))
+
     def test_bulk_history_header_icon_mouse_escape_and_compact_dark(self):
         started = self.mcp.call("desktop.start", bulk_history=True)
         print(f"History icon evidence: {started['artifacts']}", flush=True)
@@ -5000,6 +5028,21 @@ class NativeFlows(unittest.TestCase):
                        click(350,mail_row_y(3)),check("selected","Long formatted letter"),check("composer.visible",True),
                        check("editor","A reply above the long original.","contains"),shot("inline-long-reply-restored"))
 
+    def test_queued_send_closes_composer_while_providers_are_held_and_survives_restart(self):
+        self.mcp.call("desktop.start", persistent=True, held_provider_slots=True)
+        self.mcp.batch(key("r"), check("composer.visible", True),
+                       check("focused_input", "compose-body"), type_text("Keep this queued reply."),
+                       click(675, 564), check("composer.visible", False),
+                       check("outgoing_pending", 1), check("busy", []),
+                       click(91, 516), check("dialog", "Outbox"),
+                       check("outgoing_rows.0.delivery", "Queued"), shot("queued-send-held-providers"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("outgoing_pending", 1), click(91, 516), check("dialog", "Outbox"),
+                       check("outgoing_rows.0.delivery", "Queued"), shot("queued-send-after-restart"),
+                       click(532, 562), check("outgoing_pending", 0), check("busy", []),
+                       check("draft_count", 1), shot("queued-send-returned-to-drafts"))
+
     def test_inline_composer_send_preparation_allows_another_reply_and_preserves_failure(self):
         started = self.mcp.call("desktop.start", mail_actions="slow")
         print(f"Inline send navigation: {started['artifacts']}", flush=True)
@@ -5750,6 +5793,23 @@ class NativeFlows(unittest.TestCase):
                        check("fields.title", "A quiet start"), check("fields.source", "preview-calendar"),
                        key("Escape"), check("dialog", None))
 
+    def test_calendar_queued_save_survives_close_and_crash_with_provider_capacity_held(self):
+        started = self.mcp.call("desktop.start", held_provider_slots=True, persistent=True)
+        print(f"Calendar durable admission evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), double_click(700, 474),
+                       check("dialog", "Event"), wait(80), type_text("Retained across restart"),
+                       click(510, 677), check("dialog", None), check("events", 6),
+                       check("calendar_actions.0.admitted", True), check("calendar_actions.0.status", "queued"),
+                       shot("calendar-durable-queued"))
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), check("events", 6),
+                       check("calendar_actions.0.title", "Retained across restart"),
+                       check("calendar_actions.0.status", "queued"), shot("calendar-durable-normal-restart"))
+        self.mcp.call("desktop.restart", crash=True)
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), check("events", 6),
+                       check("calendar_actions.0.title", "Retained across restart"),
+                       check("calendar_actions.0.status", "queued"), shot("calendar-durable-crash-restart"))
+
     def test_calendar_delete_projects_while_provider_capacity_is_held(self):
         started = self.mcp.call("desktop.start", held_provider_slots=True)
         print(f"Calendar immediate delete evidence: {started['artifacts']}", flush=True)
@@ -5761,6 +5821,31 @@ class NativeFlows(unittest.TestCase):
                        check("calendar_actions.0.acknowledged", False), shot("calendar-pending-delete"),
                        key("ctrl+1"), check("tab", "Mail"), key("ctrl+2"), check("tab", "Calendar"),
                        check("events", 4), check("calendar_actions.0.acknowledged", False))
+
+    def test_calendar_authentication_wait_survives_restart_with_visible_recovery(self):
+        started = self.mcp.call("desktop.start", held_provider_slots=True, persistent=True)
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), double_click(700, 474),
+                       check("dialog", "Event"), wait(80), type_text("Waiting for reconnect"),
+                       click(510, 677), check("dialog", None), check("calendar_actions.0.admitted", True))
+        self.mcp.call("desktop.close")
+        database = Path(started["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database) as cache:
+            identity, data = cache.execute("SELECT id,data FROM calendar_actions").fetchone()
+            job = json.loads(data)
+            job.update(status="waiting", attempts=1, wait_reason="Authentication", retry_at=None,
+                       error="Reconnect or unlock this calendar, then retry")
+            cache.execute("UPDATE calendar_actions SET status='waiting',data=? WHERE id=?",
+                          (json.dumps(job), identity))
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), check("events", 6),
+                       check("calendar_actions.0.title", "Waiting for reconnect"),
+                       check("calendar_actions.0.status", "waiting"),
+                       shot("calendar-authentication-wait-recovery"))
+        self.mcp.call("desktop.close")
+        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as cache:
+            stored = json.loads(cache.execute("SELECT data FROM calendar_actions WHERE id=?", (identity,)).fetchone()[0])
+        self.assertEqual(stored["status"], "waiting")
+        self.assertEqual(stored["attempts"], 1)
 
     def test_keyboard_pane_navigation_and_full_reader(self):
         self.mcp.batch(key("Down"), check("selected", "Your weekly workspace digest"),

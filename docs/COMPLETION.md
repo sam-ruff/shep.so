@@ -1,5 +1,44 @@
 # Completion audit
 
+## Durable action checkpoint, 20 September 2026
+
+This continuation implements durable native calendar admission, restart recovery,
+authentication/offline Waiting and receipt-first cache repair through the existing
+worker. Native group flag receipts now survive failed cache writes and repair
+without provider capacity or another server mutation. Reader controls use the
+same projected flags as the list.
+
+Desktop Send now saves exact prepared MIME as Queued on the local persistence
+lane, closes the composer before provider capacity and supports local cancellation.
+Only an atomic Queued-to-Submitting claim can begin SMTP. Restart preserves exact
+bytes; changed accounts reject dispatch, and imported queues require review.
+The existing delivery and Sent-copy recovery remain authoritative.
+
+Browser individual actions now retain Activity, offline projections, cancellation
+and durable receipt-based Undo across reload. Browser Send admits its draft and
+queue atomically before provider reservation. Account attempts persist nonsecret
+progress and reject late activation after dismissal/newer input. Preferences save
+values and field revisions together. Flutter individual actions persist stable
+admission before credentials and expose waiting/recovery state; its expanded
+Activity and checked Undo are still under integration.
+
+Focused integrated evidence: 1,110 library tests and 13 Outbox storage tests pass;
+54 Python harness tests pass. Native bulk/calendar/rapid execution passes 40
+scenarios, followed by the authentication-wait flow and three Send controls.
+The queued Send scenario also passes its visible Return to drafts check with
+all provider slots held. Reviewed captures include `db6f309e9f38` for calendar
+Waiting and `fcef3a6aaa07` for queued Send/restart, under ignored `artifacts/e2e/`.
+Browser v2 passes 90 unit and 18 Chromium scenarios; the integrated v3 unit suite
+passes 94. Flutter's actual admission FFI and 21 workspace tests pass.
+
+Remaining limits: native deferred individual/group admission and fair scheduling
+are still being migrated; native large MIME preparation precedes queued admission;
+browser newly queued sends can wait behind a held scheduler batch; unsupported
+client domains remain explicit parity gaps; mailbox-scale timing, live providers
+and Apple/other-platform execution are not established by these fixture tests.
+The full architecture goal remains active. Final shipping gates and the source
+commit are recorded with the checkpoint receipt below.
+
 ## First immediate-actions migration, 20 September 2026
 
 Implementation: `a1049ab`. Small native selection reviews freeze and summarise

@@ -31,6 +31,67 @@ async fn begin(store: &Store, draft: &Draft) -> OutgoingInfo {
 }
 
 #[tokio::test]
+async fn queued_submission_reopens_with_exact_wire_and_claims_only_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("queued.sqlite");
+    let store = Store::open(&path).unwrap();
+    store.save_account(account()).await.unwrap();
+    let draft = draft("queued");
+    store.save_draft(draft.clone()).await.unwrap();
+    let mut prepared = submission(&draft);
+    prepared.info.delivery = DeliveryState::Queued;
+    let raw = prepared.raw.clone();
+    let info = store.begin_outgoing(prepared, draft.clone()).await.unwrap();
+    assert!(
+        store
+            .workspace()
+            .await
+            .unwrap()
+            .outgoing_drafts
+            .contains(&draft.id)
+    );
+    assert!(store.delete_draft(draft.id).await.is_err());
+    drop(store);
+    let store = Store::open(path).unwrap();
+    assert_eq!(
+        store.next_queued_outgoing().await.unwrap(),
+        Some(info.attempt.clone())
+    );
+    assert!(store.claim_outgoing(info.attempt.clone()).await.unwrap());
+    assert!(
+        store
+            .cancel_queued_outgoing(info.attempt.clone())
+            .await
+            .is_err()
+    );
+    assert!(!store.claim_outgoing(info.attempt.clone()).await.unwrap());
+    assert_eq!(store.next_queued_outgoing().await.unwrap(), None);
+    let saved = store.outgoing_submission(info.attempt).await.unwrap();
+    assert_eq!(saved.raw, raw);
+    assert_eq!(saved.info.message_id, info.message_id);
+    assert!(saved.info.needs_delivery_review());
+}
+
+#[tokio::test]
+async fn changed_sending_account_rejects_unsent_queue_before_claim() {
+    let store = Store::memory().unwrap();
+    store.save_account(account()).await.unwrap();
+    let draft = draft("queued");
+    store.save_draft(draft.clone()).await.unwrap();
+    let mut prepared = submission(&draft);
+    prepared.info.delivery = DeliveryState::Queued;
+    let info = store.begin_outgoing(prepared, draft).await.unwrap();
+    let mut changed = account();
+    changed.smtp_host = "other.example.test".into();
+    store.save_account(changed).await.unwrap();
+    assert!(!store.claim_outgoing(info.attempt.clone()).await.unwrap());
+    assert_eq!(
+        store.outgoing_info(info.attempt).await.unwrap().delivery,
+        DeliveryState::Rejected
+    );
+}
+
+#[tokio::test]
 async fn interrupted_submission_survives_restart_with_exact_wire_and_private_envelope() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mail.sqlite");

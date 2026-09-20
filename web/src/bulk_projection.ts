@@ -4,6 +4,8 @@ import { read, walk } from "./mailbox_cache";
 import type { CacheChange, CacheState, CacheMail } from "./cache_changes";
 import type { MailIntent } from "./mail_intents";
 import type { MailAlias } from "./sent_cache";
+import { queuedActionFields } from "./mail_activity";
+import type { Fields } from "./model";
 
 const schema = `
 CREATE TABLE IF NOT EXISTS bulk_index_state(singleton INTEGER PRIMARY KEY,epoch TEXT NOT NULL);
@@ -21,6 +23,7 @@ CREATE TEMP TABLE IF NOT EXISTS bulk_current(id TEXT PRIMARY KEY,folder TEXT,unr
 /** Both mailbox queries and captured selections use these same full-group
  * effects. Only changed durable metadata crosses into worker-owned SQLite. */
 export class BulkProjection {
+  private queued = new Map<string, Fields>();
   constructor(
     private sql: Database,
     private user: string,
@@ -142,6 +145,9 @@ export class BulkProjection {
     this.exec(
       `INSERT INTO bulk_current WITH ${bulkEffects} SELECT id,CASE WHEN lower(folder)='inbox' THEN 'INBOX' ELSE folder END,unread,starred FROM bulk_effect`,
     );
+    for (const [id, fields] of this.queued)
+      this.exec("INSERT INTO bulk_current VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET folder=COALESCE(excluded.folder,bulk_current.folder),unread=COALESCE(excluded.unread,bulk_current.unread),starred=COALESCE(excluded.starred,bulk_current.starred)",
+        [id, fields.folder ?? null, fields.unread === undefined ? null : +fields.unread, fields.starred === undefined ? null : +fields.starred]);
   }
   fields(id: string) {
     const row = this.sql.selectObject(
@@ -189,6 +195,7 @@ export class BulkProjection {
     state: CacheState & { epoch: string },
     accounts: { id: string }[],
   ) {
+    this.queued = tx.objectStoreNames.contains("mailActions") ? await queuedActionFields(tx) : new Map();
     const previous = this.sql.selectObject(
       "SELECT epoch,revision FROM bulk_source_state WHERE singleton=1",
     ) as { epoch: string; revision: number } | undefined;

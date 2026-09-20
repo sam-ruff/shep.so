@@ -6,6 +6,7 @@ import {
   type CacheMail,
 } from "./cache_changes";
 import type { MailAlias } from "./sent_cache";
+import { BrowserActivity, actionId, type ActionActivity, type MailAction } from "./mail_activity";
 
 export type IntentField = "folder" | "unread" | "starred";
 export type IntentStatus = "pending" | "applied" | "failed";
@@ -24,6 +25,7 @@ export interface MailIntent {
   applied?: Partial<Record<IntentField, number>>;
 }
 export interface IntentLease {
+  action?: string;
   alias?: { id: string; lineage: string };
   id: string;
   account: string;
@@ -31,8 +33,10 @@ export interface IntentLease {
   fields: Fields;
 }
 export interface IntentStore {
+  activity?: ActionActivity;
   reserve(): Promise<number>;
-  register(id: string, fields: Fields): Promise<IntentLease>;
+  register(id: string, fields: Fields, owner?: string): Promise<IntentLease>;
+  registerUndo?(expected: MailAction, owner: string): Promise<IntentLease>;
   claim(
     id: string,
     revision: number,
@@ -47,6 +51,8 @@ export interface IntentStore {
   ): Promise<void>;
 }
 const names = [
+  "accounts",
+  "mailActions",
   "mailIntents",
   "intentState",
   "mailAliases",
@@ -84,7 +90,8 @@ export function intentValues(fields: Fields): Fields {
 /** Field ownership is independent of provider flags. Sync cannot erase newer
  * intent, and matching boolean values never justify an older group's Undo. */
 export class BrowserIntents implements IntentStore {
-  constructor(private db: IDBDatabase) {}
+  readonly activity: ActionActivity;
+  constructor(private db: IDBDatabase) { this.activity = new BrowserActivity(db); }
   private transaction<T>(
     mode: IDBTransactionMode,
     work: (tx: IDBTransaction) => Promise<T>,
@@ -146,23 +153,54 @@ export class BrowserIntents implements IntentStore {
   reserve() {
     return this.transaction("readwrite", (tx) => this.next(tx));
   }
-  register(id: string, fields: Fields) {
+  registerUndo(expected: MailAction, owner: string) {
+    if (!expected.receipt) throw Error("This change has no confirmed receipt to undo.");
+    const fields: Fields = {};
+    for (const key of intentFields)
+      if ((expected.applied ?? expected.lease.fields)[key] !== undefined)
+        Object.assign(fields, { [key]: expected.receipt.before[key] });
+    return this.register(expected.receipt.after.id, fields, owner, expected);
+  }
+  register(id: string, fields: Fields, owner?: string, undo?: MailAction) {
     const values = intentValues(fields);
     return this.transaction("readwrite", async (tx) => {
+      if ((await read<MailAction[]>(tx.objectStore("mailActions").getAll(undefined, 148))).filter(action => action.status !== "Succeeded").length >= 128)
+        throw Error("Review saved mail actions in Activity before starting more changes.");
       const record = await this.record(tx, id),
         revision = await this.next(tx);
+      if (undo) {
+        const saved = await read<MailAction | undefined>(tx.objectStore("mailActions").get(undo.id));
+        if (!saved || JSON.stringify(saved) !== JSON.stringify(undo) || saved.status !== "Succeeded" || saved.undoneBy || !saved.receipt || (saved.receipt.recovery && !saved.receipt.after.remoteId))
+          throw Error("This change needs a fresh review before Undo.");
+        for (const key of intentFields)
+          if (record.fields[key]?.revision !== undo.lease.revision) delete values[key];
+        if (!Object.keys(values).length) throw Error("Newer changes own these fields. Nothing from this action can be undone.");
+      }
       for (const key of intentFields)
         if (values[key] !== undefined)
           record.fields[key] = {
             revision,
             value: values[key]!,
             status: "pending",
+            ...(undo ? { origin: undo.lease.revision } : {}),
           };
       tx.objectStore("mailIntents").put(record, record.id);
+      const metadata = await read<CacheMail>(tx.objectStore("mailMetadata").get(record.id));
+      const lease = { id: record.id, account: record.account, revision, fields: values, action: actionId(revision) };
+      const action: MailAction = {
+        id: actionId(revision), account: record.account, lease,
+        source: undo?.receipt?.after ?? { id: record.id, account: record.account, folder: metadata.core.folder, remoteId: metadata.core.remote_id, lineage: metadata.lineage, unread: metadata.core.unread, starred: metadata.core.starred },
+        status: "Queued",
+        owner,
+        connection: JSON.stringify(await read(tx.objectStore("accounts").get(record.account))),
+      };
+      tx.objectStore("mailActions").put(action, action.id);
+      if (undo) tx.objectStore("mailActions").put({ ...undo, undoneBy: action.id }, undo.id);
       recordCacheChanges(tx, [
         { store: "mailIntents", key: record.id, value: record },
       ]);
       return {
+        action: action.id,
         id: record.id,
         account: record.account,
         revision,

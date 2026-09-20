@@ -582,6 +582,7 @@ export class SelectionStore {
         "mailAliases",
         "mailRoles",
         "mailIntents",
+        "mailActions",
       ];
       if ("scope" in command && command.scope.query?.trim()) names.push("mail");
       await this.bulk.journal();

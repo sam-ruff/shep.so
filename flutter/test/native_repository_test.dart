@@ -148,6 +148,28 @@ void main() {
     return repository;
   }
 
+  test('native mail activity exposes durable admission through FFI', () async {
+    final credentials = FixtureCredentials();
+    final repository = await connection(credentials);
+    final page = await repository.call({'op': 'page', 'folder': 'Inbox'});
+    final mail = Map<String, dynamic>.from((page['mail'] as List).first as Map);
+    final result = await repository.call({
+      'op': 'mutate',
+      'action_id': 'dart-waiting-action',
+      'id': mail['id'],
+      'folder': 'Archive',
+    });
+    expect(result['status'], 'succeeded');
+    final activity = await repository.mailActions();
+    expect(activity.single.id, 'dart-waiting-action');
+    expect(activity.single.status, 'succeeded');
+    expect(activity.single.canResume, false);
+    await expectLater(
+      repository.cancelMailAction(activity.single.id),
+      throwsA(isA<Exception>()),
+    );
+  });
+
   test(
     'profile operation fixtures survive the actual Dart FFI without importing accounts',
     () async {

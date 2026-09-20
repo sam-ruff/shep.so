@@ -4,6 +4,7 @@ import type { Change, StoreName } from "./storage";
 import { localId, type MailAlias } from "./sent_cache";
 import type { BulkAccountReview } from "./bulk_journal";
 import type { MailIntent } from "./mail_intents";
+import type { MailAction } from "./mail_activity";
 export interface RemovalReview {
   id: string;
   token: string;
@@ -22,6 +23,7 @@ export interface RemovalReview {
 export type RemovalSnapshot = Partial<Record<StoreName, any[]>>;
 export const reviewStores = [
   "accounts",
+  "accountConnections",
   "mail",
   "drafts",
   "draftFiles",
@@ -30,6 +32,7 @@ export const reviewStores = [
   "mailRoles",
   "removedAccounts",
   "mailIntents",
+  "mailActions",
 ] as const;
 const ordered = <T>(items: T[], key: (v: T) => string) =>
   [...items].sort((a, b) => key(a).localeCompare(key(b)));
@@ -68,6 +71,10 @@ export function removalPreview(s: RemovalSnapshot, id: string): RemovalReview {
   const pending = new Set(
     mail.filter((m) => m.moved || m.pendingMove).map(localId),
   );
+  const actions = ordered(((s.mailActions ?? []) as MailAction[]).filter(a => a.account === id), a => a.id);
+  const connections = (s.accountConnections ?? []).filter(attempt => attempt.account?.id === id);
+  for (const connection of connections) pending.add(`connection:${connection.id}`);
+  for (const action of actions) if (action.status !== "Succeeded") pending.add(action.lease.id);
   for (const intent of intents)
     if (Object.values(intent.fields).some((f) => f?.status === "pending"))
       pending.add(intent.id);
@@ -97,6 +104,8 @@ export function removalPreview(s: RemovalSnapshot, id: string): RemovalReview {
       files.map((f) => [f.draftId, f.info, f.order]),
       outgoing.map((o) => [o.id, o.draft, o.state, o.recovery, o.sent]),
       intents,
+      actions,
+      connections,
     ]),
   };
 }
@@ -150,7 +159,11 @@ export function removalChanges(
     ...((s.mailIntents ?? []) as MailIntent[])
       .filter((i) => i.account === expected.id)
       .map((i) => ({ store: "mailIntents" as const, key: i.id })),
+    ...((s.mailActions ?? []) as MailAction[])
+      .filter(a => a.account === expected.id)
+      .map(a => ({ store: "mailActions" as const, key: a.id })),
     { store: "accounts", key: expected.id },
+    { store: "accountConnections", key: expected.id },
     {
       store: "removedAccounts",
       key: expected.id,
@@ -173,7 +186,7 @@ export function checkRemovedWrites(changes: Change[], removed: any[]) {
     if (c.value === undefined) continue;
     const v: any = c.value;
     const owner =
-      c.store === "accounts"
+      c.store === "accounts" || c.store === "accountConnections"
         ? c.key
         : c.store === "mail"
           ? v.core?.account_id
@@ -181,7 +194,7 @@ export function checkRemovedWrites(changes: Change[], removed: any[]) {
             ? v.accountId
             : c.store === "outgoing"
               ? (v.account?.id ?? v.draft?.accountId)
-              : c.store === "mailRoles" || c.store === "mailIntents"
+              : c.store === "mailRoles" || c.store === "mailIntents" || c.store === "mailActions"
                 ? v.account
                 : undefined;
     if (

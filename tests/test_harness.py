@@ -16,6 +16,17 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_bulk_repair_fixture_rejects_unknown_modes_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (1, None, "unknown"):
+                with self.assertRaisesRegex(ValueError, "Bulk history fixture"):
+                    desktop.start(bulk_history=value)
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        modes = tool["inputSchema"]["properties"]["bulk_history"]["oneOf"]
+        self.assertEqual(modes[1]["enum"], ["flag-repair"])
+
     def test_native_notifications_require_an_owned_bus_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

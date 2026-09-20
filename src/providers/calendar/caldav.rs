@@ -151,7 +151,10 @@ impl CalDav {
                 .context("Sync calendar before editing this event again.")?;
             // REPORT expansion may omit data. Always edit the complete resource and
             // preserve alarms, attendees, timezones and unknown extension properties.
-            let (current, original) = self.resource(source, &url, secret).await?;
+            let (current, original) = self
+                .resource(source, &url, secret)
+                .await
+                .map_err(super::before_dispatch)?;
             anyhow::ensure!(
                 current.id == event.id,
                 "The calendar resource belongs to another event."
@@ -181,7 +184,10 @@ impl CalDav {
         )
         .await?;
         if response.status() == reqwest::StatusCode::PRECONDITION_FAILED {
-            let (current, _) = self.resource(source, &url, secret).await?;
+            let (current, _) = self
+                .resource(source, &url, secret)
+                .await
+                .map_err(super::before_dispatch)?;
             anyhow::ensure!(
                 current.id == event.id && super::same_event_content(&current, event),
                 "This event changed on the server. Sync calendar before editing it again."
@@ -256,7 +262,11 @@ impl CalendarProvider for CalDav {
         source: &CalendarSource,
         event: &CalendarEvent,
     ) -> anyhow::Result<Option<CalendarEvent>> {
-        let secret = self.credentials.read(&source.id).await?;
+        let secret = self
+            .credentials
+            .read(&source.id)
+            .await
+            .map_err(super::credential_failure)?;
         self.read(source, event, secret.expose_secret()).await
     }
 
@@ -266,7 +276,11 @@ impl CalendarProvider for CalDav {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> anyhow::Result<Vec<CalendarEvent>> {
-        let secret = self.credentials.read(&source.id).await?;
+        let secret = self
+            .credentials
+            .read(&source.id)
+            .await
+            .map_err(super::credential_failure)?;
         self.fetch(source, start, end, secret.expose_secret()).await
     }
     async fn save_event(
@@ -274,7 +288,11 @@ impl CalendarProvider for CalDav {
         source: &CalendarSource,
         event: &CalendarEvent,
     ) -> anyhow::Result<CalendarEvent> {
-        let secret = self.credentials.read(&source.id).await?;
+        let secret = self
+            .credentials
+            .read(&source.id)
+            .await
+            .map_err(super::credential_failure)?;
         self.save(source, event, secret.expose_secret()).await
     }
     async fn delete_event(
@@ -282,7 +300,11 @@ impl CalendarProvider for CalDav {
         source: &CalendarSource,
         event: &CalendarEvent,
     ) -> anyhow::Result<()> {
-        let secret = self.credentials.read(&source.id).await?;
+        let secret = self
+            .credentials
+            .read(&source.id)
+            .await
+            .map_err(super::credential_failure)?;
         self.delete(source, event, secret.expose_secret()).await
     }
 }
@@ -299,6 +321,50 @@ mod tests {
         calendar::encode_ical(&test_server::event())
             .replace("BEGIN:VEVENT", "X-WR-CALNAME:Home\r\nBEGIN:VTIMEZONE\r\nTZID:Europe/London\r\nBEGIN:STANDARD\r\nDTSTART:19701025T020000\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT")
             .replace("END:VEVENT", "SEQUENCE:4\r\nORGANIZER:mailto:owner@example.com\r\nATTENDEE;CN=Friend:mailto:friend@example.com\r\nX-HOME-NOTE:retain me\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Keep this alarm\r\nEND:VALARM\r\nEND:VEVENT")
+    }
+
+    #[tokio::test]
+    async fn calendar_safe_waits_are_distinct_from_uncertain_mutation_transport() {
+        let mut server = Server::start(vec![
+            Reply::new(401, ""),
+            Reply::new(429, ""),
+            Reply::disconnect(),
+            Reply::new(503, ""),
+            Reply::new(503, ""),
+        ])
+        .await;
+        let provider = CalDav {
+            credentials: Default::default(),
+            http: test_server::client(),
+        };
+        let source = test_server::source(&server.url);
+        let mut event = test_server::event();
+        for expected in [
+            Some(calendar::WaitReason::Authentication),
+            Some(calendar::WaitReason::Offline),
+            None,
+            None,
+        ] {
+            let error = provider
+                .save(&source, &event, "fixture")
+                .await
+                .expect_err("provider failure");
+            assert_eq!(calendar::mutation_wait_reason(&error), expected);
+            assert_eq!(calendar::mutation_is_uncertain(&error), expected.is_none());
+        }
+        event.etag = Some("old".into());
+        event.remote_url = Some("walk.ics".into());
+        let preflight = provider
+            .save(&source, &event, "fixture")
+            .await
+            .expect_err("read-only preflight unavailable");
+        assert_eq!(
+            calendar::mutation_wait_reason(&preflight),
+            Some(calendar::WaitReason::Offline)
+        );
+        assert!(!calendar::mutation_is_uncertain(&preflight));
+        server.finish().await;
+        assert_eq!(server.requests().len(), 5);
     }
 
     #[tokio::test]

@@ -5,6 +5,7 @@ mod backups;
 #[cfg(test)]
 mod backups_tests;
 mod bulk;
+mod calendar_actions;
 mod calendar_connections;
 mod database_transfers;
 mod dispatch;
@@ -114,9 +115,16 @@ pub enum Command {
     CleanupCredentials,
     RestoreGoogleCalendars,
     SyncCalendar,
+    #[cfg(test)]
     SaveEvent(CalendarEvent),
+    #[cfg(test)]
     DeleteEvent(CalendarEvent),
+    #[cfg(test)]
     CalendarAction(u64, CalendarEvent, bool),
+    AdmitCalendarAction(u64, String, CalendarEvent, bool),
+    CheckCalendarJob(String, u64),
+    ResolveCalendarJob(String, u64),
+    RetryCalendarJob(String, u64),
     InspectCalendarAction(u64, CalendarEvent),
     Backup(BackupTarget, SecretString),
     AutomaticBackup(BackupTarget),
@@ -166,9 +174,12 @@ impl Command {
                 Some(format!("sftp-probe:{}:{}", settings.host, settings.port))
             }
             Self::Send(d) => Some(format!("send:{}", d.id)),
-            Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
-            Self::CalendarAction(_, e, _) => Some(format!("event:{}", e.key())),
+            #[cfg(test)]
+            Self::SaveEvent(e) | Self::DeleteEvent(e) | Self::CalendarAction(_, e, _) => {
+                Some(format!("event:{}", e.key()))
+            }
             Self::InspectCalendarAction(_, e) => Some(format!("event:{}", e.key())),
+            Self::CheckCalendarJob(id, _) => Some(format!("calendar-check:{id}")),
             Self::Flags(request, m, _) => Some(format!("flags:{}:{request}", m.id)),
             Self::UndoMove(request, m, _) => Some(format!("undo:{}:{request}", m.id)),
             Self::Move(request, m, _) => Some(format!("move:{}:{request}", m.id)),
@@ -295,6 +306,14 @@ pub enum Event {
     CalendarEventSaved(String),
     CalendarActionFinished(u64, CalendarActionResult),
     CalendarActionObserved(u64, Result<CalendarObservation, String>),
+    CalendarAdmitted(u64, Result<Arc<crate::store::CalendarJob>, String>),
+    CalendarJournal(
+        u64,
+        u64,
+        Arc<Vec<CalendarEvent>>,
+        Arc<Vec<crate::store::CalendarJob>>,
+    ),
+    CalendarJob(String, Result<Arc<crate::store::CalendarJob>, String>),
     ConnectionTest(ConnectionTarget, Result<String, String>),
 }
 #[derive(Debug, Clone)]
@@ -503,20 +522,30 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
         let _ = output
             .send(Event::Ready(tx, Arc::new(workspace), preview_google))
             .await;
-        if let Ok((revision, events)) = engine.store.calendar_snapshot().await {
+        if let Err(error) = engine.store.recover_calendar_actions().await {
             let _ = output
-                .send(Event::Calendar(revision, Arc::new(events)))
+                .send(Event::Error(format!(
+                    "Could not recover calendar changes. {error:#}"
+                )))
                 .await;
+            return;
         }
+        let _ = engine.send_calendar(&mut output).await;
         engine.run(input, output).await;
     })
 }
 
 impl Engine {
     async fn send_calendar(&self, output: &mut Output) -> anyhow::Result<()> {
-        let (revision, events) = self.store.calendar_snapshot().await?;
+        let (revision, journal_revision, events, jobs) =
+            self.store.calendar_action_snapshot().await?;
         output
-            .send(Event::Calendar(revision, Arc::new(events)))
+            .send(Event::CalendarJournal(
+                revision,
+                journal_revision,
+                Arc::new(events),
+                Arc::new(jobs),
+            ))
             .await?;
         Ok(())
     }
@@ -581,6 +610,7 @@ impl Engine {
         Ok(current)
     }
 
+    #[cfg(test)]
     async fn complete_calendar_write(
         &self,
         event: &CalendarEvent,
@@ -666,15 +696,50 @@ impl Engine {
     }
     async fn execute(&self, command: Command, mut output: Output) -> anyhow::Result<()> {
         let explicit_draft = matches!(&command, Command::SaveDraft(_));
+        #[cfg(test)]
         let deleting_event = matches!(
             &command,
             Command::DeleteEvent(_) | Command::CalendarAction(_, _, true)
         );
+        #[cfg(test)]
         let calendar_request = match &command {
             Command::CalendarAction(request, ..) => Some(*request),
             _ => None,
         };
         match command {
+            Command::AdmitCalendarAction(request, id, event, deleting) => {
+                let result = self
+                    .store
+                    .admit_calendar_action(id, event, deleting)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|error| format!("{error:#}"));
+                output
+                    .send(Event::CalendarAdmitted(request, result))
+                    .await?;
+            }
+            Command::CheckCalendarJob(id, revision) => {
+                self.check_calendar_job(id, revision, output).await?;
+            }
+            Command::RetryCalendarJob(id, revision) => {
+                let result = self
+                    .store
+                    .retry_calendar_action(id.clone(), revision)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|error| format!("{error:#}"));
+                output.send(Event::CalendarJob(id, result)).await?;
+            }
+            Command::ResolveCalendarJob(id, revision) => {
+                let result = self
+                    .store
+                    .resolve_calendar_action(id.clone(), revision)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|error| format!("{error:#}"));
+                self.send_calendar(&mut output).await?;
+                output.send(Event::CalendarJob(id, result)).await?;
+            }
             Command::ProfileSync(_) => anyhow::bail!("Profile sync reached the wrong worker"),
             Command::Database(_) => anyhow::bail!("Database transfer reached the wrong worker"),
             Command::Profiles(request, action) => {
@@ -1177,7 +1242,7 @@ impl Engine {
                     ))
                     .await?;
             }
-            Command::Send(draft) => self.send_draft(draft, &mut output).await?,
+            Command::Send(draft) => self.queue_draft(draft, &mut output).await?,
             Command::OutgoingPage(request, offset) => {
                 let result = self
                     .store
@@ -1389,6 +1454,7 @@ impl Engine {
                     ))
                     .await?;
             }
+            #[cfg(test)]
             Command::SaveEvent(event)
             | Command::DeleteEvent(event)
             | Command::CalendarAction(_, event, _) => {

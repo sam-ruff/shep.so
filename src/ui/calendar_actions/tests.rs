@@ -1,5 +1,113 @@
 use super::*;
 
+fn durable(id: &str, title: &str, status: &str, revision: u64) -> crate::store::CalendarJob {
+    let event = event(title);
+    crate::store::CalendarJob {
+        id: id.into(),
+        origin: event.key(),
+        source: CalendarSource {
+            id: "work".into(),
+            name: "Work".into(),
+            kind: CalendarKind::CalDav,
+            url: "https://example.test/".into(),
+            username: "fixture".into(),
+            access: Default::default(),
+        },
+        request: event.clone(),
+        event,
+        deleting: false,
+        status: status.into(),
+        receipt: None,
+        cache_applied: false,
+        checked: false,
+        observed: None,
+        revision,
+        previous: None,
+        error: None,
+        attempts: 0,
+        retry_at: None,
+        wait_reason: None,
+    }
+}
+
+#[tokio::test]
+async fn waiting_calendar_keeps_requested_state_and_retry_keeps_stable_identity() {
+    let (mut app, _) = App::new();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
+    app.tx = Some(sender);
+    let mut job = durable("stable", "Requested", "waiting", 2);
+    job.error = Some("Reconnect this calendar, then retry".into());
+    job.wait_reason = Some(crate::providers::calendar::WaitReason::Authentication);
+    app.calendar_journal(1, 2, Arc::new(vec![event("Cached")]), Arc::new(vec![job]));
+    assert_eq!(app.events[0].title, "Requested");
+    assert!(!app.calendar_actions.needs_flush());
+    let request = *app.calendar_actions.pending.keys().next().expect("pending");
+    app.retry_calendar_change(request);
+    assert!(
+        matches!(commands.try_recv().expect("retry"),Command::RetryCalendarJob(id,2) if id=="stable")
+    );
+    assert!(app.calendar_actions.needs_flush());
+}
+
+#[tokio::test]
+async fn durable_calendar_restart_keeps_unknown_visible_without_trapping_close() {
+    let (mut app, _) = App::new();
+    app.calendar_journal(
+        1,
+        2,
+        Arc::new(vec![event("Cached")]),
+        Arc::new(vec![durable("one", "Requested", "uncertain", 2)]),
+    );
+    assert_eq!(app.events[0].title, "Requested");
+    assert!(app.calendar_actions.needs_review());
+    assert!(!app.calendar_actions.needs_flush());
+    assert!(!app.calendar_actions.unsaved_review());
+    assert!(!app.has_required_close_work());
+}
+
+#[tokio::test]
+async fn late_admission_after_finished_snapshot_cannot_resurrect_prediction() {
+    let (mut app, _) = App::new();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
+    app.tx = Some(sender);
+    app.begin_calendar_action(event("Requested"), false);
+    let Command::AdmitCalendarAction(request, id, _, _) = commands.try_recv().expect("admission")
+    else {
+        panic!("admission")
+    };
+    assert!(app.calendar_actions.needs_flush());
+    app.calendar_journal(
+        2,
+        5,
+        Arc::new(vec![event("Later server state")]),
+        Arc::new(vec![]),
+    );
+    app.calendar_admitted(
+        request,
+        Ok(Arc::new(durable(&id, "Requested", "queued", 1))),
+    );
+    assert!(!app.calendar_actions.has_changes());
+    assert_eq!(app.events[0].title, "Later server state");
+}
+
+#[tokio::test]
+async fn newer_calendar_intent_survives_old_rejection_and_editor_is_retained() {
+    let (mut app, _) = App::new();
+    app.calendar_actions.base = Arc::new(vec![event("Original")]);
+    app.remember_calendar_job(Arc::new(durable("one", "First", "running", 1)));
+    app.remember_calendar_job(Arc::new(durable("two", "Newer", "queued", 2)));
+    app.dialog = Some(Dialog::Event);
+    app.fields.insert("title", "Still editing".into());
+    app.calendar_job_update(
+        "one".into(),
+        Ok(Arc::new(durable("one", "First", "rejected", 3))),
+    );
+    assert_eq!(app.events.len(), 1);
+    assert_eq!(app.events[0].title, "Newer");
+    assert_eq!(app.field("title"), "Still editing");
+    assert_eq!(app.dialog, Some(Dialog::Event));
+}
+
 fn event(title: &str) -> CalendarEvent {
     let start = chrono::Utc::now();
     CalendarEvent {
@@ -17,16 +125,30 @@ fn event(title: &str) -> CalendarEvent {
 }
 
 #[tokio::test]
+async fn newer_edit_hides_rekeyed_acknowledged_create_while_cache_repairs() {
+    let (mut app, _) = App::new();
+    let mut first = durable("one", "First", "repair", 2);
+    let mut receipt = first.event.clone();
+    receipt.id = "remote-id".into();
+    first.receipt = Some(receipt.clone());
+    let mut newer = durable("two", "Newer", "queued", 3);
+    newer.previous = Some("one".into());
+    app.calendar_journal(1, 3, Arc::new(vec![receipt]), Arc::new(vec![first, newer]));
+    assert_eq!(app.events.len(), 1);
+    assert_eq!(app.events[0].title, "Newer");
+}
+
+#[tokio::test]
 async fn calendar_save_paints_before_receipt_and_late_rejection_keeps_newer_editor() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     app.calendar_actions.base = Arc::new(vec![event("Original")]);
     app.dialog = Some(Dialog::Event);
     app.begin_calendar_action(event("Requested"), false);
     assert_eq!(app.events[0].title, "Requested");
     assert!(app.dialog.is_none());
-    let Command::CalendarAction(request, _, false) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, _, false) = commands.try_recv().unwrap() else {
         panic!("expected save")
     };
     app.dialog = Some(Dialog::Event);
@@ -48,13 +170,13 @@ async fn calendar_save_paints_before_receipt_and_late_rejection_keeps_newer_edit
 #[tokio::test]
 async fn calendar_delete_preserves_prediction_until_authoritative_revision() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     let original = event("Original");
     app.calendar_actions.base = Arc::new(vec![original.clone()]);
     app.begin_calendar_action(original.clone(), true);
     assert!(app.events.is_empty());
-    let Command::CalendarAction(request, _, true) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, _, true) = commands.try_recv().unwrap() else {
         panic!("expected delete")
     };
     app.calendar_action_finished(
@@ -78,25 +200,23 @@ async fn calendar_delete_preserves_prediction_until_authoritative_revision() {
 #[tokio::test]
 async fn uncertain_calendar_write_keeps_content_and_requires_review_before_close() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     app.begin_calendar_action(event("Requested"), false);
-    let Command::CalendarAction(request, _, _) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, _, _) = commands.try_recv().unwrap() else {
         panic!("expected save")
     };
     app.calendar_action_finished(
         request,
         CalendarActionResult::Uncertain("Connection lost".into()),
     );
-    app.begin_calendar_action(event("Second attempt"), false);
-    assert!(commands.try_recv().is_err());
     assert_eq!(app.events[0].title, "Requested");
     let _ = app.handle(Message::WindowClose(iced::window::Id::unique()));
     assert!(app.pending_close.is_none());
     assert!(app.calendar_actions.needs_review());
     app.busy.clear();
     assert!(
-        app.has_required_close_work(),
+        app.calendar_actions.unsaved_review(),
         "Recovery survives provider capacity release"
     );
     app.dismiss_calendar_change(request);
@@ -145,14 +265,14 @@ async fn uncertain_calendar_write_keeps_content_and_requires_review_before_close
 #[tokio::test]
 async fn exact_calendar_inspection_handles_out_of_window_events_without_replaying_writes() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     app.events_revision = 10;
     let mut requested = event("Requested");
     requested.start += chrono::Duration::days(800);
     requested.end += chrono::Duration::days(800);
     app.begin_calendar_action(requested.clone(), false);
-    let Command::CalendarAction(request, _, _) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, _, _) = commands.try_recv().unwrap() else {
         panic!("expected save")
     };
     app.calendar_action_finished(
@@ -188,11 +308,11 @@ async fn exact_calendar_inspection_handles_out_of_window_events_without_replayin
 #[tokio::test]
 async fn acknowledged_calendar_repair_can_adopt_verified_newer_server_edit_without_etag() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     let requested = event("Requested");
     app.begin_calendar_action(requested.clone(), false);
-    let Command::CalendarAction(request, _, _) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, _, _) = commands.try_recv().unwrap() else {
         panic!("expected save")
     };
     app.calendar_action_finished(
@@ -229,10 +349,10 @@ async fn acknowledged_calendar_repair_can_adopt_verified_newer_server_edit_witho
 #[tokio::test]
 async fn unknown_calendar_create_projects_one_row_until_verified_remote_identity_is_adopted() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     app.begin_calendar_action(event("Requested"), false);
-    let Command::CalendarAction(request, _, _) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, _, _) = commands.try_recv().unwrap() else {
         panic!("expected save")
     };
     app.calendar_action_finished(
@@ -266,13 +386,13 @@ async fn unknown_calendar_create_projects_one_row_until_verified_remote_identity
 #[tokio::test]
 async fn acknowledged_calendar_change_never_dismisses_to_stale_cache() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     let mut saved = event("Saved");
     saved.etag = Some("new".into());
     app.calendar_actions.base = Arc::new(vec![event("Original")]);
     app.begin_calendar_action(saved.clone(), false);
-    let Command::CalendarAction(request, _, _) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, _, _) = commands.try_recv().unwrap() else {
         panic!("expected save")
     };
     app.calendar_action_finished(
@@ -294,12 +414,12 @@ async fn acknowledged_calendar_change_never_dismisses_to_stale_cache() {
 #[tokio::test]
 async fn acknowledged_delete_does_not_retire_repair_from_an_old_absent_snapshot() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     app.events_revision = 5;
     let original = event("Original");
     app.begin_calendar_action(original.clone(), true);
-    let Command::CalendarAction(request, _, _) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, _, _) = commands.try_recv().unwrap() else {
         panic!("expected delete")
     };
     app.calendar_action_finished(
@@ -320,10 +440,10 @@ async fn acknowledged_delete_does_not_retire_repair_from_an_old_absent_snapshot(
 #[tokio::test]
 async fn rejected_calendar_change_can_be_edited_and_retried_without_discarding_recovery() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     app.begin_calendar_action(event("First attempt"), false);
-    let Command::CalendarAction(request, original, _) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, original, _) = commands.try_recv().unwrap() else {
         panic!("expected save")
     };
     app.calendar_action_finished(
@@ -332,7 +452,7 @@ async fn rejected_calendar_change_can_be_edited_and_retried_without_discarding_r
     );
     app.busy.remove(&format!("event:{}", original.key()));
     app.begin_calendar_action(event("Edited retry"), false);
-    let Command::CalendarAction(retry, submitted, _) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(retry, _, submitted, _) = commands.try_recv().unwrap() else {
         panic!("expected retry")
     };
     assert_ne!(retry, request);
@@ -350,7 +470,7 @@ async fn rejected_calendar_change_can_be_edited_and_retried_without_discarding_r
 #[tokio::test]
 async fn rejected_new_caldav_event_reopens_as_editable_creation_with_the_same_identity() {
     let (mut app, _) = App::new();
-    let (sender, mut commands) = engine::CommandSender::network_test_channel();
+    let (sender, mut commands) = engine::CommandSender::calendar_test_channel();
     app.tx = Some(sender);
     Arc::make_mut(&mut app.workspace)
         .calendars
@@ -370,7 +490,7 @@ async fn rejected_new_caldav_event_reopens_as_editable_creation_with_the_same_id
     original.etag = None;
     original.remote_url = None;
     app.begin_calendar_action(original.clone(), false);
-    let Command::CalendarAction(request, _, _) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(request, _, _, _) = commands.try_recv().unwrap() else {
         panic!("expected save")
     };
     app.calendar_action_finished(
@@ -383,7 +503,7 @@ async fn rejected_new_caldav_event_reopens_as_editable_creation_with_the_same_id
     assert!(!app.event_access().delete);
     app.fields.insert("title", "Edited new event".into());
     let _ = app.handle(Message::SaveEvent);
-    let Command::CalendarAction(_, submitted, false) = commands.try_recv().unwrap() else {
+    let Command::AdmitCalendarAction(_, _, submitted, false) = commands.try_recv().unwrap() else {
         panic!("expected retry")
     };
     assert_eq!(submitted.id, original.id);

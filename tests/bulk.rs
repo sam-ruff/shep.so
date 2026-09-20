@@ -48,6 +48,413 @@ fn read() -> Action {
 }
 
 #[tokio::test]
+async fn flag_receipt_cannot_patch_a_replacement_with_the_same_local_id() {
+    let store = Store::memory().expect("store");
+    seed(&store, 1).await;
+    let original = store.query(MailQuery::default()).await.expect("page").rows[0].clone();
+    store
+        .start_individual_mail_action("identity".into(), original.clone(), read())
+        .await
+        .expect("admission");
+    let item = store
+        .claim_bulk_item("identity".into())
+        .await
+        .expect("claim")
+        .expect("item");
+    store
+        .acknowledge_bulk_flags(
+            item.clone(),
+            Receipt::Flags {
+                before: Flags {
+                    unread: Some(true),
+                    starred: None,
+                },
+                after: Flags {
+                    unread: Some(false),
+                    starred: None,
+                },
+            },
+        )
+        .await
+        .expect("acknowledgement");
+    store
+        .run(|c| {
+            c.execute(
+                "UPDATE messages SET data=json_set(data,'$.remote_id','replacement'),starred=1",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("replace physical source");
+    assert!(
+        store
+            .finish_bulk_item(item, Ok(Receipt::Unchanged))
+            .await
+            .is_err()
+    );
+    let current = store.mail_metadata(original.id).await.expect("replacement");
+    assert!(current.unread && current.starred);
+    assert_eq!(current.remote_id, "replacement");
+    let lease = store.bulk_lease("identity".into()).await.expect("lease");
+    assert!(
+        store
+            .pending_bulk_flag_repair(&lease)
+            .await
+            .expect("retained receipt")
+            .is_some()
+    );
+    assert_eq!(
+        store.resume_bulk(&lease).await.expect("resume").uncertain,
+        0
+    );
+}
+
+#[tokio::test]
+async fn acknowledged_flags_keep_the_receipt_and_projection_when_cache_commit_fails() {
+    let store = Store::memory().expect("store");
+    seed(&store, 2).await;
+    let original = store.query(MailQuery::default()).await.expect("page").rows[0].clone();
+    let selection = freeze(&store, MailQuery::default()).await;
+    store
+        .start_bulk("repair".into(), selection, read())
+        .await
+        .expect("admission");
+    let item = store
+        .claim_bulk_item("repair".into())
+        .await
+        .expect("claim")
+        .expect("item");
+    store
+        .acknowledge_bulk_flags(
+            item.clone(),
+            Receipt::Flags {
+                before: Flags {
+                    unread: Some(true),
+                    starred: None,
+                },
+                after: Flags {
+                    unread: Some(false),
+                    starred: None,
+                },
+            },
+        )
+        .await
+        .expect("acknowledgement");
+    store.run(|c| {
+        c.execute_batch("CREATE TRIGGER reject_flag_cache BEFORE UPDATE OF unread ON messages BEGIN SELECT RAISE(ABORT,'fixture cache failure'); END;")?;
+        Ok(())
+    }).await.expect("cache failure fixture");
+    assert!(
+        store
+            .finish_bulk_item(item.clone(), Ok(Receipt::Unchanged))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .bulk_items("repair".into(), None)
+            .await
+            .expect("items")[0]
+            .status,
+        "repair"
+    );
+    assert_eq!(
+        store
+            .query(MailQuery::default())
+            .await
+            .expect("optimistic page")
+            .unread,
+        0
+    );
+    assert!(
+        store
+            .mail_metadata(original.id)
+            .await
+            .expect("confirmed cache")
+            .unread
+    );
+    assert!(
+        store
+            .claim_bulk_item("repair".into())
+            .await
+            .expect("block later dispatch")
+            .is_none()
+    );
+    let lease = store.bulk_lease("repair".into()).await.expect("lease");
+    assert!(
+        store
+            .pending_bulk_flag_repair(&lease)
+            .await
+            .expect("durable receipt")
+            .is_some()
+    );
+    store
+        .run(|c| {
+            c.execute_batch("DROP TRIGGER reject_flag_cache;")?;
+            Ok(())
+        })
+        .await
+        .expect("restore cache");
+    let job = store
+        .finish_bulk_item(item, Ok(Receipt::Unchanged))
+        .await
+        .expect("cache-only retry");
+    assert_eq!((job.completed, job.remaining, job.uncertain), (1, 1, 0));
+    assert!(
+        store
+            .claim_bulk_item("repair".into())
+            .await
+            .expect("next message")
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn acknowledged_flags_repair_after_restart_without_dispatch_and_preserve_undo() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("mail.sqlite");
+    let original;
+    {
+        let store = Store::open(&path).expect("store");
+        seed(&store, 1).await;
+        original = store.query(MailQuery::default()).await.expect("page").rows[0].clone();
+        store
+            .start_individual_mail_action("flags".into(), original.clone(), read())
+            .await
+            .expect("admission");
+        let item = store
+            .claim_bulk_item("flags".into())
+            .await
+            .expect("claim")
+            .expect("item");
+        store
+            .acknowledge_bulk_flags(
+                item,
+                Receipt::Flags {
+                    before: Flags {
+                        unread: Some(true),
+                        starred: None,
+                    },
+                    after: Flags {
+                        unread: Some(false),
+                        starred: None,
+                    },
+                },
+            )
+            .await
+            .expect("acknowledged");
+        assert!(
+            store
+                .mail_metadata(original.id.clone())
+                .await
+                .expect("baseline")
+                .unread
+        );
+        store
+            .request_bulk_undo("flags".into())
+            .await
+            .expect("undo during cache gap");
+    }
+    let store = Store::open(&path).expect("reopen");
+    let lease = store.bulk_lease("flags".into()).await.expect("lease");
+    let resumed = store.resume_bulk(&lease).await.expect("resume");
+    assert_eq!(resumed.uncertain, 0);
+    assert!(
+        store
+            .claim_bulk_item("flags".into())
+            .await
+            .expect("no repeat")
+            .is_none()
+    );
+    let item = store
+        .pending_bulk_flag_repair(&lease)
+        .await
+        .expect("repair")
+        .expect("acknowledged step");
+    let finished = store
+        .finish_bulk_item(
+            item,
+            Err((
+                "a stale failure must not erase acknowledgement".into(),
+                true,
+            )),
+        )
+        .await
+        .expect("repair cache");
+    assert_eq!(finished.uncertain, 0);
+    assert!(
+        !store
+            .mail_metadata(original.id)
+            .await
+            .expect("updated baseline")
+            .unread
+    );
+    let inverse = store
+        .claim_bulk_item("flags".into())
+        .await
+        .expect("inverse")
+        .expect("undo");
+    assert!(inverse.undo);
+    assert!(matches!(
+        inverse.receipt,
+        Some(Receipt::Flags {
+            before: Flags {
+                unread: Some(true),
+                ..
+            },
+            ..
+        })
+    ));
+    assert!(
+        store
+            .pending_bulk_flag_repair(&lease)
+            .await
+            .expect("retired receipt")
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn individual_admission_shares_group_ownership_and_keeps_the_confirmed_baseline() {
+    let store = Store::memory().expect("store");
+    seed(&store, 3).await;
+    let original = store.query(MailQuery::default()).await.expect("page").rows[0].clone();
+    let raw = store.raw_message(original.id.clone()).await.expect("raw");
+    let selection = freeze(&store, MailQuery::default()).await;
+    let mut projected = original.clone();
+    projected.unread = false;
+    let job = store
+        .start_individual_mail_action("individual".into(), projected.clone(), read())
+        .await
+        .expect("admitted");
+    assert_eq!((job.total, job.remaining), (1, 1));
+    assert_eq!(
+        store
+            .query(MailQuery::default())
+            .await
+            .expect("projected")
+            .unread,
+        2
+    );
+    assert!(
+        store
+            .mail_metadata(original.id.clone())
+            .await
+            .expect("baseline")
+            .unread
+    );
+    assert!(
+        store.bulk_items(job.id.clone(), None).await.expect("items")[0]
+            .original
+            .as_ref()
+            .expect("original")
+            .unread
+    );
+    assert_eq!(
+        store.raw_message(original.id.clone()).await.expect("raw"),
+        raw
+    );
+    assert!(
+        store
+            .start_bulk("overlap".into(), selection, moved("Trash"))
+            .await
+            .is_err()
+    );
+    assert!(store.bulk_job("overlap".into()).await.is_err());
+    let repeated = store
+        .start_individual_mail_action("individual".into(), projected, read())
+        .await
+        .expect("lost reply");
+    assert_eq!(repeated.revision, job.revision);
+    assert_eq!(store.bulk_jobs(0).await.expect("jobs").len(), 1);
+    assert!(
+        store
+            .start_individual_mail_action("individual".into(), original, moved("Trash"))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn individual_admission_rejects_changed_physical_identity_without_creating_work() {
+    let store = Store::memory().expect("store");
+    seed(&store, 1).await;
+    let mut original = store.query(MailQuery::default()).await.expect("page").rows[0].clone();
+    original.remote_id = "another-uid".into();
+    assert!(
+        store
+            .start_individual_mail_action("stale".into(), original, read())
+            .await
+            .is_err()
+    );
+    assert!(store.bulk_jobs(0).await.expect("jobs").is_empty());
+    assert_eq!(
+        store
+            .query(MailQuery::default())
+            .await
+            .expect("page")
+            .unread,
+        1
+    );
+}
+
+#[tokio::test]
+async fn individual_admission_survives_restart_and_never_requeues_a_dispatched_action() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("mail.sqlite");
+    let store = Store::open(&path).expect("store");
+    seed(&store, 2).await;
+    let rows = store.query(MailQuery::default()).await.expect("page").rows;
+    store
+        .start_individual_mail_action("queued".into(), rows[0].clone(), read())
+        .await
+        .expect("queued");
+    store
+        .start_individual_mail_action("dispatched".into(), rows[1].clone(), read())
+        .await
+        .expect("queued");
+    store
+        .claim_bulk_item("dispatched".into())
+        .await
+        .expect("claimed")
+        .expect("item");
+    drop(store);
+    let reopened = Store::open(&path).expect("reopen");
+    assert_eq!(
+        reopened
+            .query(MailQuery::default())
+            .await
+            .expect("projection")
+            .unread,
+        0
+    );
+    for id in ["queued", "dispatched"] {
+        let lease = reopened.bulk_lease(id.into()).await.expect("owned");
+        let state = reopened.resume_bulk(&lease).await.expect("recovered");
+        if id == "queued" {
+            assert_eq!((state.remaining, state.uncertain), (1, 0));
+            assert!(
+                reopened
+                    .claim_bulk_item(id.into())
+                    .await
+                    .expect("claim")
+                    .is_some()
+            );
+        } else {
+            assert_eq!((state.remaining, state.uncertain), (0, 1));
+            assert!(
+                reopened
+                    .claim_bulk_item(id.into())
+                    .await
+                    .expect("claim")
+                    .is_none()
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn frozen_groups_publish_full_query_effects_without_changing_originals_or_mime() {
     let store = Store::memory().unwrap();
     seed(&store, 125).await;

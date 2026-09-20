@@ -80,6 +80,42 @@ impl Store {
     pub async fn outgoing_info(&self, attempt: String) -> anyhow::Result<OutgoingInfo> {
         self.run(move |c| info(c, &attempt)).await
     }
+    pub async fn next_queued_outgoing(&self) -> anyhow::Result<Option<String>> {
+        self.run(|c| {
+            Ok(c.query_row(
+            "SELECT attempt FROM outgoing WHERE stage='Queued' ORDER BY created,attempt LIMIT 1",
+            [], |r| r.get(0),
+        ).optional()?)
+        })
+        .await
+    }
+    pub async fn claim_outgoing(&self, attempt: String) -> anyhow::Result<bool> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let mut saved = info(&tx, &attempt)?;
+            if saved.delivery != DeliveryState::Queued {
+                return Ok(false);
+            }
+            connections::allow(&tx, ConnectionKind::Account, &saved.account_id)?;
+            folder_actions::idle(&tx, &saved.account_id)?;
+            let config: String = tx.query_row("SELECT config FROM outgoing WHERE attempt=?", [&attempt], |r| r.get(0))?;
+            let original: Account = serde_json::from_str(&config)?;
+            let current = get::<Vec<Account>>(&tx, "accounts")?.into_iter()
+                .find(|account| account.id == saved.account_id)
+                .context("The sending account was removed.")?;
+            if original != current {
+                saved.delivery = DeliveryState::Rejected;
+                saved.error = Some("The sending account changed. Return this message to drafts and review it before sending.".into());
+                write(&tx, &saved)?;
+                tx.commit()?;
+                return Ok(false);
+            }
+            saved.delivery = DeliveryState::Submitting;
+            write(&tx, &saved)?;
+            tx.commit()?;
+            Ok(true)
+        }).await
+    }
     pub async fn outgoing_submission(&self, attempt: String) -> anyhow::Result<Submission> {
         self.run(move |c| {
             let info = info(c, &attempt)?;
@@ -116,12 +152,12 @@ impl Store {
             let latest=drafts::snapshot(&tx)?.drafts.into_iter().find(|d|d.id==draft.id).context("Save this draft before sending.")?;
             anyhow::ensure!(serde_json::to_string(&latest)?==serde_json::to_string(&draft)? && latest.attachments==draft.attachments,"The draft changed before sending. Review its latest text and attachments.");
             let i=&submission.info;
-            anyhow::ensure!(i.account_id==draft.account_id && i.draft_id==draft.id && i.draft_revision==draft.revision && submission.account.id==draft.account_id && i.delivery==DeliveryState::Submitting && submission.raw.len()<=MAX_MESSAGE_BYTES,"Invalid outgoing attempt.");
+            anyhow::ensure!(i.account_id==draft.account_id && i.draft_id==draft.id && i.draft_revision==draft.revision && submission.account.id==draft.account_id && matches!(i.delivery,DeliveryState::Queued|DeliveryState::Submitting) && submission.raw.len()<=MAX_MESSAGE_BYTES,"Invalid outgoing attempt.");
             let previous:Option<String>=tx.query_row("SELECT data FROM outgoing WHERE draft=?",[&draft.id],|r|r.get(0)).optional()?;
             if let Some(previous)=previous { let previous:OutgoingInfo=serde_json::from_str(&previous)?;
                 anyhow::ensure!(matches!(previous.delivery,DeliveryState::Rejected|DeliveryState::Released),"This draft already has a delivery record. Review it in Outbox before sending again.");
             }
-            tx.execute("INSERT INTO outgoing(draft,attempt,account,stage,created,data,logical_id,config,envelope,raw) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(draft) DO UPDATE SET attempt=excluded.attempt,account=excluded.account,stage=excluded.stage,created=excluded.created,data=excluded.data,logical_id=excluded.logical_id,config=excluded.config,envelope=excluded.envelope,raw=excluded.raw",params![draft.id,i.attempt,i.account_id,"Submitting",i.created,serde_json::to_string(i)?,logical_id(&i.message_id),serde_json::to_string(&submission.account)?,serde_json::to_string(&submission.envelope)?,submission.raw])?;
+            tx.execute("INSERT INTO outgoing(draft,attempt,account,stage,created,data,logical_id,config,envelope,raw) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(draft) DO UPDATE SET attempt=excluded.attempt,account=excluded.account,stage=excluded.stage,created=excluded.created,data=excluded.data,logical_id=excluded.logical_id,config=excluded.config,envelope=excluded.envelope,raw=excluded.raw",params![draft.id,i.attempt,i.account_id,format!("{:?}",i.delivery),i.created,serde_json::to_string(i)?,logical_id(&i.message_id),serde_json::to_string(&submission.account)?,serde_json::to_string(&submission.envelope)?,submission.raw])?;
             changed(&tx)?; tx.commit()?; Ok(submission.info)
         }).await
     }
@@ -163,7 +199,10 @@ impl Store {
             anyhow::ensure!(
                 matches!(
                     info.delivery,
-                    DeliveryState::Submitting | DeliveryState::Uncertain | DeliveryState::Rejected
+                    DeliveryState::Queued
+                        | DeliveryState::Submitting
+                        | DeliveryState::Uncertain
+                        | DeliveryState::Rejected
                 ),
                 "A delivered message cannot be returned to its original draft."
             );
@@ -173,6 +212,26 @@ impl Store {
             tx.execute(
                 "UPDATE outgoing SET config=NULL,envelope=NULL,raw=NULL WHERE attempt=?",
                 [attempt],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+    pub async fn cancel_queued_outgoing(&self, attempt: String) -> anyhow::Result<()> {
+        self.run(move |c| {
+            let tx = c.transaction()?;
+            let mut saved = info(&tx, &attempt)?;
+            anyhow::ensure!(
+                saved.delivery == DeliveryState::Queued,
+                "Sending has already started. Review delivery in Outbox."
+            );
+            saved.delivery = DeliveryState::Released;
+            saved.error = None;
+            write(&tx, &saved)?;
+            tx.execute(
+                "UPDATE outgoing SET config=NULL,envelope=NULL,raw=NULL WHERE attempt=?",
+                [&attempt],
             )?;
             tx.commit()?;
             Ok(())

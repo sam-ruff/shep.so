@@ -84,7 +84,7 @@ impl Database {
                     .map_err(|_| anyhow::anyhow!("Cache connection failed. Reopen Shep."))?
                     .query_row("PRAGMA user_version", [], |r| r.get(0))?;
                 anyhow::ensure!(
-                    version <= 13,
+                    version <= 14,
                     "This cache requires a newer Shep version. Update before reopening it."
                 );
                 return Ok(profile);
@@ -107,7 +107,7 @@ impl Database {
             )?;
             let version: u32 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             anyhow::ensure!(
-                version <= 13,
+                version <= 14,
                 "This cache requires a newer Shep version. Update before reopening it."
             );
             writer.execute_batch(include_str!("schema.sql"))?;
@@ -119,6 +119,10 @@ impl Database {
             )?;
             writer.execute(
                 "UPDATE outgoing_sent SET state='uncertain' WHERE state='appending'",
+                [],
+            )?;
+            writer.execute(
+                "UPDATE individual_mail_actions SET status='uncertain',error='The app closed before the provider result was saved. Refresh the affected folders before retrying.' WHERE status='running'",
                 [],
             )?;
             crate::groups::restart(&writer)?;

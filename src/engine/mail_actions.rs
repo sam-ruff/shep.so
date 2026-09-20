@@ -606,7 +606,9 @@ impl Engine {
             .await?;
         let mail = self.store.mail_metadata(original.id.clone()).await?;
         anyhow::ensure!(
-            mail.account_id == original.account_id && mail.folder == original.folder,
+            mail.account_id == original.account_id
+                && mail.folder == original.folder
+                && mail.remote_id == original.remote_id,
             "The message changed folders. Refresh it before Undo."
         );
         if let Some(expected) = expected {
@@ -627,13 +629,25 @@ impl Engine {
             unread: changes.unread.map(|_| mail.unread),
             starred: changes.starred.map(|_| mail.starred),
         };
-        self.write_flags(&mail, changes).await?;
-        Ok(crate::bulk::Receipt::Flags {
+        self.send_flags(&mail, changes).await?;
+        let receipt = crate::bulk::Receipt::Flags {
             before,
             after: changes,
-        })
+        };
+        self.store
+            .acknowledge_bulk_flags(item.clone(), receipt.clone())
+            .await?;
+        Ok(receipt)
     }
     async fn write_flags(
+        &self,
+        mail: &Mail,
+        changes: crate::mail_actions::Flags,
+    ) -> anyhow::Result<()> {
+        self.send_flags(mail, changes).await?;
+        self.store.patch_flags(mail.clone(), changes).await
+    }
+    async fn send_flags(
         &self,
         mail: &Mail,
         changes: crate::mail_actions::Flags,
@@ -662,7 +676,7 @@ impl Engine {
                 .context("The server did not confirm the change. Refresh and try again.")??;
             }
         }
-        self.store.patch_flags(mail.clone(), changes).await
+        Ok(())
     }
 }
 

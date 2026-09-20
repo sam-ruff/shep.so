@@ -265,6 +265,7 @@ pub enum Message {
     DeleteEvent,
     DismissCalendarChange(u64),
     InspectCalendarChange(u64),
+    RetryCalendarChange(u64),
     SaveExport,
     ExportAttachment(usize),
     SystemTheme(iced::theme::Mode),
@@ -800,13 +801,14 @@ impl App {
         let close_key = match &command {
             Command::SaveAccount(..)
             | Command::RecoverPendingMoves
-            | Command::SaveEvent(..)
-            | Command::DeleteEvent(..)
-            | Command::CalendarAction(..)
             | Command::InspectCalendarAction(..)
             | Command::GoogleLogin(..)
             | Command::BackupIncluded(..)
             | Command::RetryBackupHistory(..) => command.key(),
+            #[cfg(test)]
+            Command::SaveEvent(..) | Command::DeleteEvent(..) | Command::CalendarAction(..) => {
+                command.key()
+            }
             _ => None,
         };
         if close_key
@@ -875,10 +877,10 @@ impl App {
         let mut query = self.query.clone();
         query.project_moves = self.mail_actions.projected_moves();
         query.observe = self.mail_actions.observed_ids();
-        if let Some(id) = &self.selected
-            && !query.observe.contains(id)
-        {
-            query.observe.push(id.clone());
+        for id in self.selected.iter().chain(self.conversation.focus.iter()) {
+            if !query.observe.contains(id) {
+                query.observe.push(id.clone());
+            }
         }
         query.observe_bulk = self.bulk_observed_ids();
         self.send(Command::Query(self.generation, query, false));
@@ -1467,11 +1469,10 @@ impl App {
                             self.prefetch_query = Some(query.clone());
                             query.project_moves = self.mail_actions.projected_moves();
                             query.observe = self.mail_actions.observed_ids();
-                            if let Some(id) = &self.selected
-                                && self.page.move_recovery.contains_key(id)
-                                && !query.observe.contains(id)
-                            {
-                                query.observe.push(id.clone());
+                            for id in self.selected.iter().chain(self.conversation.focus.iter()) {
+                                if !query.observe.contains(id) {
+                                    query.observe.push(id.clone());
+                                }
                             }
                             query.observe_bulk = self.bulk_observed_ids();
                             self.send(Command::Query(g, query, true));
@@ -1737,7 +1738,12 @@ impl App {
                         self.notice("An outgoing message needs review in Outbox.", true);
                     }
                 }
-                Event::SubmissionQueued(id, revision) | Event::Sent(id, revision) => {
+                Event::SubmissionQueued(id, revision) => {
+                    self.retire_draft(&id, Some(revision));
+                    self.notice("Message queued in Outbox.", false);
+                    self.send(Command::BulkRun(String::new()));
+                }
+                Event::Sent(id, revision) => {
                     self.retire_draft(&id, Some(revision));
                 }
                 Event::RemoteImage(url, result) => {
@@ -1797,6 +1803,11 @@ impl App {
                 Event::CalendarActionFinished(request, result) => {
                     self.calendar_action_finished(request, result)
                 }
+                Event::CalendarAdmitted(request, result) => self.calendar_admitted(request, result),
+                Event::CalendarJournal(revision, journal_revision, events, jobs) => {
+                    self.calendar_journal(revision, journal_revision, events, jobs)
+                }
+                Event::CalendarJob(id, result) => self.calendar_job_update(id, result),
                 Event::BackupHistory(request, target, result) => {
                     if request == self.backup_activity.generation
                         && target == self.configured_backup_target()
@@ -1910,8 +1921,11 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
-                if self.calendar_actions.needs_review() {
-                    self.notice("Review the calendar changes before closing. Their recovery details are not saved across restarts.", true);
+                if self.calendar_actions.unsaved_review() {
+                    self.notice(
+                        "A calendar edit could not be saved locally. Review it before closing.",
+                        true,
+                    );
                     self.pending_close = None;
                     return Task::none();
                 }
@@ -1982,7 +1996,9 @@ impl App {
                     );
                 } else if self.busy.iter().any(|key| key.starts_with("outgoing:")) {
                     self.notice("Finishing Sent-copy recovery before closing…", false);
-                } else if self.calendar_setup.saving.is_some() {
+                } else if self.calendar_setup.saving.is_some()
+                    || self.calendar_actions.needs_flush()
+                {
                     self.notice("Saving the calendar connection before closing…", false);
                 } else if self
                     .busy
@@ -3174,6 +3190,7 @@ impl App {
             }
             Message::DismissCalendarChange(request) => self.dismiss_calendar_change(request),
             Message::InspectCalendarChange(request) => self.inspect_calendar_change(request),
+            Message::RetryCalendarChange(request) => self.retry_calendar_change(request),
             Message::ExportAttachment(index) => {
                 self.open(Dialog::Export);
                 self.export_index = Some(index);
@@ -4210,7 +4227,7 @@ impl App {
         self.test_revision += 1;
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
-        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.mail_actions.effective(&d.summary).starred),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.composer.current.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
+        let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.displayed_mail_flags(&d.summary).1),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.composer.current.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
         data["compose_fields"] = serde_json::json!({
             "account": self.compose_field("account"),
             "to": self.compose_field("to"),
@@ -4336,7 +4353,7 @@ impl App {
         data["unread"] = serde_json::json!(
             self.detail
                 .as_ref()
-                .map(|d| self.mail_actions.effective(&d.summary).unread)
+                .map(|d| self.displayed_mail_flags(&d.summary).0)
         );
         data["mail_rows"] = serde_json::json!(self.page.rows);
         #[cfg(feature = "test-support")]

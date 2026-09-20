@@ -1,4 +1,5 @@
 import { samePhysical, metadataIdentity } from "./mail_lineage";
+import type { MailAction } from "./mail_activity";
 import type { CacheMail } from "./cache_changes";
 import { BrowserGroups } from "./bulk_client";
 import { MailboxWorkerClient } from "./mailbox_worker_client";
@@ -39,7 +40,7 @@ import {
 import { recoverSent, type SentWork } from "./sent";
 import { envelope, replyDraft, type ReplyEnvelope } from "./reply";
 import type { Session } from "./auth";
-import { MutationFailure } from "./model";
+import { MutationFailure, MutationWaiting } from "./model";
 import { intentValues, type IntentLease } from "./mail_intents";
 import type {
   Repository,
@@ -50,6 +51,7 @@ import type {
   CalendarEntry,
 } from "./model";
 import type { LocalStore, Change } from "./storage";
+import { BrowserWriteFailure } from "./storage";
 
 export interface Account {
   id: string;
@@ -210,6 +212,7 @@ interface PreparedWire {
   raw: string;
 }
 export interface Outgoing {
+  queueError?: string;
   account?: Account;
   sent?: SentWork;
   sentError?: string;
@@ -219,6 +222,12 @@ export interface Outgoing {
   id: string;
   draft: Draft;
   state: string;
+}
+export interface AccountConnection {
+  id: string;
+  account: Account;
+  state: "checking" | "failed";
+  error?: string;
 }
 type Fetcher = typeof fetch;
 type Lock = <T>(
@@ -326,6 +335,90 @@ async function* lines(response: Response): AsyncGenerator<unknown> {
   }
 }
 export class GatewayRepository implements Repository, SelectionRepository {
+  private readonly actionOwner = crypto.randomUUID();
+  private actionReady?: Promise<void>;
+  private releaseActions?: () => void;
+  private actionsClosed = false;
+  private activeActions = new Set<string>();
+  private resumingActions?: Promise<void>;
+  private actionProgress?: () => void;
+  private outgoingResume?: Promise<void>;
+  private outgoingAgain = false;
+  private holdActionOwner() {
+    if (this.actionsClosed) return Promise.reject(Error("Mail actions are closed. Reopen Shep."));
+    return this.actionReady ??= new Promise<void>((resolve, reject) => {
+      void this.exclusive(`actions.tab.${this.actionOwner}`, async () => {
+        if (this.actionsClosed) { reject(Error("Mail actions are closed.")); return; }
+        resolve();
+        await new Promise<void>(release => { this.releaseActions = release; });
+      }).catch(reject);
+    });
+  }
+  startActions(changed: () => void) {
+    this.actionProgress = changed;
+    void this.resumeActions();
+    void this.resumeOutgoing();
+  }
+  resumeActions(): Promise<void> {
+    if (this.actionsClosed || !this.actionActivity) return Promise.resolve();
+    if (this.resumingActions) return this.resumingActions;
+    const running = this.resumeSavedActions().catch(() => {}).finally(() => {
+      this.resumingActions = undefined;
+    });
+    return this.resumingActions = running;
+  }
+  private async resumeSavedActions() {
+    await this.holdActionOwner();
+    let after: string | undefined;
+    const tasks = new Set<Promise<void>>(), accounts = new Set<string>();
+    do {
+      const page = await this.actionActivity!.page(after);
+      after = page.next;
+      for (const action of page.rows) {
+        if (this.actionsClosed) break;
+        if (!action.owner || !["Queued", "Waiting"].includes(action.status) || (action.owner === this.actionOwner && action.status !== "Waiting")) continue;
+        if (accounts.has(action.account)) { await Promise.all(tasks); }
+        while (tasks.size >= 4) await Promise.race(tasks);
+        accounts.add(action.account);
+        const work = this.resumeAction(action).finally(() => { tasks.delete(work); accounts.delete(action.account); });
+        tasks.add(work);
+      }
+    } while (after && !this.actionsClosed);
+    await Promise.all(tasks);
+  }
+  private async resumeAction(action: MailAction) {
+    try {
+      const claim = async () => {
+        if (this.actionsClosed) return;
+        const current = await this.actionActivity!.get(action.id);
+        if (!current || current.owner !== action.owner || !["Queued", "Waiting"].includes(current.status)) return;
+        const account = this.accounts.find(a => a.id === current.account);
+        const cached = await resolveMail(this.store, current.lease.id);
+        if (!account || (account.protocol === "Imap" && !cached?.local && !this.connected(account.id))) {
+          await this.actionActivity!.update(current.lease, { status: "Waiting", error: "Reconnect this account in Preferences to continue the saved change." });
+          return;
+        }
+        return this.actionActivity!.adopt(current.id, current.owner!, this.actionOwner);
+      };
+      const adopted = action.owner === this.actionOwner ? await claim() : await this.exclusive(`actions.tab.${action.owner}`, claim, false);
+      if (!adopted || this.actionsClosed) return;
+      await this.mutateWithReceipt(adopted.lease.id, adopted.lease.fields, undefined, adopted.source, adopted.lease);
+    } catch { /* The original owner or the saved outcome retains recovery. */ }
+    finally { if (!this.actionsClosed) this.actionProgress?.(); }
+  }
+  async acceptActionReview(expected: MailAction, checked: boolean) {
+    if (!checked) throw Error("Check the source and destination folders before accepting their current state.");
+    if (this.activeActions.has(expected.id)) throw Error("This action is still running. Wait for its result.");
+    const accept = () => this.exclusive(`account.${expected.account}`, async () => {
+      if (this.activeActions.has(expected.id)) throw Error("This action is still running. Wait for its result.");
+      await this.actionActivity?.acceptReviewed(expected);
+    }, false);
+    if (expected.owner && expected.owner !== this.actionOwner)
+      await this.exclusive(`actions.tab.${expected.owner}`, accept, false);
+    else await accept();
+    this.actionProgress?.();
+    void this.resumeActions();
+  }
   private groupClient?: BrowserGroups;
   get groups() {
     return (this.groupClient ??= new BrowserGroups(
@@ -391,6 +484,8 @@ export class GatewayRepository implements Repository, SelectionRepository {
     });
   }
   stopMailbox() {
+    this.actionsClosed = true;
+    if (!this.activeActions.size) this.releaseActions?.();
     this.mailboxStopped = true;
     this.groupClient?.stop();
     this.mailboxWorker?.terminate();
@@ -641,8 +736,32 @@ export class GatewayRepository implements Repository, SelectionRepository {
   forgetPasswords() {
     this.secrets.clear();
   }
-  async connect(account: Account, password: string, smtpPassword: string) {
+  async connectionProgress(): Promise<AccountConnection[]> { return this.store.all("accountConnections"); }
+  async queueConnection(account: Account, password: string, smtpPassword: string) {
+    if (this.actionsClosed) throw Error("Mail actions are closed. Reopen Shep.");
+    const attempt: AccountConnection = { id: crypto.randomUUID(), account: structuredClone(account), state: "checking" };
+    await this.exclusive(`connection.${account.id}`, () => this.store.commit([{ store: "accountConnections", key: account.id, value: attempt }]));
+    void this.connect(account, password, smtpPassword, attempt.id).catch(async error => {
+      await this.exclusive(`connection.${account.id}`, async () => {
+        const latest = await this.store.get<AccountConnection>("accountConnections", account.id);
+        if (latest?.id !== attempt.id) return;
+        await this.store.commit([{ store: "accountConnections", key: account.id, value: { ...latest, state: "failed", error: error instanceof Error ? error.message : "Connection could not be confirmed. Re-enter the password to retry." } }]);
+      }).catch(() => {});
+    }).finally(() => { if (!this.actionsClosed) this.actionProgress?.(); });
+  }
+  async dismissConnection(expected: AccountConnection) {
+    await this.exclusive(`connection.${expected.account.id}`, async () => {
+      const current = await this.store.get<AccountConnection>("accountConnections", expected.account.id);
+      if (JSON.stringify(current) !== JSON.stringify(expected)) throw Error("This connection attempt changed. Refresh Preferences.");
+      await this.store.commit([{ store: "accountConnections", key: expected.account.id }]);
+    });
+    this.actionProgress?.();
+  }
+  async connect(account: Account, password: string, smtpPassword: string, attempt?: string) {
     await this.exclusive(`account.${account.id}`, async () => {
+      const progress = await this.store.get<AccountConnection>("accountConnections", account.id);
+      if (attempt && progress?.id !== attempt) throw Error("A newer connection attempt replaced this one.");
+      const expectedAttempt = progress?.id;
       if (await this.store.get("removedAccounts", account.id))
         throw new Error(
           "This account was removed. Add it again as a new account in Preferences.",
@@ -674,9 +793,15 @@ export class GatewayRepository implements Repository, SelectionRepository {
         connection: { account, password: smtpPassword },
         smtp: true,
       });
-      await this.store.commit([
-        { store: "accounts", key: account.id, value: account },
-      ]);
+      await this.exclusive(`connection.${account.id}`, async () => {
+        if (this.actionsClosed) throw Error("This workspace closed before the connection was activated. Reconnect when it opens.");
+        const latest = await this.store.get<AccountConnection>("accountConnections", account.id);
+        if (latest?.id !== expectedAttempt) throw Error("A newer connection decision replaced this attempt.");
+        await this.store.commit([
+          { store: "accounts", key: account.id, value: account },
+          { store: "accountConnections", key: account.id },
+        ]);
+      });
       this.secrets.set(account.id, { incoming: password, smtp: smtpPassword });
       this.accounts = [
         ...this.accounts.filter((a) => a.id !== account.id),
@@ -685,6 +810,8 @@ export class GatewayRepository implements Repository, SelectionRepository {
       if (this.reconnectRequired.delete(account.id))
         await this.onCredentialActivated?.(account.id);
     });
+    if (this.actionProgress) void this.resumeActions();
+    if (this.actionProgress) void this.resumeOutgoing();
   }
   /// Save an account definition from a synced profile. No probe, no password:
   /// the account stays unusable until a reviewed reconnect activates one.
@@ -1128,7 +1255,9 @@ export class GatewayRepository implements Repository, SelectionRepository {
     );
   }
   async registerMutation(id: string, fields: Fields) {
-    return this.store.intents?.register(id, fields);
+    if (this.actionActivity) await this.holdActionOwner();
+    if (this.actionsClosed) throw Error("Mail actions are closed. Reopen Shep.");
+    return this.store.intents?.register(id, fields, this.actionOwner);
   }
   get bulkIntents() {
     if (!this.store.intents)
@@ -1139,7 +1268,45 @@ export class GatewayRepository implements Repository, SelectionRepository {
     return this.session.user_id;
   }
   async cancelMutation(lease: IntentLease) {
+    if (lease.action && this.actionActivity) {
+      const action = await this.actionActivity.get(lease.action);
+      if (!action) return;
+      await this.actionActivity.cancelQueued(action);
+      this.actionProgress?.();
+      return;
+    }
     await this.store.intents?.finish(lease, "failed");
+    await this.store.intents?.activity?.complete(lease);
+  }
+  get actionActivity() { return this.store.intents?.activity; }
+  async cancelSavedAction(expected: MailAction) {
+    const cancel = async () => {
+      if (this.activeActions.has(expected.id)) throw Error("This action is starting. Refresh Activity before cancelling it.");
+      await this.actionActivity?.cancelQueued(expected);
+    };
+    if (expected.owner && expected.owner !== this.actionOwner)
+      await this.exclusive(`actions.tab.${expected.owner}`, cancel, false);
+    else await cancel();
+    this.actionProgress?.();
+    void this.resumeActions();
+  }
+  async repairAction(id: string) {
+    const action = await this.actionActivity?.get(id);
+    if (!action?.receipt || action.status !== "Repair")
+      throw Error("Only acknowledged changes can repair their cache. Check the original account before repeating this action.");
+    await this.repairMutation(action.receipt, { ...action.lease, fields: action.applied ?? action.lease.fields });
+    await this.actionActivity?.complete(action.lease, true);
+    await this.reloadMail(action.lease.id);
+  }
+  async undoSavedAction(expected: MailAction) {
+    await this.holdActionOwner();
+    const intents = this.store.intents;
+    if (!intents?.registerUndo) throw Error("Saved Undo is unavailable. Reopen Shep.");
+    const lease = await intents.registerUndo(expected, this.actionOwner);
+    this.actionProgress?.();
+    try { await this.mutateWithReceipt(lease.id, lease.fields, undefined, expected.receipt!.after, lease); }
+    catch (error) { if (!(error instanceof MutationWaiting)) throw error; }
+    finally { this.actionProgress?.(); }
   }
   /** Replay an acknowledged result into the cache, never into IMAP/SMTP. A
    * field already cached by this or a newer action keeps its current value. */
@@ -1339,17 +1506,57 @@ export class GatewayRepository implements Repository, SelectionRepository {
     expected?: BulkIdentity,
     lease?: IntentLease,
   ): Promise<MutationReceipt> {
+    if (this.actionsClosed) throw Error("Mail actions are closed. Reopen Shep.");
+    if (lease?.action && this.activeActions.has(lease.action)) throw Error("This action is still running. Wait for its result.");
+    if (lease?.action) this.activeActions.add(lease.action);
+    try { return await this.executeMutationWithReceipt(id, fields, acknowledged, expected, lease); }
+    finally {
+      if (lease?.action) this.activeActions.delete(lease.action);
+      if (this.actionsClosed && !this.activeActions.size) this.releaseActions?.();
+    }
+  }
+  private async executeMutationWithReceipt(
+    id: string,
+    fields: Fields,
+    acknowledged?: (result: MutationReceipt) => Promise<void>,
+    expected?: BulkIdentity,
+    lease?: IntentLease,
+  ): Promise<MutationReceipt> {
     let result: MutationReceipt;
+    const activity = this.store.intents?.activity;
+    if (lease?.action && activity) {
+      const saved = await activity.get(lease.action);
+      const account = this.accounts.find(a => a.id === lease.account);
+      const mail = await resolveMail(this.store, id);
+      if (saved && ["Queued", "Waiting"].includes(saved.status) && account?.protocol === "Imap" && mail && !mail.local && !this.connected(account.id)) {
+        const message = "Saved on this browser. Reconnect the account in Preferences to sync this change.";
+        await activity.update(lease, { status: "Waiting", error: message });
+        this.actionProgress?.();
+        throw new MutationWaiting(message);
+      }
+    }
+    if (lease) await activity?.update(lease, { status: "Running" });
     try {
       result = await this.performMutation(
         id,
         fields,
-        acknowledged,
+        async receipt => {
+          if (lease) await activity?.update(lease, { status: "Repair", receipt: receipt.receipt, applied: receipt.applied });
+          await acknowledged?.(receipt);
+        },
         expected,
         lease,
       );
     } catch (error) {
       if (lease) {
+        try {
+          if (error instanceof MutationSuperseded) await activity?.complete(lease);
+          else await activity?.update(lease, {
+            status: error instanceof MutationFailure ? error.committed ? "Repair" : "Uncertain" : "Rejected",
+            ...(error instanceof MutationFailure && error.receipt ? { receipt: error.receipt, applied: error.applied } : {}),
+            error: error instanceof Error ? error.message : "This action needs review.",
+          });
+        } catch { /* The saved dispatch remains unconfirmed; never repeat it. */ }
         // An uncertain wire result remains pending for explicit recovery. A
         // known receipt dominates a later cache/display/intent-save failure.
         const status =
@@ -1371,6 +1578,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
     if (lease) {
       try {
         await this.store.intents?.finish(lease, "applied");
+        await activity?.complete(lease, true);
       } catch {
         throw new MutationFailure(
           "The change was saved, but its local action record could not finish. Refresh before another action.",
@@ -1405,6 +1613,12 @@ export class GatewayRepository implements Repository, SelectionRepository {
       throw new Error("This account was removed. Reopen Preferences.");
     let receipt: BulkReceipt | undefined,
       cacheApplied = false;
+    const checkConnection = async () => {
+      if (!lease?.action) return;
+      const action = await this.actionActivity?.get(lease.action);
+      if (action?.connection !== JSON.stringify(await this.store.get("accounts", account.id)))
+        throw Error("The account changed after this action was saved. Review it before trying again.");
+    };
     try {
       const local = await this.exclusive(`cache.${account.id}`, async () => {
         const latest = await resolveMail(this.store, id);
@@ -1413,6 +1627,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
             "This message is no longer cached. Refresh its folder.",
           );
         if (!latest.local && account.protocol !== "Pop3") return false;
+        await checkConnection();
         await effective();
         if (latest.pendingMove || latest.receipt || latest.moved)
           throw new Error(
@@ -1441,6 +1656,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
       });
       if (local) return { receipt: receipt!, cacheApplied, applied: fields };
       await this.exclusive(`account.${account.id}`, async () => {
+        await checkConnection();
         const latest = await resolveMail(this.store, id);
         if (!latest)
           throw new Error(
@@ -1573,6 +1789,8 @@ export class GatewayRepository implements Repository, SelectionRepository {
       });
       return { receipt: receipt!, cacheApplied, applied: fields };
     } catch (error) {
+      if (error instanceof BrowserWriteFailure)
+        error = new Error("Could not save this message change on this browser. Free storage space and retry.");
       if (receipt && !(error instanceof MutationFailure && error.committed))
         throw new MutationFailure(
           "The change was acknowledged, but its local progress could not be saved. Refresh before another action.",
@@ -1785,10 +2003,72 @@ export class GatewayRepository implements Repository, SelectionRepository {
       );
     return String(value.state);
   }
-  async send(draft: Draft): Promise<void> {
+  async queueSend(draft: Draft): Promise<void> {
+    if (this.actionsClosed) throw Error("Mail actions are closed. Reopen Shep.");
     await this.exclusive(`draft.${draft.id}`, async () => {
+      if (await this.store.get("outgoing", draft.id)) throw Error("This message already has an Outbox record. Check it before sending again.");
+      const account = this.accounts.find(a => a.id === draft.accountId);
+      if (!account) throw Error("Choose a sending account.");
+      const saved = await this.store.get<Draft>("drafts", draft.id);
+      if (saved && (saved.revision ?? 0) > (draft.revision ?? 0)) throw Error("This draft changed in another editor. Reopen it before sending.");
+      if (JSON.stringify(saved?.forward ?? null) !== JSON.stringify(draft.forward ?? null) || saved?.forwardSource !== draft.forwardSource)
+        throw Error("The original forward changed. Reopen the draft before sending.");
+      const attachments = await this.attachments(draft.id);
+      if (JSON.stringify(attachments) !== JSON.stringify(draft.attachments ?? [])) throw Error("The attachments changed. Reopen the draft and review its files.");
+      const record: Outgoing = { id: `queued:${crypto.randomUUID()}`, draft: structuredClone(draft), account: structuredClone(account), state: "queued" };
+      await this.store.commit([
+        { store: "drafts", key: draft.id, value: structuredClone(draft) },
+        { store: "outgoing", key: draft.id, value: record },
+      ]);
+    });
+    this.actionProgress?.();
+    void this.resumeOutgoing();
+  }
+  resumeOutgoing(): Promise<void> {
+    if (this.actionsClosed) return Promise.resolve();
+    if (this.outgoingResume) { this.outgoingAgain = true; return this.outgoingResume; }
+    const run = (async () => {
+      do {
+        this.outgoingAgain = false;
+        const accounts = new Map<string, Outgoing[]>();
+        for (const record of await this.outgoing()) {
+          if (record.state !== "queued") continue;
+          const key = record.draft.accountId ?? "";
+          const queued = accounts.get(key) ?? [];
+          queued.push(record); accounts.set(key, queued);
+        }
+        const groups = [...accounts.values()];
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(4, groups.length) }, async () => {
+          while (next < groups.length && !this.actionsClosed) {
+            const group = groups[next++];
+            for (const record of group) {
+              if (this.actionsClosed) return;
+              await this.continueQueuedSend(record);
+            }
+          }
+        }));
+      } while (this.outgoingAgain && !this.actionsClosed);
+    })().catch(() => {}).finally(() => { this.outgoingResume = undefined; });
+    return this.outgoingResume = run;
+  }
+  private async continueQueuedSend(record: Outgoing) {
+    try { await this.send(record.draft, true); }
+    catch (error) {
+      await this.exclusive(`draft.${record.draft.id}`, async () => {
+        const current = await this.store.get<Outgoing>("outgoing", record.draft.id);
+        if (!current || current.recovery) return;
+        current.queueError = error instanceof Error ? error.message : "This queued message needs attention. Open Outbox.";
+        await this.store.commit([{ store: "outgoing", key: current.draft.id, value: current }]);
+      }).catch(() => {});
+    }
+    if (!this.actionsClosed) this.actionProgress?.();
+  }
+  async send(draft: Draft, queuedOnly = false): Promise<void> {
+    await this.exclusive(`draft.${draft.id}`, () => this.exclusive(`account.${draft.accountId ?? "unassigned"}`, async () => {
       let record = await this.store.get<Outgoing>("outgoing", draft.id);
-      if (record) {
+      if (queuedOnly && (!record || record.state !== "queued" || this.actionsClosed)) return;
+      if (record && record.state !== "queued") {
         if (record.recovery)
           throw new Error(
             "This submission was already reviewed. Open its recovered draft or Sent copy; it was not resent.",
@@ -1809,6 +2089,10 @@ export class GatewayRepository implements Repository, SelectionRepository {
       } else {
         const account = this.accounts.find((a) => a.id === draft.accountId);
         if (!account) throw new Error("Choose a sending account.");
+        if (JSON.stringify(await this.store.get("accounts", account.id)) !== JSON.stringify(account))
+          throw Error("The sending account changed in another tab. Reconnect and review this queued message before sending.");
+        if (record && (draftKey(record.draft) !== draftKey(draft) || JSON.stringify(record.account) !== JSON.stringify(account)))
+          throw Error("The queued message or sending account changed. Return it to drafts and review it before sending.");
         const connection = this.connection(account, true);
         const saved = await this.store.get<Draft>("drafts", draft.id);
         if (saved && (saved.revision ?? 0) > (draft.revision ?? 0))
@@ -1946,7 +2230,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
               ? "The server has not started this submission. Its reservation is kept; this draft was not resent."
               : "Delivery remains unconfirmed. Check Sent or the recipient before composing a new message. This draft was not resent.",
         );
-    });
+    }));
     // Independent Sent work cannot make acknowledged SMTP depend on another
     // cache read. Its recovery record remains visible in Outbox on failure.
     void this.store
@@ -2143,6 +2427,11 @@ export class GatewayRepository implements Repository, SelectionRepository {
       );
       if (!record || record.id !== id)
         throw new Error("This Outbox entry changed. Refresh Outbox.");
+      if (record.state === "queued") {
+        if (action === "check") return;
+        if (action !== "return") throw Error("This message has not started sending. Return it to drafts to change it.");
+        record.state = "cancelled";
+      }
       if (record.sent?.state === "saved" && action === "return")
         throw new Error(
           "A matching provider Sent copy is acknowledged. Keep it instead of returning this message to drafts.",

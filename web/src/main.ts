@@ -24,6 +24,7 @@ async function start() {
       `shep.profile-preferences.v1.${session.user_id}`,
     );
     const workspace = new Workspace(repository, settings);
+    repository.startActions(() => { void workspace.retryPage(); workspace.changed(); });
     workspace.error = repository.warning;
     const port = new WorkerHistoryPort(
       () =>
@@ -56,6 +57,8 @@ async function start() {
     );
     void profiles.start();
     const timer = setInterval(() => {
+      void repository.resumeActions();
+      void repository.resumeOutgoing();
       if (
         !document.hidden &&
         !workspace.syncing &&

@@ -2201,6 +2201,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "shep-action-core"
+version = "0.1.0"
+
+[[package]]
 name = "shep-mail-content"
 version = "0.1.0"
 dependencies = [
@@ -2281,6 +2285,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shep-action-core",
  "shep-mail-core",
  "shep-profile-core",
  "tempfile",

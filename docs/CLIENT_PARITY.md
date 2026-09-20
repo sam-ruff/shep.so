@@ -1,5 +1,22 @@
 # Client parity
 
+Native group flag writes now retain provider receipts before cache updates;
+cache-only repair preserves Undo and never repeats a provider write. Native
+calendar actions now admit durable requests independently of provider capacity.
+Browser individuals retain Activity and safely resume orphan queued work;
+Flutter individuals admit exact UUID requests before credentials/provider waits
+and expose waiting/recovery controls. The [browser](agents/IMMEDIATE_ACTIONS_BROWSER.md)
+and [Flutter](agents/IMMEDIATE_ACTIONS_FLUTTER.md) inventories retain remaining
+adoption and verification requirements. These migrations do not establish
+complete domain, Undo, offline-policy or platform parity.
+
+Desktop Send now admits prepared MIME to a durable Queued Outbox before provider
+capacity and supports local cancellation before dispatch. Browser now saves
+queued Send before provider reservation, retains connection-attempt recovery and
+atomically saves preference values with intent revisions. Flutter still needs
+the sending admission/UI migration. MIME
+preparation before native admission remains a responsiveness limitation.
+
 20 September immediate actions: the approved common lifecycle is being adopted
 on desktop, starting with bulk review during pending mail writes and calendar
 save/delete projections. `shared/action-core` defines projection outcomes but

@@ -34,6 +34,12 @@ class Workspace extends ChangeNotifier {
   final GoogleConnection? google;
   final ProfileDiscovery? profileDiscovery;
   final MailRepository repository;
+  List<MailActivity> mailActivities = const [];
+  Iterable<MailActivity> get mailActivityReview =>
+      mailActivities.where((action) => action.needsReview);
+  Iterable<MailActivity> get mailActivityPending => mailActivities.where(
+    (action) => const {'queued', 'waiting', 'running'}.contains(action.status),
+  );
   final SettingsStore settings;
   List<Mail> _mail;
   final Map<String, Mail> _confirmed;
@@ -382,6 +388,7 @@ class Workspace extends ChangeNotifier {
         await native.initialize();
         drafts.addEntries(native.savedDrafts.map((d) => MapEntry(d.id, d)));
         await loadPage();
+        await refreshMailActivity(resume: true);
       } catch (e) {
         error = '$e';
       }
@@ -394,10 +401,72 @@ class Workspace extends ChangeNotifier {
         }
       });
     }
+    if (native == null && repository is MailActivityRepository) {
+      await refreshMailActivity(resume: true);
+    }
     // Saved groups recover at startup: runnable ones continue, paused ones
     // wait for an explicit decision in History.
     unawaited(groups?.refreshHistory());
     _changed();
+  }
+
+  Future<void> refreshMailActivity({bool resume = false}) async {
+    final source = switch (repository) {
+      MailActivityRepository value => value,
+      _ => null,
+    };
+    if (source == null) return;
+    try {
+      mailActivities = await source.mailActions();
+      _changed();
+      if (resume) {
+        for (final action in mailActivities.where(
+          (action) => action.canResume,
+        )) {
+          unawaited(_resumeMailActivity(source, action));
+        }
+      }
+    } catch (e) {
+      error = 'Could not load mail activity. $e';
+      _changed();
+    }
+  }
+
+  Future<void> _resumeMailActivity(
+    MailActivityRepository source,
+    MailActivity action,
+  ) async {
+    try {
+      await source.resumeMailAction(action);
+    } catch (e) {
+      error = '$e';
+    } finally {
+      await refreshMailActivity();
+    }
+  }
+
+  void retryMailActivity(MailActivity action) {
+    if (action.status == 'rejected') {
+      unawaited(change(action.mail, action.fields, force: true));
+    } else {
+      retry = () => unawaited(refresh());
+      unawaited(refresh());
+    }
+  }
+
+  Future<void> cancelMailActivity(MailActivity action) async {
+    final source = switch (repository) {
+      MailActivityRepository value => value,
+      _ => null,
+    };
+    if (source == null) return;
+    if (!action.canResume) return;
+    try {
+      await source.cancelMailAction(action.id);
+    } catch (e) {
+      error = '$e';
+    }
+    await refreshMailActivity();
   }
 
   Future<void> loadPage({bool append = false}) async {

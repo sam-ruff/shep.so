@@ -1,5 +1,7 @@
 pub(crate) mod backup_history;
 mod bulk;
+pub(crate) mod calendar_actions;
+pub use calendar_actions::CalendarJob;
 mod folder_actions;
 mod folder_creation;
 pub use folder_creation::PendingCreation;
@@ -47,7 +49,7 @@ pub struct Store(
     Option<Arc<crate::cache_cipher::ownership::Guard>>,
 );
 
-pub(crate) const DATABASE_VERSION: u32 = 5;
+pub(crate) const DATABASE_VERSION: u32 = 6;
 /// Plain-text characters the reader loads per page of a long message.
 pub const READER_BODY_PAGE: usize = 32_000;
 
@@ -249,6 +251,10 @@ impl Store {
             tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
             tx.commit()?;
         }
+        let tx = conn.transaction()?;
+        calendar_actions::schema(&tx)?;
+        tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
+        tx.commit()?;
         Ok(conn)
     }
     pub async fn run<T, F>(&self, f: F) -> anyhow::Result<T>
@@ -443,7 +449,7 @@ impl Store {
                 move_pending_total: move_journal::pending(c)?,
                 outgoing_revision: get(c, "outgoing_revision")?,
                 google_archived: get(c, "google_archived")?,
-                outgoing_drafts:c.prepare("SELECT draft FROM outgoing WHERE stage IN ('Submitting','Uncertain','Accepted')")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
+                outgoing_drafts:c.prepare("SELECT draft FROM outgoing WHERE stage IN ('Queued','Submitting','Uncertain','Accepted')")?.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<_,_>>()?,
                 credential_cleanup: c.query_row(
                     "SELECT COUNT(*) FROM credential_cleanup",
                     [],
@@ -531,7 +537,7 @@ fn read_page(
     let mut observed = std::collections::HashMap::new();
     let mut relocated = std::collections::HashMap::new();
     let mut statement = c.prepare(&format!(
-        "SELECT account,folder,unread FROM {source} WHERE id=?"
+        "SELECT account,folder,unread,starred FROM {source} WHERE id=?"
     ))?;
     for id in query.observe {
         use rusqlite::OptionalExtension;
@@ -541,6 +547,7 @@ fn read_page(
                     account: row.get(0)?,
                     folder: row.get(1)?,
                     unread: row.get(2)?,
+                    starred: row.get(3)?,
                 })
             })
             .optional()?;
@@ -981,7 +988,7 @@ impl Store {
         self.run(move |c| {
             let tx = c.transaction()?;
             anyhow::ensure!(!id.is_empty() && id.len() <= 256, "Invalid draft identity.");
-            let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft=? AND stage IN ('Submitting','Uncertain','Accepted'))", [&id], |r| r.get(0))?;
+            let pending: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft=? AND stage IN ('Queued','Submitting','Uncertain','Accepted'))", [&id], |r| r.get(0))?;
             anyhow::ensure!(!pending, "Review this message in Outbox before discarding its draft.");
             // A discarded identity is retired permanently, including revisions
             // captured by a file picker or autosave before the delete committed.
@@ -1124,6 +1131,11 @@ impl Store {
                 .map(|r|{let(data,raw,text,folder,unread,starred)=r?;let mut summary:Mail=serde_json::from_str(&data)?;summary.folder=folder;summary.unread=unread;summary.starred=starred;Ok(StoredMail{summary,raw,text})}).collect()
         }).await
     }
+}
+
+pub(crate) fn action_schema(c: &Connection) -> anyhow::Result<()> {
+    bulk::schema(c)?;
+    calendar_actions::schema(c)
 }
 
 pub(crate) fn import_archive_schema(c: &Connection) -> anyhow::Result<()> {

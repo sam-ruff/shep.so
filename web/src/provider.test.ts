@@ -1,4 +1,6 @@
-import { describe, it, expect } from "vitest";
+import "fake-indexeddb/auto";
+import { describe, it, expect, vi } from "vitest";
+import { BrowserStore } from "./storage";
 import { GatewayRepository, type Account, type CoreMail } from "./provider";
 import type { LocalStore, StoreName, Change } from "./storage";
 import type { Draft, Fields } from "./model";
@@ -337,6 +339,7 @@ function setup() {
   let moveRemote: string | null = "91.8";
   let recoveryFails = false;
   let moveFailure = "";
+  let probeWait: Promise<void> | undefined, probeFailure = false;
   const requests: { path: string; body: any }[] = [];
   const request: typeof fetch = async (input, init) => {
     const path = String(input);
@@ -348,7 +351,11 @@ function setup() {
       expect((init!.headers as Record<string, string>)["x-shep-csrf"]).toBe(
         session.csrf,
       );
-    if (path.endsWith("probe")) return json({ connected: true });
+    if (path.endsWith("probe")) {
+      await probeWait;
+      if (probeFailure) throw Error("Fixture connection refused");
+      return json({ connected: true });
+    }
     if (path.endsWith("sync")) return stream(events, terminated);
     if (path.endsWith("resolve-move")) {
       if (recoveryFails)
@@ -426,6 +433,8 @@ function setup() {
     db,
     repo,
     requests,
+    probeWait: (pending: Promise<void>) => { probeWait = pending; },
+    probeFailure: () => { probeFailure = true; },
     reopen: () => new GatewayRepository(session, db, request, unlock),
     moveFailure: (v: string) => {
       moveFailure = v;
@@ -447,6 +456,35 @@ function setup() {
     },
   };
 }
+
+it("individual activity retains real mutation receipts and unknown attempts across reopen without another dispatch", async () => {
+  for (const failure of ["cache", "lost"] as const) {
+    const s = setup();
+    await s.repo.connect(account, "p", "p");
+    await s.repo.refresh();
+    const profile = (failure === "cache" ? "J" : "K").repeat(43);
+    const durable = await BrowserStore.open(profile);
+    await durable.commit([
+      { store: "accounts", key: account.id, value: account },
+      { store: "mail", key: summary.id, value: await s.db.get("mail", summary.id) },
+    ]);
+    s.db.intents = durable.intents;
+    const lease = await s.repo.registerMutation(summary.id, { folder: "Archive" });
+    s.moveFailure(failure);
+    await expect(s.repo.mutate(summary.id, { folder: "Archive" }, lease)).rejects.toBeInstanceOf(MutationFailure);
+    const original = (await durable.intents.activity!.page()).rows[0];
+    expect(original.status).toBe(failure === "cache" ? "Repair" : "Uncertain");
+    if (failure === "cache") expect(original.receipt?.after.remoteId).toBe("91.8");
+    durable.close();
+    const reopened = await BrowserStore.open(profile);
+    try {
+      s.db.intents = reopened.intents;
+      expect((await reopened.intents.activity!.page()).rows[0]).toEqual(original);
+      await expect(s.repo.mutate(summary.id, { folder: "Archive" }, lease)).rejects.toThrow("already started");
+      expect(s.requests.filter(r => r.path.endsWith("/move"))).toHaveLength(1);
+    } finally { reopened.close(); }
+  }
+});
 describe("real browser provider/cache contract", () => {
   it("stores no passwords; a reopened cache remains readable and asks to reconnect", async () => {
     const s = setup();
@@ -671,6 +709,84 @@ describe("real browser provider/cache contract", () => {
     await reopened.send(draft);
     expect(s.sends()).toBe(1);
     expect(JSON.stringify([...s.db.data])).not.toContain('"smtp"');
+  });
+  it("admits Send locally while offline, resumes queued work after reconnect, and never automatically repeats an uncertain submission", async () => {
+    const s = setup();
+    await s.repo.connect(account, "incoming", "smtp");
+    s.repo.forgetPasswords();
+    await s.repo.queueSend(draft);
+    await s.repo.resumeOutgoing();
+    expect(await s.db.get("outgoing", draft.id)).toMatchObject({ state: "queued", draft, queueError: expect.stringContaining("Reconnect") });
+    expect(s.sends()).toBe(0);
+    const reopened = s.reopen();
+    await reopened.load();
+    await reopened.connect(account, "incoming", "smtp");
+    s.mode("lost");
+    await reopened.resumeOutgoing();
+    expect(s.sends()).toBe(1);
+    expect(await s.db.get("outgoing", draft.id)).toMatchObject({ state: "submitting", wire: expect.anything() });
+    await reopened.resumeOutgoing();
+    expect(s.sends()).toBe(1);
+    expect(s.checks()).toBe(0);
+  });
+  it("retains failed connection progress without persisting passwords or disabling an existing connection", async () => {
+    const s = setup();
+    await s.repo.connect(account, "previous", "previous");
+    s.probeFailure();
+    await s.repo.queueConnection(account, "new-secret", "smtp-secret");
+    await vi.waitFor(async () => expect((await s.repo.connectionProgress())[0]).toMatchObject({ state: "failed", error: "Fixture connection refused" }));
+    expect(s.repo.connected(account.id)).toBe(true);
+    const reopened = s.reopen(); await reopened.load();
+    expect(await reopened.connectionProgress()).toHaveLength(1);
+    expect(JSON.stringify(await reopened.connectionProgress())).not.toContain("new-secret");
+    expect(JSON.stringify(await reopened.connectionProgress())).not.toContain("smtp-secret");
+  });
+  it("a dismissed connection attempt cannot activate after its probes complete", async () => {
+    const s = setup();
+    const attempt = { id: "attempt", account, state: "checking" as const };
+    await s.db.commit([{ store: "accountConnections", key: account.id, value: attempt }]);
+    let release!: () => void;
+    s.probeWait(new Promise<void>(resolve => { release = resolve; }));
+    const connecting = s.repo.connect(account, "new-secret", "smtp-secret", attempt.id);
+    await vi.waitFor(() => expect(s.requests).toHaveLength(1));
+    await s.repo.dismissConnection(attempt);
+    release();
+    await expect(connecting).rejects.toThrow("newer connection decision");
+    expect(s.repo.connected(account.id)).toBe(false);
+    expect(await s.db.get("accounts", account.id)).toBeUndefined();
+  });
+  it("rejects failed local Send admission before network and returns an unsent queue to a new editable draft without network", async () => {
+    const s = setup();
+    await s.repo.connect(account, "incoming", "smtp");
+    s.repo.forgetPasswords();
+    s.db.fail = true;
+    await expect(s.repo.queueSend(draft)).rejects.toThrow("disk full");
+    expect(await s.db.get("outgoing", draft.id)).toBeUndefined();
+    await s.repo.queueSend(draft);
+    await s.repo.resumeOutgoing();
+    const queued = await s.db.get<any>("outgoing", draft.id);
+    const restored = await s.repo.recoverOutgoing(queued.id, "return");
+    expect(restored).toMatchObject({ subject: draft.subject, body: draft.body });
+    expect(restored!.id).not.toBe(draft.id);
+    expect(s.requests.filter(request => !request.path.endsWith("probe"))).toEqual([]);
+    await s.repo.resumeOutgoing();
+    expect(s.sends()).toBe(0);
+  });
+  it("a slow queued send does not block another account's queued dispatch", async () => {
+    const s = setup();
+    const queued = ["first", "second"].map(id => ({ id: `queued:${id}`, state: "queued", draft: { ...draft, id, accountId: id } }));
+    await s.db.commit(queued.map(record => ({ store: "outgoing", key: record.draft.id, value: record })));
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const finished: string[] = [];
+    s.repo.send = async value => {
+      if (value.accountId === "first") await held;
+      finished.push(value.accountId!);
+    };
+    const running = s.repo.resumeOutgoing();
+    await vi.waitFor(() => expect(finished).toEqual(["second"]));
+    release(); await running;
+    expect(finished).toEqual(["second", "first"]);
   });
   it("does not submit if durable storage fails", async () => {
     const s = setup();

@@ -191,6 +191,7 @@ impl App {
                 account: account.clone(),
                 folder: folder.clone(),
                 unread: mail.unread,
+                starred: mail.starred,
             };
             let before = member(base, mail).unwrap_or_else(|| destination.clone());
             let after = if actions.restoring(&original.id) {
@@ -238,6 +239,7 @@ mod tests {
                 account: mail.account_id.clone(),
                 folder: folder.into(),
                 unread,
+                starred: mail.starred,
             }),
         );
         Arc::new(page)

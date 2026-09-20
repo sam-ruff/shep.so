@@ -46,7 +46,7 @@ pub(super) struct State {
     retiring: Option<crate::store::MailSelectionId>,
     pub staging: Option<String>,
     deferred_start: Option<Command>,
-    stop_requested: bool,
+    pub(super) stop_requested: bool,
     pub stopped: bool,
     pub waiting_reader: Option<String>,
     staged_review: Option<crate::store::MailSelectionId>,
@@ -1270,6 +1270,7 @@ impl App {
                                 match item.status.as_str() {
                                     "queued" => "Waiting",
                                     "running" => "Saving…",
+                                    "repair" => "Server confirmed · updating this device",
                                     "done" =>
                                         if item.undo {
                                             "Restored"

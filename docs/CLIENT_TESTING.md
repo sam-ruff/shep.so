@@ -1,5 +1,18 @@
 # Client testing
 
+Immediate-action receipt scenarios must cover server acknowledgement followed by
+a failed cache transaction, restart before cache repair, and Undo requested
+during that gap. Repair must preserve the original receipt, touch only accepted
+fields, reject a replaced physical message and finish without provider capacity.
+Native equivalents are in `tests/bulk.rs` and `engine::bulk::tests`; client
+adoption needs its own storage and real-control evidence.
+
+Queued Send scenarios hold every provider slot and the source account while
+admitting a message locally, then cancel without SMTP. Reopen must retain exact
+MIME/Message-ID; only Queued may claim once as Submitting. Changed connection
+settings reject dispatch, imported queues require review, and a cancellation
+racing dispatch must not report that an already-started message was unsent.
+
 Use [the parity matrix](CLIENT_PARITY.md) to distinguish preview behavior from real provider/platform evidence. Tests use `shared/preview.json`, fake transports and synthetic mail; never personal accounts. Keep every new scenario reproducible and keep screenshots/logs in ignored `artifacts/`.
 
 ## Flutter

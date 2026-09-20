@@ -249,6 +249,8 @@ impl Store {
                     drafts::changed(&tx)?;
                 }
                 ConnectionKind::Calendar => {
+                    let pending: bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM calendar_actions WHERE source=? AND status NOT IN ('succeeded','cancelled'))",[&target.id],|r|r.get(0))?;
+                    anyhow::ensure!(!pending,"Finish or review this calendar's pending changes before removing it.");
                     let mut sources: Vec<CalendarSource> = get(&tx, "calendars")?;
                     if let Some(source) = sources.iter().find(|s| s.id == target.id) {
                         if source.kind == CalendarKind::CalDav { keys.push(target.id.clone()); }

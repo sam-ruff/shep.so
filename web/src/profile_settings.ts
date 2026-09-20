@@ -104,6 +104,7 @@ export function describeSetting(key: SettingKey, value: unknown): string {
 }
 
 interface Revisions {
+  preferences?: Preferences;
   revisions: Record<BrowserSettingKey, number>;
   receipt: ApplyReceipt | null;
 }
@@ -116,16 +117,17 @@ export class ProfileSettingsStore implements SettingsStore {
     private storage: Pick<Storage, "getItem" | "setItem"> = localStorage,
   ) {}
   read(): Preferences {
-    return this.inner.read();
+    return this.state().preferences ?? this.inner.read();
   }
   write(value: Preferences): void {
-    const before = portableValues(this.inner.read());
+    const before = portableValues(this.read());
     const after = portableValues(value);
     const state = this.state();
     for (const key of BROWSER_SETTINGS)
       if (before[key] !== after[key]) state.revisions[key]++;
-    this.inner.write(value);
+    state.preferences = structuredClone(value);
     this.persist(state);
+    try { this.inner.write(value); } catch { /* The authoritative values and revisions already committed together. */ }
   }
   /// Explicit local intent even when the value is unchanged, used by
   /// enrollment to mark a kept field as newer local intent.
@@ -136,7 +138,7 @@ export class ProfileSettingsStore implements SettingsStore {
   }
   capture(): PortableValues {
     return {
-      values: portableValues(this.inner.read()),
+      values: portableValues(this.read()),
       revisions: { ...this.state().revisions },
     };
   }
@@ -159,6 +161,8 @@ export class ProfileSettingsStore implements SettingsStore {
       const raw = this.storage.getItem(this.key);
       if (!raw) return fresh;
       const parsed = JSON.parse(raw) as Partial<Revisions>;
+      if (parsed.preferences && typeof parsed.preferences === "object")
+        fresh.preferences = parsed.preferences;
       for (const key of BROWSER_SETTINGS) {
         const value = parsed.revisions?.[key];
         if (Number.isInteger(value) && (value as number) >= 0)
@@ -216,7 +220,13 @@ export class ProfilePreferenceDevice {
         applied.push(key);
       } else kept.push(key);
     }
-    if (applied.length) this.workspace.savePreferences(next);
+    if (applied.length) {
+      this.workspace.savePreferences(next);
+      const saved = this.settings.capture().values;
+      const desired = portableValues(next);
+      if (applied.some(key => saved[key] !== desired[key]))
+        throw Error("Preferences could not be admitted locally. Retry this reviewed application before acknowledging it.");
+    }
     // Kept fields carry newer local intent forward for later publication.
     if (kept.length) this.settings.bump(kept);
     const receipt: ApplyReceipt = {

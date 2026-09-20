@@ -67,6 +67,7 @@ export interface Draft {
 }
 export type Fields = Partial<Pick<Mail, "unread" | "starred" | "folder">>;
 export type Action = "archive" | "trash" | "read" | "star" | "move";
+export class MutationWaiting extends Error {}
 export class MutationFailure extends Error {
   constructor(
     message: string,
@@ -104,6 +105,7 @@ export interface Repository {
   ): Promise<Fields | void>;
   saveDraft(draft: Draft): Promise<void>;
   send(draft: Draft): Promise<void>;
+  queueSend?(draft: Draft): Promise<void>;
   saveEvent(event: CalendarEntry): Promise<void>;
 }
 export interface Preferences {
@@ -245,6 +247,8 @@ export class Workspace extends EventTarget {
     { id: string; fields: Fields; acknowledged?: boolean }
   >();
   private commandCount = 0;
+  private savedCancellations = new Map<string, () => void>();
+  cancelSavedProjection(id: string) { this.savedCancellations.get(id)?.(); }
   private flagUndoId?: string;
   private groupedFields: Record<string, Fields> = {};
   private undoWatch?: string;
@@ -1494,6 +1498,12 @@ export class Workspace extends EventTarget {
     const previous = Object.fromEntries(
       Object.keys(fields).map((key) => [key, current[key as keyof Mail]]),
     ) as Fields;
+    const previousVersions = new Map(Object.keys(fields).map(key => [key, this.versions.get(`${id}:${key}`)]));
+    const previousJobs = [...this.queues]
+      .filter(([key]) => this.canonical(key) === id)
+      .map(([, job]) => job);
+    let priorSettled = previousJobs.length === 0;
+    const predecessors = Promise.all(previousJobs).then(() => { priorSettled = true; });
     const revision = ++this.revision;
     const actionEpoch = this.pageEpoch;
     const currentSource = () =>
@@ -1538,14 +1548,58 @@ export class Workspace extends EventTarget {
     let reserved:
       | ReturnType<NonNullable<Repository["registerMutation"]>>
       | undefined;
+    let cancelled = false, savedAction: string | undefined;
     try {
       reserved = this.repository.registerMutation?.(id, fields);
     } catch (error) {
       reserved = Promise.reject(error);
     }
     const reservation = Promise.resolve(reserved).then(
-      (lease) => ({ lease }),
-      (error) => ({ error }),
+      (lease) => {
+        if (lease?.action) {
+          savedAction = lease.action;
+          this.savedCancellations.set(lease.action, () => {
+            cancelled = true;
+            if (!currentSource()) return;
+            this.pendingFields.delete(revision);
+            const key = this.canonical(id), rollback: Fields = {};
+            for (const field of Object.keys(fields) as (keyof Fields)[]) {
+              if (this.versions.get(`${key}:${field}`) !== revision) continue;
+              Object.assign(rollback, { [field]: priorSettled ? this.confirmed.get(key)![field] : previous[field] });
+              const prior = previousVersions.get(field);
+              if (prior !== undefined) this.versions.set(`${key}:${field}`, prior);
+              else this.versions.delete(`${key}:${field}`);
+            }
+            if (move) this.moves.failed(move);
+            if (this.flagUndoRevision === revision) { this.flagUndo = null; this.statusNotice = null; }
+            this.paint(key, rollback);
+            this.changed();
+          });
+        }
+        return { lease };
+      },
+      (error) => {
+        if (currentSource()) {
+          this.pendingFields.delete(revision);
+          const key = this.canonical(id), rollback: Fields = {};
+          for (const field of Object.keys(fields) as (keyof Fields)[]) {
+            if (this.versions.get(`${key}:${field}`) !== revision) continue;
+            Object.assign(rollback, { [field]: priorSettled ? this.confirmed.get(key)![field] : previous[field] });
+            const prior = previousVersions.get(field);
+            if (prior !== undefined) this.versions.set(`${key}:${field}`, prior);
+            else this.versions.delete(`${key}:${field}`);
+          }
+          if (move) this.moves.failed(move);
+          if (restoring) { this.moves.failed(restoring); this.undoFailures.add(restoring); }
+          this.paint(key, rollback);
+          this.paging?.sync();
+          this.error = `Could not save this change locally. ${error instanceof Error ? error.message : "Retry when browser storage is available."}`;
+          if (this.flagUndoRevision === revision) { this.flagUndo = null; this.statusNotice = null; }
+          this.retry = () => void this.change(id, fields, offerUndo, quiet, restoring, force);
+          this.changed();
+        }
+        return { error };
+      },
     );
     const accept = (applied: Fields) => {
       this.acceptAliases(this.repository.cached, revision);
@@ -1578,14 +1632,12 @@ export class Workspace extends EventTarget {
         this.statusNotice = null;
       }
     };
-    const previousJobs = [...this.queues]
-      .filter(([key]) => this.canonical(key) === id)
-      .map(([, job]) => job);
-    const job = Promise.all(previousJobs).then(async () => {
+    const job = predecessors.then(async () => {
       try {
         const registered = await reservation;
         if (!currentSource()) return;
-        if ("error" in registered) throw registered.error;
+        if ("error" in registered) return;
+        if (cancelled) return;
         if (move?.cancelled || (restoring && !restoring.committed)) {
           if (registered.lease)
             await this.repository.cancelMutation?.(registered.lease);
@@ -1611,6 +1663,21 @@ export class Workspace extends EventTarget {
         accept(applied);
       } catch (error) {
         if (!currentSource()) return;
+        if (error instanceof MutationWaiting) {
+          this.notice = error.message;
+          this.statusNotice = error.message;
+          if (move) move.started = false;
+          return;
+        }
+        const saved = await reservation;
+        if (error instanceof MutationFailure && !error.committed && "lease" in saved && saved.lease?.action) {
+          if (move) move.blocked = true;
+          this.error = error.message;
+          this.notice = null;
+          if (this.flagUndoRevision === revision) { this.flagUndo = null; this.statusNotice = null; }
+          this.retry = () => void this.refresh();
+          return;
+        }
         const acknowledged =
           error instanceof MutationFailure && error.committed;
         if (move && !move.undoRequested && !acknowledged)
@@ -1691,6 +1758,7 @@ export class Workspace extends EventTarget {
     this.queues.set(id, job);
     this.changed();
     await job;
+    if (savedAction) this.savedCancellations.delete(savedAction);
     this.commandCount--;
     if (!this.pendingFields.get(revision)?.acknowledged)
       this.pendingFields.delete(revision);

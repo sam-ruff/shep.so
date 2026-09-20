@@ -5,6 +5,53 @@ use crate::{
     model::MailQuery,
     store::{MailSelectionId, SelectionChange, Store},
 };
+use anyhow::Context;
+
+pub async fn seed_flag_repair(store: &Store) -> anyhow::Result<()> {
+    let original = store
+        .query(MailQuery::default())
+        .await?
+        .rows
+        .into_iter()
+        .next()
+        .context("Fixture message missing")?;
+    let flags = Flags {
+        unread: None,
+        starred: Some(!original.starred),
+    };
+    store
+        .start_individual_mail_action(
+            "flag-repair-fixture".into(),
+            original.clone(),
+            Action::Flags(flags),
+        )
+        .await?;
+    let item = store
+        .claim_bulk_item("flag-repair-fixture".into())
+        .await?
+        .context("Fixture claim missing")?;
+    store
+        .acknowledge_bulk_flags(
+            item,
+            Receipt::Flags {
+                before: Flags {
+                    unread: None,
+                    starred: Some(original.starred),
+                },
+                after: flags,
+            },
+        )
+        .await?;
+    store
+        .run(|c| {
+            c.execute(
+                "UPDATE bulk_jobs SET paused=1 WHERE id='flag-repair-fixture'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+}
 
 pub async fn seed(store: &Store) -> anyhow::Result<()> {
     let query = MailQuery {
