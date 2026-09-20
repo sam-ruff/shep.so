@@ -25,6 +25,9 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
         position INTEGER NOT NULL, id TEXT NOT NULL, original TEXT, undo INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL, receipt TEXT, error TEXT, PRIMARY KEY(job,position));
         CREATE INDEX IF NOT EXISTS bulk_item_work ON bulk_items(job,status,position);
+        CREATE INDEX IF NOT EXISTS bulk_ready_seek ON bulk_items(
+            CASE WHEN status='repair' THEN '0' ELSE '1' END||job||':'||printf('%020d',position))
+            WHERE status IN ('queued','running','repair');
         CREATE TABLE IF NOT EXISTS bulk_flag_receipts(
         job TEXT NOT NULL, position INTEGER NOT NULL, undo INTEGER NOT NULL,
         receipt TEXT NOT NULL, PRIMARY KEY(job,position),

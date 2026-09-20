@@ -16,6 +16,16 @@ spec.loader.exec_module(harness)
 
 
 class HarnessTests(unittest.TestCase):
+    def test_preference_save_failure_fixture_is_boolean_and_described(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (1, None, "yes"):
+                with self.assertRaisesRegex(ValueError, "Preference save failure fixture"):
+                    desktop.start(preference_save_failure_once=value)
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["preference_save_failure_once"], {"type": "boolean", "default": False})
+
     def test_draft_save_failure_fixture_is_boolean_and_described(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

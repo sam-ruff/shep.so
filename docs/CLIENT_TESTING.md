@@ -15,6 +15,12 @@ racing dispatch must not report that an already-started message was unsent.
 
 Use [the parity matrix](CLIENT_PARITY.md) to distinguish preview behavior from real provider/platform evidence. Tests use `shared/preview.json`, fake transports and synthetic mail; never personal accounts. Keep every new scenario reproducible and keep screenshots/logs in ignored `artifacts/`.
 
+Native Preferences recovery uses the owned `preference_save_failure_once` fixture:
+its first Dark appearance save fails after a short delay. The saved
+`test_preference_save_failure_retains_local_choice_and_retry_status` scenario
+checks immediate appearance, retained errors after dismissal/navigation, visible
+Retry and restart at desktop and compact sizes. It never changes personal settings.
+
 ## Flutter
 
 Flutter is pinned to **3.44.2 / Dart 3.12.2**, with flutter_rust_bridge 2.13.0 and Rust 1.96.0. The native-assets hook builds `flutter/rust` against `shared/mail-core`; Android builds require SDK 37, NDK 28.2, Perl and make. The hook honors Android minSdk 24 for C/OpenSSL and handles the Linux Snap Perl mismatch. Apple native TLS uses platform trust. iOS now targets 14.0 for WebP support in WKWebView; this minimum is not an Apple execution claim. From `flutter/`:

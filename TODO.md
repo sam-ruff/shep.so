@@ -47,28 +47,43 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   acknowledgements, calendar retries and cache repair while capacity is held.
   Independent accounts within one group now progress under one retained lease;
   21 integrated scheduler and 26 store tests pass; 24 native scenarios pass with
-  one live-mailbox skip. Final commit gates remain before shipping this
-  continuation. Keep the per-group storage-error
-  cooldown and automatic retargeting over an unresolved legacy move explicit;
+  one live-mailbox skip. Continuation `48cd150` is pushed with 1,516 normal-hook
+  Rust executions passing, four ignored, and strict docs passing. The per-group
+  storage-error cooldown now survives successful sibling completions and applies
+  even when a failed receipt step advanced its claim; both focused recovery gates
+  pass. Keep automatic retargeting over an unresolved legacy move explicit;
   the latter rejects admission until checked recovery proves its physical source.
-  Audit the item scheduler's computed cursor/query plan at 100,000-message scale;
-  bounded returned rows alone do not prove bounded database work per claim.
+  Indexed native 50-key candidate pages and a 100,000-row query-plan/VM-step gate
+  are integrated for verification. The shared owner yields between pages and
+  defers cursor resets. Per-lineage predecessor history and other domain query
+  costs still need bounds; key discovery does not establish whole-app latency.
   Flutter receipt-before-cache persistence and exact dispatch baselines now pass
   126 Rust and 175 Flutter tests, including newer field ownership, replacement,
   cache-failure restart and missing destination UID recovery without replay.
   Schema 17 now persists the accepted field subset at claim, including partial
   supersession, receipt repair and exact Undo; 131 integrated Rust tests and
   all-target/all-feature Clippy pass.
-  Keep fair resumption beyond the first bounded batch open. Typed refusals reject;
+  Fair Flutter resumption now uses indexed 50-row cursor pages, per-account
+  exclusion and at most 32 requests; 132 integrated Rust and 182 Flutter tests
+  pass, with three additional Activity visual scenarios passing.
+  Typed refusals reject;
   pre-dispatch credential failure stays Waiting. Remote move plus flag payloads
   are rejected before admission until separate provider receipts are supported.
 
-  Next integration adds browser connection attempts to Activity through their
-  existing bounded owner. Native account setup needs an additional prerequisite:
-  it currently writes active keychain entries before settings and treats probes
-  as a separate operation. Adopt staged credential slots consistently across
-  sync, SMTP, vault, import/removal and cleanup before claiming checked background
-  activation. Preserve the previous connection until the new attempt activates.
+  Browser connection Activity ships in `48cd150` through its existing owner.
+  Native schema 8 staged credential slots and checked adapters across sync,
+  SMTP, vault, backup, import/removal and cleanup are integrated for verification.
+  Preserve the previous connection until the new attempt activates. Local UI
+  admission, bounded connection activity and queued-close controls remain in
+  integrated verification, with isolated held-capacity/close/restart controls
+  passing. Removal UI fencing is integrated. Incoming identity changes with cached mail need a
+  reviewed migration; reject those changes until that migration exists.
+  Combined native verification initially passed 26 of 27 scenarios; the rejected
+  synced password scenario found staged slots awaiting cleanup. Vault completion
+  now uses the existing cleanup owner, retaining durable failed-cleanup recovery.
+  The demo no-op is selected at adapter construction so injected keychain cleanup
+  is exercised. All four rebuilt password/backup controls pass, including the
+  formerly failing scenario and restart; all 27 combined scenarios are covered.
   Draft adoption is adding session-owned saving/failure feedback and Retry,
   preserving newer edits, parked drafts and forced-close saving through the
   existing revisioned persistence owner.
@@ -76,12 +91,32 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   editor while opening Preferences. Preserve the failing `9aa5b298c215` fixture
   evidence. The command binding fix passes 31 composer unit tests and its saved
   native keyboard regression. Draft recovery and its final compact contrast
-  rerun pass; light/dark captures are reviewed. Normal commit gates remain.
+  rerun pass; light/dark captures are reviewed and included in `48cd150`.
   Native preferences already preserve field intent and save through the local
   writer, but failures only use the shared notice. Add revision-owned save status
   that survives unrelated notices and ignores stale failure replies; retain local
   changes and explicit Retry without reverting successful local preferences when
   later profile publication fails.
+  The preference-owned error/retry adapter is implemented with stale-result and
+  close regressions; native desktop/compact failure, navigation and restart gates
+  pass on the initial native build with reviewed desktop/compact captures.
+  The combined rebuild passes the preference native gate. Flutter resumption
+  fairness v3 fixes page-read error loops, disposal, active-account retry and
+  cursor-reset starvation; its real Activity Retry and indexed seek are integrated.
+  Flutter preference saves retain local values and field ownership, but their
+  failure currently shares the unrelated mail notice. Add owned save status and
+  visible Retry in Preferences, with delayed-save and unrelated-error controls.
+  This adapter and retained Flutter/browser draft sessions are now integrated:
+  196 Flutter tests, 132 Flutter Rust tests, 51 browser unit/provider tests and
+  11 Chromium draft/Forward/queued-Send scenarios pass. Compact preference and
+  draft captures are reviewed. Browser concurrent-editor review and Flutter
+  account lifecycle follow-ups are active in their isolated lanes.
+  Native folder creation still acquires provider/account capacity before saving
+  its planned target and closes the dialog only after remote completion. Extend
+  its existing creation owner with local request admission, a pending tree entry,
+  receipt-first recovery and shared scheduling; keep namespace planning and
+  unknown CREATE inspection separate from local acceptance. This path is not
+  covered by the existing rename/delete journal migration.
 
 Sam reports new mail is slow to arrive and moves failing on `sam@shep.so`
 (Stalwart at `mail.shep.so`). These items outrank everything below. Sam's

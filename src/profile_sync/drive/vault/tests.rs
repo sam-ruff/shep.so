@@ -390,7 +390,7 @@ async fn profile_vault_loopback_publish_and_import_keep_passwords_out_of_sqlite_
         .await
         .unwrap();
     assert_eq!(imported.imported, 1);
-    assert_eq!(b.secret("b-native").as_deref(), Some(INCOMING));
+    assert_eq!(b.secret("b-native").await.as_deref(), Some(INCOMING));
     assert_eq!(b.local().await.synced(studio, Field::Smtp).revision, 1);
     let report = format!("{published:?}{imported:?}");
     // Every byte on disk (main files and their live WAL), in the log and on

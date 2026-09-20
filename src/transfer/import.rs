@@ -276,6 +276,15 @@ fn validate_schema_in(
         "This database version is not supported. Use matching, current Shep versions on both devices."
     );
     let mut expected = expected.clone();
+    if version < 8 {
+        expected.remove("bulk_ready_seek");
+        expected.retain(|_, (_, owner, _)| {
+            !matches!(
+                owner.as_str(),
+                "account_setup_attempts" | "account_setup_current" | "account_credential_slots"
+            )
+        });
+    }
     if version < 7 {
         expected.retain(|name, (_, owner, _)| {
             !matches!(

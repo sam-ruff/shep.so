@@ -1051,6 +1051,19 @@ dialog > .field,
 }
 .composer-actions {
   justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.draft-save-status {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.composer .dialog-heading {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.composer .form-status {
+  color: var(--text);
 }
 .composer-actions .button {
   padding: 10px 14px;
@@ -1472,14 +1485,22 @@ dialog > .field,
   padding: 16px;
   overflow: auto;
 }
-.draft-list > .button {
-  flex: 0 0 auto;
+.draft-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.draft-row > .button {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   min-height: 44px;
   justify-content: flex-start;
   text-align: left;
   overflow-wrap: anywhere;
 }
-.draft-list > .button span {
+.draft-row > .button span {
   min-width: 0;
 }
 

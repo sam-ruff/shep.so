@@ -21,11 +21,7 @@ impl Outbound for Servers {
             SecretString::from("")
         } else {
             self.credentials
-                .read(&if account.smtp_separate_password {
-                    format!("{}:smtp", account.id)
-                } else {
-                    account.id.clone()
-                })
+                .account_password(account, true)
                 .await
                 .map_err(|_| {
                     DeliveryFailure::Rejected(
@@ -39,7 +35,7 @@ impl Outbound for Servers {
         mail::send_raw(account, &secret, &envelope, &message.raw).await
     }
     async fn sent(&self, account: &Account) -> anyhow::Result<Box<dyn SentConnection>> {
-        let secret = self.credentials.read(&account.id).await?;
+        let secret = self.credentials.account_password(account, false).await?;
         Ok(Box::new(SentMailbox::open(account, &secret).await?))
     }
 }

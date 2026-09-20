@@ -113,12 +113,16 @@ class ActivityRepository extends PreviewRepository
     MailActivity({
       'id': 'queued',
       'mail': '1',
+      'account': 'fixture',
+      'created': 1,
       'status': 'queued',
       'fields': {'unread': false},
     }),
     MailActivity({
       'id': 'uncertain',
       'mail': '2',
+      'account': 'fixture',
+      'created': 2,
       'status': 'uncertain',
       'fields': {'folder': 'Archive'},
       'error': 'Check Archive before retrying.',
@@ -130,8 +134,20 @@ class ActivityRepository extends PreviewRepository
   Future<List<MailActivity>> mailActions({int offset = 0}) async =>
       actions.skip(offset).take(50).toList();
   @override
-  Future<List<MailActivity>> runnableMailActions() async =>
-      actions.where((action) => action.canResume).take(50).toList();
+  Future<List<MailActivity>> runnableMailActions({
+    int? afterCreated,
+    String? afterId,
+  }) async => actions
+      .where(
+        (action) =>
+            action.canResume &&
+            (afterCreated == null ||
+                action.created > afterCreated ||
+                (action.created == afterCreated &&
+                    action.id.compareTo(afterId!) > 0)),
+      )
+      .take(50)
+      .toList();
   @override
   Future<void> resumeMailAction(MailActivity action) async {
     resumed.add(action.id);
@@ -264,9 +280,187 @@ class BuriedRunnableActivityRepository extends ActivityRepository {
         MailActivity({
           'id': 'buried-queued',
           'mail': 'queued',
+          'account': 'fixture',
+          'created': 60,
           'status': 'queued',
           'fields': {'starred': true},
         }),
+      );
+  }
+}
+
+class FairActivityRepository extends ActivityRepository {
+  FairActivityRepository() {
+    actions
+      ..clear()
+      ..addAll(
+        List.generate(
+          60,
+          (index) => MailActivity({
+            'id': 'waiting-$index',
+            'mail': 'waiting-$index',
+            'account': 'waiting-account',
+            'created': index,
+            'status': 'waiting',
+            'fields': {'unread': false},
+          }),
+        ),
+      )
+      ..add(
+        MailActivity({
+          'id': 'other-account',
+          'mail': 'other-account',
+          'account': 'ready-account',
+          'created': 60,
+          'status': 'queued',
+          'fields': {'starred': true},
+        }),
+      );
+  }
+
+  @override
+  Future<void> resumeMailAction(MailActivity action) async {
+    resumed.add(action.id);
+    if (action.account == 'waiting-account') {
+      throw StateError('Reconnect this account.');
+    }
+    actions.removeWhere((saved) => saved.id == action.id);
+  }
+}
+
+class FailingRunnableActivityRepository extends ActivityRepository {
+  int calls = 0;
+  bool fail = true;
+
+  @override
+  Future<List<MailActivity>> runnableMailActions({
+    int? afterCreated,
+    String? afterId,
+  }) async {
+    calls++;
+    if (fail) throw StateError('activity query failed');
+    return super.runnableMailActions(
+      afterCreated: afterCreated,
+      afterId: afterId,
+    );
+  }
+}
+
+class FailedPageWithActiveAccountRepository extends ActivityRepository {
+  FailedPageWithActiveAccountRepository() {
+    actions
+      ..clear()
+      ..addAll([
+        MailActivity({
+          'id': 'active',
+          'mail': 'active',
+          'account': 'same-account',
+          'created': 1,
+          'status': 'queued',
+          'fields': {'unread': false},
+        }),
+        MailActivity({
+          'id': 'next',
+          'mail': 'next',
+          'account': 'same-account',
+          'created': 2,
+          'status': 'queued',
+          'fields': {'starred': true},
+        }),
+      ]);
+  }
+
+  int calls = 0;
+  bool fail = true;
+  final active = Completer<void>();
+
+  @override
+  Future<List<MailActivity>> runnableMailActions({
+    int? afterCreated,
+    String? afterId,
+  }) async {
+    calls++;
+    if (calls == 2 && fail) throw StateError('page unavailable');
+    return super.runnableMailActions(
+      afterCreated: afterCreated,
+      afterId: afterId,
+    );
+  }
+
+  @override
+  Future<void> resumeMailAction(MailActivity action) async {
+    resumed.add(action.id);
+    if (action.id == 'active') await active.future;
+    actions.removeWhere((saved) => saved.id == action.id);
+  }
+}
+
+class HeldRunnablePageRepository extends ActivityRepository {
+  final page = Completer<List<MailActivity>>();
+
+  @override
+  Future<List<MailActivity>> runnableMailActions({
+    int? afterCreated,
+    String? afterId,
+  }) => page.future;
+}
+
+class HeldFairActivityRepository extends ActivityRepository {
+  HeldFairActivityRepository() {
+    actions
+      ..clear()
+      ..addAll(
+        List.generate(
+          60,
+          (index) => MailActivity({
+            'id': 'early-$index',
+            'mail': 'early-$index',
+            'account': 'account-$index',
+            'created': index,
+            'status': 'queued',
+            'fields': {'unread': false},
+          }),
+        ),
+      )
+      ..add(
+        MailActivity({
+          'id': 'late-account',
+          'mail': 'late-account',
+          'account': 'late-account',
+          'created': 60,
+          'status': 'queued',
+          'fields': {'starred': true},
+        }),
+      );
+  }
+
+  final gates = <String, Completer<void>>{};
+
+  @override
+  Future<void> resumeMailAction(MailActivity action) async {
+    resumed.add(action.id);
+    final gate = gates.putIfAbsent(action.id, Completer<void>.new);
+    await gate.future;
+    actions.removeWhere((saved) => saved.id == action.id);
+  }
+}
+
+class DrainingActivityRepository extends ActivityRepository {
+  DrainingActivityRepository() {
+    actions
+      ..clear()
+      ..addAll(
+        List.generate(
+          51,
+          (index) => MailActivity({
+            'id': 'same-$index',
+            'mail': 'same-$index',
+            'account': 'same-account',
+            'created': index,
+            'status': 'queued',
+            'fields': {'unread': false},
+          }),
+        ),
       );
   }
 }
@@ -314,6 +508,75 @@ void main() {
       expect(workspace.mailActivities, hasLength(50));
     },
   );
+  test(
+    'waiting account does not starve runnable work after fifty rows',
+    () async {
+      final repository = FairActivityRepository();
+      final workspace = Workspace(repository, MemorySettings());
+      addTearDown(workspace.dispose);
+      await workspace.initialize();
+      await waitUntil(() => repository.resumed.contains('other-account'));
+      expect(
+        repository.resumed.where((id) => id.startsWith('waiting-')),
+        hasLength(1),
+      );
+    },
+  );
+  test('failed runnable page is visible and does not spin', () async {
+    final repository = FailingRunnableActivityRepository();
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.initialize();
+    await tick();
+    await tick();
+    expect(repository.calls, 1);
+    expect(workspace.error, contains('Retry Activity'));
+  });
+  test(
+    'retry after a failed page does not overlap an active account',
+    () async {
+      final repository = FailedPageWithActiveAccountRepository();
+      final workspace = Workspace(repository, MemorySettings());
+      addTearDown(workspace.dispose);
+      await workspace.initialize();
+      expect(repository.resumed, ['active']);
+      repository.fail = false;
+      await workspace.refreshMailActivity(resume: true);
+      expect(repository.resumed, ['active']);
+      repository.active.complete();
+    },
+  );
+  test('disposing during a runnable page fences its result', () async {
+    final repository = HeldRunnablePageRepository();
+    final workspace = Workspace(repository, MemorySettings());
+    final initializing = workspace.initialize();
+    await tick();
+    workspace.dispose();
+    repository.page.complete(repository.actions.take(1).toList());
+    await initializing;
+    expect(repository.resumed, isEmpty);
+  });
+  test('held early completions do not starve a later account', () async {
+    final repository = HeldFairActivityRepository();
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.initialize();
+    await waitUntil(() => repository.resumed.length == 32);
+    for (final id in List<String>.from(repository.resumed)) {
+      repository.gates[id]!.complete();
+    }
+    await waitUntil(() => repository.resumed.contains('late-account'));
+  });
+  test('more than fifty actions from one account drain in order', () async {
+    final repository = DrainingActivityRepository();
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.initialize();
+    await waitUntil(() => repository.resumed.length == 51);
+    expect(repository.resumed, [
+      for (var index = 0; index < 51; index++) 'same-$index',
+    ]);
+  });
   testWidgets('waiting activity exposes a working Cancel control', (
     tester,
   ) async {
@@ -353,6 +616,22 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Review'), findsOneWidget);
+  });
+  testWidgets('Activity Retry resumes a failed runnable query', (tester) async {
+    final repository = FailingRunnableActivityRepository();
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.initialize();
+    await tester.pumpWidget(
+      MaterialApp(home: MailActivityScreen(workspace: workspace)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Retry Activity'), findsOneWidget);
+    repository.fail = false;
+    await tester.tap(find.widgetWithText(TextButton, 'Retry'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Retry Activity'), findsNothing);
+    expect(repository.resumed, contains('queued'));
   });
   testWidgets('Mail Activity pages bounded history from the native owner', (
     tester,

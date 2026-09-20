@@ -4,6 +4,7 @@ use crate::{model::Preferences, store::PreferenceSnapshot};
 pub(super) struct PreferenceSync {
     local: u64,
     acknowledged: u64,
+    failure: Option<(u64, String)>,
     pub saved: PreferenceSnapshot,
     portable: crate::preference_edits::Tracker,
 }
@@ -21,6 +22,7 @@ impl PreferenceSync {
             saved,
             local: 0,
             acknowledged: 0,
+            failure: None,
         }
     }
 
@@ -35,6 +37,24 @@ impl PreferenceSync {
 
     pub fn dirty(&self) -> bool {
         self.local != self.acknowledged
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        self.failure.as_ref().map(|(_, error)| error.as_str())
+    }
+
+    pub fn failed(&mut self, request: u64, error: String) -> bool {
+        if request <= self.acknowledged
+            || request > self.local
+            || self
+                .failure
+                .as_ref()
+                .is_some_and(|(newer, _)| *newer > request)
+        {
+            return false;
+        }
+        self.failure = Some((request, error));
+        true
     }
 
     pub fn write(&mut self, value: Preferences) -> crate::preference_edits::Write {
@@ -87,6 +107,13 @@ impl PreferenceSync {
             return;
         }
         self.acknowledged = self.acknowledged.max(request);
+        if self
+            .failure
+            .as_ref()
+            .is_some_and(|(failed, _)| *failed <= request)
+        {
+            self.failure = None;
+        }
         self.observe(snapshot, live);
     }
 }
@@ -101,6 +128,26 @@ mod tests {
             revision,
             value: value.clone(),
         }
+    }
+
+    #[test]
+    fn failures_keep_their_revision_until_a_matching_or_newer_save_succeeds() {
+        let mut live = Preferences::default();
+        let mut sync = PreferenceSync::default();
+        let first = sync.changed();
+        let second = sync.changed();
+        assert!(sync.failed(second, "Disk full".into()));
+        assert!(!sync.failed(first, "Older error".into()));
+        assert!(!sync.failed(second + 1, "Unknown request".into()));
+        sync.acknowledge(first, snapshot(1, &live), &mut live);
+        assert_eq!(sync.error(), Some("Disk full"));
+        let retry = sync.changed();
+        assert_eq!(sync.error(), Some("Disk full"));
+        sync.acknowledge(retry, snapshot(2, &live), &mut live);
+        assert!(!sync.dirty());
+        assert!(sync.error().is_none());
+        assert!(!sync.failed(second, "Late error".into()));
+        assert!(sync.error().is_none());
     }
 
     #[tokio::test]

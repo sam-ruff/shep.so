@@ -451,8 +451,16 @@ impl Engine {
         for import in outcome.imports {
             control.check()?;
             let tested = async {
-                sync::vault::stage(&ctx, &import).await?;
-                let _account = self.account_exclusive(&import.local).await;
+                {
+                    let _lifecycle = self.connection_lifecycle.write().await;
+                    let _account = self.account_exclusive(&import.local).await;
+                    let _writes = self.account_setup_writes.read().await;
+                    anyhow::ensure!(
+                        !self.bulk_control.stopping.get(),
+                        "Account setup was interrupted by close."
+                    );
+                    sync::vault::stage(&ctx, &import).await?;
+                }
                 control.read(sync::vault::test(&ctx, &import)).await
             }
             .await;
@@ -460,6 +468,11 @@ impl Engine {
                 Ok(()) => {
                     let _lifecycle = self.connection_lifecycle.write().await;
                     let _account = self.account_exclusive(&import.local).await;
+                    let _writes = self.account_setup_writes.read().await;
+                    anyhow::ensure!(
+                        !self.bulk_control.stopping.get(),
+                        "Account setup was interrupted by close."
+                    );
                     let activated = sync::vault::activate(&ctx, &import).await;
                     report.imported += usize::from(activated.is_ok());
                     activated
@@ -471,8 +484,16 @@ impl Engine {
                 }
             };
             let unstaged = sync::vault::unstage(&ctx, &import).await;
+            let cleaned = self.cleanup_credentials().await;
             result?;
             unstaged?;
+            let remaining = cleaned.context(
+                "Saved credential cleanup needs attention. Retry credential cleanup in Preferences.",
+            )?;
+            anyhow::ensure!(
+                remaining == 0,
+                "Saved credential cleanup needs attention. Retry credential cleanup in Preferences."
+            );
         }
         Ok(report)
     }

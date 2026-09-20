@@ -18,6 +18,8 @@ class MailActivity {
   final Map<String, dynamic> data;
   String get id => data['id'] as String;
   String get mail => data['mail'] as String;
+  String get account => data['account'] as String;
+  int get created => data['created'] as int? ?? 0;
   String get status => data['status'] as String;
   String? get error => data['error'] as String?;
   Map<String, Object> get fields {
@@ -35,7 +37,10 @@ class MailActivity {
 
 abstract interface class MailActivityRepository {
   Future<List<MailActivity>> mailActions({int offset = 0});
-  Future<List<MailActivity>> runnableMailActions();
+  Future<List<MailActivity>> runnableMailActions({
+    int? afterCreated,
+    String? afterId,
+  });
   Future<void> resumeMailAction(MailActivity action);
   Future<void> cancelMailAction(String id);
   Future<void> undoMailAction(

@@ -88,6 +88,9 @@ impl vault::Tester for Tester {
             ConnectionTarget::Smtp => (&account.smtp_host, &fixtures["native_fixture"]["smtp"]),
         };
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        if std::env::args().any(|arg| arg == "--mail-actions=slow") {
+            super::mail_action_delay().await?;
+        }
         anyhow::ensure!(
             mode().as_deref() == Some("ready")
                 && host.ends_with("example.test")

@@ -2,7 +2,7 @@ use crate::{
     api::MobileProfile,
     operations::{self, Request},
 };
-use rusqlite::params;
+use rusqlite::{StatementStatus, params};
 use serde_json::{Value, json};
 use shep_mail_core::model::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -890,6 +890,47 @@ async fn fully_superseded_compound_action_never_reaches_provider() {
     assert_eq!(request(&p, json!({"op":"mutate","action_id":"compound-newer","id":"fixture:INBOX:0","unread":true,"starred":true})).await["status"], "waiting");
     drop(guard);
     assert_eq!(first.await.unwrap()["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn runnable_actions_page_beyond_fifty_with_a_stable_cursor() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute_batch(
+                "WITH RECURSIVE rows(value) AS (VALUES(0) UNION ALL SELECT value+1 FROM rows WHERE value<99999)
+                 INSERT INTO individual_mail_actions(id,mail,account,fields,physical,intent_revision,status,created)
+                 SELECT printf('runnable-%06d',value),'fixture:INBOX:0','fixture','{\"folder\":null,\"unread\":false,\"starred\":null}','{}',0,'waiting',value FROM rows;",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let first = request(&p, json!({"op":"mail_actions","runnable":true})).await;
+    assert_eq!(first["actions"].as_array().unwrap().len(), 50);
+    let last = first["actions"].as_array().unwrap().last().unwrap();
+    let second = request(
+        &p,
+        json!({"op":"mail_actions","runnable":true,"after_created":last["created"],"after_id":last["id"]}),
+    )
+    .await;
+    assert_eq!(second["actions"].as_array().unwrap().len(), 50);
+    assert_eq!(second["actions"][0]["id"], "runnable-000050");
+    p.database
+        .read(|db| {
+            let mut query = db.prepare(operations::RUNNABLE_ACTIONS_AFTER)?;
+            let rows = query
+                .query_map(params![99_949_i64, "runnable-099949"], |_| Ok(()))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            assert_eq!(rows.len(), 50);
+            assert_eq!(query.get_status(StatementStatus::Sort), 0);
+            assert!(query.get_status(StatementStatus::FullscanStep) < 100);
+            assert!(query.get_status(StatementStatus::VmStep) < 2_000);
+            Ok(())
+        })
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -2008,6 +2049,14 @@ async fn pop_resync_preserves_local_move_and_flags() {
 async fn draft_revisions_discard_and_files_are_atomic_and_survive_restart() {
     let (dir, p) = profile().await;
     request(&p, json!({"op":"save_draft","draft":draft(4,"newer")})).await;
+    request(&p, json!({"op":"save_draft","draft":draft(4,"newer")})).await;
+    let conflict: Value = serde_json::from_str(
+        &p.request(json!({"op":"save_draft","draft":draft(4,"different editor")}).to_string())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(conflict["error"].as_str().unwrap().contains("newer editor"));
     request(&p, json!({"op":"save_draft","draft":draft(2,"old")})).await;
     assert_eq!(
         request(&p, json!({"op":"drafts"})).await[0]["body"],
@@ -2023,6 +2072,7 @@ async fn draft_revisions_discard_and_files_are_atomic_and_survive_restart() {
         })
         .await
         .unwrap();
+    request(&p, json!({"op":"save_draft","draft":draft(4,"newer")})).await;
     request(
         &p,
         json!({"op":"discard_draft","id":"draft-one","revision":5}),

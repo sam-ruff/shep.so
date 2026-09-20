@@ -216,8 +216,33 @@ reserve both source and inverse destination accounts. Never recover live sibling
 steps. Automatic lease recovery preserves Pause and newer Undo decisions;
 explicit Continue or Undo owns any decision to resume. Stop drains every active
 receipt before acknowledging its generation.
+Storage failures retain a group retry delay even when a claim or receipt changed
+state. Successful sibling steps cannot clear that unexpired delay; other groups
+remain eligible, and acknowledged work resumes through cache repair.
+Native schema 8 indexes runnable mail item cursors. Read at most 50 candidate
+keys per store request and yield through the shared owner between pages. Defer
+cursor resets until the current sweep finishes so completions and wakeups cannot
+starve later accounts. Preserve repair priority and the 100,000-row query-plan
+tests; these do not establish bounds for every predecessor-history query.
 
-Draft saving feedback belongs to the current or parked composer session and its
+Desktop account setup stages unique OS credential slots and probes before
+activating their binding with account settings in one SQLite transaction. Schema 8
+fences older credential readers. Provider, vault and backup adapters resolve the
+checked binding. Credential backups retain logical identities; database import
+discards device slot bindings and fences unfinished setup attempts.
+Keep old credentials active until activation and recheck the attempt after probes.
+Newer attempts, removal and restart fence stale results. Imported vault revisions
+commit with activation; lost replies cannot acknowledge a replacement attempt.
+Changing incoming identity while mail is cached requires a reviewed migration;
+until then, reconnect preserves incoming settings or uses a separate account.
+Admit exact nonsecret setup requests through the local selection writer before
+provider capacity. Close only the matching form after admission; retain bounded
+Connection activity and explicit credential re-entry. Normal close interrupts
+read-only probes and queued attempts after draining credential writes/activation,
+with a correlated generation acknowledgement. Removed or superseded attempts
+cannot activate, recreate activity or trigger another probe.
+
+Native draft saving feedback belongs to the current or parked composer session and its
 revision. Keep local save errors visible through unrelated actions and provide
 Retry without discarding text. A retry uses a fresh revision; stale acknowledgements
 cannot clear newer failures. Queue saturation retains deferred saving and resumes
@@ -227,6 +252,26 @@ it silently. Preserve the native light/dark failure, parked-draft and restart fl
 Composer command navigation must not insert the command's text into the draft.
 Preserve normal typing, AltGr input and native copy/cut/paste/select-all bindings.
 Keep save status readable in both appearances and visible at compact sizes.
+Preference save errors belong to their local request revision and remain visible
+in Preferences after dismissing an unrelated notice. Older failed replies cannot
+cancel close or overwrite newer saved status. Retry saves current local intent;
+profile publication failures never revert a successfully saved local choice.
+Flutter Preferences retains its own save error and Retry independently of mail
+notices. Successful retries clear only their owned notice/callback; stale failed
+revisions cannot replace newer choices or status.
+
+Flutter draft sessions retain pending text and save errors in Workspace across
+editor disposal. Revision and attempt ownership fence late saves, refresh and
+Send/discard/removal. Drafts offers Retry and reopening; suspension flushes new
+revision-zero drafts. Exact text/revision retries are idempotent, while different
+text at the same stored revision is rejected. Attachment and forward metadata
+remain backend-owned. Uncommitted text is not durable across process loss.
+Browser draft sessions similarly retain text/file failure and Retry while parked.
+Save through the existing draft lock/IndexedDB transaction; never add another
+durable queue. File retries keep exact identities/bytes after lost replies, and
+Use saved attachments observes current storage before retiring a failed request.
+Close/sign-out protects uncommitted work, and late results cannot restore a
+removed/sent draft. Keep actual held Drafts pointer and compact controls tests.
 
 Flutter individual mail actions use the existing Rust mutation dispatcher and
 an atomic claim under the account operation lock. Recheck status, physical
@@ -303,6 +348,11 @@ inspection and Undo use the accepted subset. Reject combined remote move/flag
 requests before admission until ordered provider steps have their own receipts.
 Activity/cancellation must use these records,
 including account-removal review, without adding another provider dispatcher.
+Resume Flutter actions with indexed 50-row `(created,id)` pages and at most 32
+active requests, serialised per account. Complete a sweep before revisiting early
+accounts. A failed page stops automatic pumping and retains a visible Activity
+Retry; disposal fences late reads. Keep the 100,000-row seek, held-account,
+late-account, same-account drain and real Retry-control regressions.
 
 Flutter Send saves frozen MIME, envelope, account settings and credential-slot
 identity in the existing Outbox before returning to the UI. Execution uses the

@@ -66,6 +66,30 @@ class PreferencesView extends StatelessWidget {
             style: TextStyle(fontSize: ShepText.secondary, color: c.muted),
           ),
         ),
+        if (workspace.savingPreferences ||
+            workspace.preferenceSaveError != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 18),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    workspace.savingPreferences
+                        ? 'Saving preferences…'
+                        : workspace.preferenceSaveError!,
+                  ),
+                ),
+                if (workspace.preferenceSaveError != null)
+                  TextButton(
+                    onPressed: workspace.savingPreferences
+                        ? null
+                        : () =>
+                              workspace.savePreferences(workspace.preferences),
+                    child: const Text('Retry save'),
+                  ),
+              ],
+            ),
+          ),
         section('Appearance', [
           ListTile(
             title: const Text('Theme'),
@@ -299,7 +323,6 @@ class PreferencesView extends StatelessWidget {
               device: workspace.profileApplication,
             ),
           ]),
-        if (workspace.savingPreferences) const Text('Saving preferences…'),
         const SizedBox(height: 24),
       ],
     );

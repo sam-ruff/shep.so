@@ -1,5 +1,12 @@
 # Conversation request audit
 
+The current 20 September continuation integrates checked native account admission,
+bounded scheduler seeks, fair Flutter resumption and retained Flutter/browser draft
+failures, plus independent native/Flutter preference Retry. Combined gates and
+shipping are recorded in [Completion](COMPLETION.md); remaining domain migrations
+and the final latency/platform gates stay active. This is implementation of the
+approved architecture, not completion of the app-wide request.
+
 **20 September immediate actions across the app:** Sam reported slow preparation
 and deletion for about ten selected messages, accepted background server work
 provided review and UI feedback are fast, then requested an architecture proposal
@@ -35,11 +42,11 @@ Send. Integrated verification passes 117 Flutter Rust and 175 Flutter tests,
 live-mailbox skip. Input-lineage, failed Undo/restart and held-provider controls
 are included. Full architecture adoption and measured latency remain open.
 
-The continuation integrates native within-group account concurrency and preserved
+Implementation `48cd150`, pushed to main, integrates native within-group account concurrency and preserved
 Pause/Undo, Flutter receipt-before-cache recovery and accepted-field ownership,
 connection attempts in browser Activity and session-owned native draft errors.
-Exact gates and remaining shipping
-work are recorded in the completion log. Native staged credential activation,
+Normal hooks pass 1,516 Rust executions with four ignored; the completion log
+records all gates and limits. Native staged credential activation,
 Flutter scheduling fairness and the remaining domain adapters stay active.
 
 **14 September mail sync speed and reliable moves (R100/R101):** Sam reports

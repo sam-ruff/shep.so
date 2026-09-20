@@ -119,7 +119,7 @@ impl Engine {
                 anyhow::bail!("Folder creation preview is unavailable in this build.");
             }
         } else {
-            let password = self.credentials.read(&account.id).await?;
+            let password = self.credentials.account_password(&account, false).await?;
             let target = match saved {
                 Some(target) => target,
                 None => {

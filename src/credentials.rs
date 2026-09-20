@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 const CAPACITY: usize = 32;
+mod account_setup;
 
 /// Validate IDs from portable data before they can address this profile's
 /// credential store. Display names and email addresses are not restricted.
@@ -87,6 +88,7 @@ struct Request {
 #[derive(Clone)]
 pub struct Credentials {
     scope: Scope,
+    account_store: Option<crate::store::Store>,
     commands: mpsc::Sender<Request>,
     start_error: Option<Arc<String>>,
 }
@@ -120,6 +122,7 @@ impl Credentials {
             });
         Self {
             scope,
+            account_store: None,
             commands,
             start_error,
         }
@@ -143,8 +146,33 @@ impl Credentials {
         result.await.context("The credential service stopped before confirming the operation. Reopen Shep and check the account.")?
     }
 
+    pub fn with_account_store(mut self, store: crate::store::Store) -> Self {
+        self.account_store = Some(store);
+        self
+    }
+    async fn resolved_key(&self, id: &str) -> anyhow::Result<String> {
+        match &self.account_store {
+            Some(store) => store.resolve_account_credential(id.to_owned()).await,
+            None => Ok(id.to_owned()),
+        }
+    }
+    pub async fn account_password(
+        &self,
+        account: &crate::model::Account,
+        smtp: bool,
+    ) -> anyhow::Result<SecretString> {
+        let key = match &self.account_store {
+            Some(store) => store.account_credential_key(account.clone(), smtp).await?,
+            None if smtp && account.smtp_separate_password => format!("{}:smtp", account.id),
+            None => account.id.clone(),
+        };
+        self.call(&key, Operation::Read)
+            .await?
+            .context("Credentials are missing from this profile. Reconnect in Preferences.")
+    }
     pub async fn read_optional(&self, id: &str) -> anyhow::Result<Option<SecretString>> {
-        self.call(id, Operation::Read).await
+        self.call(&self.resolved_key(id).await?, Operation::Read)
+            .await
     }
     pub async fn read(&self, id: &str) -> anyhow::Result<SecretString> {
         self.read_optional(id).await?.context(
@@ -152,11 +180,23 @@ impl Credentials {
         )
     }
     pub async fn write(&self, id: &str, secret: SecretString) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.resolved_key(id).await? == id,
+            "Active account credentials require checked staged activation."
+        );
         self.call(id, Operation::Write(secret)).await?;
         Ok(())
     }
     pub async fn restore_missing(&self, id: &str, secret: SecretString) -> anyhow::Result<()> {
-        self.call(id, Operation::RestoreMissing(secret)).await?;
+        let key = self.resolved_key(id).await?;
+        if key != id {
+            anyhow::ensure!(
+                self.call(&key, Operation::Read).await?.is_some(),
+                "Reconnect this account before restoring its missing credentials."
+            );
+            return Ok(());
+        }
+        self.call(&key, Operation::RestoreMissing(secret)).await?;
         Ok(())
     }
     /// A data-root owner must exclude other processes before calling this.

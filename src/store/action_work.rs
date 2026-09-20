@@ -1,5 +1,7 @@
 use super::*;
 use rusqlite::OptionalExtension;
+#[cfg(test)]
+mod tests;
 
 pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     c.execute_batch("CREATE TABLE scratch.action_backoff(domain INTEGER NOT NULL,id TEXT NOT NULL,until INTEGER NOT NULL,PRIMARY KEY(domain,id));
@@ -21,6 +23,19 @@ pub(crate) struct ReadyWork {
     pub accounts: Vec<String>,
     pub cursor: String,
 }
+
+pub(crate) enum WorkPage {
+    Ready(ReadyWork),
+    More(String),
+    Done,
+}
+
+const MAIL_KEYS: &str = "SELECT job,position,CASE WHEN status='repair' THEN '0' ELSE '1' END||job||':'||printf('%020d',position) AS cursor
+    FROM bulk_items INDEXED BY bulk_ready_seek
+    WHERE status IN ('queued','running','repair')
+      AND (CASE WHEN status='repair' THEN '0' ELSE '1' END||job||':'||printf('%020d',position))>?1
+      AND (CASE WHEN status='repair' THEN '0' ELSE '1' END||job||':'||printf('%020d',position))<?2
+    ORDER BY cursor LIMIT 50";
 
 impl Work {
     pub fn key(&self) -> String {
@@ -49,7 +64,7 @@ impl Store {
         let domain = domain as i64;
         self.run(move |c| {
             if changed {
-                c.execute("DELETE FROM scratch.action_backoff WHERE domain=? AND id=?",params![domain,id])?;
+                c.execute("DELETE FROM scratch.action_backoff WHERE domain=? AND id=? AND until<=unixepoch()",params![domain,id])?;
             } else {
                 c.execute("INSERT INTO scratch.action_backoff(domain,id,until) VALUES(?1,?2,unixepoch()+2)
                     ON CONFLICT(domain,id) DO UPDATE SET until=excluded.until",params![domain,id])?;
@@ -68,35 +83,66 @@ impl Store {
     ) -> anyhow::Result<Option<i64>> {
         self.run(move |c|Ok(c.query_row("SELECT min(until) FROM scratch.action_backoff WHERE domain NOT IN (SELECT value FROM json_each(?))",[serde_json::to_string(&blocked)?],|r|r.get(0))?)).await
     }
+    #[cfg(test)]
     pub(crate) async fn next_action_work(
+        &self,
+        domain: usize,
+        mut after: String,
+        occupied: Vec<String>,
+        active: Vec<String>,
+        cache_only: bool,
+    ) -> anyhow::Result<Option<ReadyWork>> {
+        loop {
+            match self
+                .scan_action_work(domain, after, occupied.clone(), active.clone(), cache_only)
+                .await?
+            {
+                WorkPage::Ready(work) => return Ok(Some(work)),
+                WorkPage::More(cursor) => after = cursor,
+                WorkPage::Done => return Ok(None),
+            }
+        }
+    }
+
+    pub(crate) async fn scan_action_work(
         &self,
         domain: usize,
         after: String,
         occupied: Vec<String>,
         active: Vec<String>,
         cache_only: bool,
-    ) -> anyhow::Result<Option<ReadyWork>> {
+    ) -> anyhow::Result<WorkPage> {
         self.run(move |c| {
             let occupied = serde_json::to_string(&occupied)?;
             let active = serde_json::to_string(&active)?;
             let parameters = params![after, occupied, active, cache_only];
+            let mut continuation = None;
             let row: Option<(String, i64, String, Option<String>, bool)> = match domain {
-                0 => c.query_row(
+                0 => {
+                    let keys = c.prepare(MAIL_KEYS)?.query_map(params![after, if cache_only { "1" } else { "2" }], |r| Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                    if keys.len() == 50 { continuation = keys.last().map(|(_,_,cursor)|cursor.clone()); }
+                    let mut found = None;
+                    for (job, position, _) in keys {
+                        found = c.prepare_cached(
                     "SELECT j.id,i.position,
                         COALESCE((SELECT m.account FROM bulk_admissions a JOIN mail_lineage l ON l.lineage=a.lineage JOIN messages m ON m.id=l.id WHERE a.job=i.job AND a.position=i.position),json_extract(i.original,'$.account_id'),''),
                         CASE WHEN i.undo=1 THEN json_extract(i.original,'$.account_id') ELSE json_extract(j.action,'$.Move.account') END,i.status='repair'
                      FROM bulk_jobs j JOIN bulk_items i ON i.job=j.id
-                     WHERE j.paused=0 AND (CASE WHEN i.status='repair' THEN '0' ELSE '1' END||j.id||':'||printf('%020d',i.position))>?1 AND (j.id||':'||i.position) NOT IN (SELECT value FROM json_each(?3))
+                     WHERE i.job=?1 AND i.position=?4 AND j.paused=0 AND (j.id||':'||i.position) NOT IN (SELECT value FROM json_each(?3))
                        AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=0 AND b.id=j.id AND b.until>unixepoch())
-                       AND i.status IN ('queued','running','repair') AND (?4=0 OR i.status='repair')
+                       AND i.status IN ('queued','running','repair')
                        AND (i.status IN ('running','repair') OR NOT EXISTS(SELECT 1 FROM bulk_admissions a JOIN bulk_admissions prior ON prior.lineage=a.lineage AND prior.sequence<a.sequence
                            JOIN bulk_items p ON p.job=prior.job AND p.position=prior.position
                            WHERE a.job=i.job AND a.position=i.position AND p.status IN ('queued','running','repair','uncertain')))
                        AND 'mail:'||COALESCE((SELECT m.account FROM bulk_admissions a JOIN mail_lineage l ON l.lineage=a.lineage JOIN messages m ON m.id=l.id WHERE a.job=i.job AND a.position=i.position),json_extract(i.original,'$.account_id'),'') NOT IN (SELECT value FROM json_each(?2))
                        AND (CASE WHEN i.undo=1 THEN json_extract(i.original,'$.account_id') ELSE json_extract(j.action,'$.Move.account') END IS NULL
                          OR 'mail:'||CASE WHEN i.undo=1 THEN json_extract(i.original,'$.account_id') ELSE json_extract(j.action,'$.Move.account') END NOT IN (SELECT value FROM json_each(?2)))
-                     ORDER BY CASE WHEN i.status='repair' THEN '0' ELSE '1' END||j.id||':'||printf('%020d',i.position) LIMIT 1",
-                    parameters, |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?,
+                     LIMIT 1")?.query_row(
+                    params![job,occupied,active,position], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?;
+                        if found.is_some() { break; }
+                    }
+                    found
+                },
                 1 => c.query_row(
                     "SELECT id,0,account,NULL,0 FROM folder_jobs j WHERE closed=0 AND id>?1 AND ?4=0
                      AND NOT EXISTS(SELECT 1 FROM scratch.action_backoff b WHERE b.domain=1 AND b.id=j.id AND b.until>unixepoch())
@@ -121,7 +167,7 @@ impl Store {
                     parameters, |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional()?,
                 _ => anyhow::bail!("Unknown action domain"),
             };
-            Ok(row.map(|(id, position, source, destination, repair)| {
+            Ok(row.map_or_else(||continuation.map_or(WorkPage::Done, WorkPage::More), |(id, position, source, destination, repair)| {
                 let prefix = if domain == 2 { "calendar:" } else { "mail:" };
                 let mut accounts = vec![format!("{prefix}{source}")];
                 if let Some(destination) = destination.filter(|v| v != &source) { accounts.push(format!("mail:{destination}")); }
@@ -131,7 +177,7 @@ impl Store {
                     _ => id.clone(),
                 };
                 let work = match domain { 0 => Work::Mail { id, position: position as u64 }, 1 => Work::Folder(id), 2 => Work::Calendar(id), _ => Work::Outgoing(id) };
-                ReadyWork { work, accounts, cursor }
+                WorkPage::Ready(ReadyWork { work, accounts, cursor })
             }))
         }).await
     }

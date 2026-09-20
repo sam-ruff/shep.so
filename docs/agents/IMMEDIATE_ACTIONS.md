@@ -278,6 +278,10 @@ prioritises cache repair and drains active steps on correlated close requests.
 Independent accounts within one group now share a retained lease while exact
 item claims and repairs preserve conflicting account order. Automatic recovery
 preserves Pause and newer Undo decisions. A storage failure still applies the
-bounded cooldown to its group. Offline/auth policies and remaining domain
+bounded cooldown to its group. Candidate discovery uses indexed pages of 50 keys
+and yields between pages. Deferred cursor resets prevent wakeups and completions
+from starving later accounts. The 100,000-row key-seek tests do not bound every
+predecessor-history query or establish input-to-visible latency.
+Offline/auth policies and remaining domain
 adapters still need work. Shared scenarios and client parity retain
 those gaps explicitly.

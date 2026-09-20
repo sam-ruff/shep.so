@@ -40,6 +40,7 @@ pub struct CredentialCleanup {
 }
 
 pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
+    super::account_setup::schema(c)?;
     c.execute_batch(
         "CREATE TABLE IF NOT EXISTS connection_tombstones (
         kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,google_data TEXT,
@@ -116,6 +117,10 @@ fn preview(c: &Connection, target: ConnectionRef) -> anyhow::Result<RemovalPrevi
                 .find(|a| a.id == target.id)
                 .context("This account is no longer connected.")?;
             digest.update(serde_json::to_vec(&account)?);
+            let setup: Option<String> = c.query_row("SELECT a.data FROM account_setup_attempts a JOIN account_setup_current p ON p.attempt=a.id WHERE p.account=?", [&target.id], |r| r.get(0)).optional()?;
+            if let Some(setup) = setup {
+                digest.update(setup);
+            }
             (account.name, account.email)
         }
         ConnectionKind::Calendar => {
@@ -217,6 +222,7 @@ impl Store {
             let mut google_data = None;
             match target.kind {
                 ConnectionKind::Account => {
+                    super::account_setup::remove(&tx, &target.id)?;
                     let mut accounts: Vec<Account> = get(&tx, "accounts")?;
                     accounts.retain(|a| a.id != target.id);
                     super::profile_sync::join::reconnected(&tx, &target.id)?;
@@ -310,9 +316,14 @@ impl Store {
     }
     pub async fn credential_in_use(&self, key: String) -> anyhow::Result<bool> {
         self.run(move |c| {
-            Ok(get::<Vec<Account>>(c, "accounts")?
-                .iter()
-                .any(|a| a.id == key || format!("{}:smtp", a.id) == key)
+            let slotted = c
+                .prepare("SELECT account FROM account_credential_slots")?
+                .query_map([], |r| r.get::<_, String>(0))?
+                .collect::<Result<std::collections::HashSet<_>, _>>()?;
+            Ok(super::account_setup::in_use(c, &key)?
+                || get::<Vec<Account>>(c, "accounts")?.iter().any(|a| {
+                    !slotted.contains(&a.id) && (a.id == key || format!("{}:smtp", a.id) == key)
+                })
                 || get::<Vec<CalendarSource>>(c, "calendars")?
                     .iter()
                     .any(|s| s.kind == CalendarKind::CalDav && s.id == key))

@@ -118,6 +118,9 @@ impl App {
                     .is_some_and(|t| t.kind == ConnectionKind::Account)
                 {
                     self.profile_sync.connection_removed();
+                    if let Some(target) = self.removal.target.clone() {
+                        self.account_setup_removed(&target.id);
+                    }
                     if let Some(target) = &self.removal.target {
                         self.composer
                             .parked
@@ -264,7 +267,7 @@ impl App {
         if self.workspace.credential_cleanup == 0 {
             return space().into();
         }
-        container(column![text("Credential cleanup needs attention").font(BOLD).size(13), muted("A removed connection still has credentials in the OS store. Unlock it, then retry.").size(12),
+        container(column![text("Credential cleanup pending").font(BOLD).size(13), muted("Unused saved credentials need cleanup. Unlock your device credential store, then retry.").size(12),
             button(text("Retry credential cleanup").size(12)).padding([12,18]).style(outline).on_press_maybe((!self.busy.contains("credential-cleanup")).then_some(Message::CleanupCredentials))
         ].spacing(10)).padding(16).style(subtle).into()
     }

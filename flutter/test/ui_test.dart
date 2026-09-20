@@ -209,6 +209,8 @@ void main() {
       find.text('Preview cannot send mail. Your draft is still open.'),
       findsOneWidget,
     );
+    await t.pumpWidget(const SizedBox());
+    await t.pumpAndSettle();
   });
   testWidgets('calendar edits exact event', (t) async {
     final w = await start(t);

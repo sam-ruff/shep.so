@@ -201,6 +201,7 @@ async fn rejected_forward_recovery_clones_inline_identities_and_immutable_quote(
     p.database.write(move|db| {
         let mut draft:Draft=serde_json::from_value(drafts::value(db,&target)?)?;
         draft.to="recipient@example.test".into();
+        draft.revision += 1;
         drafts::save_text(db,draft.clone())?;
         let parts=drafts::files(db,&mut draft)?;
         let raw=compose::build(&crate::tests::account(),&draft,parts)?.formatted();

@@ -196,6 +196,8 @@ impl CommandSender {
             | Command::ReleaseSelection(_)
             | Command::BulkStart(..)
             | Command::AdmitMail(..)
+            | Command::AdmitAccount(..)
+            | Command::InterruptAccountSetups(_)
             | Command::BulkUndo(_)
             | Command::BulkResolve(_)
             | Command::BulkStop(_)
@@ -212,6 +214,7 @@ impl CommandSender {
             | Command::Conversation(..)
             | Command::RemovalPreview(..)
             | Command::OutgoingPage(..)
+            | Command::AccountSetups(..)
             | Command::BulkJobs(..)
             | Command::BulkItems(..) => &self.reads,
             Command::SavePreferences(..)
@@ -265,6 +268,7 @@ async fn network_operation<Fut: std::future::Future<Output = anyhow::Result<()>>
             | Command::InspectCalendarAction(..)
             | Command::CheckCalendarJob(..)
             | Command::SaveAccount(..)
+            | Command::ConnectAccount(..)
             | Command::RemoveConnection(..)
             | Command::CleanupCredentials
             | Command::RestoreGoogleCalendars
@@ -427,6 +431,99 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn account_close_interrupts_admitted_setup_behind_eight_held_provider_jobs() {
+        let mut engine = super::super::calendar_tests::engine();
+        engine.demo = false;
+        let store = engine.store.clone();
+        let (sender, inputs) = CommandSender::channel();
+        let (output, mut events) = futures::channel::mpsc::channel(64);
+        let _network = Running(tokio::spawn(
+            engine.clone().run_network(inputs.network, output.clone()),
+        ));
+        let _local = Running(tokio::spawn(
+            engine.run_persistence(inputs.selections, output),
+        ));
+        let started = Arc::new(tokio::sync::Barrier::new(NETWORK_CONCURRENCY + 1));
+        let release = Arc::new(tokio::sync::Notify::new());
+        for _ in 0..NETWORK_CONCURRENCY {
+            sender
+                .try_send(Command::HoldBackend {
+                    started: started.clone(),
+                    release: release.clone(),
+                })
+                .expect("held provider");
+        }
+        tokio::time::timeout(Duration::from_secs(5), started.wait())
+            .await
+            .expect("all provider jobs held");
+        let account: Account = serde_json::from_value(serde_json::json!({"id":"queued-setup","name":"Queued","email":"fixture@example.test","protocol":"Imap","host":"imap.example.test","port":993,"username":"fixture","smtp_host":"smtp.example.test","smtp_port":465})).expect("account");
+        let id = uuid::Uuid::new_v4().to_string();
+        sender
+            .try_send(Command::AdmitAccount(id.clone(), account, None))
+            .expect("local admission");
+        let event = tokio::time::timeout(Duration::from_secs(5), events.next())
+            .await
+            .expect("local response")
+            .expect("event");
+        assert!(matches!(event, Event::AccountSetupAdmitted(ref saved, Ok(_)) if saved == &id));
+        sender
+            .try_send(Command::ConnectAccount(
+                id.clone(),
+                "fixture-secret".into(),
+                "".into(),
+            ))
+            .expect("queued connect");
+        sender.try_send(Command::BulkStop(9)).expect("ordered stop");
+        sender
+            .try_send(Command::InterruptAccountSetups(9))
+            .expect("ordered interruption");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = events.next().await {
+                if matches!(event, Event::AccountSetupsStopped(9, Ok(()))) {
+                    return;
+                }
+            }
+            panic!("interruption acknowledgement");
+        })
+        .await
+        .expect("close must not wait for provider jobs");
+        assert_eq!(
+            store
+                .account_setup(id.clone())
+                .await
+                .expect("saved attempt")
+                .stage,
+            crate::store::account_setup::Stage::Interrupted
+        );
+        assert!(
+            store
+                .get::<Vec<Account>>("accounts")
+                .await
+                .expect("accounts")
+                .is_empty()
+        );
+        release.notify_waiters();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = events.next().await {
+                if matches!(event, Event::Busy(ref key, false) if key == &format!("account:{id}")) {
+                    return;
+                }
+            }
+            panic!("queued connection retired");
+        })
+        .await
+        .expect("late command must retire without credential access");
+        assert_eq!(
+            store
+                .account_setup(id)
+                .await
+                .expect("still interrupted")
+                .stage,
+            crate::store::account_setup::Stage::Interrupted
+        );
+    }
 
     #[tokio::test]
     async fn calendar_admission_uses_local_queue_when_provider_queue_is_full() {
@@ -597,6 +694,7 @@ mod tests {
         let id = mail.summary.id.clone();
         store.upsert(vec![mail]).await.unwrap();
         let engine = Engine {
+            account_tester: Arc::new(crate::profile_sync::vault::MailTester),
             profiles: Some(crate::profiles::Session {
                 catalog: crate::profiles::Catalog::open(directory.path(), "cache.sqlite").unwrap(),
                 current: crate::profiles::Id::Legacy,
@@ -608,6 +706,7 @@ mod tests {
             account_work: Default::default(),
             calendar_work: Default::default(),
             calendar_setup: Default::default(),
+            account_setup_writes: Default::default(),
             connection_lifecycle: Default::default(),
             secret_remover: Arc::new(removals::OsSecretRemover::default()),
             outbound: Arc::new(providers::outgoing::Servers::default()),

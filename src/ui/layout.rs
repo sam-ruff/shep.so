@@ -197,11 +197,83 @@ mod tests {
         assert_eq!(app.preferences.sidebar_width, Some(330.));
         let _ = app.handle(Message::Backend(Event::PreferencesSaveFailed(
             request,
+            "Stale failure".into(),
+        )));
+        assert_eq!(app.pending_close, Some(window));
+        assert!(app.preference_sync.error().is_none());
+        let _ = app.handle(Message::WindowClose(window));
+        let latest = app.preference_sync.generation();
+        let _ = app.handle(Message::Backend(Event::PreferencesSaveFailed(
+            latest,
             "Disk unavailable".into(),
         )));
         assert!(app.pending_close.is_none());
         assert!(app.preference_sync.dirty());
         assert!(app.notice.as_ref().unwrap().0.contains("Disk unavailable"));
+    }
+
+    #[test]
+    fn preference_failure_survives_unrelated_notices_and_retry_preserves_newer_values() {
+        let (mut app, _) = App::new();
+        let (sender, _receiver) = engine::CommandSender::persistence_test_channel();
+        app.tx = Some(sender);
+        app.settings_fields();
+        let _ = app.handle(Message::Appearance(Appearance::Dark));
+        let failed = app.preference_sync.generation();
+        let _ = app.handle(Message::Backend(Event::PreferencesSaveFailed(
+            failed,
+            "Disk full".into(),
+        )));
+        app.notice("Other work finished", false);
+        assert_eq!(app.preference_sync.error(), Some("Disk full"));
+        assert_eq!(app.preferences.appearance, Appearance::Dark);
+        let _ = app.handle(Message::Appearance(Appearance::Light));
+        let retry = app.preference_sync.generation();
+        let saved = app.preferences.clone();
+        let _ = app.handle(Message::Backend(Event::PreferencesSaved(
+            retry,
+            Arc::new(PreferenceSnapshot {
+                revision: retry,
+                value: saved,
+            }),
+        )));
+        assert!(app.preference_sync.error().is_none());
+        assert_eq!(app.preferences.appearance, Appearance::Light);
+        let _ = app.handle(Message::Backend(Event::PreferencesSaveFailed(
+            failed,
+            "Late disk error".into(),
+        )));
+        assert!(app.preference_sync.error().is_none());
+        assert_eq!(
+            app.notice.as_ref().map(|notice| notice.0.as_str()),
+            Some("Other work finished")
+        );
+    }
+
+    #[test]
+    fn a_newer_automatic_save_clears_its_own_failure_notice() {
+        let (mut app, _) = App::new();
+        let (sender, _receiver) = engine::CommandSender::persistence_test_channel();
+        app.tx = Some(sender);
+        let _ = app.handle(Message::Appearance(Appearance::Dark));
+        let failed = app.preference_sync.generation();
+        let _ = app.handle(Message::Backend(Event::PreferencesSaveFailed(
+            failed,
+            "Disk full".into(),
+        )));
+        assert!(app.notice.is_some());
+        let _ = app.handle(Message::Appearance(Appearance::Light));
+        let request = app.preference_sync.generation();
+        let value = app.preferences.clone();
+        let _ = app.handle(Message::Backend(Event::PreferencesSaved(
+            request,
+            Arc::new(PreferenceSnapshot {
+                revision: request,
+                value,
+            }),
+        )));
+        assert!(app.preference_sync.error().is_none());
+        assert!(app.notice.is_none());
     }
     #[test]
     fn save_toast_requires_current_ack_and_invalid_edits_do_not_confirm() {
