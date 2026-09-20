@@ -27,12 +27,13 @@ Send storage tests pass. Checkpoint `7689ef3` is pushed with normal hooks,
 The whole architecture remains active,
 including deferred native mail admission and the remaining domain adapters.
 
-The current integration connects native individual controls to durable observed
+Implementation `e84f66b` connects native individual controls to durable observed
 admission and the common background owner. Flutter adds bounded Activity, checked
 Undo, admission before provider queues, conditional failure rollback and queued
-Send. The integrated Flutter baseline passes 116 Rust and 167 Flutter tests;
-input-lineage checks and final combined native verification are in progress.
-These changes are not yet a shipped checkpoint or full architecture completion.
+Send. Integrated verification passes 117 Flutter Rust and 175 Flutter tests,
+1,509 normal-hook Rust executions and 29 final native scenarios, with one
+live-mailbox skip. Input-lineage, failed Undo/restart and held-provider controls
+are included. Full architecture adoption and measured latency remain open.
 
 **14 September mail sync speed and reliable moves (R100/R101):** Sam reports
 the related-messages notice after archiving (fixed, `3dabf16`) and a failed

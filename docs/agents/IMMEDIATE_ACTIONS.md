@@ -270,7 +270,11 @@ wait for provider capacity. Reader controls use the same projected flag metadata
 as rows, including bounded observations for an offscreen reader.
 
 The [browser inventory](IMMEDIATE_ACTIONS_BROWSER.md) records durable individual
-admission, Activity, receipt repair and safe orphan-queue recovery. Deferred native
-individual admission, offline/auth policies, durable individual Undo and the
-remaining domains still need adoption. Shared scenarios and client parity retain
+admission, Activity, receipt repair and safe orphan-queue recovery. Native
+individual controls now admit into the existing group journal with observed
+lineage and field ownership; History retains receipt-based Undo across restart.
+The bounded owner shares capacity across mail, folders, calendar and Outbox,
+prioritises cache repair and drains active steps on correlated close requests.
+Offline/auth policies, fairness within a multi-account group and remaining
+domain adapters still need work. Shared scenarios and client parity retain
 those gaps explicitly.

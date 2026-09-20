@@ -13,11 +13,13 @@ storage passes 13. Native Send queue/restart/cancellation controls pass. Normal
 hooks pass 1,479 Rust test executions; browser v3 passes 94 unit and 31
 control/storage/profile scenarios. Strict docs pass.
 
-The current uncommitted integration adds native individual observed admission,
+Implementation `e84f66b`, pushed to `main`, adds native individual observed admission,
 field ownership and a shared bounded background scheduler. Flutter Activity,
-conditional rollback, checked Undo and queued Send pass 116 Rust and 167 Flutter
-tests before the latest input-lineage check. Native combined verification and a
-calendar retry-deadline fix are running; Flutter Outbox retry/refresh follows.
+conditional rollback, checked Undo and queued Send pass 117 Rust and 175 Flutter
+tests, including input-lineage and Outbox retry/refresh. Normal hooks pass 1,509
+Rust executions, with four ignored. Final native gates pass 29 scenarios, with
+one live-mailbox skip; strict docs pass. The release-build observation method
+also passes the no-default-features Clippy gate.
 Frozen lane handoffs and logs live under ignored `artifacts/`.
 Preserve the user-owned untracked `handover-fable.md`. Full domain adoption and measured mailbox-scale
 latency remain open; TODO is authoritative.
@@ -28,8 +30,9 @@ save/delete uses shared projection outcomes and exact read-only recovery.
 The completion log records 1,365 passing Rust tests and 38 native scenarios.
 Normal hooks pass, with reviewed light and compact dark captures.
 
-Next: durable admission for deferred mail and calendar recovery, then consistent
-adoption across the other desktop domains and Flutter/browser. Keep one durable
+Next: Flutter receipt-before-cache repair with newer-field/replacement guards,
+fair scheduling within multi-account groups and connection status in browser
+Activity, then consistent adoption across remaining domains. Keep one durable
 owner per action, preserve uncertain receipts and newer intent, and retain
 native 100 ms mailbox-scale timing and release/install verification as open
 work. TODO remains authoritative; this checkpoint does not complete the app-wide
