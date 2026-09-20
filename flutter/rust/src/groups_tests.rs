@@ -140,7 +140,12 @@ impl shep_mail_core::providers::MailProvider for Scripted {
         _changes: shep_mail_core::mail_actions::Flags,
     ) -> anyhow::Result<()> {
         self.flags.fetch_add(1, Ordering::SeqCst);
-        self.reply().await.map(|_| ())
+        match self.reply().await {
+            Err(error) if error.to_string() == "NO STORE failed" => {
+                Err(shep_mail_core::mail_actions::FlagsRejected(error.to_string()).into())
+            }
+            result => result.map(|_| ()),
+        }
     }
 }
 

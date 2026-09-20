@@ -755,6 +755,31 @@ describe("real browser provider/cache contract", () => {
     expect(s.repo.connected(account.id)).toBe(false);
     expect(await s.db.get("accounts", account.id)).toBeUndefined();
   });
+  it("a stale activity dismissal cannot erase a newer connection attempt", async () => {
+    const s = setup();
+    const old = { id: "old-attempt", account, state: "failed" as const, error: "Earlier failure" };
+    const current = { id: "new-attempt", account, state: "checking" as const };
+    await s.db.commit([{ store: "accountConnections", key: account.id, value: current }]);
+    await expect(s.repo.dismissConnection(old)).rejects.toThrow("connection attempt changed");
+    expect(await s.db.get("accountConnections", account.id)).toEqual(current);
+    expect(s.requests).toHaveLength(0);
+  });
+  it("a late connection result cannot replace the newer attempt shown in Activity", async () => {
+    const s = setup();
+    const old = { id: "old-attempt", account, state: "checking" as const };
+    await s.db.commit([{ store: "accountConnections", key: account.id, value: old }]);
+    let release!: () => void;
+    s.probeWait(new Promise<void>(resolve => { release = resolve; }));
+    const connecting = s.repo.connect(account, "new-secret", "smtp-secret", old.id);
+    await vi.waitFor(() => expect(s.requests).toHaveLength(1));
+    const current = { ...old, id: "new-attempt" };
+    await s.db.commit([{ store: "accountConnections", key: account.id, value: current }]);
+    release();
+    await expect(connecting).rejects.toThrow("newer connection decision");
+    expect(await s.repo.connectionProgress()).toEqual([current]);
+    expect(s.repo.connected(account.id)).toBe(false);
+    expect(await s.db.get("accounts", account.id)).toBeUndefined();
+  });
   it("rejects failed local Send admission before network and returns an unsent queue to a new editable draft without network", async () => {
     const s = setup();
     await s.repo.connect(account, "incoming", "smtp");

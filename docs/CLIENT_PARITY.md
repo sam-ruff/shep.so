@@ -10,11 +10,24 @@ and [Flutter](agents/IMMEDIATE_ACTIONS_FLUTTER.md) inventories retain remaining
 adoption and verification requirements. These migrations do not establish
 complete domain, Undo, offline-policy or platform parity.
 
+Flutter schema 17 records individual receipts before cache work and saves the
+still-owned field subset at claim for dispatch, repair, inspection and Undo. Cache-only
+repair preserves newer fields and physical replacements, and acknowledged moves
+without a UID retain read-only identity recovery through restart. Native groups
+now share one lease across independent account items, retaining exact item repair,
+Pause and Undo ownership. Other domain/lifecycle adapters remain unfinished.
+Desktop draft feedback now stays with each editor or parked session, including
+Retry and newer-revision ownership. Flutter/browser draft status adapters still
+need the same lifecycle review; native storage failure is not a remote-sync error.
+
 Desktop Send now admits prepared MIME to a durable Queued Outbox before provider
 capacity and supports local cancellation before dispatch. Browser now saves
 queued Send before provider reservation, retains connection-attempt recovery and
-atomically saves preference values with intent revisions. Flutter now saves the
-exact message and delivery identity before returning from Send; delivery runs in
+atomically saves preference values with intent revisions.
+Browser Activity also reads a bounded connection-attempt page from its existing
+owner, with reconnect navigation and exact-attempt dismissal. Reload and newer
+attempt tests retain unrelated mail failures. Other domain summaries remain open.
+Flutter now saves the exact message and delivery identity before returning from Send; delivery runs in
 the background and queued cancellation retains the draft. Account and credential
 changes are checked before SMTP. Outbox resumes the same saved attempt and
 refreshes its bounded page without clearing errors or review choices. Wider

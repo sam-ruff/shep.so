@@ -30,9 +30,15 @@ save/delete uses shared projection outcomes and exact read-only recovery.
 The completion log records 1,365 passing Rust tests and 38 native scenarios.
 Normal hooks pass, with reviewed light and compact dark captures.
 
-Next: Flutter receipt-before-cache repair with newer-field/replacement guards,
-fair scheduling within multi-account groups and connection status in browser
-Activity, then consistent adoption across remaining domains. Keep one durable
+The next integration adds Flutter schema 17 receipt-before-cache repair and
+accepted-field ownership (131 Rust and 175 Flutter tests), native within-group
+account concurrency (21 scheduler, 26 store and 24 native scenarios, one skip),
+browser connection Activity (42 unit and 14 Chromium scenarios) and native
+draft-owned errors/Retry plus a focused editor-shortcut regression. Final compact
+visual review passes; normal commit hooks remain before shipping this continuation.
+
+Next: checked native credential-slot activation, indexed bounded native scheduler
+claims and fair Flutter resumption, then remaining domain adapters. Keep one durable
 owner per action, preserve uncertain receipts and newer intent, and retain
 native 100 ms mailbox-scale timing and release/install verification as open
 work. TODO remains authoritative; this checkpoint does not complete the app-wide

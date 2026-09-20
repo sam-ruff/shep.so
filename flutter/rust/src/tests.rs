@@ -51,6 +51,74 @@ struct FlagInspector {
     gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
 
+mockall::mock! {
+    ReceiptProvider {}
+
+    #[async_trait::async_trait]
+    impl shep_mail_core::providers::MailProvider for ReceiptProvider {
+        async fn sync(&self, account: &Account, password: &secrecy::SecretString, known: &std::collections::HashSet<String>, output: tokio::sync::mpsc::Sender<MailSyncItem>) -> anyhow::Result<Vec<String>>;
+        async fn move_mail(&self, account: &Account, password: &secrecy::SecretString, mail: &Mail, folder: &str) -> anyhow::Result<Option<String>>;
+        async fn set_flags(&self, account: &Account, password: &secrecy::SecretString, mail: &Mail, changes: shep_mail_core::mail_actions::Flags) -> anyhow::Result<()>;
+        async fn inspect_flags(&self, account: &Account, password: &secrecy::SecretString, mail: &Mail) -> anyhow::Result<shep_mail_core::mail_actions::Flags>;
+        async fn inspect_move(&self, account: &Account, password: &secrecy::SecretString, receipt: &shep_mail_core::mail_actions::MoveReceipt) -> anyhow::Result<Mail>;
+    }
+}
+
+fn acknowledging_move_provider() -> Arc<MockReceiptProvider> {
+    let mut provider = MockReceiptProvider::new();
+    provider
+        .expect_move_mail()
+        .times(1)
+        .returning(|_, _, _, _| Ok(Some("moved-uid".into())));
+    provider.expect_set_flags().times(0);
+    provider.expect_inspect_move().times(0);
+    Arc::new(provider)
+}
+
+fn refusing_move_provider() -> Arc<MockReceiptProvider> {
+    let mut provider = MockReceiptProvider::new();
+    provider
+        .expect_move_mail()
+        .times(1)
+        .returning(|_, _, _, _| {
+            Err(shep_mail_core::mail_actions::MoveRefused("provider refused move".into()).into())
+        });
+    provider.expect_set_flags().times(0);
+    provider.expect_inspect_move().times(0);
+    Arc::new(provider)
+}
+
+fn refusing_flags_provider() -> Arc<MockReceiptProvider> {
+    let mut provider = MockReceiptProvider::new();
+    provider.expect_move_mail().times(0);
+    provider
+        .expect_set_flags()
+        .times(1)
+        .returning(|_, _, _, _| {
+            Err(shep_mail_core::mail_actions::FlagsRejected("provider refused flags".into()).into())
+        });
+    provider.expect_inspect_move().times(0);
+    Arc::new(provider)
+}
+
+fn unresolved_move_provider(resolved: Mail, move_calls: usize) -> Arc<MockReceiptProvider> {
+    let mut provider = MockReceiptProvider::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    provider
+        .expect_move_mail()
+        .times(move_calls)
+        .returning(move |_, _, _, _| {
+            let call = calls.fetch_add(1, Ordering::SeqCst);
+            Ok((call > 0).then(|| "undo-uid".to_owned()))
+        });
+    provider.expect_set_flags().times(0);
+    provider
+        .expect_inspect_move()
+        .times(1)
+        .return_once(move |_, _, _| Ok(resolved));
+    Arc::new(provider)
+}
+
 #[async_trait::async_trait]
 impl shep_mail_core::providers::MailProvider for FlagInspector {
     async fn sync(
@@ -565,7 +633,10 @@ async fn queued_provider_claim_rechecks_newer_intent_after_account_wait() {
     *p.operations.provider.lock().unwrap() = Some(provider.clone());
     let first = json!({"op":"mutate","action_id":"older-queued","id":"fixture:INBOX:0","unread":false,"password":"secret"});
     let guard = p.operations.account("fixture").await;
-    let worker = p.clone();
+    let worker = MobileProfile {
+        database: p.database.clone(),
+        operations: p.operations.clone(),
+    };
     let pending = tokio::spawn(async move { request(&worker, first).await });
     p.operations.mutation_waiting.notified().await;
     let mut newer =
@@ -577,6 +648,352 @@ async fn queued_provider_claim_rechecks_newer_intent_after_account_wait() {
     newer["password"] = json!("secret");
     assert_eq!(request(&p, newer).await["status"], "succeeded");
     assert_eq!(provider.writes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn partial_compound_claim_dispatches_and_undoes_only_owned_fields() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut provider = MockReceiptProvider::new();
+    provider.expect_move_mail().times(0);
+    provider.expect_inspect_move().times(0);
+    provider
+        .expect_set_flags()
+        .withf(|_, _, _, flags| flags.unread == Some(false) && flags.starred.is_none())
+        .times(1)
+        .returning(|_, _, _, _| Ok(()));
+    provider
+        .expect_set_flags()
+        .withf(|_, _, _, flags| flags.unread.is_none() && flags.starred == Some(true))
+        .times(1)
+        .returning(|_, _, _, _| Ok(()));
+    provider
+        .expect_set_flags()
+        .withf(|_, _, _, flags| flags.unread == Some(true) && flags.starred.is_none())
+        .times(1)
+        .returning(|_, _, _, _| Ok(()));
+    *p.operations.provider.lock().unwrap() = Some(Arc::new(provider));
+    let guard = p.operations.account("fixture").await;
+    let worker = MobileProfile {
+        database: p.database.clone(),
+        operations: p.operations.clone(),
+    };
+    let first = tokio::spawn(async move {
+        request(&worker,json!({"op":"mutate","action_id":"partial-first","id":"fixture:INBOX:0","unread":false,"starred":false,"password":"secret"})).await
+    });
+    p.operations.mutation_waiting.notified().await;
+    let mut newer =
+        json!({"op":"mutate","action_id":"partial-newer","id":"fixture:INBOX:0","starred":true});
+    assert_eq!(request(&p, newer.clone()).await["status"], "waiting");
+    drop(guard);
+    assert_eq!(first.await.unwrap()["status"], "succeeded");
+    let accepted: String = p
+        .database
+        .read(|db| {
+            Ok(db.query_row(
+                "SELECT accepted_fields FROM individual_mail_actions WHERE id='partial-first'",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    let accepted: Value = serde_json::from_str(&accepted).unwrap();
+    assert_eq!(accepted["unread"], false);
+    assert!(accepted["starred"].is_null());
+    newer["password"] = json!("secret");
+    assert_eq!(request(&p, newer).await["status"], "succeeded");
+    assert_eq!(
+        request(
+            &p,
+            json!({"op":"undo_mail_action","id":"partial-first","password":"secret"})
+        )
+        .await["status"],
+        "succeeded"
+    );
+    let mail = p
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert!(mail.unread);
+    assert!(mail.starred);
+}
+
+#[tokio::test]
+async fn partial_compound_receipt_repairs_only_accepted_field_after_restart() {
+    let (dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database.write(|db|{
+        db.execute("UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",[])?;
+        db.execute_batch("CREATE TRIGGER fail_partial_cache BEFORE UPDATE OF unread ON mail BEGIN SELECT RAISE(ABORT,'fixture cache failure'); END;")?;
+        Ok(())
+    }).await.unwrap();
+    let mut provider = MockReceiptProvider::new();
+    provider.expect_move_mail().times(0);
+    provider.expect_inspect_move().times(0);
+    provider
+        .expect_set_flags()
+        .withf(|_, _, _, flags| flags.unread == Some(false) && flags.starred.is_none())
+        .times(1)
+        .returning(|_, _, _, _| Ok(()));
+    let provider = Arc::new(provider);
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let guard = p.operations.account("fixture").await;
+    let worker = MobileProfile {
+        database: p.database.clone(),
+        operations: p.operations.clone(),
+    };
+    let first = tokio::spawn(async move {
+        request(&worker,json!({"op":"mutate","action_id":"partial-repair","id":"fixture:INBOX:0","unread":false,"starred":false,"password":"secret"})).await
+    });
+    p.operations.mutation_waiting.notified().await;
+    assert_eq!(request(&p,json!({"op":"mutate","action_id":"partial-repair-newer","id":"fixture:INBOX:0","starred":true})).await["status"],"waiting");
+    drop(guard);
+    assert_eq!(first.await.unwrap()["status"], "repair");
+    drop(p);
+    let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_string_lossy().into())
+        .await
+        .unwrap();
+    *reopened.operations.provider.lock().unwrap() = Some(provider);
+    reopened
+        .database
+        .write(|db| {
+            db.execute_batch("DROP TRIGGER fail_partial_cache;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        request(
+            &reopened,
+            json!({"op":"inspect_mail_action","id":"partial-repair"})
+        )
+        .await["status"],
+        "succeeded"
+    );
+    let mail = reopened
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert!(!mail.unread);
+    assert!(mail.starred);
+}
+
+#[tokio::test]
+async fn partial_compound_unknown_result_inspects_only_accepted_field_after_restart() {
+    let (dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut provider = MockReceiptProvider::new();
+    provider.expect_move_mail().times(0);
+    provider.expect_inspect_move().times(0);
+    provider
+        .expect_set_flags()
+        .withf(|_, _, _, flags| flags.unread == Some(false) && flags.starred.is_none())
+        .times(1)
+        .returning(|_, _, _, _| anyhow::bail!("connection lost after STORE"));
+    provider
+        .expect_inspect_flags()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(shep_mail_core::mail_actions::Flags {
+                unread: Some(false),
+                starred: Some(false),
+            })
+        });
+    let provider = Arc::new(provider);
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let guard = p.operations.account("fixture").await;
+    let worker = MobileProfile {
+        database: p.database.clone(),
+        operations: p.operations.clone(),
+    };
+    let first = tokio::spawn(async move {
+        request(&worker,json!({"op":"mutate","action_id":"partial-unknown","id":"fixture:INBOX:0","unread":false,"starred":false,"password":"secret"})).await
+    });
+    p.operations.mutation_waiting.notified().await;
+    assert_eq!(request(&p, json!({"op":"mutate","action_id":"partial-unknown-newer","id":"fixture:INBOX:0","starred":true})).await["status"], "waiting");
+    drop(guard);
+    assert_eq!(first.await.unwrap()["status"], "uncertain");
+    drop(p);
+    let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_string_lossy().into())
+        .await
+        .unwrap();
+    *reopened.operations.provider.lock().unwrap() = Some(provider);
+    assert_eq!(
+        request(
+            &reopened,
+            json!({"op":"inspect_mail_action","id":"partial-unknown","password":"secret"})
+        )
+        .await["status"],
+        "succeeded"
+    );
+    let mail = reopened
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert!(!mail.unread);
+    assert!(mail.starred);
+}
+
+#[tokio::test]
+async fn fully_superseded_compound_action_never_reaches_provider() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut provider = MockReceiptProvider::new();
+    provider.expect_move_mail().times(0);
+    provider.expect_set_flags().times(0);
+    provider.expect_inspect_flags().times(0);
+    provider.expect_inspect_move().times(0);
+    *p.operations.provider.lock().unwrap() = Some(Arc::new(provider));
+    let guard = p.operations.account("fixture").await;
+    let worker = MobileProfile {
+        database: p.database.clone(),
+        operations: p.operations.clone(),
+    };
+    let first = tokio::spawn(async move {
+        request(&worker,json!({"op":"mutate","action_id":"compound-superseded","id":"fixture:INBOX:0","unread":false,"starred":false,"password":"secret"})).await
+    });
+    p.operations.mutation_waiting.notified().await;
+    assert_eq!(request(&p, json!({"op":"mutate","action_id":"compound-newer","id":"fixture:INBOX:0","unread":true,"starred":true})).await["status"], "waiting");
+    drop(guard);
+    assert_eq!(first.await.unwrap()["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn remote_move_and_flags_are_rejected_before_admission() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let reply: Value = serde_json::from_str(&p.request(json!({"op":"mutate","action_id":"unsupported-compound","id":"fixture:INBOX:0","folder":"Archive","unread":false,"password":"secret"}).to_string()).await.unwrap()).unwrap();
+    assert!(
+        reply["error"]
+            .as_str()
+            .unwrap()
+            .contains("separate actions")
+    );
+    p.database
+        .read(|db| {
+            assert_eq!(
+                db.query_row(
+                    "SELECT COUNT(*) FROM individual_mail_actions WHERE id='unsupported-compound'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )?,
+                0
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn queued_provider_claim_rejects_identity_replaced_while_waiting_for_account() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = Arc::new(FlagInspector {
+        inspections: AtomicUsize::new(0),
+        writes: AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        gate: Mutex::new(None),
+    });
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let guard = p.operations.account("fixture").await;
+    let worker = MobileProfile {
+        database: p.database.clone(),
+        operations: p.operations.clone(),
+    };
+    let pending = tokio::spawn(async move {
+        worker
+            .request(json!({"op":"mutate","action_id":"claim-replaced","id":"fixture:INBOX:0","starred":false,"password":"secret"}).to_string())
+            .await
+            .unwrap()
+    });
+    p.operations.mutation_waiting.notified().await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE mail SET raw=?2 WHERE id=?1",
+                params!["fixture:INBOX:0", b"replacement".as_slice()],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    drop(guard);
+    let reply: Value = serde_json::from_str(&pending.await.unwrap()).unwrap();
+    assert!(
+        reply["error"]
+            .as_str()
+            .unwrap()
+            .contains("no provider operation was started")
+    );
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 0);
+    p.database
+        .read(|db| {
+            let (status, intents): (String, i64) = db.query_row(
+                "SELECT status,(SELECT COUNT(*) FROM mail_intents) FROM individual_mail_actions WHERE id='claim-replaced'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            assert_eq!(status, "rejected");
+            assert_eq!(intents, 0);
+            Ok(())
+        })
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -694,8 +1111,534 @@ async fn queued_flag_follows_an_acknowledged_move_but_rejects_replaced_content()
             assert_eq!(mail.folder, "Archive");
             assert_eq!(mail.remote_id, "41.2");
             assert!(!mail.starred);
+            let physical = p
+                .database
+                .read(|db| {
+                    Ok(db.query_row(
+                        "SELECT physical FROM individual_mail_actions WHERE id='after-move'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?)
+                })
+                .await
+                .unwrap();
+            let physical: Value = serde_json::from_str(&physical).unwrap();
+            assert_eq!(physical["folder"], "Archive");
+            assert_eq!(physical["remote_id"], "41.2");
+            let undone = request(
+                &p,
+                json!({"op":"undo_mail_action","id":"after-move","password":"secret"}),
+            )
+            .await;
+            assert_eq!(undone["status"], "succeeded");
+            assert_eq!(provider.writes.load(Ordering::SeqCst), 2);
+            assert!(
+                p.database
+                    .read(|db| Ok(operations::stored_mail(db, "fixture:INBOX:0")?.starred))
+                    .await
+                    .unwrap()
+            );
         }
     }
+}
+
+#[tokio::test]
+async fn acknowledged_flag_repairs_cache_after_restart_without_provider_replay() {
+    let (dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            db.execute_batch(
+                "CREATE TRIGGER fail_acknowledged_flag_cache BEFORE UPDATE OF starred ON mail BEGIN SELECT RAISE(ABORT,'fixture cache failure'); END;",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = Arc::new(FlagInspector {
+        inspections: AtomicUsize::new(0),
+        writes: AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        gate: Mutex::new(None),
+    });
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let result = request(
+        &p,
+        json!({"op":"mutate","action_id":"repair-flags","id":"fixture:INBOX:0","starred":false,"password":"secret"}),
+    )
+    .await;
+    assert_eq!(result["status"], "repair");
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 1);
+    assert!(
+        p.database
+            .read(|db| Ok(operations::stored_mail(db, "fixture:INBOX:0")?.starred))
+            .await
+            .unwrap()
+    );
+    drop(p);
+
+    let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_string_lossy().into())
+        .await
+        .unwrap();
+    *reopened.operations.provider.lock().unwrap() = Some(provider.clone());
+    reopened
+        .database
+        .write(|db| {
+            db.execute_batch("DROP TRIGGER fail_acknowledged_flag_cache;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let repaired = request(
+        &reopened,
+        json!({"op":"inspect_mail_action","id":"repair-flags"}),
+    )
+    .await;
+    assert_eq!(repaired["status"], "succeeded");
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.inspections.load(Ordering::SeqCst), 0);
+    assert!(
+        !reopened
+            .database
+            .read(|db| Ok(operations::stored_mail(db, "fixture:INBOX:0")?.starred))
+            .await
+            .unwrap()
+    );
+    reopened
+        .database
+        .write(|db| {
+            db.execute("UPDATE mail SET starred=1 WHERE id='fixture:INBOX:0'", [])?;
+            db.execute_batch(
+                "CREATE TRIGGER fail_second_flag_cache BEFORE UPDATE OF starred ON mail BEGIN SELECT RAISE(ABORT,'fixture cache failure'); END;",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let second = request(
+        &reopened,
+        json!({"op":"mutate","action_id":"repair-flags-superseded","id":"fixture:INBOX:0","starred":false,"password":"secret"}),
+    )
+    .await;
+    assert_eq!(second["status"], "repair");
+    reopened
+        .database
+        .write(|db| {
+            operations::record_intent(db, "fixture:INBOX:0", &["starred"])?;
+            db.execute_batch("DROP TRIGGER fail_second_flag_cache;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let repaired = request(
+        &reopened,
+        json!({"op":"inspect_mail_action","id":"repair-flags-superseded"}),
+    )
+    .await;
+    assert_eq!(repaired["status"], "succeeded");
+    assert!(
+        reopened
+            .database
+            .read(|db| Ok(operations::stored_mail(db, "fixture:INBOX:0")?.starred))
+            .await
+            .unwrap()
+    );
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn acknowledged_move_repairs_exact_receipt_after_restart_without_provider_replay() {
+    let (dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            db.execute_batch(
+                "CREATE TRIGGER fail_acknowledged_move_cache BEFORE UPDATE OF folder ON mail BEGIN SELECT RAISE(ABORT,'fixture cache failure'); END;",
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = acknowledging_move_provider();
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let result = request(
+        &p,
+        json!({"op":"mutate","action_id":"repair-move","id":"fixture:INBOX:0","folder":"Archive","password":"secret"}),
+    )
+    .await;
+    assert_eq!(result["status"], "repair");
+    drop(p);
+
+    let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_string_lossy().into())
+        .await
+        .unwrap();
+    *reopened.operations.provider.lock().unwrap() = Some(provider.clone());
+    reopened
+        .database
+        .write(|db| {
+            db.execute_batch("DROP TRIGGER fail_acknowledged_move_cache;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let repaired = request(
+        &reopened,
+        json!({"op":"inspect_mail_action","id":"repair-move"}),
+    )
+    .await;
+    assert_eq!(repaired["status"], "succeeded");
+    let moved = reopened
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert_eq!(moved.folder, "Archive");
+    assert_eq!(moved.remote_id, "moved-uid");
+    reopened
+        .database
+        .read(|db| {
+            assert_eq!(
+                db.query_row("SELECT COUNT(*) FROM pending_moves", [], |row| row
+                    .get::<_, i64>(0))?,
+                0
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn acknowledged_move_without_uid_is_inspected_then_undo_uses_resolved_identity() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut resolved = p
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    resolved.folder = "Archive".into();
+    resolved.remote_id = "resolved-uid".into();
+    let provider = unresolved_move_provider(resolved, 2);
+    *p.operations.provider.lock().unwrap() = Some(provider);
+    let moved = request(&p, json!({"op":"mutate","action_id":"unresolved-move","id":"fixture:INBOX:0","folder":"Archive","password":"secret"})).await;
+    assert_eq!(moved["status"], "repair");
+    assert!(
+        moved["warning"]
+            .as_str()
+            .unwrap()
+            .contains("destination identity needs recovery")
+    );
+    assert!(
+        !moved["warning"]
+            .as_str()
+            .unwrap()
+            .contains("cache could not save")
+    );
+    let inspected = request(
+        &p,
+        json!({"op":"inspect_mail_action","id":"unresolved-move","password":"secret"}),
+    )
+    .await;
+    assert_eq!(inspected["status"], "succeeded");
+    let current = p
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert_eq!(
+        (current.folder.as_str(), current.remote_id.as_str()),
+        ("Archive", "resolved-uid")
+    );
+    let undone = request(
+        &p,
+        json!({"op":"undo_mail_action","id":"unresolved-move","password":"secret"}),
+    )
+    .await;
+    assert_eq!(undone["status"], "succeeded");
+    let current = p
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert_eq!(
+        (current.folder.as_str(), current.remote_id.as_str()),
+        ("INBOX", "undo-uid")
+    );
+}
+
+#[tokio::test]
+async fn unresolved_move_cache_failure_restarts_into_inspection_without_replay() {
+    let (dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute("UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')", [])?;
+            db.execute_batch("CREATE TRIGGER fail_unresolved_move_cache BEFORE UPDATE OF folder ON mail BEGIN SELECT RAISE(ABORT,'fixture cache failure'); END;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let mut resolved = p
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    resolved.folder = "Archive".into();
+    resolved.remote_id = "resolved-after-restart".into();
+    let provider = unresolved_move_provider(resolved, 1);
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let moved = request(&p, json!({"op":"mutate","action_id":"unresolved-restart","id":"fixture:INBOX:0","folder":"Archive","password":"secret"})).await;
+    assert_eq!(moved["status"], "repair");
+    drop(p);
+    let reopened = MobileProfile::open(dir.path().join("mail.sqlite3").to_string_lossy().into())
+        .await
+        .unwrap();
+    *reopened.operations.provider.lock().unwrap() = Some(provider);
+    reopened
+        .database
+        .write(|db| {
+            db.execute_batch("DROP TRIGGER fail_unresolved_move_cache;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let inspected = request(
+        &reopened,
+        json!({"op":"inspect_mail_action","id":"unresolved-restart","password":"secret"}),
+    )
+    .await;
+    assert_eq!(inspected["status"], "succeeded");
+    let current = reopened
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert_eq!(
+        (current.folder.as_str(), current.remote_id.as_str()),
+        ("Archive", "resolved-after-restart")
+    );
+}
+
+#[tokio::test]
+async fn acknowledged_move_repair_refuses_a_replaced_cached_source_without_replay() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute("UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')", [])?;
+            db.execute_batch("CREATE TRIGGER fail_move_cache_before_replace BEFORE UPDATE OF folder ON mail BEGIN SELECT RAISE(ABORT,'fixture cache failure'); END;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = acknowledging_move_provider();
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let result = request(&p, json!({"op":"mutate","action_id":"repair-replaced-move","id":"fixture:INBOX:0","folder":"Archive","password":"secret"})).await;
+    assert_eq!(result["status"], "repair");
+    p.database
+        .write(|db| {
+            db.execute_batch("DROP TRIGGER fail_move_cache_before_replace;")?;
+            db.execute(
+                "UPDATE mail SET raw=?2 WHERE id=?1",
+                params!["fixture:INBOX:0", b"replacement".as_slice()],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let reviewed: Value = serde_json::from_str(
+        &p.request(json!({"op":"inspect_mail_action","id":"repair-replaced-move"}).to_string())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        reviewed["error"]
+            .as_str()
+            .unwrap()
+            .contains("no longer matches")
+    );
+    let current = p
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert_eq!(current.folder, "INBOX");
+    assert_eq!(
+        p.database
+            .read(|db| Ok(db.query_row(
+                "SELECT raw FROM mail WHERE id='fixture:INBOX:0'",
+                [],
+                |row| row.get::<_, Vec<u8>>(0)
+            )?))
+            .await
+            .unwrap(),
+        b"replacement"
+    );
+}
+
+#[tokio::test]
+async fn older_move_repair_cannot_regress_a_later_acknowledged_move() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute("UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')", [])?;
+            db.execute_batch("CREATE TRIGGER fail_old_move_cache BEFORE UPDATE OF folder ON mail BEGIN SELECT RAISE(ABORT,'fixture cache failure'); END;")?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = acknowledging_move_provider();
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    assert_eq!(
+        request(&p, json!({"op":"mutate","action_id":"old-move-repair","id":"fixture:INBOX:0","folder":"Archive","password":"secret"})).await["status"],
+        "repair"
+    );
+    p.database
+        .write(|db| {
+            db.execute_batch("DROP TRIGGER fail_old_move_cache;")?;
+            let tx = db.transaction()?;
+            let source = operations::stored_mail(&tx, "fixture:INBOX:0")?;
+            let raw: Vec<u8> =
+                tx.query_row("SELECT raw FROM mail WHERE id=?1", [&source.id], |row| {
+                    row.get(0)
+                })?;
+            let fingerprint = shep_mail_core::mail_actions::Fingerprint::of(&raw);
+            let receipt = shep_mail_core::mail_actions::MoveReceipt::server(
+                &source,
+                &source.account_id,
+                "Trash",
+                Some("later-uid".into()),
+                fingerprint,
+            );
+            operations::save_move(&tx, &source.id, &receipt)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let reviewed: Value = serde_json::from_str(
+        &p.request(json!({"op":"inspect_mail_action","id":"old-move-repair"}).to_string())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        reviewed["error"]
+            .as_str()
+            .unwrap()
+            .contains("no longer matches")
+    );
+    let current = p
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert_eq!(current.folder, "Trash");
+    assert_eq!(current.remote_id, "later-uid");
+}
+
+#[tokio::test]
+async fn typed_move_refusal_is_rejected_once_and_releases_pending_move() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = refusing_move_provider();
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let action = json!({"op":"mutate","action_id":"refused-move","id":"fixture:INBOX:0","folder":"Archive","password":"secret"});
+    let rejected: Value =
+        serde_json::from_str(&p.request(action.clone().to_string()).await.unwrap()).unwrap();
+    assert!(
+        rejected["error"]
+            .as_str()
+            .unwrap()
+            .contains("provider refused move")
+    );
+    p.database
+        .read(|db| {
+            assert_eq!(
+                db.query_row(
+                    "SELECT status FROM individual_mail_actions WHERE id='refused-move'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )?,
+                "rejected"
+            );
+            assert_eq!(
+                db.query_row("SELECT COUNT(*) FROM pending_moves", [], |row| row
+                    .get::<_, i64>(0))?,
+                0
+            );
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let again: Value = serde_json::from_str(&p.request(action.to_string()).await.unwrap()).unwrap();
+    assert_eq!(again["data"]["status"], "rejected");
+}
+
+#[tokio::test]
+async fn typed_flag_refusal_is_rejected_once_without_cache_write() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = refusing_flags_provider();
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let action = json!({"op":"mutate","action_id":"refused-flags","id":"fixture:INBOX:0","starred":false,"password":"secret"});
+    let rejected: Value =
+        serde_json::from_str(&p.request(action.clone().to_string()).await.unwrap()).unwrap();
+    assert!(
+        rejected["error"]
+            .as_str()
+            .unwrap()
+            .contains("provider refused flags")
+    );
+    assert!(
+        p.database
+            .read(|db| Ok(operations::stored_mail(db, "fixture:INBOX:0")?.starred))
+            .await
+            .unwrap()
+    );
+    let again: Value = serde_json::from_str(&p.request(action.to_string()).await.unwrap()).unwrap();
+    assert_eq!(again["data"]["status"], "rejected");
 }
 
 #[tokio::test]

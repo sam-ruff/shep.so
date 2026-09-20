@@ -1,4 +1,5 @@
 import { GroupUI } from "./bulk_ui";
+import { connectionActivity, connectionStatus } from "./connection_activity";
 import {
   dialogShortcuts,
   keyCombo,
@@ -331,8 +332,11 @@ export function mount(
       activityAgain = false;
       let summary: string;
       try {
-        const page = await gateway.actionActivity.page();
-        summary = page.rows.length ? `${page.rows.length}${page.next ? "+" : ""}` : "";
+        const [page, connections] = await Promise.all([
+          gateway.actionActivity.page(), connectionActivity(gateway),
+        ]);
+        const count = page.rows.length + connections.rows.length;
+        summary = count ? `${count}${page.next || connections.more ? "+" : ""}` : "";
       } catch { summary = "!"; }
       if (summary !== activitySummary) { activitySummary = summary; render(); }
     } while (activityAgain);
@@ -359,10 +363,37 @@ export function mount(
       const request = ++generation;
       status.textContent = "Loading saved actions…";
       try {
-        const page = await gateway!.actionActivity!.page(after, completed);
+        let connectionError = "";
+        const [page, connections] = await Promise.all([
+          gateway!.actionActivity!.page(after, completed),
+          completed ? Promise.resolve({ rows: [], more: false }) : connectionActivity(gateway!).catch(() => {
+            connectionError = "Saved connection progress could not load. Refresh Activity to retry.";
+            return { rows: [], more: false };
+          }),
+        ]);
         if (!d.isConnected || request !== generation) return;
         next = page.next;
         content.replaceChildren();
+        for (const attempt of connections.rows) {
+          const card = el("section", "settings-card");
+          card.append(el("h3", "", `Connection: ${attempt.account.email}`),
+            el("p", "", connectionStatus(attempt)));
+          if (attempt.error) card.append(el("p", "form-status", attempt.error));
+          card.append(button(`Reconnect ${attempt.account.email}`, () => {
+            d.close(); tab = "Preferences"; w.changed();
+          }));
+          const dismiss = button(`Dismiss connection for ${attempt.account.email}`, async () => {
+            if (busy) return;
+            busy = true; dismiss.disabled = true;
+            try { await gateway!.dismissConnection(attempt); await draw(); }
+            catch (error) { status.textContent = error instanceof Error ? error.message : "Could not dismiss this connection attempt. Refresh Activity."; }
+            finally { busy = false; dismiss.disabled = false; void refreshActivitySummary(); }
+          });
+          card.append(dismiss);
+          content.append(card);
+        }
+        if (connections.more) content.append(el("p", "muted", "More connection attempts are available in Accounts and profile sync."));
+        if (connectionError) content.append(el("p", "form-status", connectionError));
         if (!page.rows.length) content.append(el("p", "empty", completed ? "No recent completed changes." : "No individual mail changes need attention."));
         for (const entry of page.rows) {
           const card = el("section", "settings-card");

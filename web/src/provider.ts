@@ -736,7 +736,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
   forgetPasswords() {
     this.secrets.clear();
   }
-  async connectionProgress(): Promise<AccountConnection[]> { return this.store.all("accountConnections"); }
+  async connectionProgress(limit?: number): Promise<AccountConnection[]> { return this.store.all("accountConnections", limit); }
   async queueConnection(account: Account, password: string, smtpPassword: string) {
     if (this.actionsClosed) throw Error("Mail actions are closed. Reopen Shep.");
     const attempt: AccountConnection = { id: crypto.randomUUID(), account: structuredClone(account), state: "checking" };

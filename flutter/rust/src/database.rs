@@ -84,7 +84,7 @@ impl Database {
                     .map_err(|_| anyhow::anyhow!("Cache connection failed. Reopen Shep."))?
                     .query_row("PRAGMA user_version", [], |r| r.get(0))?;
                 anyhow::ensure!(
-                    version <= 15,
+                    version <= 17,
                     "This cache requires a newer Shep version. Update before reopening it."
                 );
                 return Ok(profile);
@@ -107,9 +107,27 @@ impl Database {
             )?;
             let version: u32 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             anyhow::ensure!(
-                version <= 15,
+                version <= 17,
                 "This cache requires a newer Shep version. Update before reopening it."
             );
+            if version > 0 && version < 17 {
+                let has_actions: bool = writer.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='individual_mail_actions')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let has_accepted_fields: bool = writer.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('individual_mail_actions') WHERE name='accepted_fields')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if has_actions && !has_accepted_fields {
+                    writer.execute(
+                        "ALTER TABLE individual_mail_actions ADD COLUMN accepted_fields TEXT",
+                        [],
+                    )?;
+                }
+            }
             writer.execute_batch(include_str!("schema.sql"))?;
             // Exclusive ownership proves no previous native process can still
             // finish these SMTP operations. They require explicit review.
@@ -119,6 +137,10 @@ impl Database {
             )?;
             writer.execute(
                 "UPDATE outgoing_sent SET state='uncertain' WHERE state='appending'",
+                [],
+            )?;
+            writer.execute(
+                "UPDATE individual_mail_actions SET status='repair',error='The provider acknowledged this change. Finish saving it locally.' WHERE status='running' AND EXISTS(SELECT 1 FROM individual_mail_action_receipts WHERE action=individual_mail_actions.id)",
                 [],
             )?;
             writer.execute(

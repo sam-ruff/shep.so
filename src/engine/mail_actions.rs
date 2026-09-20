@@ -409,9 +409,16 @@ impl Engine {
     ) -> anyhow::Result<(Option<Account>, MoveReceipt)> {
         #[cfg(feature = "test-support")]
         if self.demo && std::env::args().any(|arg| arg == "--undo-failure-once") {
-            let failed: bool = self.store.get("preview-undo-failed").await?;
-            if !failed {
-                self.store.put("preview-undo-failed", true).await?;
+            let fail = self
+                .store
+                .run(|db| {
+                    Ok(db.execute(
+                        "INSERT OR IGNORE INTO kv(key,value) VALUES('preview-undo-failed','true')",
+                        [],
+                    )? == 1)
+                })
+                .await?;
+            if fail {
                 tokio::time::sleep(Duration::from_millis(1800)).await;
                 anyhow::bail!("Fixture server rejected Undo. Retry is available.");
             }

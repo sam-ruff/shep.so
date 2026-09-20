@@ -10,6 +10,36 @@ use iced::{
     widget::{button, column, container, pick_list, row, scrollable, space, text},
 };
 
+fn compose_binding(
+    key: text_editor::KeyPress,
+    shortcuts: &crate::shortcuts::Keymap,
+) -> Option<text_editor::Binding<Message>> {
+    let modifiers = key.modifiers;
+    let navigation = modifiers.command()
+        && chord(&key.key, modifiers)
+            .as_deref()
+            .and_then(|chord| shortcuts.resolve(chord))
+            .is_some_and(|action| {
+                matches!(
+                    action,
+                    Action::Search
+                        | Action::Find
+                        | Action::Mail
+                        | Action::Calendar
+                        | Action::Settings
+                )
+            });
+    if navigation {
+        return None;
+    }
+    let binding = text_editor::Binding::from_key_press(key)?;
+    if matches!(binding, text_editor::Binding::Insert(_)) && modifiers.command() && !modifiers.alt()
+    {
+        return None;
+    }
+    Some(binding)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Exit {
     Tab(Tab),
@@ -23,6 +53,8 @@ pub(super) struct Session {
     pub editor: text_editor::Content,
     pub dirty: Option<Instant>,
     pub pending: Option<u64>,
+    pub saved_revision: Option<u64>,
+    pub save_error: Option<(u64, String)>,
     pub explicit_save: bool,
     pub show_recipients: bool,
     pub minimized: bool,
@@ -335,8 +367,21 @@ impl App {
         } else {
             "New message"
         };
+        let session = &self.composer.current;
+        let status = if session.save_error.is_some() {
+            text("Not saved").font(BOLD)
+        } else {
+            muted(if session.pending.is_some() || session.dirty.is_some() {
+                "Saving…"
+            } else if session.saved_revision.is_some() {
+                "Saved"
+            } else {
+                ""
+            })
+        };
         let header = row![
             text(title).size(16).font(BOLD),
+            status.size(11),
             space().width(Length::Fill),
             self.icon_action(
                 if self.composer.current.minimized {
@@ -430,6 +475,7 @@ impl App {
             super::text_context::TextContext::editor(
                 widget::text_editor(&self.composer.current.editor)
                     .id("compose-body")
+                    .key_binding(|key| compose_binding(key, &self.preferences.shortcuts))
                     .on_action(Message::Editor)
                     .placeholder("Write your message…")
                     .style(editor_field)
@@ -532,15 +578,30 @@ impl App {
                     "Discard draft",
                     Message::ReviewDiscardDraft(self.composer.current.draft.id.clone())
                 ),
-                button(text("Save draft").size(12))
-                    .padding([12, 14])
-                    .style(ghost)
-                    .on_press_maybe((!self.compose_locked()).then_some(Message::SaveDraft)),
+                button(
+                    text(if self.composer.current.save_error.is_some() {
+                        "Retry save"
+                    } else {
+                        "Save draft"
+                    })
+                    .size(12)
+                )
+                .padding([12, 14])
+                .style(ghost)
+                .on_press_maybe((!self.compose_locked()).then_some(Message::SaveDraft)),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
             .wrap(),
         );
+        let session = &self.composer.current;
+        if let Some((_, error)) = &session.save_error {
+            form = form.push(text(format!("Draft not saved. {error}")).size(11));
+        } else if session.pending.is_some() || session.dirty.is_some() {
+            form = form.push(muted("Saving draft…").size(11));
+        } else if session.saved_revision.is_some() {
+            form = form.push(muted("Draft saved on this device").size(11));
+        }
         form.into()
     }
 

@@ -981,7 +981,7 @@ class NativeFlows(unittest.TestCase):
 
     def archive_two_for_recovery(self):
         self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
-                       click(274,218),click(274,322),check("mail_selection.count",2),
+                       click(274,218),click(274,270),check("mail_selection.count",2),
                        check("mail_selection.pending",False),key("Delete"),check("dialog","BulkReview"),
                        key("Return"),check("dialog",None),check("bulk.jobs.0.running",1))
 
@@ -1562,6 +1562,28 @@ class NativeFlows(unittest.TestCase):
                        wait(80),shot("bulk-history-retry-after-restart"),click(560,440),
                        check("bulk.jobs.0.failed",0),{**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
                        check("bulk.jobs.0.restored",2),check("total",120),shot("bulk-history-retry-complete"))
+
+    def test_bulk_parallel_account_undo_fails_once_and_retries_its_receipt(self):
+        started = self.mcp.call("desktop.start", persistent=True, mail_actions="slow",
+                                undo_failure_once=True)
+        print(f"Parallel group Undo evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(click(584,164), check("mail_selection.mode",True),
+                       check("mail_selection.drawn",True), click(274,218), click(274,322),
+                       check("mail_selection.count",2), check("mail_selection.pending",False),
+                       key("Delete"), check("dialog","BulkReview"), key("Return"),
+                       check("dialog",None), check("bulk.jobs.0.running",2),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.completed",2), click(1340,874),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.failed",1), check("bulk.jobs.0.restored",1),
+                       check("bulk.jobs.0.uncertain",0), shot("parallel-undo-one-failure"),
+                       {"type":"restart"}, check("bulk.jobs.0.failed",1),
+                       click(1330,36), check("dialog","BulkHistory"), wait(80),
+                       click(700,490), wait(80), click(560,440),
+                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
+                       check("bulk.jobs.0.failed",0), check("bulk.jobs.0.restored",2),
+                       check("bulk.jobs.0.uncertain",0), check("total",120),
+                       shot("parallel-undo-retry-complete"))
 
     def test_bulk_history_continue_and_job_pages(self):
         started=self.mcp.call("desktop.start",bulk_history=True)
@@ -4420,7 +4442,7 @@ class NativeFlows(unittest.TestCase):
                        key("BackSpace"), check("dialog","BulkReview"),
                        check("bulk.review_count",120), key("y"), check("dialog",None),
                        check("total",0), check("action_toast.count",120),
-                       shot("bulk-archive-immediate"), check("bulk.jobs.0.running",1), click(1340,874),
+                       shot("bulk-archive-immediate"), check("bulk.jobs.0.running",2), click(1340,874),
                        check("action_toast.label","Restored 120 messages"), check("total",120),
                        shot("bulk-undo-immediate"), {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
                        check("bulk.jobs.0.failed",0), check("bulk.jobs.0.uncertain",0),
@@ -4463,7 +4485,7 @@ class NativeFlows(unittest.TestCase):
                        check("mail_selection.pending",False), key("ctrl+d"),
                        check("dialog","BulkReview"), check("bulk.review_count",2),
                        key("Return"), check("dialog",None), check("total",118),
-                       check("action_toast.count",2), check("bulk.jobs.0.running",1),
+                       check("action_toast.count",2), check("bulk.jobs.0.running",2),
                        shot("bulk-delete-pending"), {**check("bulk.jobs.0.failed",2),"timeout_ms":5000},
                        check("bulk.jobs.0.remaining",0), check("total",120),
                        check("notice","2 messages could not be confirmed","contains"),
@@ -4486,7 +4508,7 @@ class NativeFlows(unittest.TestCase):
                        shot("bulk-dark-delete-review"),key("n"),check("dialog",None),check("total",120),
                        key("Delete"),check("dialog","BulkReview"),check("bulk.action","Archive"),
                        key("Return"),check("dialog",None),check("total",118),
-                       check("action_toast.count",2),check("bulk.jobs.0.running",1),
+                       check("action_toast.count",2),check("bulk.jobs.0.running",2),
                        shot("bulk-dark-archive-pending"),click(800,594),
                        check("action_toast.label","Restored 2 messages"),check("total",120),
                        shot("bulk-dark-undo-immediate"),
@@ -5243,6 +5265,52 @@ class NativeFlows(unittest.TestCase):
                        click(680,279),type_text("Compact draft"),check("draft_count",1),
                        click(729,543),check("dialog","DiscardDraft"),shot("discard-review-dark-compact"),
                        key("Escape"),check("composer.visible", True),check("compose_fields.subject","Compact draft"))
+
+    def test_composer_preferences_shortcut_preserves_focused_body(self):
+        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+                       click(850, 400), type_text("Keep comma, and words"),
+                       check("editor", "Keep comma, and words"),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       key("ctrl+1"), check("tab", "Mail"), check("composer.visible", True),
+                       check("editor", "Keep comma, and words"),
+                       click(850, 400), key("ctrl+a"), type_text("Normal comma, still works"),
+                       check("editor", "Normal comma, still works"),
+                       shot("composer-shortcut-preserves-body"))
+
+    def test_draft_save_feedback_survives_switch_and_retries_latest_text(self):
+        result = self.mcp.call("desktop.start", draft_save_failure_once=True, persistent=True)
+        print(f"Draft save evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+                       click(850, 279), type_text("A retained draft"),
+                       check("composer.pending", None, "ne"), shot("draft-saving-light"))
+        original = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(key("Escape"), check("composer.visible", False),
+                       key("c"), check("composer.visible", True), wait(80),
+                       click(850, 279), type_text("B independent draft"),
+                       check(f"composer.save_errors.{original}", "Preview storage failure", "contains"),
+                       check("draft_count", 1), shot("draft-parked-error-light"),
+                       click(98, 555), check("composer.id", original),
+                       check("composer.save_error", "Preview storage failure", "contains"),
+                       check("compose_fields.subject", "A retained draft"), shot("draft-retry-light"),
+                       click(98, 879), check("tab", "Preferences"),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       click(98, 555), check("composer.id", original),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900, 640]),
+                       check("composer.save_error", "Preview storage failure", "contains"), shot("draft-retry-dark-compact"),
+                       {"type": "resize", "width": 1440, "height": 920}, check("window_size", [1440, 920]),
+                       wait(80),
+                       click(890, 633), check("composer.save_error", None),
+                       check("composer.saved_revision", None, "ne"), check("draft_count", 2),
+                       shot("draft-retry-saved-dark"),
+                       click(98, 879), check("tab", "Preferences"),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       click(98, 555), check("composer.id", original), shot("draft-saved-dark"))
+        self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("draft_count", 2), click(98, 555), check("composer.visible", True),
+                       check("compose_fields.subject", "A retained draft"),
+                       check("composer.save_error", None), check("composer.saved_revision", None, "ne"),
+                       shot("draft-saved-after-restart"))
 
     def test_compose_autosaves_and_move_accepts_typed_folder(self):
         self.mcp.batch(key("c"), check("composer.visible", True),
@@ -6778,7 +6846,7 @@ class NativeFlows(unittest.TestCase):
                 self.assert_store_matches(total=total - 3, folder="INBOX")
             elif slow:
                 # The delayed fixture keeps the batch running so Undo lands mid-job.
-                self.mcp.batch(check("bulk.jobs.0.running", 1))
+                self.mcp.batch(check("bulk.jobs.0.running", 1, "gte"))
             self.mcp.batch(self.UNDO, check("action_toast.label", "Restored 3 messages"), check("total", total),
                            {**check("bulk.jobs.0.remaining", 0), "timeout_ms": 5000},
                            check("bulk.jobs.0.failed", 0), check("bulk.jobs.0.uncertain", 0), *self.settled(slow),

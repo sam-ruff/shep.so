@@ -2,7 +2,7 @@ use crate::api::MobileProfile;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use secrecy::SecretString;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shep_action_core::Status;
 use shep_mail_core::{
@@ -805,9 +805,9 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::Groups{command} => crate::groups::run(profile,command).await,
         Request::MailActions{offset,runnable} => db.read(move|db| {
             let query=if runnable {
-                "SELECT id,mail,account,fields,status,error,created FROM individual_mail_actions WHERE status IN ('queued','waiting') ORDER BY created,id LIMIT 50 OFFSET ?1"
+                "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions WHERE status IN ('queued','waiting') ORDER BY created,id LIMIT 50 OFFSET ?1"
             } else {
-                "SELECT id,mail,account,fields,status,error,created FROM individual_mail_actions ORDER BY created DESC,id LIMIT 50 OFFSET ?1"
+                "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions ORDER BY created DESC,id LIMIT 50 OFFSET ?1"
             };
             let saved=db.prepare(query)?
                 .query_map([offset],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,i64>(6)?)))?
@@ -830,7 +830,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let lookup=id.clone();
             let undo_id=format!("{id}:undo");
             let (mail,fields,physical)=db.read(move|db|{
-                let (mail,fields,physical,status):(String,String,String,String)=db.query_row("SELECT mail,fields,physical,status FROM individual_mail_actions WHERE id=?1",[lookup],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+                let (mail,fields,physical,status):(String,String,String,String)=db.query_row("SELECT mail,COALESCE(accepted_fields,fields),physical,status FROM individual_mail_actions WHERE id=?1",[lookup],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
                 anyhow::ensure!(status=="succeeded","Only a confirmed mail change can be undone.");
                 let fields=serde_json::from_str::<Value>(&fields)?;
                 Ok((mail,fields,serde_json::from_str::<Value>(&physical)?))
@@ -851,6 +851,15 @@ async fn inspect_mail_action(
     credential_slot: Option<String>,
     password: Option<SecretString>,
 ) -> Result<Value> {
+    let repair = id.clone();
+    if profile
+        .database
+        .write(move |db| apply_individual_receipt(db, &repair))
+        .await?
+        == ReceiptApplication::Complete
+    {
+        return Ok(json!({"status":"succeeded","committed":true}));
+    }
     let lookup = id.clone();
     let account = profile
         .database
@@ -881,7 +890,7 @@ async fn inspect_mail_action(
         .database
         .read(move |db| {
             crate::connections::check_binding(db, &account_id, credential_slot.as_deref())?;
-            let (mail,fields,physical,status,intent_revision):(String,String,String,String,i64)=db.query_row("SELECT mail,fields,physical,status,intent_revision FROM individual_mail_actions WHERE id=?1",[lookup],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
+            let (mail,fields,physical,status,intent_revision):(String,String,String,String,i64)=db.query_row("SELECT mail,COALESCE(accepted_fields,fields),physical,status,intent_revision FROM individual_mail_actions WHERE id=?1",[lookup],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;
             anyhow::ensure!(matches!(status.as_str(),"repair"|"uncertain"),"This mail change no longer needs inspection.");
             let fields:Value=serde_json::from_str(&fields)?;
             let physical:Value=serde_json::from_str(&physical)?;
@@ -1018,6 +1027,137 @@ pub(crate) struct Mutation {
     pub intent: bool,
     pub report: bool,
 }
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum IndividualReceipt {
+    Move { receipt: Box<MoveReceipt> },
+    Flags,
+}
+
+fn save_individual_receipt(
+    db: &Connection,
+    action: &str,
+    receipt: &IndividualReceipt,
+) -> Result<()> {
+    let tx = db.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO individual_mail_action_receipts(action,result) VALUES(?1,?2) ON CONFLICT(action) DO UPDATE SET result=excluded.result",
+        params![action, serde_json::to_string(receipt)?],
+    )?;
+    tx.execute(
+        "UPDATE individual_mail_actions SET status='repair',error='The provider acknowledged this change. Finish saving it locally.' WHERE id=?1 AND status='running'",
+        [action],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReceiptApplication {
+    Missing,
+    NeedsInspection,
+    Complete,
+}
+
+fn apply_individual_receipt(db: &Connection, action: &str) -> Result<ReceiptApplication> {
+    let tx = db.unchecked_transaction()?;
+    let saved: Option<(String, String, String, String, i64)> = tx
+        .query_row(
+            "SELECT a.mail,COALESCE(a.accepted_fields,a.fields),a.physical,r.result,a.intent_revision FROM individual_mail_actions a JOIN individual_mail_action_receipts r ON r.action=a.id WHERE a.id=?1 AND a.status IN ('running','repair')",
+            [action],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .optional()?;
+    let Some((mail, fields, physical, receipt, revision)) = saved else {
+        return Ok(ReceiptApplication::Missing);
+    };
+    let fields: Value = serde_json::from_str(&fields)?;
+    let physical: Value = serde_json::from_str(&physical)?;
+    let receipt: IndividualReceipt = serde_json::from_str(&receipt)?;
+    let current = stored_mail(&tx, &mail)?;
+    let mut needs_inspection = false;
+    let owns = |field: &str| -> Result<bool> {
+        Ok(tx
+            .query_row(
+                "SELECT revision=?3 FROM mail_intents WHERE mail=?1 AND field=?2",
+                params![mail, field, revision],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    };
+    match receipt {
+        IndividualReceipt::Move { receipt } => {
+            let continuous = action_source_matches(&tx, &current, &physical)?;
+            let at_source = physical["account"].as_str() == Some(current.account_id.as_str())
+                && physical["folder"].as_str() == Some(current.folder.as_str())
+                && physical["remote_id"].as_str() == Some(current.remote_id.as_str())
+                && continuous;
+            let at_receipt = receipt.current.as_ref().is_some_and(|target| {
+                target.account_id == current.account_id
+                    && target.folder == current.folder
+                    && target.remote_id == current.remote_id
+            }) && continuous;
+            let at_unresolved_target = receipt.current.is_none()
+                && receipt.account == current.account_id
+                && receipt.folder == current.folder
+                && continuous;
+            anyhow::ensure!(
+                at_source || at_receipt || at_unresolved_target,
+                "The acknowledged move no longer matches this cached message. Refresh and review it."
+            );
+            if at_source {
+                mark_local_sent_edit(&tx, &current)?;
+                save_move(&tx, &mail, &receipt)?;
+            }
+            needs_inspection = receipt.current.is_none();
+        }
+        IndividualReceipt::Flags => {
+            anyhow::ensure!(
+                action_source_matches(&tx, &current, &physical)?,
+                "The acknowledged flag change no longer matches this cached message. Refresh and review it."
+            );
+            let unread = if owns("unread")? {
+                fields.get("unread").and_then(Value::as_bool)
+            } else {
+                None
+            };
+            let starred = if owns("starred")? {
+                fields.get("starred").and_then(Value::as_bool)
+            } else {
+                None
+            };
+            if unread.is_none() && starred.is_none() {
+                tx.execute(
+                    "UPDATE individual_mail_actions SET status='succeeded',error=NULL WHERE id=?1 AND status IN ('running','repair')",
+                    [action],
+                )?;
+                tx.commit()?;
+                return Ok(ReceiptApplication::Complete);
+            }
+            mark_local_sent_edit(&tx, &current)?;
+            acknowledged_mail_write(&tx, &mail, || {
+                Ok(tx.execute(
+                    "UPDATE mail SET unread=COALESCE(?2,unread),starred=COALESCE(?3,starred) WHERE id=?1",
+                    params![mail, unread, starred],
+                )?)
+            })?;
+        }
+    }
+    if !needs_inspection {
+        tx.execute(
+            "UPDATE individual_mail_actions SET status='succeeded',error=NULL WHERE id=?1 AND status IN ('running','repair')",
+            [action],
+        )?;
+    }
+    tx.commit()?;
+    Ok(if needs_inspection {
+        ReceiptApplication::NeedsInspection
+    } else {
+        ReceiptApplication::Complete
+    })
+}
 pub(crate) fn record_intent(db: &Connection, id: &str, fields: &[&str]) -> Result<()> {
     if fields.is_empty() {
         return Ok(());
@@ -1108,9 +1248,6 @@ fn action_physical_continuity(
     let Some(receipt) = receipt else {
         return Ok(false);
     };
-    let Some(current) = receipt.current.as_ref() else {
-        return Ok(false);
-    };
     let frozen_fingerprint = physical
         .get("fingerprint")
         .filter(|value| !value.is_null())
@@ -1120,15 +1257,21 @@ fn action_physical_continuity(
     let raw: Vec<u8> = db.query_row("SELECT raw FROM mail WHERE id=?1", [&message.id], |r| {
         r.get(0)
     })?;
+    let identity_matches = receipt.current.as_ref().map_or_else(
+        || message.account_id == receipt.account && message.folder == receipt.folder,
+        |current| {
+            current.account_id == message.account_id
+                && current.folder == message.folder
+                && current.remote_id == message.remote_id
+        },
+    );
     Ok(receipt.account
         == physical
             .get("account")
             .and_then(Value::as_str)
             .unwrap_or_default()
         && receipt.folder == destination
-        && current.account_id == message.account_id
-        && current.folder == message.folder
-        && current.remote_id == message.remote_id
+        && identity_matches
         && receipt
             .fingerprint
             .as_ref()
@@ -1153,6 +1296,20 @@ fn action_source_matches(db: &Connection, message: &Mail, physical: &Value) -> R
     Ok(physical["folder"].as_str() == Some(message.folder.as_str())
         && physical["remote_id"].as_str() == Some(message.remote_id.as_str()))
 }
+fn provider_definitely_refused(error: &anyhow::Error) -> bool {
+    classify_move_failure(error) == MoveFailure::Refused
+        || error
+            .chain()
+            .any(|cause| cause.is::<shep_mail_core::mail_actions::FlagsRejected>())
+}
+#[derive(Debug)]
+struct ClaimRejected;
+impl std::fmt::Display for ClaimRejected {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("This message changed identity; no provider operation was started.")
+    }
+}
+impl std::error::Error for ClaimRejected {}
 pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Result<Value> {
     let db = &profile.database;
     let action_id = mutation.action_id.clone();
@@ -1191,6 +1348,7 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
         }
         let message=stored_mail(&tx,&id)?;
         let account=stored_account(&tx,&message.account_id)?;
+        anyhow::ensure!(account.protocol==Protocol::Pop3 || folder.is_none() || (unread.is_none() && starred.is_none()),"Move and flag changes must be separate actions.");
         if intent {
             let fields:Vec<&str>=[folder.as_ref().map(|_|"folder"),unread.map(|_|"unread"),starred.map(|_|"starred")].into_iter().flatten().collect();
             let fingerprint = if folder.is_some() {
@@ -1235,7 +1393,7 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
                     );
                 }
                 if let Some(parent)=&parent_action {
-                    let (parent_mail,parent_fields,parent_revision,parent_status):(String,String,i64,String)=tx.query_row("SELECT mail,fields,intent_revision,status FROM individual_mail_actions WHERE id=?1",[parent],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+                    let (parent_mail,parent_fields,parent_revision,parent_status):(String,String,i64,String)=tx.query_row("SELECT mail,COALESCE(accepted_fields,fields),intent_revision,status FROM individual_mail_actions WHERE id=?1",[parent],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
                     anyhow::ensure!(parent_status=="succeeded" && parent_mail==message.id,"This Undo no longer matches the confirmed mail change.");
                     let parent_fields:Value=serde_json::from_str(&parent_fields)?;
                     let parent_physical:String=tx.query_row("SELECT physical FROM individual_mail_actions WHERE id=?1",[parent],|r|r.get(0))?;
@@ -1271,7 +1429,6 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
             tx.commit()?;
             return Ok(if has_password {None} else {Some(if report {json!({"action_id":action_id,"status":"waiting","requires_credentials":account.id})} else {json!({"requires_credentials":account.id})})});
         }
-        anyhow::ensure!(account.protocol==Protocol::Pop3 || folder.is_none() || (unread.is_none() && starred.is_none()),"Move and flag changes must be separate actions.");
         mark_local_sent_edit(&tx,&message)?;
         acknowledged_mail_write(&tx,&message.id,|| Ok(tx.execute("UPDATE mail SET folder=COALESCE(?2,folder),unread=COALESCE(?3,unread),starred=COALESCE(?4,starred) WHERE id=?1",params![message.id,folder,unread,starred])?))?;
         tx.execute("UPDATE individual_mail_actions SET status='succeeded',error=NULL WHERE id=?1",[&action_id])?;
@@ -1291,21 +1448,21 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
             })
             .await;
         if let Err(error) = binding {
-            let rejected = mutation.action_id.clone();
+            let waiting = mutation.action_id.clone();
+            let saved_action = waiting.clone();
             let message = format!("{error:#}");
             let saved = message.clone();
             db.write(move |db| {
-                let tx = db.transaction()?;
-                tx.execute(
-                    "UPDATE individual_mail_actions SET status='rejected',error=?2 WHERE id=?1",
-                    params![&rejected, saved],
+                db.execute(
+                    "UPDATE individual_mail_actions SET status='waiting',error=?2 WHERE id=?1 AND status IN ('queued','waiting')",
+                    params![&saved_action, saved],
                 )?;
-                release_action_intent(&tx, &rejected)?;
-                tx.commit()?;
                 Ok(())
             })
             .await?;
-            return Err(anyhow::anyhow!(message));
+            return Ok(
+                json!({"action_id":waiting,"status":"waiting","committed":true,"warning":message}),
+            );
         }
     }
     let final_action = mutation.action_id.clone();
@@ -1332,21 +1489,17 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
     {
         return result;
     }
-    if let Err(error) = &result
-        && !format!("{error:#}").contains("no provider operation was started")
-    {
-        let id = final_action.clone();
-        let warning = format!("Waiting to synchronise. {error:#}");
-        let saved = warning.clone();
-        let waiting=db.write(move |db| Ok(db.execute(
-            "UPDATE individual_mail_actions SET status='waiting',error=?2 WHERE id=?1 AND status IN ('queued','waiting')",
-            params![id,saved])?==1)).await?;
-        if waiting {
-            return Ok(
-                json!({"action_id":final_action,"status":"waiting","committed":true,"warning":warning}),
-            );
-        }
-    }
+    let status_before_result = {
+        let saved = final_action.clone();
+        db.read(move |db| {
+            Ok(db.query_row(
+                "SELECT status FROM individual_mail_actions WHERE id=?1",
+                [saved],
+                |row| row.get::<_, String>(0),
+            )?)
+        })
+        .await?
+    };
     let (status, error) = match &result {
         Ok(value) if value.get("warning").is_some() => (
             "repair",
@@ -1356,11 +1509,15 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
                 .map(str::to_owned),
         ),
         Ok(_) => ("succeeded", None),
+        Err(error) if status_before_result == "repair" => ("repair", Some(format!("{error:#}"))),
         Err(error)
-            if format!("{error:#}").contains("no provider operation was started")
-                || classify_move_failure(error) == MoveFailure::Refused =>
+            if error.chain().any(|cause| cause.is::<ClaimRejected>())
+                || provider_definitely_refused(error) =>
         {
             ("rejected", Some(format!("{error:#}")))
+        }
+        Err(error) if matches!(status_before_result.as_str(), "queued" | "waiting") => {
+            ("waiting", Some(format!("{error:#}")))
         }
         Err(error) => ("uncertain", Some(format!("{error:#}"))),
     };
@@ -1389,7 +1546,7 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
         }
         Err(original) if status == "rejected" => Err(original),
         Err(_) => Ok(
-            json!({"action_id":final_action,"status":"uncertain","committed":true,"warning":error.expect("uncertain actions have an error")}),
+            json!({"action_id":final_action,"status":status,"committed":true,"warning":error.expect("failed actions have an error")}),
         ),
     }
 }
@@ -1525,9 +1682,9 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             credential_slot,
             id,
             password,
-            folder,
-            unread,
-            starred,
+            mut folder,
+            mut unread,
+            mut starred,
         } => {
             let identity = id.clone();
             let account = db
@@ -1634,42 +1791,90 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             } else {
                 None
             };
+            let dispatch_lineage = if action_id.is_some() {
+                let identity = id.clone();
+                Some(
+                    db.read(move |db| {
+                        Ok(db.query_row(
+                            "SELECT token FROM mail_lineage WHERE id=?1",
+                            [identity],
+                            |row| row.get::<_, String>(0),
+                        )?)
+                    })
+                    .await?,
+                )
+            } else {
+                None
+            };
+            let durable_action = action_id.clone();
             if let Some(action_id) = action_id {
                 let source = message.clone();
                 let slot = credential_slot.clone();
+                let dispatch_physical = serde_json::to_string(
+                    &json!({"account":source.account_id,"folder":source.folder,"remote_id":source.remote_id,"unread":source.unread,"starred":source.starred,"fingerprint":fingerprint.clone(),"lineage":dispatch_lineage}),
+                )?;
+                let claim_fingerprint = fingerprint.clone();
+                let claim_lineage = dispatch_lineage.clone();
                 let claimed = db.write(move |db| {
                     let tx = db.transaction()?;
+                    let current = stored_mail(&tx, &source.id)?;
+                    let current_lineage: String = tx.query_row(
+                        "SELECT token FROM mail_lineage WHERE id=?1",
+                        [&source.id],
+                        |row| row.get(0),
+                    )?;
+                    if !(current.account_id == source.account_id
+                            && current.folder == source.folder
+                            && current.remote_id == source.remote_id
+                            && claim_lineage.as_deref() == Some(current_lineage.as_str())) {
+                        anyhow::bail!(ClaimRejected);
+                    }
+                    if let Some(expected) = claim_fingerprint.as_ref() {
+                        let raw: Vec<u8> = tx.query_row(
+                            "SELECT raw FROM mail WHERE id=?1",
+                            [&source.id],
+                            |row| row.get(0),
+                        )?;
+                        if !expected.matches(&raw) {
+                            anyhow::bail!(ClaimRejected);
+                        }
+                    }
                     let (status, physical, fields, revision):(String,String,String,i64)=tx.query_row(
                         "SELECT status,physical,fields,intent_revision FROM individual_mail_actions WHERE id=?1",
                         [&action_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)))?;
                     if !matches!(status.as_str(),"queued"|"waiting") {
                         let warning = matches!(status.as_str(),"running"|"repair"|"uncertain").then_some("This action already has an execution or recovery result.");
-                        return Ok(Some(json!({"action_id":action_id,"status":status,"committed":matches!(status.as_str(),"running"|"succeeded"|"repair"|"uncertain"),"warning":warning})));
+                        return Ok((Some(json!({"action_id":action_id,"status":status,"committed":matches!(status.as_str(),"running"|"succeeded"|"repair"|"uncertain"),"warning":warning})),None));
                     }
                     let frozen:Value=serde_json::from_str(&physical)?;
-                    anyhow::ensure!(action_source_matches(&tx,&source,&frozen)?,
-                        "This message changed identity; no provider operation was started.");
-                    let fields:Value=serde_json::from_str(&fields)?;
-                    let mut superseded=false;
-                    for field in ["folder","unread","starred"] {
-                        if fields.get(field).is_some_and(|value|!value.is_null()) {
-                            let owned=tx.query_row("SELECT revision=?3 FROM mail_intents WHERE mail=?1 AND field=?2",params![source.id,field,revision],|row|row.get::<_,bool>(0)).optional()?.unwrap_or(false);
-                            superseded|=!owned;
-                        }
+                    if !action_source_matches(&tx,&source,&frozen)? {
+                        anyhow::bail!(ClaimRejected);
                     }
-                    if superseded {
+                    let fields:Value=serde_json::from_str(&fields)?;
+                    let owned = |field: &str| -> Result<bool> {
+                        Ok(tx.query_row("SELECT revision=?3 FROM mail_intents WHERE mail=?1 AND field=?2",params![source.id,field,revision],|row|row.get::<_,bool>(0)).optional()?.unwrap_or(false))
+                    };
+                    let accepted_folder=if owned("folder")? {fields.get("folder").and_then(Value::as_str).map(str::to_owned)} else {None};
+                    let accepted_unread=if owned("unread")? {fields.get("unread").and_then(Value::as_bool)} else {None};
+                    let accepted_starred=if owned("starred")? {fields.get("starred").and_then(Value::as_bool)} else {None};
+                    if accepted_folder.is_none() && accepted_unread.is_none() && accepted_starred.is_none() {
                         tx.execute("UPDATE individual_mail_actions SET status='cancelled',error=NULL WHERE id=?1",[&action_id])?;
                         release_action_intent(&tx,&action_id)?;
                         tx.commit()?;
-                        return Ok(Some(json!({"action_id":action_id,"status":"cancelled","committed":false})));
+                        return Ok((Some(json!({"action_id":action_id,"status":"cancelled","committed":false})),None));
                     }
-                    tx.execute("UPDATE individual_mail_actions SET status='running',credential_slot=COALESCE(?2,credential_slot),error=NULL WHERE id=?1",params![action_id,slot])?;
+                    let accepted=serde_json::to_string(&json!({"folder":&accepted_folder,"unread":accepted_unread,"starred":accepted_starred}))?;
+                    tx.execute("UPDATE individual_mail_actions SET status='running',credential_slot=COALESCE(?2,credential_slot),physical=?3,accepted_fields=?4,error=NULL WHERE id=?1",params![action_id,slot,dispatch_physical,accepted])?;
                     tx.commit()?;
-                    Ok(None)
+                    Ok((None,Some((accepted_folder,accepted_unread,accepted_starred))))
                 }).await?;
-                if let Some(result) = claimed {
+                if let Some(result) = claimed.0 {
                     return Ok(result);
                 }
+                let accepted = claimed
+                    .1
+                    .context("The accepted mail fields were not saved.")?;
+                (folder, unread, starred) = accepted;
             }
             if remote && let Some(destination) = folder.clone() {
                 password
@@ -1702,8 +1907,23 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                             .map(|_| None)
                     }
                 };
-                tokio::time::timeout(Duration::from_secs(45),operation).await.ok().and_then(Result::ok)
-                    .context("The server did not confirm this change. Refresh its folders before another action.")?
+                let result = tokio::time::timeout(Duration::from_secs(45), operation)
+                    .await
+                    .context("The server did not confirm this change. Refresh its folders before another action.")?;
+                match result {
+                    Ok(remote_id) => remote_id,
+                    Err(error) => {
+                        if provider_definitely_refused(&error) && folder.is_some() {
+                            let identity = id.clone();
+                            db.write(move |db| {
+                                db.execute("DELETE FROM pending_moves WHERE id=?1", [identity])?;
+                                Ok(())
+                            })
+                            .await?;
+                        }
+                        return Err(error);
+                    }
+                }
             } else {
                 None
             };
@@ -1717,18 +1937,40 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                 )
             });
             let unresolved = receipt.is_some() && remote_id.is_none();
+            if let Some(action) = durable_action.as_deref() {
+                let acknowledged = receipt
+                    .clone()
+                    .map(|receipt| IndividualReceipt::Move {
+                        receipt: Box::new(receipt),
+                    })
+                    .unwrap_or(IndividualReceipt::Flags);
+                let saved_action = action.to_owned();
+                db.write(move |db| save_individual_receipt(db, &saved_action, &acknowledged))
+                    .await?;
+            }
             let identity = id.clone();
             let pending_receipt = receipt.clone();
-            let saved=db.write(move |db| {
-                let tx=db.transaction()?;
-                mark_local_sent_edit(&tx,&message)?;
-                if let Some(receipt)=&pending_receipt {
-                    save_move(&tx,&identity,receipt)?;
-                } else {
-                    acknowledged_mail_write(&tx,&identity,|| Ok(tx.execute("UPDATE mail SET folder=COALESCE(?2,folder),unread=COALESCE(?3,unread),starred=COALESCE(?4,starred) WHERE id=?1",params![identity,folder,unread,starred])?))?;
-                }
-                tx.commit()?; Ok(())
-            }).await;
+            let saved = if let Some(action) = durable_action {
+                db.write(move |db| {
+                    anyhow::ensure!(
+                        apply_individual_receipt(db, &action)? != ReceiptApplication::Missing,
+                        "The saved provider acknowledgment no longer matches this action."
+                    );
+                    Ok(())
+                })
+                .await
+            } else {
+                db.write(move |db| {
+                    let tx=db.transaction()?;
+                    mark_local_sent_edit(&tx,&message)?;
+                    if let Some(receipt)=&pending_receipt {
+                        save_move(&tx,&identity,receipt)?;
+                    } else {
+                        acknowledged_mail_write(&tx,&identity,|| Ok(tx.execute("UPDATE mail SET folder=COALESCE(?2,folder),unread=COALESCE(?3,unread),starred=COALESCE(?4,starred) WHERE id=?1",params![identity,folder,unread,starred])?))?;
+                    }
+                    tx.commit()?; Ok(())
+                }).await
+            };
             if remote && saved.is_err() {
                 return Ok(
                     json!({"committed":true,"warning":"The server acknowledged the change, but the cache could not save it. Refresh before another action."}),

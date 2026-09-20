@@ -45,13 +45,43 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   pass 1,509 Rust test executions, with four ignored. Final native gates pass
   29 scenarios, with one live-mailbox skip, covering correlated close
   acknowledgements, calendar retries and cache repair while capacity is held.
-  Retain explicit follow-ups for fairness within a multi-account group and
-  automatic retargeting over an unresolved legacy move; the latter currently
-  rejects admission until checked recovery proves its physical source.
-  Flutter still needs receipt-before-cache persistence for individual provider
-  actions, exact dispatch baselines after queued predecessors, per-field compound
-  acceptance and fair resumption beyond the first bounded batch. Preserve typed
-  provider refusals instead of classifying every transport error as uncertain.
+  Independent accounts within one group now progress under one retained lease;
+  21 integrated scheduler and 26 store tests pass; 24 native scenarios pass with
+  one live-mailbox skip. Final commit gates remain before shipping this
+  continuation. Keep the per-group storage-error
+  cooldown and automatic retargeting over an unresolved legacy move explicit;
+  the latter rejects admission until checked recovery proves its physical source.
+  Audit the item scheduler's computed cursor/query plan at 100,000-message scale;
+  bounded returned rows alone do not prove bounded database work per claim.
+  Flutter receipt-before-cache persistence and exact dispatch baselines now pass
+  126 Rust and 175 Flutter tests, including newer field ownership, replacement,
+  cache-failure restart and missing destination UID recovery without replay.
+  Schema 17 now persists the accepted field subset at claim, including partial
+  supersession, receipt repair and exact Undo; 131 integrated Rust tests and
+  all-target/all-feature Clippy pass.
+  Keep fair resumption beyond the first bounded batch open. Typed refusals reject;
+  pre-dispatch credential failure stays Waiting. Remote move plus flag payloads
+  are rejected before admission until separate provider receipts are supported.
+
+  Next integration adds browser connection attempts to Activity through their
+  existing bounded owner. Native account setup needs an additional prerequisite:
+  it currently writes active keychain entries before settings and treats probes
+  as a separate operation. Adopt staged credential slots consistently across
+  sync, SMTP, vault, import/removal and cleanup before claiming checked background
+  activation. Preserve the previous connection until the new attempt activates.
+  Draft adoption is adding session-owned saving/failure feedback and Retry,
+  preserving newer edits, parked drafts and forced-close saving through the
+  existing revisioned persistence owner.
+  Native draft recovery exposed Ctrl+, inserting a literal comma in the focused
+  editor while opening Preferences. Preserve the failing `9aa5b298c215` fixture
+  evidence. The command binding fix passes 31 composer unit tests and its saved
+  native keyboard regression. Draft recovery and its final compact contrast
+  rerun pass; light/dark captures are reviewed. Normal commit gates remain.
+  Native preferences already preserve field intent and save through the local
+  writer, but failures only use the shared notice. Add revision-owned save status
+  that survives unrelated notices and ignores stale failure replies; retain local
+  changes and explicit Retry without reverting successful local preferences when
+  later profile publication fails.
 
 Sam reports new mail is slow to arrive and moves failing on `sam@shep.so`
 (Stalwart at `mail.shep.so`). These items outrank everything below. Sam's

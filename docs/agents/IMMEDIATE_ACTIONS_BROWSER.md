@@ -91,6 +91,10 @@ after both probes, then commits account settings and retires progress together.
 Dismissal invalidates an unfinished activation; failure preserves a previously
 usable connection. Reload shows interrupted/failed attempts and requires password
 entry before retry. Removal reviews include attempts and atomically clear them.
+Activity reads at most 21 attempts to display 20 plus an overflow indication,
+using these same records. Reconnect opens the existing credential controls;
+dismissal compares the exact captured attempt and cannot retire its replacement.
+Connection failures and individual mail failures remain independently visible.
 
 Preference values and ownership revisions share one localStorage write. A failed
 legacy mirror does not undo an admitted choice; failed authoritative admission
@@ -110,7 +114,7 @@ reload and refusal to repeat interrupted dispatch. Desktop
 and narrow dark Activity screenshots were reviewed. Exact execution evidence
 belongs in the completion log after integration.
 
-Remaining work includes common summary adapters for every domain, shared WASM
+Remaining work includes common summary adapters for the remaining domains, shared WASM
 lifecycle fixtures and cross-browser execution. Activity reconnect directs
 users to the existing Preferences controls. This slice does not establish the 100 ms performance target, live
 provider parity, whole-client memory bounds or mobile/Apple behaviour.

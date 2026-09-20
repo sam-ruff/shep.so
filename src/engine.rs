@@ -1162,6 +1162,16 @@ impl Engine {
                 let id = draft.id.clone();
                 let revision = draft.revision;
                 let result = async {
+                    #[cfg(feature = "test-support")]
+                    if self.demo
+                        && std::env::args().any(|arg| arg == "--draft-save-failure-once")
+                        && self.store.run(|c| Ok(c.execute("INSERT OR IGNORE INTO kv(key,value) VALUES('preview_draft_save_failed','true')", [])? == 1)).await?
+                    {
+                        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+                        anyhow::bail!(
+                            "Preview storage failure. Your draft is still open; retry saving."
+                        );
+                    }
                     self.store.save_draft(draft).await?;
                     self.store.draft_state().await
                 }

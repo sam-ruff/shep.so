@@ -22,6 +22,14 @@ impl Session {
 }
 
 impl Composer {
+    pub(in crate::ui) fn save_error(&self, id: &str) -> Option<&str> {
+        let session = if self.current.draft.id == id {
+            Some(&self.current)
+        } else {
+            self.parked.get(id)
+        };
+        session.and_then(|session| session.save_error.as_ref().map(|(_, error)| error.as_str()))
+    }
     pub(in crate::ui) fn session_mut(&mut self, id: &str) -> Option<&mut Session> {
         if self.current.draft.id == id {
             Some(&mut self.current)
@@ -89,7 +97,7 @@ impl App {
                 .parked
                 .insert(session.draft.id.clone(), session);
         }
-        self.flush_draft_saves(true);
+        self.flush_draft_saves_inner(true, false);
     }
 
     pub(in crate::ui) fn close_composer(&mut self) {
@@ -139,6 +147,7 @@ impl App {
                 editor: text_editor::Content::with_text(&draft.body),
                 show_recipients: !draft.cc.is_empty() || !draft.bcc.is_empty(),
                 dirty: (!saved).then(Instant::now),
+                saved_revision: saved.then_some(draft.revision),
                 draft,
                 ..Default::default()
             }
@@ -261,6 +270,10 @@ impl App {
     }
 
     pub(in crate::ui) fn flush_draft_saves(&mut self, force: bool) {
+        self.flush_draft_saves_inner(force, force);
+    }
+
+    fn flush_draft_saves_inner(&mut self, force: bool, retry_failed: bool) {
         if self.composer.discard_pending {
             return;
         }
@@ -270,15 +283,34 @@ impl App {
             .chain(self.composer.parked.values())
             .filter(|session| {
                 session.pending.is_none()
+                    && (retry_failed
+                        || session
+                            .save_error
+                            .as_ref()
+                            .is_none_or(|(revision, _)| session.draft.revision > *revision))
                     && session
                         .dirty
                         .is_some_and(|at| force || at.elapsed().as_secs() >= 1)
                     && !self.busy.contains(&format!("send:{}", session.draft.id))
             })
             .take(4)
-            .map(Session::snapshot)
+            .map(|session| session.draft.id.clone())
             .collect();
-        for draft in ready {
+        for id in ready {
+            let Some(session) = self.composer.session_mut(&id) else {
+                continue;
+            };
+            if session
+                .save_error
+                .as_ref()
+                .is_some_and(|(revision, _)| session.draft.revision <= *revision)
+                || session
+                    .saved_revision
+                    .is_some_and(|revision| session.draft.revision <= revision)
+            {
+                session.draft.revision += 1;
+            }
+            let draft = session.snapshot();
             let id = draft.id.clone();
             let revision = draft.revision;
             let explicit = self
@@ -350,9 +382,24 @@ impl App {
             if pending {
                 session.pending = None;
             }
-            if result.is_err() && (pending || session.draft.revision == revision) {
+            if let Err(error) = &result
+                && (pending
+                    || session.pending.is_none()
+                        && session.draft.revision == revision
+                        && session.saved_revision.is_none_or(|saved| saved < revision))
+            {
                 session.dirty = Some(Instant::now());
+                session.save_error = Some((revision, error.clone()));
                 owned_error = true;
+            } else if pending && result.is_ok() {
+                session.saved_revision = Some(
+                    session
+                        .saved_revision
+                        .map_or(revision, |saved| saved.max(revision)),
+                );
+                if session.draft.revision == revision && session.dirty.is_none() {
+                    session.save_error = None;
+                }
             }
         }
         match result {
@@ -363,8 +410,8 @@ impl App {
                     self.composer.close = None;
                     self.fail_removal_draft_wait(&id, &error);
                     self.fail_database_preparation(&error);
+                    self.notice(error, true);
                 }
-                self.notice(error, true);
                 return Task::none();
             }
         }

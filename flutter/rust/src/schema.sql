@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS profile_sync_reviews(seq INTEGER PRIMARY KEY AUTOINCR
 CREATE TABLE IF NOT EXISTS group_clock(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
 INSERT OR IGNORE INTO group_clock VALUES(1,0);
 CREATE TABLE IF NOT EXISTS mail_intents(mail TEXT NOT NULL REFERENCES mail(id) ON DELETE CASCADE,field TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(mail,field));
-CREATE TABLE IF NOT EXISTS individual_mail_actions(id TEXT PRIMARY KEY,mail TEXT NOT NULL,account TEXT NOT NULL,fields TEXT NOT NULL,physical TEXT NOT NULL DEFAULT '{}',intent_revision INTEGER NOT NULL DEFAULT 0,credential_slot TEXT,status TEXT NOT NULL CHECK(status IN ('queued','running','waiting','succeeded','rejected','uncertain','repair','cancelled')),error TEXT,created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS individual_mail_actions(id TEXT PRIMARY KEY,mail TEXT NOT NULL,account TEXT NOT NULL,fields TEXT NOT NULL,accepted_fields TEXT,physical TEXT NOT NULL DEFAULT '{}',intent_revision INTEGER NOT NULL DEFAULT 0,credential_slot TEXT,status TEXT NOT NULL CHECK(status IN ('queued','running','waiting','succeeded','rejected','uncertain','repair','cancelled')),error TEXT,created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS individual_mail_action_receipts(action TEXT PRIMARY KEY REFERENCES individual_mail_actions(id) ON DELETE CASCADE,result TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS individual_mail_action_status ON individual_mail_actions(status,created,id);
 CREATE INDEX IF NOT EXISTS individual_mail_action_history ON individual_mail_actions(created DESC,id);
 CREATE TABLE IF NOT EXISTS group_jobs(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,action TEXT NOT NULL,fields TEXT NOT NULL,state TEXT NOT NULL,scope TEXT NOT NULL,created INTEGER NOT NULL,approved INTEGER,undone INTEGER,total INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 0,error TEXT);
@@ -90,5 +91,5 @@ CREATE INDEX IF NOT EXISTS group_item_state ON group_items(job,state,position);
 CREATE INDEX IF NOT EXISTS group_item_mail ON group_items(mail,state);
 CREATE INDEX IF NOT EXISTS group_item_account ON group_items(account,state);
 CREATE INDEX IF NOT EXISTS group_item_active ON group_items(state,job) WHERE state IN ('pending','sending','undoing','reversing');
-PRAGMA user_version=15;
+PRAGMA user_version=17;
 COMMIT;

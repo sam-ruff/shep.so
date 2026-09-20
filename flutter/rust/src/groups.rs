@@ -1107,10 +1107,15 @@ async fn step(
         ),
         Err(error) => {
             let text = error.to_string();
-            let ambiguous = fields.folder.is_some()
-                && (text.contains("did not confirm")
-                    || text.contains("timed out")
-                    || text.contains("acknowledged"));
+            let flags_rejected = error
+                .chain()
+                .any(|cause| cause.is::<shep_mail_core::mail_actions::FlagsRejected>());
+            let move_refused = shep_mail_core::mail_actions::classify_move_failure(error)
+                == shep_mail_core::mail_actions::MoveFailure::Refused;
+            let provider_started = !text.contains("no provider operation was started");
+            let ambiguous = provider_started
+                && ((fields.folder.is_some() && !move_refused)
+                    || ((fields.unread.is_some() || fields.starred.is_some()) && !flags_rejected));
             if ambiguous {
                 (
                     if inverse {

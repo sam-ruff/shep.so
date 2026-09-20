@@ -210,11 +210,28 @@ groups on Undo. Individual controls carry the lineage observed with their row or
 reader metadata into the same durable journal. Missing or replaced observations
 reject locally. Retire admission overlays only after observing their saved
 revision, and preserve the close guard until local admission settles.
+The background owner retains one group lease while independent account items
+run concurrently. Claims, progress and repairs address exact item positions;
+reserve both source and inverse destination accounts. Never recover live sibling
+steps. Automatic lease recovery preserves Pause and newer Undo decisions;
+explicit Continue or Undo owns any decision to resume. Stop drains every active
+receipt before acknowledging its generation.
+
+Draft saving feedback belongs to the current or parked composer session and its
+revision. Keep local save errors visible through unrelated actions and provide
+Retry without discarding text. A retry uses a fresh revision; stale acknowledgements
+cannot clear newer failures. Queue saturation retains deferred saving and resumes
+automatically when capacity returns. A definite storage failure waits for a new
+edit, explicit Retry or forced-close save; ordinary draft switching cannot retry
+it silently. Preserve the native light/dark failure, parked-draft and restart flow.
+Composer command navigation must not insert the command's text into the draft.
+Preserve normal typing, AltGr input and native copy/cut/paste/select-all bindings.
+Keep save status readable in both appearances and visible at compact sizes.
 
 Flutter individual mail actions use the existing Rust mutation dispatcher and
 an atomic claim under the account operation lock. Recheck status, physical
 lineage and field ownership after waiting; a repeated UUID cannot dispatch
-twice. Mail schema 15 retains lineage through acknowledged moves and proven
+twice. Mail schema 17 retains lineage through acknowledged moves and proven
 Sent aliases, merges the latest field reservations before deleting duplicate
 rows, and invalidates unproven identity/content replacements. Never hash full
 message bodies to admit ordinary flag edits. SQLite projects owned pending
@@ -259,17 +276,32 @@ Send saves the draft and queued Outbox record atomically before provider
 reservation; only Queued may automatically continue. Account connection attempts
 save nonsecret progress before probes and recheck their attempt identity before
 activation. Dismissal, removal and newer attempts must fence late results.
+Connection Activity reads at most 21 saved attempts to display 20 and an overflow
+link to the existing account controls. Dismiss only the captured attempt; retain
+independent mail failures and show an explicit refresh error if progress cannot
+load. Reconnect opens credential entry and never silently invokes authentication.
 Preference values and field revisions share one authoritative settings write;
 the legacy settings key is only a mirror. A failed local save cannot produce a
 profile application receipt. Reuse existing Outbox and profile recovery owners.
 
-Flutter individual mail admission uses schema 15 and `individual_mail_actions`
+Flutter individual mail admission uses schema 17 and `individual_mail_actions`
 beside the existing field-intent owner. Reserve an action UUID before FFI and
 save exact fields/account identity before credentials or provider capacity.
 Only never-dispatched queued/waiting work may resume; reopen classifies Running
 as Uncertain. Return a saved terminal result before looking up its source mail.
 A changed physical source becomes an explicit rejection and releases only the
-same action's intent revisions. Activity/cancellation must use these records,
+same action's intent revisions. Save provider receipts before cache work;
+restart retains acknowledged work as Repair. Cache-only repair rechecks lineage,
+physical identity and field ownership transactionally, without credentials or a
+provider write. Missing destination UIDs require read-only identity inspection;
+preserve this path after cache failure/restart and use its proven identity for
+Undo. Typed local/provider refusal permits rejection; pre-dispatch credential
+failure remains Waiting and saved receipts take precedence over later errors.
+Claim only fields still owned by the action and persist that accepted subset with
+Running. Keep original requested fields for UUID deduplication; receipts, Activity,
+inspection and Undo use the accepted subset. Reject combined remote move/flag
+requests before admission until ordered provider steps have their own receipts.
+Activity/cancellation must use these records,
 including account-removal review, without adding another provider dispatcher.
 
 Flutter Send saves frozen MIME, envelope, account settings and credential-slot

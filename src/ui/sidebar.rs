@@ -181,11 +181,19 @@ impl App {
                 for (id, subject) in drafts {
                     items.push(SidebarItem {
                         account_email: None,
-                        label: if subject.is_empty() {
-                            "Untitled draft".into()
-                        } else {
-                            subject.to_owned()
-                        },
+                        label: format!(
+                            "{}{}",
+                            if self.composer.save_error(id).is_some() {
+                                "Not saved: "
+                            } else {
+                                ""
+                            },
+                            if subject.is_empty() {
+                                "Untitled draft"
+                            } else {
+                                subject
+                            }
+                        ),
                         icon: "compose",
                         action: Message::Draft(id.to_owned()),
                         active: self.compose_visible() && self.composer.current.draft.id == id,
