@@ -470,7 +470,8 @@ async fn reconnect_activation_clears_import_guard_and_newer_local_account_change
                 [&id],
                 |r| r.get(0),
             )?;
-            let prepared = crate::connections::prepare(db, account.clone(), Some(account.clone()))?;
+            let prepared =
+                crate::connections::prepare(db, None, account.clone(), Some(account.clone()))?;
             let slot = prepared["slot"].as_str().unwrap();
             assert_ne!(slot, old);
             assert!(crate::connections::target(db, account.clone()).is_err());

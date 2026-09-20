@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { DraftSession } from "./draft_session";
 import type { Draft } from "./model";
+import {
+  DraftConflict,
+  observeDraft,
+  type DraftObservation,
+} from "./draft_revision";
 
 const initial: Draft = {
   id: "draft",
@@ -22,6 +27,76 @@ function deferred() {
   return { promise, resolve, reject };
 }
 afterEach(() => vi.useRealTimers());
+
+it("refreshes a clean reopened draft but preserves edits made during the read", () => {
+  vi.useFakeTimers();
+  const session = new DraftSession(initial, true, vi.fn());
+  const expected = observeDraft(session.draft);
+  const current = {
+    ...initial,
+    revision: 4,
+    body: "Other editor",
+    references: undefined,
+  };
+  expect(session.refreshSaved(current, expected)).toBe(true);
+  expect(session.draft.references).toBeUndefined();
+  const reopened = observeDraft(session.draft);
+  session.draft.body = "Own newer text";
+  session.edited();
+  expect(session.refreshSaved({ ...current, revision: 6 }, reopened)).toBe(
+    false,
+  );
+  expect(session.draft.body).toBe("Own newer text");
+});
+
+it("keeps conflicting text editable without blind retries until the saved revision is reviewed", async () => {
+  const save = vi
+    .fn<(draft: Draft, expected: DraftObservation | null) => Promise<void>>()
+    .mockRejectedValueOnce(new DraftConflict())
+    .mockResolvedValue(undefined);
+  const session = new DraftSession(initial, true, save);
+  session.draft.body = "My first edit";
+  session.edited();
+  expect(await session.flush()).toBe(false);
+  session.draft.body = "My latest retained text";
+  session.edited();
+  expect(await session.flush(true)).toBe(false);
+  expect(save).toHaveBeenCalledTimes(1);
+  const current = { ...initial, body: "Other editor", revision: 5 };
+  expect(session.acceptReview(current, 1, true)).toBe(false);
+  expect(session.acceptReview(current, 2, true)).toBe(true);
+  expect(session.draft.body).toBe("My latest retained text");
+  expect(await session.flush()).toBe(true);
+  expect(save.mock.calls[1]).toEqual([
+    {
+      ...current,
+      body: "My latest retained text",
+      revision: 6,
+      attachments: [],
+      forward: undefined,
+      forwardSource: "source",
+    },
+    observeDraft(current),
+  ]);
+  expect(session.needsReview).toBe(false);
+});
+
+it("accepting reviewed saved text refreshes the base for the next edit", async () => {
+  const save = vi
+    .fn<(draft: Draft, expected: DraftObservation | null) => Promise<void>>()
+    .mockResolvedValue(undefined);
+  const session = new DraftSession(initial, true, save);
+  session.recordConflict(new DraftConflict());
+  expect(session.pending).toBe(true);
+  const current = { ...initial, revision: 7, body: "Saved elsewhere" };
+  expect(session.acceptReview(current, 0, false)).toBe(true);
+  expect(session.pending).toBe(false);
+  session.draft.body = "Continue from reviewed text";
+  session.edited();
+  expect(await session.flush()).toBe(true);
+  expect(save.mock.calls[0][1]).toEqual(observeDraft(current));
+  expect(session.draft.revision).toBe(8);
+});
 
 it("abandons a refused file request only after observing current saved attachments", async () => {
   const session = new DraftSession(initial, true, async () => {});

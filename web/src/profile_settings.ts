@@ -119,12 +119,16 @@ export class ProfileSettingsStore implements SettingsStore {
   read(): Preferences {
     return this.state().preferences ?? this.inner.read();
   }
-  write(value: Preferences): void {
+  write(value: Preferences, intent?: readonly (keyof Preferences)[]): void {
     const before = portableValues(this.read());
     const after = portableValues(value);
     const state = this.state();
+    const localKeys: Record<BrowserSettingKey, keyof Preferences> = {
+      appearance: "appearance", preview_lines: "previewLines",
+      sender_pictures: "avatars", reply_display: "quoteMode",
+    };
     for (const key of BROWSER_SETTINGS)
-      if (before[key] !== after[key]) state.revisions[key]++;
+      if (before[key] !== after[key] || intent?.includes(localKeys[key])) state.revisions[key]++;
     state.preferences = structuredClone(value);
     this.persist(state);
     try { this.inner.write(value); } catch { /* The authoritative values and revisions already committed together. */ }
@@ -189,16 +193,23 @@ export class ProfilePreferenceDevice {
     private settings: ProfileSettingsStore,
     private workspace: {
       preferences: Preferences;
+      preferenceError?: string | null;
       savePreferences(value: Preferences): void;
     },
   ) {}
   capture(): PortableValues {
+    this.requireSaved();
     return this.settings.capture();
+  }
+  private requireSaved() {
+    if (this.workspace.preferenceError)
+      throw Error("Save your pending preference changes before reviewing or applying profile settings. Open Preferences and retry.");
   }
   apply(request: ApplyRequest): ApplyReceipt {
     const existing = this.settings.receipt();
     // A lost reply retries the identical request and gets the same receipt.
     if (existing && existing.id === request.id) return existing;
+    this.requireSaved();
     if (existing)
       throw new Error(
         "Another profile application is still awaiting acknowledgment. Finish or cancel it first.",

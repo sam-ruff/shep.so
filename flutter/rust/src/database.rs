@@ -84,7 +84,7 @@ impl Database {
                     .map_err(|_| anyhow::anyhow!("Cache connection failed. Reopen Shep."))?
                     .query_row("PRAGMA user_version", [], |r| r.get(0))?;
                 anyhow::ensure!(
-                    version <= 17,
+                    version <= 18,
                     "This cache requires a newer Shep version. Update before reopening it."
                 );
                 return Ok(profile);
@@ -107,7 +107,7 @@ impl Database {
             )?;
             let version: u32 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             anyhow::ensure!(
-                version <= 17,
+                version <= 18,
                 "This cache requires a newer Shep version. Update before reopening it."
             );
             if version > 0 && version < 17 {
@@ -126,6 +126,21 @@ impl Database {
                         "ALTER TABLE individual_mail_actions ADD COLUMN accepted_fields TEXT",
                         [],
                     )?;
+                }
+            }
+            if version > 0 && version < 18 {
+                let has_slots: bool = writer.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='credential_slots')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let has_error: bool = writer.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('credential_slots') WHERE name='error')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                if has_slots && !has_error {
+                    writer.execute("ALTER TABLE credential_slots ADD COLUMN error TEXT", [])?;
                 }
             }
             writer.execute_batch(include_str!("schema.sql"))?;

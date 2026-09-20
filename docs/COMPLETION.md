@@ -1,8 +1,30 @@
 # Completion audit
 
+## Client conflict and connection continuation, 20 September 2026
+
+The next batch integrates browser schema 15 observed draft revisions and explicit
+conflict review, independent preference failure/Retry, and Flutter schema 18
+account admission through existing credential slots. Browser passes 113 focused
+tests. Its initial eight-worker control run passed 34 of 37; the one-worker
+storage/preference rerun passed nine of ten. The unchanged 100,000-message case
+then passed in 57.5 seconds in a quiet window, covering all 37 distinct scenarios.
+These are functional gates, not whole-app latency measurements. Reviewed browser
+captures show both draft versions and independent preference/mail errors in
+compact light/dark layouts. Flutter passes 134 Rust and 203 Flutter tests with
+clean analysis and Clippy; two additional compact connection-recovery goldens
+pass and are reviewed.
+The first Flutter run exposed stale integration fixture edits; send hold/release
+signals are restored and query failures now use their own fixture field.
+Review also found duplicate execution sharing the raw failed activation reply
+while the first caller reconciled its saved receipt. The shared future now covers
+reconciliation; 26 focused actual-FFI/control tests pass after that correction.
+Normal commit gates and shipping remain required for this batch.
+
 ## Bounded resumption and checked activation continuation, 20 September 2026
 
-The continuation after `48cd150` integrates native schema 8 staged account
+Checkpoint `d7f06b7`, pushed to main and verified remotely, follows `48cd150`.
+Normal hooks pass 1,547 Rust executions with four ignored, both Clippy modes and
+strict documentation. It integrates native schema 8 staged account
 credentials, checked provider/vault/backup readers and atomic activation. Logical
 credential backups remain portable; database imports discard device slot bindings.
 Incoming connection edits with cached mail require a separate reviewed migration.
@@ -74,7 +96,7 @@ Limits: full app timing is unmeasured; predecessor-history queries and other
 domain schedules still need bounds;
 Flutter account and browser concurrent-draft adapters remain active; fixture
 results do not establish live-provider, suspension, Apple/Windows or installation
-behaviour. Normal commit gates and shipping remain required for this continuation.
+behaviour. These remain active requirements after this shipped checkpoint.
 
 ## Recovery and activity continuation, 20 September 2026
 

@@ -102,6 +102,13 @@ cannot be acknowledged as a profile application. The existing publication
 journal preserves exact retries and durable errors independently of this device
 save. No credential or mail action is imported through preference state.
 
+Preferences retains failed local intent and its own Retry through unrelated mail
+errors. Retry merges locally edited top-level fields with the latest saved
+settings and preserves explicit portable intent through a failed change-and-revert.
+New profile capture/application and sign-out wait for local admission. Preference
+notices preserve held controls when unrelated errors arrive; remote publication
+keeps its separate status and journal.
+
 ## Verification and remaining rollout
 
 Drafts retain a session-owned latest revision, save status and file request through
@@ -110,8 +117,10 @@ waits for accepted saves and page leave warns about uncommitted work. Stable Dra
 rows preserve held pointer input through late failure. Attachment retry reuses
 exact identities/bytes after a lost reply, while Use saved attachments reads the
 current files before retiring a refused request. Successful Send and account
-removal retire the session. Unadmitted text remains tab-local; checked cross-tab
-text conflict review is still being implemented.
+removal retire the session. Schema 15 compares the exact observed text/revision
+under the draft lock and fences older writers. A conflict retains both versions
+for explicit review; Use saved text and Save my text recheck that observation.
+Newer saved changes reject stale choices. Unadmitted text remains tab-local.
 
 Focused tests cover atomic admission failure, restart retention, replay refusal,
 receipt dominance, independent group ownership, bounded pages/admission and

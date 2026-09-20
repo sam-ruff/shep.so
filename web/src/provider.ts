@@ -1,4 +1,5 @@
 import { samePhysical, metadataIdentity } from "./mail_lineage";
+import { DraftConflict, observeDraft, sameDraftObservation, type DraftObservation } from "./draft_revision";
 import type { MailAction } from "./mail_activity";
 import type { CacheMail } from "./cache_changes";
 import { BrowserGroups } from "./bulk_client";
@@ -1977,7 +1978,21 @@ export class GatewayRepository implements Repository, SelectionRepository {
       all,
     );
   }
-  async saveDraft(draft: Draft) {
+  async readDraft(id: string): Promise<Draft> {
+    const current = await this.store.get<Draft>("drafts", id);
+    if (!current) throw Error("This draft is no longer saved. Your open text has been retained.");
+    return { ...current, attachments: await this.attachments(id) };
+  }
+  async reviewDraft(id: string, expected?: DraftObservation): Promise<Draft> {
+    return this.exclusive(`draft.${id}`, async () => {
+      await this.editable(id);
+      const current = await this.readDraft(id);
+      if (expected && !sameDraftObservation(observeDraft(current), expected))
+        throw new DraftConflict();
+      return current;
+    });
+  }
+  async saveDraft(draft: Draft, expected?: DraftObservation | null) {
     await this.exclusive(`draft.${draft.id}`, async () => {
       const outgoing = await this.store.get<Outgoing>("outgoing", draft.id);
       if (outgoing?.recovery)
@@ -1993,10 +2008,14 @@ export class GatewayRepository implements Repository, SelectionRepository {
           "This draft has a delivery record. Check its status before editing or sending a new message.",
         );
       const current = await this.store.get<Draft>("drafts", draft.id);
-      if (current && (current.revision ?? 0) > (draft.revision ?? 0))
-        throw new Error(
-          "This draft has newer text in another editor. Reopen it before saving.",
-        );
+      const observed = current ? observeDraft(current) : null;
+      const requested = observeDraft(draft);
+      if (observed && sameDraftObservation(observed, requested)) return;
+      if (expected !== undefined && (expected === null ? observed !== null :
+          !observed || !sameDraftObservation(observed, expected)))
+        throw new DraftConflict();
+      if (observed && observed.revision >= requested.revision)
+        throw new DraftConflict();
       const saved = {
         ...draft,
         forward: current?.forward,
@@ -2033,7 +2052,9 @@ export class GatewayRepository implements Repository, SelectionRepository {
       const account = this.accounts.find(a => a.id === draft.accountId);
       if (!account) throw Error("Choose a sending account.");
       const saved = await this.store.get<Draft>("drafts", draft.id);
-      if (saved && (saved.revision ?? 0) > (draft.revision ?? 0)) throw Error("This draft changed in another editor. Reopen it before sending.");
+      if (saved && ((saved.revision ?? 0) > (draft.revision ?? 0) ||
+          (saved.revision ?? 0) === (draft.revision ?? 0) && observeDraft(saved).text !== observeDraft(draft).text))
+        throw new DraftConflict();
       if (JSON.stringify(saved?.forward ?? null) !== JSON.stringify(draft.forward ?? null) || saved?.forwardSource !== draft.forwardSource)
         throw Error("The original forward changed. Reopen the draft before sending.");
       const attachments = await this.attachments(draft.id);
@@ -2118,10 +2139,9 @@ export class GatewayRepository implements Repository, SelectionRepository {
           throw Error("The queued message or sending account changed. Return it to drafts and review it before sending.");
         const connection = this.connection(account, true);
         const saved = await this.store.get<Draft>("drafts", draft.id);
-        if (saved && (saved.revision ?? 0) > (draft.revision ?? 0))
-          throw new Error(
-            "This draft changed in another editor. Reopen it before sending.",
-          );
+        if (saved && ((saved.revision ?? 0) > (draft.revision ?? 0) ||
+            (saved.revision ?? 0) === (draft.revision ?? 0) && observeDraft(saved).text !== observeDraft(draft).text))
+          throw new DraftConflict();
         if (
           JSON.stringify(saved?.forward ?? null) !==
             JSON.stringify(draft.forward ?? null) ||

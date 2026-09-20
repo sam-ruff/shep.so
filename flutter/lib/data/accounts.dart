@@ -1,4 +1,16 @@
 import '../model/mail.dart';
+import 'dart:math';
+
+String newConnectionAttemptId() {
+  final random = Random.secure();
+  final bytes = List<int>.generate(16, (_) => random.nextInt(256));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  final value = bytes
+      .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+      .join();
+  return '${value.substring(0, 8)}-${value.substring(8, 12)}-${value.substring(12, 16)}-${value.substring(16, 20)}-${value.substring(20)}';
+}
 
 class MailAccount {
   const MailAccount({
@@ -113,6 +125,42 @@ abstract interface class AccountRepository {
   Future<Mail> detail(String id);
   Future<void> discard(String id, int revision);
   Future<String?> delivery(String id);
+}
+
+class AccountConnectionAttempt {
+  const AccountConnectionAttempt({
+    required this.id,
+    required this.account,
+    required this.status,
+    this.error,
+  });
+  final String id, status;
+  final MailAccount account;
+  final String? error;
+  bool get needsPasswords => status == 'reentry' || status == 'failed';
+  AccountConnectionAttempt copy({String? status, String? error}) =>
+      AccountConnectionAttempt(
+        id: id,
+        account: account,
+        status: status ?? this.status,
+        error: error,
+      );
+}
+
+abstract interface class DurableAccountRepository {
+  List<AccountConnectionAttempt> get connectionAttempts;
+  Future<AccountConnectionAttempt> admitConnection(
+    String attempt,
+    MailAccount account,
+  );
+  Future<void> executeConnection(
+    AccountConnectionAttempt attempt,
+    String incoming,
+    String smtp,
+  );
+  Future<void> refreshConnectionAttempts();
+  Future<void> failConnection(String attempt, String error);
+  Future<void> abandonConnection(String attempt);
 }
 
 class MailOperationFailure implements Exception {

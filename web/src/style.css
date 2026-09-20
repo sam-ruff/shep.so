@@ -933,6 +933,26 @@ input[type="checkbox"]:focus-visible {
   padding: 4px 4px 20px;
   max-width: 940px;
 }
+.preferences-main {
+  position: relative;
+}
+.preferences-notices {
+  position: absolute;
+  z-index: 3;
+  right: 12px;
+  bottom: 12px;
+  max-width: min(580px, calc(100% - 24px));
+  max-height: 40%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.preferences-notices .error-banner,
+.preferences-notices .status {
+  flex-shrink: 0;
+  margin: 0;
+}
 .settings-card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1067,6 +1087,23 @@ dialog > .field,
 }
 .composer-actions .button {
   padding: 10px 14px;
+}
+.draft-conflict {
+  width: min(960px, calc(100% - 48px));
+}
+.draft-versions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
+  gap: 16px;
+}
+.draft-versions textarea {
+  min-height: 200px;
+}
+.draft-conflict .dialog-actions {
+  flex-wrap: wrap;
+}
+.draft-conflict .form-status {
+  color: var(--text);
 }
 .composer textarea {
   min-height: 220px;

@@ -200,6 +200,47 @@ class PreferencesView extends StatelessWidget {
         ]),
         section('Connections', [
           if (workspace.accountRepository != null) ...[
+            for (final attempt in workspace.connectionAttempts)
+              ListTile(
+                key: ValueKey('connection-${attempt.id}'),
+                leading: attempt.needsPasswords
+                    ? const ShepIcon('alert-circle')
+                    : const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                title: Text(attempt.account.email),
+                subtitle: Text(
+                  attempt.error ??
+                      (attempt.needsPasswords
+                          ? 'Passwords required to continue'
+                          : 'Checking connection'),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      onPressed: () => workspace.abandonConnection(attempt.id),
+                      child: const Text('Cancel'),
+                    ),
+                    if (attempt.needsPasswords)
+                      TextButton(
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => AccountSetup(
+                              workspace: workspace,
+                              account: attempt.account,
+                              attempt: attempt,
+                            ),
+                          ),
+                        ),
+                        child: const Text('Re-enter'),
+                      ),
+                  ],
+                ),
+              ),
             for (final account
                 in workspace.accountRepository!.mailAccounts) ...[
               ListTile(

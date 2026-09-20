@@ -33,7 +33,11 @@ async fn credential_activation_rolls_back_retries_and_survives_restart() {
     );
     assert_eq!(
         request(&p, json!({"op":"credential_cleanup"})).await,
-        json!([slot])
+        json!([])
+    );
+    assert_eq!(
+        request(&p, json!({"op":"pending_account_connections"})).await[0]["attempt"],
+        slot.strip_prefix("credential-").unwrap()
     );
     p.database
         .write(|db| {
@@ -92,16 +96,16 @@ async fn changed_settings_or_another_activation_cannot_commit_a_stale_pair() {
     let a = prepare(&p).await;
     let b = prepare(&p).await;
     let removal = request(&p, json!({"op":"account_removal_preview","id":"fixture"})).await;
-    request(&p, json!({"op":"activate_account","slot":a["slot"]})).await;
+    assert!(
+        failure(&p, json!({"op":"activate_account","slot":a["slot"]}))
+            .await
+            .contains("replaced")
+    );
+    request(&p, json!({"op":"activate_account","slot":b["slot"]})).await;
     assert!(
         failure(&p, json!({"op":"remove_account","review":removal}))
             .await
             .contains("Local data changed")
-    );
-    assert!(
-        failure(&p, json!({"op":"activate_account","slot":b["slot"]}))
-            .await
-            .contains("changed")
     );
     // A failed legacy cleanup must still allow a fresh explicit reconnect.
     let c = prepare(&p).await;
@@ -138,6 +142,79 @@ async fn changed_settings_or_another_activation_cannot_commit_a_stale_pair() {
         .contains("progress")
     );
     drop(hold);
+}
+
+#[tokio::test]
+async fn newest_connection_attempt_owns_activation_and_restart_reentry() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    let saved = request(&p, json!({"op":"accounts"})).await["accounts"][0].clone();
+    let first = "00000000-0000-4000-8000-000000000031";
+    let second = "00000000-0000-4000-8000-000000000032";
+    let one = request(&p, json!({"op":"prepare_account","attempt":first,"account":saved.clone(),"expected":saved.clone()})).await;
+    let repeated = request(&p, json!({"op":"prepare_account","attempt":first,"account":saved.clone(),"expected":saved.clone()})).await;
+    assert_eq!(one, repeated);
+    let two = request(
+        &p,
+        json!({"op":"prepare_account","attempt":second,"account":saved,"expected":saved}),
+    )
+    .await;
+    let pending = request(&p, json!({"op":"pending_account_connections"})).await;
+    assert_eq!(pending.as_array().unwrap().len(), 1);
+    assert_eq!(pending[0]["attempt"], second);
+    assert_eq!(pending[0]["status"], "reentry");
+    request(&p, json!({"op":"fail_account_connection","attempt":second,"error":"Provider refused the password."})).await;
+    let failed = request(&p, json!({"op":"pending_account_connections"})).await;
+    assert_eq!(failed[0]["status"], "failed");
+    assert_eq!(failed[0]["error"], "Provider refused the password.");
+    request(
+        &p,
+        json!({"op":"retry_account_connection","attempt":second}),
+    )
+    .await;
+    assert_eq!(
+        request(&p, json!({"op":"pending_account_connections"})).await[0]["status"],
+        "reentry"
+    );
+    assert!(
+        failure(&p, json!({"op":"activate_account","slot":one["slot"]}))
+            .await
+            .contains("replaced")
+    );
+    request(&p, json!({"op":"activate_account","slot":two["slot"]})).await;
+    assert_eq!(
+        request(&p, json!({"op":"pending_account_connections"})).await,
+        json!([])
+    );
+}
+
+#[tokio::test]
+async fn pending_connection_capacity_cannot_hide_actionable_attempts() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    let settings = serde_json::to_string(&account()).unwrap();
+    p.database
+        .write(move |db| {
+            for index in 0..32 {
+                db.execute(
+                    "INSERT INTO credential_slots(slot,account_id,settings,expected,state) VALUES(?1,?2,?3,'fixture','prepared')",
+                    rusqlite::params![format!("credential-00000000-0000-4000-8000-{index:012}"), format!("other-{index}"), settings],
+                )?;
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(
+        failure(
+            &p,
+            json!({"op":"prepare_account","attempt":"00000000-0000-4000-8000-000000000099","account":account(),"expected":account()})
+        )
+        .await
+        .contains("Finish or cancel")
+    );
+    let pending = request(&p, json!({"op":"pending_account_connections"})).await;
+    assert_eq!(pending.as_array().unwrap().len(), 32);
 }
 #[tokio::test]
 async fn stale_bindings_refuse_sync_move_and_queued_send_before_dispatch() {

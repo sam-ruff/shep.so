@@ -330,7 +330,7 @@ class FairActivityRepository extends ActivityRepository {
 
 class FailingRunnableActivityRepository extends ActivityRepository {
   int calls = 0;
-  bool fail = true;
+  bool queryFails = true;
 
   @override
   Future<List<MailActivity>> runnableMailActions({
@@ -338,7 +338,7 @@ class FailingRunnableActivityRepository extends ActivityRepository {
     String? afterId,
   }) async {
     calls++;
-    if (fail) throw StateError('activity query failed');
+    if (queryFails) throw StateError('activity query failed');
     return super.runnableMailActions(
       afterCreated: afterCreated,
       afterId: afterId,
@@ -371,7 +371,7 @@ class FailedPageWithActiveAccountRepository extends ActivityRepository {
   }
 
   int calls = 0;
-  bool fail = true;
+  bool queryFails = true;
   final active = Completer<void>();
 
   @override
@@ -380,7 +380,7 @@ class FailedPageWithActiveAccountRepository extends ActivityRepository {
     String? afterId,
   }) async {
     calls++;
-    if (calls == 2 && fail) throw StateError('page unavailable');
+    if (calls == 2 && queryFails) throw StateError('page unavailable');
     return super.runnableMailActions(
       afterCreated: afterCreated,
       afterId: afterId,
@@ -540,7 +540,7 @@ void main() {
       addTearDown(workspace.dispose);
       await workspace.initialize();
       expect(repository.resumed, ['active']);
-      repository.fail = false;
+      repository.queryFails = false;
       await workspace.refreshMailActivity(resume: true);
       expect(repository.resumed, ['active']);
       repository.active.complete();
@@ -627,7 +627,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.textContaining('Retry Activity'), findsOneWidget);
-    repository.fail = false;
+    repository.queryFails = false;
     await tester.tap(find.widgetWithText(TextButton, 'Retry'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Retry Activity'), findsNothing);

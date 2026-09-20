@@ -6,6 +6,7 @@ import type { LocalStore, StoreName, Change } from "./storage";
 import type { Draft, Fields } from "./model";
 import type { IntentStore, IntentLease } from "./mail_intents";
 import { MutationFailure } from "./model";
+import { DraftConflict, observeDraft } from "./draft_revision";
 class Memory implements LocalStore {
   intents?: IntentStore;
   data = new Map<string, unknown>();
@@ -839,6 +840,45 @@ describe("real browser provider/cache contract", () => {
 });
 
 describe("persistent draft files and cached replies", () => {
+  it("rejects equal and greater local revisions from a stale observation, but exact text retry is idempotent", async () => {
+    const s = setup();
+    const original = { ...draft, revision: 0 };
+    await s.repo.saveDraft(original, null);
+    const first = { ...original, revision: 1, body: "First editor" };
+    await s.repo.saveDraft(first, observeDraft(original));
+    const commit = vi.spyOn(s.db, "commit");
+    await s.repo.saveDraft(first, observeDraft(original));
+    expect(commit).not.toHaveBeenCalled();
+    for (const revision of [1, 20]) {
+      await expect(s.repo.saveDraft({ ...first, revision, body: "Stale editor" }, observeDraft(original))).rejects.toBeInstanceOf(DraftConflict);
+    }
+    await expect(s.repo.saveDraft({ ...first, body: "Equal revision without observation" })).rejects.toBeInstanceOf(DraftConflict);
+    expect(await s.db.get("drafts", draft.id)).toMatchObject({ body: "First editor", revision: 1 });
+    await s.db.commit([{ store: "drafts", key: draft.id }]);
+    await expect(s.repo.saveDraft({ ...first, revision: 2 }, observeDraft(first))).rejects.toBeInstanceOf(DraftConflict);
+    expect(await s.db.get("drafts", draft.id)).toBeUndefined();
+  });
+  it("rechecks reviewed text and preserves backend files while an explicit reviewed replacement advances revision", async () => {
+    const s = setup();
+    const original = { ...draft, revision: 0 };
+    await s.repo.saveDraft(original, null);
+    const files = await s.repo.addFiles(draft.id, [new File(["kept"], "kept.txt")]);
+    const reviewed = await s.repo.reviewDraft(draft.id);
+    const other = { ...reviewed, revision: 1, body: "Changed after review" };
+    await s.repo.saveDraft(other, observeDraft(reviewed));
+    await expect(s.repo.reviewDraft(draft.id, observeDraft(reviewed))).rejects.toBeInstanceOf(DraftConflict);
+    await expect(s.repo.saveDraft({ ...original, revision: 2, body: "My text" }, observeDraft(reviewed))).rejects.toBeInstanceOf(DraftConflict);
+    const latest = await s.repo.reviewDraft(draft.id);
+    await s.repo.saveDraft({ ...original, revision: 2, body: "My text", attachments: [] }, observeDraft(latest));
+    expect(await s.repo.reviewDraft(draft.id)).toMatchObject({ body: "My text", revision: 2, attachments: files });
+  });
+  it("does not admit an equal-revision different body to Outbox", async () => {
+    const s = setup();
+    await s.repo.connect(account, "incoming", "smtp");
+    await s.repo.saveDraft({ ...draft, revision: 1 });
+    await expect(s.repo.queueSend({ ...draft, revision: 1, body: "Unobserved replacement" })).rejects.toBeInstanceOf(DraftConflict);
+    expect(await s.db.all("outgoing")).toEqual([]);
+  });
   it("reuses exact attachment identities after a committed write loses its reply", async () => {
     const s = setup();
     await s.repo.saveDraft(draft);

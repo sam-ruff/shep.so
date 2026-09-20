@@ -170,7 +170,7 @@ test("schema upgrade preserves source clock and fences older connections", async
   const { profile, store } = await setup();
   const clock = await store.get("cacheState", "mail");
   const db = await openMailDatabase(profile);
-  expect(db.version).toBe(14);
+  expect(db.version).toBe(15);
   expect(db.objectStoreNames.contains("mailActions")).toBe(true);
   expect(db.objectStoreNames.contains("accountConnections")).toBe(true);
   db.close();

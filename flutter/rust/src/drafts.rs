@@ -272,9 +272,11 @@ pub fn save_text(db: &mut Connection, mut draft: Draft) -> Result<()> {
         "This draft has been submitted or discarded. Its delivery/discard record was preserved."
     );
     let current: Option<(i64, String)> = tx
-        .query_row("SELECT revision,content FROM drafts WHERE id=?1", [&draft.id], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })
+        .query_row(
+            "SELECT revision,content FROM drafts WHERE id=?1",
+            [&draft.id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
         .optional()?;
     // Creation owns the immutable original quote. Text autosave can change its
     // displayed body but cannot replace or erase the hidden formatting source.
@@ -289,7 +291,10 @@ pub fn save_text(db: &mut Connection, mut draft: Draft) -> Result<()> {
         && saved_revision == revision
     {
         let saved = serde_json::to_string(&serde_json::from_str::<Draft>(&saved)?)?;
-        anyhow::ensure!(saved == encoded,"A newer editor owns this draft revision. Reopen the saved draft before retrying.");
+        anyhow::ensure!(
+            saved == encoded,
+            "A newer editor owns this draft revision. Reopen the saved draft before retrying."
+        );
     }
     tx.execute("INSERT INTO drafts(id,revision,content) VALUES(?1,?2,?3) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,content=excluded.content WHERE excluded.revision>drafts.revision",params![draft.id,revision,encoded])?;
     tx.commit()?;

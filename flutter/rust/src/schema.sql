@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS removed_accounts(id TEXT PRIMARY KEY, fingerprint TEX
 CREATE TRIGGER IF NOT EXISTS refuse_removed_account BEFORE INSERT ON accounts WHEN EXISTS(SELECT 1 FROM removed_accounts WHERE id=new.id) BEGIN SELECT RAISE(ABORT,'This account was removed. Add a new account.'); END;
 CREATE TRIGGER IF NOT EXISTS refuse_removed_draft BEFORE INSERT ON drafts WHEN EXISTS(SELECT 1 FROM removed_accounts WHERE id=json_extract(new.content,'$.account_id')) BEGIN SELECT RAISE(ABORT,'This account was removed. Choose a connected account.'); END;
 CREATE TRIGGER IF NOT EXISTS refuse_removed_draft_edit BEFORE UPDATE ON drafts WHEN EXISTS(SELECT 1 FROM removed_accounts WHERE id=json_extract(new.content,'$.account_id')) BEGIN SELECT RAISE(ABORT,'This account was removed. Choose a connected account.'); END;
-CREATE TABLE IF NOT EXISTS credential_slots(slot TEXT PRIMARY KEY, account_id TEXT NOT NULL, settings TEXT, expected TEXT, state TEXT NOT NULL CHECK(state IN ('prepared','active','cleanup')));
+CREATE TABLE IF NOT EXISTS credential_slots(slot TEXT PRIMARY KEY, account_id TEXT NOT NULL, settings TEXT, expected TEXT, state TEXT NOT NULL CHECK(state IN ('prepared','active','cleanup')), error TEXT);
 CREATE TABLE IF NOT EXISTS account_credentials(account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE, slot TEXT NOT NULL UNIQUE REFERENCES credential_slots(slot));
 CREATE TABLE IF NOT EXISTS draft_inline(file_id TEXT PRIMARY KEY REFERENCES draft_files(id) ON DELETE CASCADE, content_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS draft_forwards(draft_id TEXT PRIMARY KEY REFERENCES drafts(id) ON DELETE CASCADE, source_id TEXT NOT NULL);
@@ -92,5 +92,5 @@ CREATE INDEX IF NOT EXISTS group_item_state ON group_items(job,state,position);
 CREATE INDEX IF NOT EXISTS group_item_mail ON group_items(mail,state);
 CREATE INDEX IF NOT EXISTS group_item_account ON group_items(account,state);
 CREATE INDEX IF NOT EXISTS group_item_active ON group_items(state,job) WHERE state IN ('pending','sending','undoing','reversing');
-PRAGMA user_version=17;
+PRAGMA user_version=18;
 COMMIT;

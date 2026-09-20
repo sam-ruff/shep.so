@@ -194,6 +194,106 @@ class Workspace extends ChangeNotifier {
   bool needsReconnect(String id) =>
       repository is ProfileAccountRepository &&
       (repository as ProfileAccountRepository).reconnectAccounts.contains(id);
+  final Map<String, AccountConnectionAttempt> _connectionAttempts = {};
+  final Set<String> _hiddenConnectionAttempts = {};
+  final Map<String, int> _connectionGenerations = {};
+  int _connectionGeneration = 0;
+  List<AccountConnectionAttempt> get connectionAttempts {
+    final durable = repository is DurableAccountRepository
+        ? (repository as DurableAccountRepository).connectionAttempts
+        : const <AccountConnectionAttempt>[];
+    return [
+      ..._connectionAttempts.values,
+      ...durable.where(
+        (item) =>
+            !_connectionAttempts.containsKey(item.id) &&
+            !_hiddenConnectionAttempts.contains(item.id) &&
+            !_removedAccounts.contains(item.account.id),
+      ),
+    ];
+  }
+
+  Future<bool> connectAccount(
+    MailAccount account,
+    String incoming,
+    String smtp, {
+    AccountConnectionAttempt? retry,
+  }) async {
+    final durable = repository is DurableAccountRepository
+        ? repository as DurableAccountRepository
+        : null;
+    if (durable == null) {
+      await accountRepository!.connect(account, incoming, smtp);
+      return true;
+    }
+    final admitted =
+        retry ??
+        await durable.admitConnection(newConnectionAttemptId(), account);
+    if (_removedAccounts.contains(account.id)) {
+      await durable.abandonConnection(admitted.id);
+      return false;
+    }
+    _connectionAttempts.removeWhere(
+      (id, item) => item.account.id == account.id && id != admitted.id,
+    );
+    _hiddenConnectionAttempts.remove(admitted.id);
+    final generation = ++_connectionGeneration;
+    _connectionGenerations[admitted.id] = generation;
+    _connectionAttempts[admitted.id] = admitted.copy(status: 'waiting');
+    _changed();
+    unawaited(
+      _executeConnection(durable, admitted, incoming, smtp, generation),
+    );
+    return true;
+  }
+
+  Future<void> _executeConnection(
+    DurableAccountRepository durable,
+    AccountConnectionAttempt attempt,
+    String incoming,
+    String smtp,
+    int generation,
+  ) async {
+    try {
+      await durable.executeConnection(attempt, incoming, smtp);
+      if (_connectionGenerations[attempt.id] != generation) return;
+      _connectionAttempts.remove(attempt.id);
+      _connectionGenerations.remove(attempt.id);
+      unawaited(refresh());
+    } catch (failure) {
+      if (_connectionGenerations[attempt.id] != generation) return;
+      final current = _connectionAttempts[attempt.id];
+      if (current?.id != attempt.id) return;
+      try {
+        await durable.failConnection(attempt.id, '$failure');
+      } catch (_) {
+        // Keep the original failure available for retry in this session.
+      }
+      if (_connectionGenerations[attempt.id] != generation) return;
+      _connectionAttempts[attempt.id] = current!.copy(
+        status: 'reentry',
+        error: '$failure',
+      );
+    }
+    _changed();
+  }
+
+  Future<void> abandonConnection(String attempt) async {
+    _connectionAttempts.remove(attempt);
+    _connectionGenerations[attempt] = ++_connectionGeneration;
+    _hiddenConnectionAttempts.add(attempt);
+    _changed();
+    if (repository case final DurableAccountRepository durable) {
+      try {
+        await durable.abandonConnection(attempt);
+      } catch (failure) {
+        _hiddenConnectionAttempts.remove(attempt);
+        error = '$failure';
+        _changed();
+      }
+    }
+  }
+
   Timer? _searchTimer;
   Timer? _syncTimer;
   int _pageRevision = 0, total = 0, _unread = 0;
@@ -829,7 +929,16 @@ class Workspace extends ChangeNotifier {
   }
 
   Future<void> accountRemoved(String id) async {
+    final removedAttempts = connectionAttempts
+        .where((attempt) => attempt.account.id == id)
+        .map((attempt) => attempt.id)
+        .toList();
     _removedAccounts.add(id);
+    _connectionAttempts.removeWhere((_, attempt) => attempt.account.id == id);
+    for (final attempt in removedAttempts) {
+      _hiddenConnectionAttempts.add(attempt);
+      _connectionGenerations[attempt] = ++_connectionGeneration;
+    }
     moves.removeAccount(id);
     undoFailures.removeWhere((r) => r.account == id);
     if (_readCandidate?.accountId == id) _readCandidate = null;

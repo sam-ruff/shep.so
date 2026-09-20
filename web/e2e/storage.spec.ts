@@ -1,5 +1,96 @@
 import { test, expect } from "@playwright/test";
 
+test("draft conflict upgrade closes older writers and preserves exact saved content", async ({
+  page,
+}) => {
+  await page.goto("/preview.html");
+  const evidence = await page.evaluate(async () => {
+    const modulePath = "/src/storage.ts";
+    const { stores, openMailDatabase } = await import(modulePath);
+    const profile = "D".repeat(43),
+      name = `shep.mail.v1.${profile}`;
+    const old = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name, 14);
+      request.onupgradeneeded = () => {
+        for (const store of stores) request.result.createObjectStore(store);
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const draft = {
+      id: "saved",
+      revision: 7,
+      body: "Exact retained text",
+      forward: { html: "retained source" },
+    };
+    await new Promise<void>((resolve, reject) => {
+      const tx = old.transaction(["drafts", "draftFiles"], "readwrite");
+      tx.objectStore("drafts").put(draft, draft.id);
+      tx.objectStore("draftFiles").put(
+        {
+          id: "file",
+          draft: draft.id,
+          blob: new Blob([new Uint8Array([0, 255])]),
+        },
+        "file",
+      );
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    let closed = false;
+    old.onversionchange = () => {
+      closed = true;
+      old.close();
+    };
+    const current = await openMailDatabase(profile);
+    let refused = false;
+    try {
+      old.transaction("drafts", "readwrite");
+    } catch {
+      refused = true;
+    }
+    const read = <T>(store: string, key: string) =>
+      new Promise<T>((resolve, reject) => {
+        const request = current.transaction(store).objectStore(store).get(key);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    const saved = await read("drafts", "saved"),
+      file = await read<{ blob: Blob }>("draftFiles", "file");
+    const version = current.version;
+    current.close();
+    const oldVersion = await new Promise<string>((resolve, reject) => {
+      const request = indexedDB.open(name, 14);
+      request.onerror = () => resolve(request.error?.name ?? "");
+      request.onsuccess = () => {
+        request.result.close();
+        reject(Error("Older writer reopened"));
+      };
+    });
+    return {
+      closed,
+      refused,
+      saved,
+      version,
+      oldVersion,
+      bytes: [...new Uint8Array(await file.blob.arrayBuffer())],
+    };
+  });
+  expect(evidence).toEqual({
+    closed: true,
+    refused: true,
+    saved: {
+      id: "saved",
+      revision: 7,
+      body: "Exact retained text",
+      forward: { html: "retained source" },
+    },
+    version: 15,
+    oldVersion: "VersionError",
+    bytes: [0, 255],
+  });
+});
+
 test("IndexedDB upgrade preserves mail and seeds Sent roles; failed writes roll back all stores", async ({
   page,
 }) => {
@@ -102,7 +193,7 @@ test("IndexedDB upgrade preserves mail and seeds Sent roles; failed writes roll 
       version,
     };
   });
-  expect(evidence.version).toBe(14);
+  expect(evidence.version).toBe(15);
   expect(evidence.migrated.mail).toEqual([
     { id: "original", subject: "Storage fixture" },
   ]);

@@ -1,8 +1,16 @@
 import type { Draft, DraftAttachment } from "./model";
+import {
+  DraftConflict,
+  observeDraft,
+  sameDraftObservation,
+  type DraftObservation,
+} from "./draft_revision";
 
 export class DraftSession {
   readonly draft: Draft;
   private saved: number;
+  private observed: DraftObservation | null;
+  private conflict = false;
   private failure?: { revision: number; message: string };
   private files?: {
     run: () => Promise<DraftAttachment[]>;
@@ -18,18 +26,27 @@ export class DraftSession {
   constructor(
     draft: Draft,
     persisted: boolean,
-    private readonly save: (draft: Draft) => Promise<void>,
+    private readonly save: (
+      draft: Draft,
+      expected: DraftObservation | null,
+    ) => Promise<void>,
     private readonly changed: () => void = () => {},
   ) {
     this.draft = structuredClone(draft);
     this.saved = persisted ? (draft.revision ?? 0) : -1;
+    this.observed = persisted ? observeDraft(draft) : null;
   }
 
   get error() {
     return this.failure?.message ?? this.files?.error;
   }
+  get needsReview() {
+    return this.conflict;
+  }
   get pending() {
-    return this.saved < (this.draft.revision ?? 0) || !!this.files;
+    return (
+      this.conflict || this.saved < (this.draft.revision ?? 0) || !!this.files
+    );
   }
   get saving() {
     return !!this.writing;
@@ -77,7 +94,7 @@ export class DraftSession {
   }
 
   flush(retry = false): Promise<boolean> {
-    if (this.retired) return Promise.resolve(false);
+    if (this.retired || this.conflict) return Promise.resolve(false);
     clearTimeout(this.timer);
     this.retryText ||= retry;
     if (retry && this.files) this.files.retry = true;
@@ -100,11 +117,13 @@ export class DraftSession {
         this.retryText = false;
         const snapshot = structuredClone(this.draft);
         try {
-          await this.save(snapshot);
+          await this.save(snapshot, this.observed);
           this.saved = Math.max(this.saved, revision);
+          this.observed = observeDraft(snapshot);
           if (this.failure && this.failure.revision <= revision)
             this.failure = undefined;
         } catch (error) {
+          this.conflict = error instanceof DraftConflict;
           this.failure = {
             revision,
             message:
@@ -113,7 +132,8 @@ export class DraftSession {
                 : "Could not save this draft.",
           };
           this.notify();
-          if ((this.draft.revision ?? 0) === revision) return false;
+          if (this.conflict || (this.draft.revision ?? 0) === revision)
+            return false;
         }
         continue;
       }
@@ -141,5 +161,69 @@ export class DraftSession {
     clearTimeout(this.timer);
     this.listeners.clear();
     this.files = undefined;
+  }
+
+  acceptReview(current: Draft, localRevision: number, keepMine: boolean) {
+    if (
+      !this.conflict ||
+      this.retired ||
+      this.writing ||
+      current.id !== this.draft.id ||
+      (this.draft.revision ?? 0) !== localRevision
+    )
+      return false;
+    clearTimeout(this.timer);
+    this.observed = observeDraft(current);
+    this.saved = current.revision ?? 0;
+    if (keepMine) {
+      this.draft.revision = Math.max(localRevision, this.saved) + 1;
+      this.draft.forward = current.forward;
+      this.draft.forwardSource = current.forwardSource;
+      this.draft.attachments = structuredClone(current.attachments ?? []);
+    } else {
+      this.replaceSaved(current);
+    }
+    this.conflict = false;
+    this.failure = undefined;
+    this.notify();
+    return true;
+  }
+
+  recordConflict(error: unknown) {
+    if (!(error instanceof DraftConflict) || this.retired) return false;
+    this.conflict = true;
+    this.failure = {
+      revision: this.draft.revision ?? 0,
+      message: error.message,
+    };
+    this.notify();
+    return true;
+  }
+
+  refreshSaved(current: Draft, expected: DraftObservation) {
+    if (
+      this.retired ||
+      this.pending ||
+      this.writing ||
+      current.id !== this.draft.id ||
+      !sameDraftObservation(observeDraft(this.draft), expected)
+    )
+      return false;
+    this.replaceSaved(current);
+    this.observed = observeDraft(current);
+    this.saved = current.revision ?? 0;
+    this.notify();
+    return true;
+  }
+
+  private replaceSaved(current: Draft) {
+    Object.assign(this.draft, structuredClone(current), {
+      accountId: current.accountId,
+      inReplyTo: current.inReplyTo,
+      references: structuredClone(current.references),
+      forward: structuredClone(current.forward),
+      forwardSource: current.forwardSource,
+      attachments: structuredClone(current.attachments),
+    });
   }
 }

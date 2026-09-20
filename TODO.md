@@ -109,8 +109,17 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   This adapter and retained Flutter/browser draft sessions are now integrated:
   196 Flutter tests, 132 Flutter Rust tests, 51 browser unit/provider tests and
   11 Chromium draft/Forward/queued-Send scenarios pass. Compact preference and
-  draft captures are reviewed. Browser concurrent-editor review and Flutter
-  account lifecycle follow-ups are active in their isolated lanes.
+  draft captures are reviewed. Browser schema 15 concurrent-editor review,
+  independent preference Retry and Flutter schema 18 account lifecycle are now
+  integrated for the next checkpoint. Browser has 113 focused passing tests and
+  37 distinct passing control/storage scenarios across bounded reruns. Its
+  100,000-row case passes unchanged in a quiet window after loaded-run timeouts.
+  Flutter passes 134 Rust and 203 Flutter tests, with two additional reviewed
+  recovery goldens and 26 final FFI/control regressions. Keep exact draft observations,
+  same-attempt retry generations, shared reconciled duplicate results,
+  removed-account fences and the 32-attempt bound. Commit gates/shipping remain.
+  Browser folder gateway/admission and shared Flutter calendar adoption are
+  continuing in isolated lanes; no fixture-only provider parity is accepted.
   Native folder creation still acquires provider/account capacity before saving
   its planned target and closes the dialog only after remote completion. Extend
   its existing creation owner with local request admission, a pending tree entry,

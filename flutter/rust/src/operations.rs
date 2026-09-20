@@ -179,8 +179,24 @@ pub enum Request {
         match_case: bool,
     },
     PrepareAccount {
+        #[serde(default)]
+        attempt: Option<String>,
         account: Account,
         expected: Option<Account>,
+    },
+    PendingAccountConnections,
+    RetryAccountConnection {
+        attempt: String,
+    },
+    ValidateAccountConnection {
+        attempt: String,
+    },
+    FailAccountConnection {
+        attempt: String,
+        error: String,
+    },
+    AbandonAccountConnection {
+        attempt: String,
     },
     ActivateAccount {
         slot: String,
@@ -610,10 +626,27 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             db.write(move|db|crate::accounts::remove(db,review,discard_unresolved)).await?;
             Ok(json!({"removed":true}))
         }
-        Request::PrepareAccount{account,expected} => {
+        Request::PrepareAccount{attempt,account,expected} => {
             let _guard=profile.operations.try_account(&account.id).await?;
-            db.write(move|db|crate::connections::prepare(db,account,expected)).await
+            db.write(move|db|crate::connections::prepare(db,attempt.as_deref(),account,expected)).await
         }
+        Request::PendingAccountConnections => db.read(crate::connections::pending).await,
+        Request::RetryAccountConnection{attempt} => db.write(move |db| {
+            crate::connections::retry(db,&attempt)?;
+            Ok(json!({"retrying":true}))
+        }).await,
+        Request::ValidateAccountConnection{attempt} => db.read(move |db| {
+            crate::connections::validate(db,&attempt)?;
+            Ok(json!({"prepared":true}))
+        }).await,
+        Request::FailAccountConnection{attempt,error} => db.write(move |db| {
+            crate::connections::fail(db,&attempt,&error)?;
+            Ok(json!({"failed":true}))
+        }).await,
+        Request::AbandonAccountConnection{attempt} => db.write(move |db| {
+            crate::connections::abandon(db,&attempt)?;
+            Ok(json!({"abandoned":true}))
+        }).await,
         Request::ActivateAccount{slot} => {
             let lookup=slot.clone();
             let id=db.read(move|db|crate::connections::owner(db,&lookup)).await?;
