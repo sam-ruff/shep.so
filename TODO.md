@@ -35,15 +35,16 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   remain active. Complete the other domain migrations and final
   timing/platform/shipping evidence as well.
 
-  Flutter integration passes 117 Rust and 172 Flutter tests, including queued
+  Integration `e84f66b` passes 117 Flutter Rust and 175 Flutter tests, including queued
   Send returning while delivery is held, pre-dispatch cancellation, conditional
   rollback, bounded Activity pages and visible recovery errors. Light/dark
   Activity captures are reviewed. Input-time lineage checks and Outbox retry/
   refresh are implemented; the eight focused Outbox tests also cover invalidating
   a review after its Sent phase changes. Native durable individual admission,
-  physical lineage and the common background owner are integrated. Final gates
-  cover correlated close acknowledgements, due calendar retries and cache repair
-  while provider capacity is held.
+  physical lineage and the common background owner are integrated. Normal hooks
+  pass 1,509 Rust test executions, with four ignored. Final native gates pass
+  29 scenarios, with one live-mailbox skip, covering correlated close
+  acknowledgements, calendar retries and cache repair while capacity is held.
   Retain explicit follow-ups for fairness within a multi-account group and
   automatic retargeting over an unresolved legacy move; the latter currently
   rejects admission until checked recovery proves its physical source.

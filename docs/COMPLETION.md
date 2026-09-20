@@ -2,17 +2,17 @@
 
 ## Immediate admission integration, 20 September 2026
 
-Source integration following `7689ef3`: desktop individual mail now uses
+Implementation `e84f66b` follows `7689ef3`: desktop individual mail now uses
 the durable group owner, input-time identity observations and per-field ordering.
 The background owner shares bounded capacity across mail, calendar, folders and
 Outbox. Flutter adds checked Activity Undo, restart projections, conditional
 admission rollback, input lineage checks and queued Send with same-attempt Resume.
 AGENTS.md records the production contracts.
 
-Current integrated evidence: 117 Flutter Rust tests and 172 Flutter tests pass;
-the subsequent eight-test Outbox gate includes invalidating a review after its
-Sent phase changes. Desktop library tests pass before the final scheduler/close
-corrections, and both desktop and Flutter Clippy gates pass at that point.
+Final integrated evidence: 117 Flutter Rust tests and 175 Flutter tests pass,
+including invalidating an Outbox review after its Sent phase changes. Normal
+commit hooks pass 1,509 Rust test executions, with four ignored, both desktop
+Clippy configurations and formatting. Flutter Clippy also passes.
 All 166 Python checks pass, with nine explicit skips. Packaging now recognises
 the shared action crate in Flutter's consuming lockfile.
 
@@ -22,11 +22,17 @@ History, and one read the raw flag instead of the durable projection after close
 The updated checks retain rejection counts, folder membership and unread state;
 close also verifies the journal and actual restart. The expanded rerun passes
 all 19 native scenarios, including the corrected checks and other forward-failure
-controls. Final scheduler/error-classification gates and shipping remain required.
+controls. The final scheduler/error-classification run passes 27 native scenarios
+with one explicit live-mailbox skip; two additional calendar restart/Waiting
+scenarios pass. This includes failed Undo recovery through History and restart.
+Strict Zensical passes. `e84f66b` is pushed to `main`, with its full remote
+commit verified. The personal installation is unchanged.
 Two compact Outbox goldens pass and have been reviewed in light and dark.
 Reviewed integrated WebPs include ten-message deletion
-before a held read finishes (`1b8a044229ca`) and compact dark admission/Undo with
-provider capacity held (`1a461b3cb509`). Evidence is under ignored `artifacts/`.
+before a held read finishes (`44942deb727c`), compact dark admission/Undo with
+provider capacity held (`1a461b3cb509`), repair status (`5b7eb23901e5`) and
+persistent failed Undo recovery (`e006e57d14e7`). Evidence is under ignored
+`artifacts/`.
 
 Assumptions and limits remain explicit:
 
