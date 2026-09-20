@@ -6,9 +6,15 @@ import 'controls.dart';
 import 'icons.dart';
 
 class AccountSetup extends StatefulWidget {
-  const AccountSetup({super.key, required this.workspace, this.account});
+  const AccountSetup({
+    super.key,
+    required this.workspace,
+    this.account,
+    this.attempt,
+  });
   final Workspace workspace;
   final MailAccount? account;
+  final AccountConnectionAttempt? attempt;
   @override
   State<AccountSetup> createState() => _AccountSetupState();
 }
@@ -97,14 +103,13 @@ class _AccountSetupState extends State<AccountSetup> {
           sentFolder: sentFolder.text.trim(),
         );
     try {
-      await widget.workspace.accountRepository!.connect(
+      await widget.workspace.connectAccount(
         account,
         password.text,
         separate ? smtpPassword.text : password.text,
+        retry: widget.attempt,
       );
       if (!mounted) return;
-      // Cached workspace is usable while the first provider sync runs.
-      unawaited(widget.workspace.refresh());
       Navigator.pop(context);
     } catch (e) {
       if (mounted) {
@@ -211,7 +216,7 @@ class _AccountSetupState extends State<AccountSetup> {
                     : const ShepIcon('link'),
                 label: Text(
                   busy
-                      ? 'Checking connections…'
+                      ? 'Saving connection…'
                       : reconnect
                       ? 'Reconnect'
                       : 'Connect account',

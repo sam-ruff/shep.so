@@ -329,6 +329,18 @@ Preference values and field revisions share one authoritative settings write;
 the legacy settings key is only a mirror. A failed local save cannot produce a
 profile application receipt. Reuse existing Outbox and profile recovery owners.
 
+Browser draft schema 15 fences older writers. Composer sessions submit the exact
+observed text/revision under the draft Web Lock; only identical retries are
+idempotent. Conflicts stop automatic retries and retain local text until an
+explicit saved-version review. Both choices recheck the observation; later edits,
+Send and removal cannot resurrect a retired draft. Preserve backend-owned files
+and forward metadata. Preferences owns failed local intent and Retry separately
+from mail notices; merge only locally changed top-level fields onto current
+settings. Preserve explicit field revisions through failed change-and-revert.
+Pending admission blocks new profile capture/application and sign-out. Keep
+held Retry controls stationary when unrelated notices appear. Unadmitted browser
+text/settings remain memory-only, with page-leave protection, not crash durability.
+
 Flutter individual mail admission uses schema 17 and `individual_mail_actions`
 beside the existing field-intent owner. Reserve an action UUID before FFI and
 save exact fields/account identity before credentials or provider capacity.
@@ -353,6 +365,16 @@ active requests, serialised per account. Complete a sweep before revisiting earl
 accounts. A failed page stops automatic pumping and retains a visible Activity
 Retry; disposal fences late reads. Keep the 100,000-row seek, held-account,
 late-account, same-account drain and real Retry-control regressions.
+
+Flutter account schema 18 reuses credential slots for at most 32 prepared
+attempts. Assign UUIDs before FFI and admit outside the provider FIFO; passwords
+remain transient until secure storage. Duplicate execution shares one future.
+Recheck attempt ownership before each probe/write and activate the exact slot
+atomically. Lost activation replies inspect the active binding without restaging.
+Cancel retires local ownership immediately and queues cleanup behind active work.
+Restart requires explicit password re-entry. Same-ID retries need a separate
+execution generation; delayed failure persistence and removed-account refreshes
+must not restore obsolete activity. Preserve actual FFI and control race tests.
 
 Flutter Send saves frozen MIME, envelope, account settings and credential-slot
 identity in the existing Outbox before returning to the UI. Execution uses the

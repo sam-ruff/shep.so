@@ -68,7 +68,7 @@ test("preferences survive legacy mirror failure with their exact field revision"
   });
   await page.getByRole("button", { name: "Preferences", exact: true }).click();
   await page.getByRole("combobox", { name: "Theme", exact: true }).selectOption("dark");
-  await expect(page.getByText("Preferences saved", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Preference saving", exact: true })).toContainText("Preferences saved on this browser");
   await page.reload();
   await page.getByRole("button", { name: "Preferences", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Theme", exact: true })).toHaveValue("dark");

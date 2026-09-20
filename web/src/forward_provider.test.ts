@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { initSync } from "./wasm/shep_mail_content";
 import { prepareForwardContent } from "./forward_content";
 import { GatewayRepository, type Account, type Outgoing } from "./provider";
+import { observeDraft } from "./draft_revision";
 import { checkRemovedWrites } from "./account_removal";
 import type { Draft } from "./model";
 import type { Change, LocalStore, StoreName } from "./storage";
@@ -138,13 +139,16 @@ it("commits complete binary files atomically and retries a lost acknowledgment w
     0, 255, 1, 13, 10,
   ]);
   expect(bytes[1].info.media_type).toBe("application/x-second");
-  await s.repo.saveDraft({
-    ...draft,
-    body: "Newer edit",
-    revision: 2,
-    forward: null,
-    attachments: [],
-  });
+  await s.repo.saveDraft(
+    {
+      ...draft,
+      body: "Newer edit",
+      revision: 2,
+      forward: null,
+      attachments: [],
+    },
+    observeDraft(draft),
+  );
   await s.repo.removeFile(draft.id, draft.attachments![0].id);
   const retry = await s.repo.forward("source", "draft");
   expect(retry.body).toBe("Newer edit");
@@ -192,6 +196,7 @@ it("send carries retained HTML and inline identities; reviewed recovery clones t
   const s = await setup();
   const draft = await s.repo.forward("source", "draft");
   draft.to = "recipient@example.test";
+  draft.revision = (draft.revision ?? 0) + 1;
   await s.repo.saveDraft(draft);
   await s.repo.connect(account, "synthetic", "synthetic");
   await expect(s.repo.send(draft)).rejects.toThrow();

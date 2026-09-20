@@ -230,10 +230,31 @@ describe("optimistic provider contract", () => {
     const w = new Workspace(new Controlled(), settings);
     settings.fail = true;
     w.savePreferences({ ...w.preferences, appearance: "dark" });
-    expect(w.error).toContain("Retry");
+    expect(w.preferenceError).toContain("Retry");
     settings.fail = false;
-    w.retry!();
+    w.retryPreferences();
     expect(settings.value.appearance).toBe("dark");
+  });
+  it("preference recovery keeps unrelated errors and merges newer stored fields", () => {
+    const settings = new Settings();
+    const w = new Workspace(new Controlled(), settings);
+    const unrelatedRetry = () => {};
+    w.error = "Unrelated mailbox failure";
+    w.retry = unrelatedRetry;
+    settings.fail = true;
+    w.savePreferences({ ...w.preferences, appearance: "dark" });
+    w.notice = "Old mail action completed";
+    expect(w.preferenceError).toContain("Retry");
+    expect(w.error).toBe("Unrelated mailbox failure");
+    settings.value.previewLines = 4;
+    w.savePreferences({ ...w.preferences, appearance: "light" });
+    settings.fail = false;
+    w.retryPreferences();
+    expect(settings.value).toMatchObject({ appearance: "light", previewLines: 4 });
+    expect(w.preferenceError).toBeNull();
+    expect(w.error).toBe("Unrelated mailbox failure");
+    expect(w.retry).toBe(unrelatedRetry);
+    expect(w.notice).toBe("Old mail action completed");
   });
   it("search filters sender/body and excludes other folders", () => {
     const w = new Workspace(new Controlled(), new Settings());

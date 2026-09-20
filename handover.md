@@ -2,7 +2,7 @@
 
 ## Current immediate-action continuation
 
-The next source checkpoint after `48cd150` integrates native schema 8 checked
+Shipped checkpoint `d7f06b7` after `48cd150` integrates native schema 8 checked
 credential slots/account admission, bounded candidate seeks, group failure
 cooldown and preference Retry; Flutter fair resumption, retained draft sessions
 and preference Retry; and browser retained draft/file recovery. Combined library
@@ -12,14 +12,19 @@ tests with nine skips. Strict docs and both client analysis/build checks pass.
 The combined native run passed 26 of 27 flows. Rejected synced credentials exposed
 missing journal cleanup and a demo shortcut bypassing the injected keychain.
 Both are corrected; four rebuilt password/backup flows pass, covering the final
-failure and restart, with reviewed capture `a9b0b41a59b3`. Normal commit hooks and
-push remain required. Use the frozen handoffs and evidence under `artifacts/`.
+failure and restart, with reviewed capture `a9b0b41a59b3`. Normal hooks pass 1,547
+Rust executions with four ignored; strict docs pass and remote main is verified.
 
-Active isolated follow-ups are native folder creation admission through its
-existing owner (schema 9, after the current schema 8 checkpoint), browser checked
-concurrent-draft review (schema 15), and Flutter account lifecycle presentation
-through credential slots. Do not combine their unverified working sources with
-this checkpoint. Preserve `handover-fable.md` without reading or staging it.
+The next uncommitted batch integrates browser draft conflict review (schema 15),
+owned preference Retry and Flutter account lifecycle (schema 18). Flutter passes
+134 Rust and 203 controls with clean analysis/Clippy, two additional reviewed
+recovery goldens and 26 final FFI/control tests after the duplicate-reply fix.
+Browser passes 113 focused tests and 37 distinct controls across reruns. The
+100,000-message case passed in 57.5 seconds in a quiet window after loaded-run
+timeouts; no budget changed. Keep failing evidence. Commit gates/shipping remain.
+Native folder creation (schema 9), real browser folder gateway/admission (schema
+16) and shared Flutter calendar adoption (schema 19) remain isolated follow-ups.
+Preserve `handover-fable.md` without reading or staging it.
 TODO remains authoritative and the full action architecture is unfinished.
 
 ## Immediate actions checkpoint, 20 September

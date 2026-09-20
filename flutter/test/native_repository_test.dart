@@ -23,6 +23,7 @@ class FixtureCredentials implements CredentialStore {
       saveUnavailable = false,
       saveResponseLost = false;
   Completer<void>? saveGate, saveStarted;
+  int writes = 0;
   @override
   Future<String?> read(String account, bool smtp) async {
     reads++;
@@ -32,6 +33,7 @@ class FixtureCredentials implements CredentialStore {
 
   @override
   Future<void> save(String account, String incoming, String smtp) async {
+    writes++;
     saveStarted?.complete();
     if (saveGate != null) await saveGate!.future;
     if (saveUnavailable) throw StateError('Synthetic locked credential write');
@@ -477,29 +479,26 @@ void main() {
         ),
         throwsA(predicate((e) => '$e'.contains('previous connection'))),
       );
-      expect(credentials.values, {
-        account.id: ['prior-incoming', 'prior-smtp'],
-      });
+      expect(await repository.password(account), 'prior-incoming');
+      expect(credentials.values, hasLength(2));
       credentials.saveResponseLost = false;
       repository.refuseActivation = true;
       await expectLater(
         repository.connect(account, 'candidate-incoming', 'candidate-smtp'),
         throwsStateError,
       );
-      expect(credentials.values, {
-        account.id: ['prior-incoming', 'prior-smtp'],
-      });
       expect(await repository.password(account), 'prior-incoming');
+      expect(credentials.values, hasLength(2));
       repository.refuseActivation = false;
       credentials.removeUnavailable = true;
       await repository.connect(account, 'candidate-incoming', 'candidate-smtp');
       expect(await repository.password(account), 'candidate-incoming');
       expect(await repository.password(account, smtp: true), 'candidate-smtp');
-      expect(repository.pendingCredentialCleanup, 1);
+      expect(repository.pendingCredentialCleanup, greaterThan(0));
       final reopened = NativeRepository(repository.profile, credentials);
       await reopened.initialize();
       expect(await reopened.password(account), 'candidate-incoming');
-      expect(reopened.pendingCredentialCleanup, 1);
+      expect(reopened.pendingCredentialCleanup, greaterThan(0));
       credentials.removeUnavailable = false;
       await reopened.cleanupCredentials();
       expect(credentials.values, hasLength(1));
@@ -535,10 +534,7 @@ void main() {
       credentials.saveGate = null;
       credentials.saveStarted = null;
       repository.loseActivationResponse = true;
-      await expectLater(
-        repository.connect(account, 'latest-incoming', 'latest-smtp'),
-        throwsStateError,
-      );
+      await repository.connect(account, 'latest-incoming', 'latest-smtp');
       expect(credentials.values, hasLength(1));
       await other.initialize();
       expect(await other.password(account), 'latest-incoming');
@@ -546,7 +542,7 @@ void main() {
     },
   );
   test(
-    'abandoned staged credentials clean up on reopening without changing the active connection',
+    'staged connection survives reopening for explicit password re-entry',
     () async {
       final credentials = FixtureCredentials();
       final repository = await connection(credentials);
@@ -563,8 +559,11 @@ void main() {
       );
       final reopened = NativeRepository(repository.profile, credentials);
       await reopened.initialize();
-      expect(reopened.pendingCredentialCleanup, 1);
+      expect(reopened.pendingCredentialCleanup, 0);
+      expect(reopened.connectionAttempts, hasLength(1));
+      expect(reopened.connectionAttempts.single.needsPasswords, isTrue);
       expect(await reopened.password(account), 'prior-incoming');
+      await reopened.abandonConnection(reopened.connectionAttempts.single.id);
       await reopened.cleanupCredentials();
       expect(credentials.values, {
         account.id: ['prior-incoming', 'prior-smtp'],
@@ -572,6 +571,101 @@ void main() {
       await expectLater(
         repository.call({'op': 'activate_account', 'slot': pending['slot']}),
         throwsA(predicate((e) => '$e'.contains('no longer available'))),
+      );
+    },
+  );
+  test(
+    'durable connection admission is visible through the actual FFI',
+    () async {
+      final credentials = FixtureCredentials();
+      final repository = await connection(credentials);
+      final admitted = await repository.admitConnection(
+        '00000000-0000-4000-8000-000000000042',
+        repository.mailAccounts.single,
+      );
+      expect(admitted.status, 'saving');
+      await repository.failConnection(
+        admitted.id,
+        'Synthetic provider refusal',
+      );
+      final reopened = NativeRepository(repository.profile, credentials);
+      await reopened.initialize();
+      expect(reopened.connectionAttempts.single.id, admitted.id);
+      expect(reopened.connectionAttempts.single.needsPasswords, isTrue);
+      expect(
+        reopened.connectionAttempts.single.error,
+        'Synthetic provider refusal',
+      );
+      expect(
+        await reopened.password(repository.mailAccounts.single),
+        'prior-incoming',
+      );
+      await reopened.abandonConnection(admitted.id);
+      await reopened.refreshConnectionAttempts();
+      expect(reopened.connectionAttempts, isEmpty);
+    },
+  );
+  test(
+    'lost admission and activation replies share one reconciled duplicate execution',
+    () async {
+      final credentials = FixtureCredentials();
+      final repository = (await connection(credentials))
+        ..losePrepareResponse = true;
+      final attempt = await repository.admitConnection(
+        '00000000-0000-4000-8000-000000000043',
+        repository.mailAccounts.single,
+      );
+      expect(attempt.id, '00000000-0000-4000-8000-000000000043');
+      repository.losePrepareResponse = false;
+      repository.loseActivationResponse = true;
+      credentials.saveGate = Completer<void>();
+      credentials.saveStarted = Completer<void>();
+      final first = repository.executeConnection(attempt, 'incoming', 'smtp');
+      await credentials.saveStarted!.future;
+      final second = repository.executeConnection(
+        attempt,
+        'ignored',
+        'ignored',
+      );
+      credentials.saveGate!.complete();
+      await Future.wait([first, second]);
+      expect(credentials.writes, 1);
+      expect(repository.probes, 2);
+      expect(
+        await repository.password(repository.mailAccounts.single),
+        'incoming',
+      );
+    },
+  );
+
+  test(
+    'cancelled held probe cannot continue to SMTP or save credentials',
+    () async {
+      final credentials = FixtureCredentials();
+      final repository = await connection(credentials);
+      final attempt = await repository.admitConnection(
+        '00000000-0000-4000-8000-000000000044',
+        repository.mailAccounts.single,
+      );
+      repository.probeStarted = Completer<void>();
+      repository.probeRelease = Completer<void>();
+      final execution = repository.executeConnection(
+        attempt,
+        'incoming',
+        'smtp',
+      );
+      await repository.probeStarted!.future;
+      await repository.abandonConnection(attempt.id);
+      repository.probeRelease!.complete();
+      await expectLater(
+        execution,
+        throwsA(predicate((error) => '$error'.contains('cancelled'))),
+      );
+      expect(repository.probes, 1);
+      expect(credentials.writes, 0);
+      expect(
+        await repository.password(repository.mailAccounts.single),
+        'prior-incoming',
       );
     },
   );

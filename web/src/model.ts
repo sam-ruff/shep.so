@@ -103,7 +103,7 @@ export interface Repository {
     fields: Fields,
     lease?: IntentLease,
   ): Promise<Fields | void>;
-  saveDraft(draft: Draft): Promise<void>;
+  saveDraft(draft: Draft, expected?: import("./draft_revision").DraftObservation | null): Promise<void>;
   send(draft: Draft): Promise<void>;
   queueSend?(draft: Draft): Promise<void>;
   saveEvent(event: CalendarEntry): Promise<void>;
@@ -155,7 +155,7 @@ export const defaults: Preferences = {
 };
 export interface SettingsStore {
   read(): Preferences;
-  write(value: Preferences): void;
+  write(value: Preferences, intent?: readonly (keyof Preferences)[]): void;
 }
 export class BrowserSettings implements SettingsStore {
   constructor(private key = "shep.preferences.v1") {}
@@ -221,6 +221,9 @@ export class Workspace extends EventTarget {
   mail: Mail[];
   events: CalendarEntry[];
   preferences: Preferences = structuredClone(defaults);
+  preferenceError: string | null = null;
+  preferenceSaved = false;
+  private preferenceIntent = new Set<keyof Preferences>();
   folder = "Inbox";
   account: string | null = null;
   filter = "All";
@@ -1240,15 +1243,27 @@ export class Workspace extends EventTarget {
     this.changed();
   }
   savePreferences(value: Preferences) {
+    for (const key of Object.keys(value) as (keyof Preferences)[])
+      if (JSON.stringify(value[key]) !== JSON.stringify(this.preferences[key]))
+        this.preferenceIntent.add(key);
     this.preferences = value;
+    this.retryPreferences();
+  }
+  retryPreferences() {
+    if (!this.preferenceIntent.size) return;
     try {
-      this.settings.write(value);
-      this.notice = "Preferences saved";
-      this.error = null;
+      const current = this.settings.read();
+      const edited = Object.fromEntries([...this.preferenceIntent].map(key => [key, this.preferences[key]]));
+      const next = { ...current, ...edited } as Preferences;
+      this.settings.write(next, [...this.preferenceIntent]);
+      this.preferences = next;
+      this.preferenceIntent.clear();
+      this.preferenceError = null;
+      this.preferenceSaved = true;
     } catch {
-      this.error =
+      this.preferenceError =
         "Preferences could not be saved. Retry to keep changes after restarting.";
-      this.retry = () => this.savePreferences(this.preferences);
+      this.preferenceSaved = false;
     }
     this.changed();
   }

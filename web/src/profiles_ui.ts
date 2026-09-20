@@ -765,8 +765,8 @@ export class ProfilesUI {
           button(
             "Review",
             () => {
-              pub
-                .prepare(name, this.repo.accounts, this.device.capture())
+              Promise.resolve()
+                .then(() => pub.prepare(name, this.repo.accounts, this.device.capture()))
                 .catch(
                   (error) =>
                     (status.textContent =
@@ -857,8 +857,8 @@ export class ProfilesUI {
           button(
             "Publish",
             () => {
-              pub
-                .approve(this.repo.accounts, this.device.capture())
+              Promise.resolve()
+                .then(() => pub.approve(this.repo.accounts, this.device.capture()))
                 .catch((error) => {
                   status.textContent =
                     error instanceof Error

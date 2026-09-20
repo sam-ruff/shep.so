@@ -28,9 +28,19 @@ fn without_sent(mut account: Account) -> Account {
 }
 pub(crate) fn prepare(
     db: &mut Connection,
+    attempt: Option<&str>,
     mut account: Account,
     expected: Option<Account>,
 ) -> Result<Value> {
+    let generated;
+    let attempt = if let Some(attempt) = attempt {
+        uuid::Uuid::parse_str(attempt)
+            .context("This connection attempt has an invalid identity.")?;
+        attempt
+    } else {
+        generated = uuid::Uuid::new_v4().to_string();
+        &generated
+    };
     account.validate()?;
     anyhow::ensure!(
         !account.id.is_empty() && account.id.len() <= 128,
@@ -38,6 +48,30 @@ pub(crate) fn prepare(
     );
     let tx = db.transaction()?;
     crate::accounts::available(&tx, &account.id)?;
+    let slot = format!("credential-{attempt}");
+    if let Some((saved_account, saved_expected, state)) = tx
+        .query_row(
+            "SELECT settings,expected,state FROM credential_slots WHERE slot=?1",
+            [&slot],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?
+    {
+        anyhow::ensure!(
+            state == "prepared"
+                && saved_account.as_deref() == Some(&serde_json::to_string(&account)?)
+                && saved_expected.as_deref() == Some(&snapshot(&tx, &account.id)?),
+            "This connection attempt was already used. Start a new attempt."
+        );
+        tx.commit()?;
+        return Ok(json!({"slot":slot,"attempt":attempt,"account":account}));
+    }
     let prior: Option<String> = tx
         .query_row(
             "SELECT settings FROM accounts WHERE id=?1",
@@ -70,11 +104,86 @@ pub(crate) fn prepare(
         |r| r.get(0),
     )?;
     anyhow::ensure!(!collision, "Choose a new account identity.");
-    let slot = format!("credential-{}", uuid::Uuid::new_v4());
     let expected = snapshot(&tx, &account.id)?;
+    tx.execute(
+        "UPDATE credential_slots SET state='cleanup',settings=NULL,expected=NULL WHERE account_id=?1 AND state='prepared'",
+        [&account.id],
+    )?;
+    let pending: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM credential_slots WHERE state='prepared'",
+        [],
+        |row| row.get(0),
+    )?;
+    anyhow::ensure!(
+        pending < 32,
+        "Finish or cancel an existing connection attempt before adding another."
+    );
     tx.execute("INSERT INTO credential_slots(slot,account_id,settings,expected,state) VALUES(?1,?2,?3,?4,'prepared')", params![slot, account.id, serde_json::to_string(&account)?, expected])?;
     tx.commit()?;
-    Ok(json!({"slot":slot,"account":account}))
+    Ok(json!({"slot":slot,"attempt":attempt,"account":account}))
+}
+
+pub(crate) fn pending(db: &Connection) -> Result<Value> {
+    let mut query = db.prepare(
+        "SELECT substr(slot,12),account_id,settings,error FROM credential_slots WHERE state='prepared' ORDER BY rowid DESC LIMIT 50",
+    )?;
+    let rows = query
+        .query_map([], |row| {
+            Ok(json!({
+                "attempt": row.get::<_, String>(0)?,
+                "account_id": row.get::<_, String>(1)?,
+                "account": serde_json::from_str::<Value>(&row.get::<_, String>(2)?).map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))?,
+                "status": if row.get::<_, Option<String>>(3)?.is_some() { "failed" } else { "reentry" },
+                "error": row.get::<_, Option<String>>(3)?,
+            }))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(json!(rows))
+}
+
+pub(crate) fn retry(db: &Connection, attempt: &str) -> Result<()> {
+    let changed = db.execute(
+        "UPDATE credential_slots SET error=NULL WHERE slot=?1 AND state='prepared'",
+        [format!("credential-{attempt}")],
+    )?;
+    anyhow::ensure!(
+        changed == 1,
+        "This connection attempt was replaced. Re-enter the passwords for the current attempt."
+    );
+    Ok(())
+}
+
+pub(crate) fn validate(db: &Connection, attempt: &str) -> Result<()> {
+    let prepared: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM credential_slots WHERE slot=?1 AND state='prepared')",
+        [format!("credential-{attempt}")],
+        |row| row.get(0),
+    )?;
+    anyhow::ensure!(
+        prepared,
+        "This connection attempt was cancelled or replaced."
+    );
+    Ok(())
+}
+
+pub(crate) fn fail(db: &Connection, attempt: &str, error: &str) -> Result<()> {
+    db.execute(
+        "UPDATE credential_slots SET error=?2 WHERE slot=?1 AND state='prepared'",
+        params![
+            format!("credential-{attempt}"),
+            error.chars().take(512).collect::<String>()
+        ],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn abandon(db: &Connection, attempt: &str) -> Result<()> {
+    let slot = format!("credential-{attempt}");
+    db.execute(
+        "UPDATE credential_slots SET state='cleanup',settings=NULL,expected=NULL WHERE slot=?1 AND state='prepared'",
+        [&slot],
+    )?;
+    Ok(())
 }
 pub(crate) fn owner(db: &Connection, slot: &str) -> Result<String> {
     db.query_row(
@@ -192,7 +301,7 @@ fn require_connected(db: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 pub(crate) fn cleanup(db: &Connection) -> Result<Vec<String>> {
-    let mut q = db.prepare("WITH candidates(slot) AS (SELECT slot FROM credential_slots WHERE state!='active' UNION SELECT id FROM removed_accounts WHERE cleanup=1) SELECT slot FROM candidates c WHERE NOT EXISTS(SELECT 1 FROM account_credentials a WHERE a.slot=c.slot) AND NOT EXISTS(SELECT 1 FROM accounts a WHERE a.id=c.slot AND NOT EXISTS(SELECT 1 FROM account_credentials b WHERE b.account_id=a.id)) ORDER BY slot")?;
+    let mut q = db.prepare("WITH candidates(slot) AS (SELECT slot FROM credential_slots WHERE state='cleanup' UNION SELECT id FROM removed_accounts WHERE cleanup=1) SELECT slot FROM candidates c WHERE NOT EXISTS(SELECT 1 FROM account_credentials a WHERE a.slot=c.slot) AND NOT EXISTS(SELECT 1 FROM accounts a WHERE a.id=c.slot AND NOT EXISTS(SELECT 1 FROM account_credentials b WHERE b.account_id=a.id)) ORDER BY slot")?;
     Ok(q.query_map([], |r| r.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }

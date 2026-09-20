@@ -55,6 +55,7 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     throw new Error("Invalid browser profile identity.");
   return new Promise((resolve, reject) => {
     let abandoned = false;
+    // Version 15 fences draft writers without observed-version conflict checks.
     // Version 14 fences removal writers without connection-attempt ownership.
     // Version 13 fences writers without individual action receipt/removal ownership.
     // Version 12 tracks acknowledged physical identity continuity in metadata.
@@ -63,7 +64,7 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     // Version 9 binds the derived persistent index to this source incarnation.
     // Version 8 fences older tabs that remove accounts without group ownership.
     // Version 7 fenced writes lacking atomic cache-applied intent revisions.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 14);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 15);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))

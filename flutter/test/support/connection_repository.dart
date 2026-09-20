@@ -7,7 +7,10 @@ class ConnectionFixtureRepository extends NativeRepository {
   ConnectionFixtureRepository(super.profile, super.credentials);
   bool refuseActivation = false,
       loseActivationResponse = false,
+      losePrepareResponse = false,
       captureSend = false;
+  Completer<void>? probeStarted, probeRelease;
+  int probes = 0;
   Map<String, Object?>? submitted;
   final sendCaptured = Completer<void>();
   final sendRelease = Completer<void>();
@@ -20,7 +23,14 @@ class ConnectionFixtureRepository extends NativeRepository {
       await sendRelease.future;
       throw StateError('Synthetic SMTP refusal');
     }
-    if (request['op'] == 'probe') return {'connected': true, 'sent': false};
+    if (request['op'] == 'probe') {
+      probes++;
+      if (probeStarted case final started? when !started.isCompleted) {
+        started.complete();
+      }
+      if (probeRelease != null) await probeRelease!.future;
+      return {'connected': true, 'sent': false};
+    }
     if (request['op'] == 'activate_account' && refuseActivation) {
       throw StateError(
         'Synthetic activation failure; previous connection kept.',
@@ -31,6 +41,9 @@ class ConnectionFixtureRepository extends NativeRepository {
         captureSend &&
         !sendSettled.isCompleted) {
       sendSettled.complete();
+    }
+    if (request['op'] == 'prepare_account' && losePrepareResponse) {
+      throw StateError('Synthetic lost preparation response.');
     }
     if (request['op'] == 'activate_account' && loseActivationResponse) {
       throw StateError('Synthetic lost activation response.');

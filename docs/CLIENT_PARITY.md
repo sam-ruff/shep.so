@@ -19,21 +19,25 @@ Pause and Undo ownership. Other domain/lifecycle adapters remain unfinished.
 Desktop draft feedback now stays with each editor or parked session, including
 Retry and newer-revision ownership. Flutter/browser now retain parked draft text,
 owned failures and Retry, with stale-result and Send/removal fences. Browser file
-retries preserve exact identities after lost replies. Cross-tab browser text
-conflicts and wider suspension/platform evidence remain active.
+retries preserve exact identities after lost replies. Browser schema 15 now checks
+observed text/revisions and offers explicit conflict review; wider suspension and
+platform evidence remain active.
 Native Preferences now retains revision-owned local save errors and Retry after
 notice dismissal/navigation, without reverting the current choice. Focused unit
-and desktop/compact native gates pass; the combined account build still needs
-its final native run. Flutter Preferences also retains owned status and Retry
+and desktop/compact native gates pass in shipped checkpoint `d7f06b7`.
+Flutter Preferences also retains owned status and Retry
 through unrelated notices; compact light/dark screenshots are reviewed. Browser
-preference feedback remains part of the audit; publication keeps its separate owner.
+Preferences now owns failure/Retry, retains pending field intent and guards profile
+application until admission succeeds; publication keeps its separate owner.
 
 Native schema 8 stages checked account credential slots and activates them with
 settings atomically; provider, vault and backup readers resolve the binding.
 Incoming identity edits with cached mail require a reviewed migration. The account
 UI now admits locally, closes its matching form and exposes Connection activity;
-the isolated native held-capacity/close/restart/rejection controls pass. Final
-integrated native execution remains required. Native candidate discovery and Flutter runnable
+the integrated native held-capacity/close/restart/rejection controls pass. Flutter
+schema 18 now admits at most 32 attempts before probes and exposes Cancel/re-entry
+with same-ID execution generations and removal fences. Its integrated gates pass
+134 Rust and 203 Flutter tests. Native candidate discovery and Flutter runnable
 actions now use indexed 50-row pages, with 100,000-row database-step tests. Flutter
 resumption retains per-account exclusion across failed reads and an explicit
 Activity Retry. These gates do not establish whole-app latency or platform parity.

@@ -1,11 +1,13 @@
 # Conversation request audit
 
-The current 20 September continuation integrates checked native account admission,
+Checkpoint `d7f06b7` ships checked native account admission,
 bounded scheduler seeks, fair Flutter resumption and retained Flutter/browser draft
 failures, plus independent native/Flutter preference Retry. Combined gates and
 shipping are recorded in [Completion](COMPLETION.md); remaining domain migrations
 and the final latency/platform gates stay active. This is implementation of the
-approved architecture, not completion of the app-wide request.
+approved architecture, not completion of the app-wide request. The next integrated
+batch adds browser draft conflict review and independent preference Retry, plus
+Flutter account admission/re-entry with retry generations and removal fences.
 
 **20 September immediate actions across the app:** Sam reported slow preparation
 and deletion for about ten selected messages, accepted background server work

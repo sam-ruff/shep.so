@@ -38,6 +38,7 @@ class NativeRepository
         FormattedMessageRepository,
         PrintRepository,
         MailActivityRepository,
+        DurableAccountRepository,
         DurableMutationRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
@@ -130,6 +131,8 @@ class NativeRepository
   @override
   Set<String> reconnectAccounts = {};
   @override
+  List<AccountConnectionAttempt> connectionAttempts = const [];
+  @override
   Future<void> refreshProfileAccounts() async {
     final state = await call({'op': 'accounts'}) as Map<String, dynamic>;
     mailAccounts = (state['accounts'] as List)
@@ -146,6 +149,7 @@ class NativeRepository
   @override
   Future<void> initialize() async {
     await refreshProfileAccounts();
+    await refreshConnectionAttempts();
     pendingCredentialCleanup =
         (await call({'op': 'credential_cleanup'}) as List).length;
     savedDrafts = (await call({'op': 'drafts'}) as List)
@@ -162,6 +166,7 @@ class NativeRepository
   // Account/credential lifecycle operations share one FIFO across bridge
   // handles. The native profile lock excludes independent app processes.
   static Future<void> _accountWrites = Future.value();
+  static final Map<String, Future<void>> _connectionExecutions = {};
   Future<T> _accountWrite<T>(Future<T> Function() operation) {
     final result = _accountWrites.then((_) => operation());
     _accountWrites = result.then<void>(
@@ -213,6 +218,9 @@ class NativeRepository
         folderNames.remove(review.id);
         savedDrafts.removeWhere((d) => d.accountId == review.id);
         cached.removeWhere((m) => m.accountId == review.id);
+        connectionAttempts = connectionAttempts
+            .where((attempt) => attempt.account.id != review.id)
+            .toList(growable: false);
         pendingCredentialCleanup++;
         try {
           await _cleanupCredentials();
@@ -222,25 +230,135 @@ class NativeRepository
       });
   @override
   Future<void> connect(MailAccount account, String incoming, String smtp) =>
-      _accountWrite(() => _connect(account, incoming, smtp));
+      () async {
+        final attempt = await admitConnection(
+          newConnectionAttemptId(),
+          account,
+        );
+        await executeConnection(attempt, incoming, smtp);
+      }();
 
-  Future<void> _connect(
+  @override
+  Future<AccountConnectionAttempt> admitConnection(
+    String attempt,
     MailAccount account,
+  ) async {
+    dynamic prepared;
+    try {
+      prepared = await call({
+        'op': 'prepare_account',
+        'attempt': attempt,
+        'account': account.toJson(),
+        'expected': mailAccounts
+            .where((a) => a.id == account.id)
+            .firstOrNull
+            ?.toJson(),
+      });
+    } catch (_) {
+      await refreshConnectionAttempts();
+      final saved = connectionAttempts
+          .where((item) => item.id == attempt && item.account.id == account.id)
+          .firstOrNull;
+      if (saved == null) rethrow;
+      return saved;
+    }
+    final admitted = AccountConnectionAttempt(
+      id: prepared['attempt'] as String,
+      account: MailAccount.fromJson(prepared['account']),
+      status: 'saving',
+    );
+    connectionAttempts = [
+      admitted,
+      ...connectionAttempts.where((item) => item.account.id != account.id),
+    ];
+    return admitted;
+  }
+
+  @override
+  Future<void> refreshConnectionAttempts() async {
+    connectionAttempts =
+        (await call({'op': 'pending_account_connections'}) as List)
+            .map((value) {
+              final row = Map<String, dynamic>.from(value);
+              return AccountConnectionAttempt(
+                id: row['attempt'] as String,
+                account: MailAccount.fromJson(
+                  Map<String, dynamic>.from(row['account']),
+                ),
+                status: row['status'] as String,
+                error: row['error'] as String?,
+              );
+            })
+            .toList(growable: false);
+  }
+
+  @override
+  Future<void> executeConnection(
+    AccountConnectionAttempt attempt,
     String incoming,
     String smtp,
   ) async {
-    final prepared = await call({
-      'op': 'prepare_account',
-      'account': account.toJson(),
-      'expected': mailAccounts
-          .where((a) => a.id == account.id)
-          .firstOrNull
-          ?.toJson(),
+    if (_connectionExecutions[attempt.id] case final Future<void> running) {
+      return running;
+    }
+    late final Future<void> execution;
+    execution = _executeConnection(attempt, incoming, smtp).whenComplete(() {
+      if (identical(_connectionExecutions[attempt.id], execution)) {
+        _connectionExecutions.remove(attempt.id);
+      }
     });
-    final slot = prepared['slot'] as String;
-    final savedAccount = MailAccount.fromJson(prepared['account']);
+    _connectionExecutions[attempt.id] = execution;
+    return execution;
+  }
+
+  Future<void> _executeConnection(
+    AccountConnectionAttempt attempt,
+    String incoming,
+    String smtp,
+  ) async {
+    try {
+      await _accountWrite(() async {
+        await call({'op': 'retry_account_connection', 'attempt': attempt.id});
+        await _connect(attempt, incoming, smtp);
+      });
+    } catch (_) {
+      await refreshConnectionAttempts();
+      try {
+        final target = await call({
+          'op': 'credential_target',
+          'account': attempt.account.toJson(),
+        });
+        if (target['slot'] == 'credential-${attempt.id}') {
+          await refreshProfileAccounts();
+          return;
+        }
+      } catch (_) {
+        // The original connection failure remains authoritative.
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> failConnection(String attempt, String error) => call({
+    'op': 'fail_account_connection',
+    'attempt': attempt,
+    'error': error,
+  });
+
+  Future<void> _connect(
+    AccountConnectionAttempt attempt,
+    String incoming,
+    String smtp,
+  ) async {
+    final slot = 'credential-${attempt.id}';
+    final savedAccount = attempt.account;
     try {
       for (final outgoing in [false, true]) {
+        await call({
+          'op': 'validate_account_connection',
+          'attempt': attempt.id,
+        });
         await call({
           'op': 'probe',
           'account': savedAccount.toJson(),
@@ -248,6 +366,7 @@ class NativeRepository
           'smtp': outgoing,
         });
       }
+      await call({'op': 'validate_account_connection', 'attempt': attempt.id});
       try {
         await credentials.save(slot, incoming, smtp);
       } catch (_) {
@@ -266,8 +385,11 @@ class NativeRepository
         /* Retry in Preferences. */
       }
     }
+    connectionAttempts = connectionAttempts
+        .where((item) => item.id != attempt.id)
+        .toList(growable: false);
     mailAccounts = [
-      ...mailAccounts.where((a) => a.id != account.id),
+      ...mailAccounts.where((a) => a.id != savedAccount.id),
       savedAccount,
     ];
     try {
@@ -277,6 +399,20 @@ class NativeRepository
         'The connection was saved, but the account list could not reload. Reopen Preferences or refresh mail.',
       );
     }
+  }
+
+  @override
+  Future<void> abandonConnection(String attempt) async {
+    await call({'op': 'abandon_account_connection', 'attempt': attempt});
+    connectionAttempts = connectionAttempts
+        .where((item) => item.id != attempt)
+        .toList(growable: false);
+    unawaited(
+      _accountWrite(_cleanupCredentials).catchError((Object _) {
+        warning =
+            'A saved password cleanup is waiting. Retry it in Preferences.';
+      }),
+    );
   }
 
   Future<String> _readPassword(String slot, {bool smtp = false}) async {
@@ -552,7 +688,7 @@ class NativeRepository
   }) => <String, Object?>{
     'op': 'mutate',
     'action_id': actionId,
-    if (observedLineage != null) 'observed_lineage': observedLineage,
+    'observed_lineage': ?observedLineage,
     if (requireObservation) 'require_observation': true,
     'id': id,
     ...fields.map(

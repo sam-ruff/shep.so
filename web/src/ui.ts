@@ -1,5 +1,6 @@
 import { GroupUI } from "./bulk_ui";
 import { DraftSession } from "./draft_session";
+import { observeDraft } from "./draft_revision";
 import { connectionActivity, connectionStatus } from "./connection_activity";
 import {
   dialogShortcuts,
@@ -919,7 +920,7 @@ export function mount(
   const draftSessions = new Map<string, DraftSession>();
   let signingOut = false;
   window.addEventListener("beforeunload", (event) => {
-    if (![...draftSessions.values()].some((session) => session.pending || session.saving)) return;
+    if (!w.preferenceError && ![...draftSessions.values()].some((session) => session.pending || session.saving)) return;
     event.preventDefault();
     event.returnValue = "";
   });
@@ -971,9 +972,11 @@ export function mount(
   }
   async function composer(original?: Mail, existing?: Draft, all = false) {
     void w.finishReading();
+    let preparedReply = false;
     if (original && gateway && !existing) {
       try {
         existing = await gateway.reply(original.id, all);
+        preparedReply = true;
       } catch (error) {
         w.error =
           error instanceof Error
@@ -1004,8 +1007,8 @@ export function mount(
     if (retained && !retained.pending && !retained.saving) retained.retire();
     const session = retained && (retained.pending || retained.saving) ? retained : new DraftSession(
       initial,
-      !!existing,
-      (snapshot) => w.repository.saveDraft(snapshot),
+      !!existing && !preparedReply,
+      (snapshot, expected) => w.repository.saveDraft(snapshot, expected),
       () => {
         if (!session.draft.accountId || !gateway?.removedAccounts.has(session.draft.accountId))
           w.rememberDraft(session.draft);
@@ -1105,7 +1108,9 @@ export function mount(
     const actions = el("div", "dialog-actions");
     let busy = false,
       deliveryLocked = false;
+    let sendError: string | undefined;
     const retry = button("Retry save", () => void session.flush(true));
+    const reviewText = button("Review saved draft", () => void reviewConflict());
     const savedFiles = button("Use saved attachments", () => {
       if (gateway) void session.useSavedFiles(() => gateway.reviewDraftFiles(draft.id));
     });
@@ -1114,9 +1119,11 @@ export function mount(
     let shownAttachments = draft.attachments;
     function showSaveStatus() {
       savedStatus.textContent = w.repository.preview ? "Preview" : session.error ? "Not saved" : session.pending || session.saving ? "Saving…" : "Saved";
-      status.textContent = session.error ? `${session.status}. ${session.error}` : w.repository.preview ? "Preview draft" : session.status;
-      retry.hidden = !session.error;
+      status.textContent = session.error ? `${session.status}. ${session.error}` : sendError ?? (w.repository.preview ? "Preview draft" : session.status);
+      retry.hidden = !session.error || session.needsReview;
       retry.disabled = session.saving || busy || deliveryLocked;
+      reviewText.hidden = !session.needsReview;
+      reviewText.disabled = session.saving || busy || deliveryLocked;
       savedFiles.hidden = !session.fileError;
       savedFiles.disabled = session.saving || busy || deliveryLocked;
       attach.disabled = busy || deliveryLocked || session.filesPending;
@@ -1140,6 +1147,7 @@ export function mount(
       for (const b of filePanel.querySelectorAll<HTMLButtonElement>("button"))
         b.disabled = disabled || deliveryLocked || session.filesPending;
       retry.disabled = disabled || deliveryLocked || session.saving;
+      reviewText.disabled = disabled || deliveryLocked || session.saving;
       savedFiles.disabled = disabled || deliveryLocked || session.saving;
     }
     async function save(send: boolean, retrySave = false) {
@@ -1159,6 +1167,7 @@ export function mount(
         return;
       }
       busy = true;
+      sendError = undefined;
       setControls(true);
       for (const b of actions.querySelectorAll("button")) b.disabled = true;
       for (const input of d.querySelectorAll<
@@ -1168,7 +1177,6 @@ export function mount(
       try {
         if (!await session.flush()) return;
         if (send) await (deliveryLocked ? w.repository.send(draft) : (w.repository.queueSend?.(draft) ?? w.repository.send(draft)));
-        else await w.repository.saveDraft(draft);
         if (send) {
           session.retire();
           draftSessions.delete(draft.id);
@@ -1182,12 +1190,14 @@ export function mount(
         d.close();
         w.changed();
       } catch (error) {
-        status.textContent =
+        session.recordConflict(error);
+        sendError =
           error instanceof Error
             ? error.message
             : send
               ? "Mail was not sent. Your draft is still open; connect a provider before retrying."
               : "Draft could not be saved. Keep this editor open and retry.";
+        showSaveStatus();
       } finally {
         busy = false;
         for (const b of actions.querySelectorAll("button")) b.disabled = false;
@@ -1205,11 +1215,82 @@ export function mount(
     });
     d.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.onclick = () =>
       void save(false);
+    async function reviewConflict() {
+      if (!gateway || session.saving || !session.needsReview) return;
+      const review = modal("Review draft changes");
+      review.classList.add("draft-conflict");
+      const info = el("p", "", "Review both versions before choosing which text to keep. Saved attachments are preserved.");
+      const versions = el("div", "draft-versions");
+      const result = el("p", "form-status", "Reading saved draft…");
+      result.setAttribute("role", "status");
+      let current: Draft | undefined;
+      let localRevision = draft.revision ?? 0;
+      const buttons = el("div", "dialog-actions");
+      const mine = button("Save my text", () => void decide(true));
+      const saved = button("Use saved text", () => void decide(false));
+      const refresh = button("Refresh saved version", () => void load());
+      buttons.append(button("Keep editing", () => review.close()), refresh, saved, mine);
+      review.append(info, versions, result, buttons);
+      function textVersion(label: string, value: Draft) {
+        const from = gateway!.accounts.find(account => account.id === value.accountId)?.email ?? "No sending account";
+        const view = field(label, `From: ${from}\nTo: ${value.to}\nCc: ${value.cc}\nBcc: ${value.bcc}\nSubject: ${value.subject}\n\n${value.body}`, () => {}, true);
+        view.querySelector("textarea")!.readOnly = true;
+        return view;
+      }
+      async function load() {
+        mine.disabled = saved.disabled = refresh.disabled = true;
+        current = undefined;
+        try {
+          const latest = await gateway!.reviewDraft(draft.id);
+          if (!review.isConnected) return;
+          current = latest;
+          localRevision = draft.revision ?? 0;
+          versions.replaceChildren(textVersion("My text", draft), textVersion("Saved text", latest));
+          result.textContent = "Saving your text replaces only the saved text shown here. A newer change will require another review.";
+          mine.disabled = saved.disabled = false;
+        } catch (error) {
+          if (review.isConnected) result.textContent = error instanceof Error ? error.message : "Could not read the saved draft.";
+        } finally {
+          refresh.disabled = false;
+        }
+      }
+      async function decide(keepMine: boolean) {
+        if (!current) return;
+        mine.disabled = saved.disabled = refresh.disabled = true;
+        try {
+          const checked = keepMine ? current : await gateway!.reviewDraft(draft.id, observeDraft(current));
+          if (!review.isConnected) return;
+          if (!session.acceptReview(checked, localRevision, keepMine))
+            throw Error("Your text changed during this review. Refresh the saved version before choosing.");
+          review.close();
+          d.close();
+          void session.flush();
+          await composer(undefined, session.draft);
+        } catch (error) {
+          if (review.isConnected) result.textContent = error instanceof Error ? error.message : "Could not apply this choice. Refresh the saved version.";
+        } finally {
+          refresh.disabled = false;
+        }
+      }
+      await load();
+    }
     async function updateDelivery() {
       if (!gateway || !d.isConnected) return;
       setControls(true);
       let delivery;
       try {
+        if (!session.pending && !session.saving) {
+          const expected = observeDraft(draft);
+          const current = await gateway.readDraft(draft.id);
+          if (d.isConnected && session.refreshSaved(current, expected)) {
+            for (const [key, label] of [["to", "To"], ["cc", "Cc"], ["bcc", "Bcc"], ["subject", "Subject"], ["body", "Message"]] as const) {
+              const input = d.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`);
+              if (input) input.value = draft[key];
+            }
+            const from = d.querySelector<HTMLSelectElement>('[aria-label="From account"]');
+            if (from) from.value = draft.accountId ?? "";
+          }
+        }
         if (!session.filesPending) {
           const previous = draft.attachments;
           const files = await gateway.attachments(draft.id);
@@ -1249,6 +1330,7 @@ export function mount(
       send,
       button("Save draft", () => void save(false, true)),
       retry,
+      reviewText,
       savedFiles,
     );
     actions.classList.add("composer-actions");
@@ -1418,6 +1500,7 @@ export function mount(
       () => {
         void w.finishReading();
         tab = "Preferences";
+        sidebarOpen = false;
         fullReader = false;
         w.changed();
       },
@@ -1436,6 +1519,12 @@ export function mount(
             if (signingOut) return;
             signingOut = true;
             try {
+              if (w.preferenceError) {
+                tab = "Preferences";
+                sidebarOpen = false;
+                w.changed();
+                return;
+              }
               const saved = await Promise.all([...draftSessions.values()]
                 .filter(session => session.pending || session.saving)
                 .map(session => session.flush(true)));
@@ -2234,6 +2323,17 @@ export function mount(
   function preferences() {
     const panel = el("section", "settings-panel");
     panel.setAttribute("aria-label", "Preferences");
+    const feedback = el("section", "settings-card preference-feedback");
+    feedback.setAttribute("aria-label", "Preference saving");
+    const status = el("p", "", w.preferenceError ?? (w.preferenceSaved ? "Preferences saved on this browser" : "Changes are saved on this browser"));
+    status.setAttribute("role", "status");
+    feedback.append(status);
+    if (w.preferenceError) {
+      const retry = button("Retry preference save", () => w.retryPreferences());
+      retry.dataset.stable = "preference-save-retry";
+      feedback.append(retry);
+    }
+    panel.append(feedback);
     const p = w.preferences;
     function card(title: string, ...children: HTMLElement[]) {
       const c = el("section", "settings-card");
@@ -2487,7 +2587,8 @@ export function mount(
     );
     const next = el("div");
     next.append(sidebar(), sizing);
-    const main = el("main");
+    const main = el("main", tab === "Preferences" ? "preferences-main" : "");
+    const notices = tab === "Preferences" ? el("div", "preferences-notices") : main;
     const header = el("header");
     header.append(
       button(
@@ -2559,7 +2660,7 @@ export function mount(
           true,
         ),
       );
-      main.append(error);
+      (tab === "Preferences" ? notices : main).append(error);
     }
     const offer = tab === "Mail" ? profiles?.banner() : null;
     if (offer) main.append(offer);
@@ -2571,13 +2672,14 @@ export function mount(
           : preferences(),
     );
     if (tab !== "Mail" || w.folder === "Drafts") w.selection.setObserved([]);
+    if (notices !== main) main.append(notices);
     if (w.notice) {
       const status = el("div", "status");
       status.setAttribute("role", "status");
       status.setAttribute("aria-label", "Mail status");
       status.append(icon("check"), el("span", "", w.notice));
       if (!w.moves.visible && w.undo) status.append(button("Undo", w.undo));
-      main.append(status);
+      notices.append(status);
     }
     if (w.moves.label) {
       const status = el("div", "status");
@@ -2593,7 +2695,7 @@ export function mount(
           true,
         ),
       );
-      main.append(status);
+      notices.append(status);
     }
     if (w.undoFailures.size) {
       const failure = el("div", "error-banner");
@@ -2617,7 +2719,7 @@ export function mount(
           true,
         ),
       );
-      main.append(failure);
+      notices.append(failure);
     }
     const groupNotice = groupUI?.notification();
     if (groupNotice) main.append(groupNotice);
