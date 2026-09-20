@@ -178,8 +178,10 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   keeps full database comparison enabled. The first timing run was contended by
   that optional test observer; preserve its failed report and the query-step
   diagnosis. Agent builds/tests were stopped; ordinary user applications remained
-  running. Common performance-gate wiring and its tests pass. Finish final hooks
-  and checkpoint shipping, then continue remaining client/domain and platform work.
+  running. Common performance-gate wiring and its tests pass. Checkpoint `8db87f1`
+  passes normal hooks with 1,586 Rust executions, ten ignored, and ships with the
+  completion evidence update. Continue remaining client/domain and platform work;
+  this does not complete the app-wide request.
 
 Sam reports new mail is slow to arrive and moves failing on `sam@shep.so`
 (Stalwart at `mail.shep.so`). These items outrank everything below. Sam's

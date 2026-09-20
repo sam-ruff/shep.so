@@ -7,7 +7,7 @@ Rename/Move/Delete with frozen metadata, receipt-first repair, uncertainty revie
 and outgoing filing fences. Its integrated 235 unit, 57 backend and 22 Chromium
 checks pass, plus three 100,000-message browser scenarios. Native ten-of-100,000
 review and confirmation pixel timing passes at 32.31 ms and 22.14 ms p95 with
-provider capacity held. These changes are not yet shipped; other-platform
+provider capacity held. Implementation is checkpoint `8db87f1`; other-platform
 coverage remains separate.
 
 Flutter schema 21 uses shared calendar event/receipt contracts for Google save
