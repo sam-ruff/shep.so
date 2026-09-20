@@ -245,6 +245,17 @@ impl App {
         if self
             .editing_event
             .as_ref()
+            .is_some_and(|event| self.calendar_rejected_create(event))
+        {
+            return CalendarAccess {
+                create: source.access.create,
+                update: source.access.create,
+                delete: false,
+            };
+        }
+        if self
+            .editing_event
+            .as_ref()
             .is_some_and(|event| source.kind == CalendarKind::CalDav && event.remote_url.is_none())
         {
             return CalendarAccess::READ_ONLY;

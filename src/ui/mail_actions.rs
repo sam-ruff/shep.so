@@ -57,6 +57,34 @@ fn local_only_notice(source_folder: &str) -> String {
 }
 
 impl Actions {
+    pub(super) fn selection_state(
+        &self,
+        id: &str,
+        observed: &crate::store::SelectionObservation,
+    ) -> crate::store::SelectionObservation {
+        let mut state = observed.clone();
+        if let Some(entry) = self.flags.get(id) {
+            state.unread = entry.desired.unread;
+            state.starred = entry.desired.starred;
+        }
+        if let Some((_, account, folder)) = self.move_target(id) {
+            state.account = account.into();
+            state.folder = folder.into();
+        }
+        state
+    }
+
+    pub(super) fn confirmed_flag_states(&self) -> Vec<Mail> {
+        self.flags
+            .values()
+            .map(|entry| entry.confirmed.clone())
+            .collect()
+    }
+
+    pub(super) fn flag_ids(&self) -> Vec<String> {
+        self.flags.keys().cloned().collect()
+    }
+
     pub fn moving(&self, id: &str) -> bool {
         self.move_target(id).is_some()
     }
@@ -646,6 +674,7 @@ impl App {
             mail.starred = confirmed.starred;
         }
         self.mail_actions.base_page = Arc::new(base);
+        self.reconcile_bulk_flags(&confirmed);
         if let Err(error) = result {
             self.pending_close = None;
             self.notice(

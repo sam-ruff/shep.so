@@ -6,6 +6,15 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Highest priority - mail sync speed and reliable moves
 
+- [ ] **20 September app-wide immediate actions architecture:** **Approved for implementation.** Apply the [action lifecycle](docs/agents/IMMEDIATE_ACTIONS.md) consistently across individual/bulk mail, folders, calendar, drafts/sending, accounts and preferences on desktop, Flutter and browser. Update AGENTS.md and deliver production changes with regression/native evidence, not tracking alone. Retain newer intent, durable restart/Undo and conservative uncertain-result recovery. Start with the small-selection delete foreground delay; record each verified migration and keep the remaining domains explicit.
+
+  First migration implemented: common projection outcomes, native bulk review and
+  confirmation during pending individual writes, pre-admission Undo, and calendar
+  save/delete with exact read-only recovery. Rust and five new native scenarios
+  pass, alongside 38 native regression scenarios; shipping is in progress. Remaining:
+  durable deferred admission/calendar recovery, consistent activity and adoption
+  across folders, accounts, preferences, drafts/sending, Flutter and browser.
+
 Sam reports new mail is slow to arrive and moves failing on `sam@shep.so`
 (Stalwart at `mail.shep.so`). These items outrank everything below. Sam's
 14 September direction supersedes the "do not start a new synchronisation
@@ -187,6 +196,8 @@ Client request numbers R67 to R80 in this section are the client session's own n
 - [ ] **R65 — Background mail freshness (client parity):** Desktop delivery (d4ecb21) is integrated. Browser visible-tab and Flutter foreground checks use 15-second intervals and independent queued manual refresh. Read-on-leave, explicit unread precedence, current pending-field projections and counted six-second Archive/Delete/Move/Restored feedback have client controls. **Remaining:** OS background scheduling, window/tab close and forced-termination durability, broader lifecycle/polling/error retention, Apple execution, large-cache performance and durable move recovery. Preserve newer intent, acknowledged identities, aliases, partial rollback/Undo, account removal and independent browsing while providers are blocked.
 
 ## Mail reading, search and bulk actions (client parity)
+
+- [ ] **20 September desktop bulk delete responsiveness:** **Owner clarification:** fast review and immediate list feedback are required; actual server deletion may continue in the background. Provider batching is not a completion prerequisite. Review now freezes and summarises in one database-worker transaction without waiting for earlier provider writes. Ten-message native review/confirmation, pre-admission Undo and rejection recovery pass with reviewed images; 38 native regressions pass. The 100,000-membership regression guards selected-row query plans; it is not a latency measurement. Remaining: finish shipping verification, measure the native 100 ms target at mailbox scale and implement Flutter/browser equivalents.
 
 Desktop delivery of these requests is recorded in the completion log; the entries track the remaining mobile/browser work and any desktop gaps named explicitly.
 

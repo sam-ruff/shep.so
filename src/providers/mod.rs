@@ -11,8 +11,14 @@ use secrecy::SecretString;
 
 pub use shep_mail_core::providers::MailProvider;
 
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait CalendarProvider: Send + Sync {
+    async fn read_event(
+        &self,
+        source: &CalendarSource,
+        event: &CalendarEvent,
+    ) -> anyhow::Result<Option<CalendarEvent>>;
     async fn events(
         &self,
         source: &CalendarSource,

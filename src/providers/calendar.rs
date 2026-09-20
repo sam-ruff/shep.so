@@ -265,6 +265,42 @@ fn fold_lines<'a>(lines: impl Iterator<Item = &'a str>) -> String {
     folded
 }
 
+#[derive(Debug)]
+struct MutationUncertain;
+
+impl std::fmt::Display for MutationUncertain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The calendar write may have reached the server")
+    }
+}
+
+impl std::error::Error for MutationUncertain {}
+
+pub fn mutation_is_uncertain(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<MutationUncertain>().is_some()
+}
+
+async fn send_mutation(request: reqwest::RequestBuilder) -> anyhow::Result<reqwest::Response> {
+    request.send().await.map_err(|error| {
+        if error.is_builder() {
+            anyhow::Error::from(error)
+        } else {
+            anyhow::Error::from(error).context(MutationUncertain)
+        }
+    })
+}
+
+fn mutation_successful(response: reqwest::Response) -> anyhow::Result<reqwest::Response> {
+    let status = response.status();
+    successful(response).map_err(|error| {
+        if status.is_client_error() && status != reqwest::StatusCode::REQUEST_TIMEOUT {
+            error
+        } else {
+            error.context(MutationUncertain)
+        }
+    })
+}
+
 fn successful(response: reqwest::Response) -> anyhow::Result<reqwest::Response> {
     let response = response.error_for_status()?;
     anyhow::ensure!(

@@ -2,6 +2,7 @@ mod account;
 mod action_toasts;
 mod backups;
 mod bulk;
+mod calendar_actions;
 mod calendar_setup;
 mod closing;
 mod components;
@@ -262,6 +263,8 @@ pub enum Message {
     EditEvent(String),
     SaveEvent,
     DeleteEvent,
+    DismissCalendarChange(u64),
+    InspectCalendarChange(u64),
     SaveExport,
     ExportAttachment(usize),
     SystemTheme(iced::theme::Mode),
@@ -452,6 +455,7 @@ pub struct App {
     day: NaiveDate,
     editing_event: Option<CalendarEvent>,
     calendar_setup: calendar_setup::CalendarSetup,
+    calendar_actions: calendar_actions::State,
     removal: removals::Removal,
     outbox: outgoing::Outbox,
     move_recovery: move_recovery::Recovery,
@@ -644,6 +648,7 @@ impl App {
                 day: today,
                 editing_event: None,
                 calendar_setup: Default::default(),
+                calendar_actions: Default::default(),
                 removal: Default::default(),
                 outbox: Default::default(),
                 move_recovery: Default::default(),
@@ -775,6 +780,21 @@ impl App {
         self.try_command(command);
     }
     fn try_command(&mut self, command: Command) -> bool {
+        let calendar_conflict = match &command {
+            Command::Restore(..) => self.calendar_actions.has_changes(),
+            Command::RemoveConnection(_, review, _) => {
+                review.target.kind == crate::store::ConnectionKind::Calendar
+                    && self.calendar_actions.owns_source(&review.target.id)
+            }
+            _ => false,
+        };
+        if calendar_conflict {
+            self.notice(
+                "Finish or review the calendar changes before replacing their local data.",
+                true,
+            );
+            return false;
+        }
         // Admission already owns a durable write, even before a provider slot
         // starts it. Close must not race the worker's later Busy notification.
         let close_key = match &command {
@@ -782,6 +802,8 @@ impl App {
             | Command::RecoverPendingMoves
             | Command::SaveEvent(..)
             | Command::DeleteEvent(..)
+            | Command::CalendarAction(..)
+            | Command::InspectCalendarAction(..)
             | Command::GoogleLogin(..)
             | Command::BackupIncluded(..)
             | Command::RetryBackupHistory(..) => command.key(),
@@ -1590,7 +1612,8 @@ impl App {
                 Event::Calendar(revision, events) => {
                     if revision >= self.events_revision {
                         self.events_revision = revision;
-                        self.events = events;
+                        self.calendar_actions.base = events;
+                        self.project_calendar_actions();
                     }
                 }
                 Event::Busy(key, busy) => {
@@ -1767,18 +1790,12 @@ impl App {
                         result.unwrap_or_else(|e| e),
                     );
                 }
-                Event::CalendarEventSaved(key) => {
-                    let current = self
-                        .editing_event
-                        .as_ref()
-                        .map(CalendarEvent::key)
-                        .unwrap_or_else(|| {
-                            CalendarEvent::scoped_key(self.field("source"), self.field("event_id"))
-                        });
-                    if self.dialog == Some(Dialog::Event) && current == key {
-                        self.dialog = None;
-                        self.editing_event = None;
-                    }
+                Event::CalendarEventSaved(_) => {}
+                Event::CalendarActionObserved(request, result) => {
+                    self.calendar_action_observed(request, result)
+                }
+                Event::CalendarActionFinished(request, result) => {
+                    self.calendar_action_finished(request, result)
                 }
                 Event::BackupHistory(request, target, result) => {
                     if request == self.backup_activity.generation
@@ -1893,6 +1910,11 @@ impl App {
                 _ => {}
             },
             Message::WindowClose(window) => {
+                if self.calendar_actions.needs_review() {
+                    self.notice("Review the calendar changes before closing. Their recovery details are not saved across restarts.", true);
+                    self.pending_close = None;
+                    return Task::none();
+                }
                 self.pending_close = Some(window);
                 // Nothing is staged until Google redirects back, so stop waiting.
                 self.cancel_google_sign_in();
@@ -3083,7 +3105,10 @@ impl App {
                 return focus_after_layout("event-title");
             }
             Message::EditEvent(key) => {
-                if let Some(event) = self.events.iter().find(|e| e.key() == key).cloned() {
+                if let Some(event) = self
+                    .calendar_recovery_event(&key)
+                    .or_else(|| self.events.iter().find(|e| e.key() == key).cloned())
+                {
                     self.open(Dialog::Event);
                     self.fields.insert("title", event.title.clone());
                     self.fields.insert("location", event.location.clone());
@@ -3134,7 +3159,7 @@ impl App {
             }
             Message::SaveEvent => match self.event_form() {
                 Ok(event) => {
-                    self.send(Command::SaveEvent(event));
+                    self.begin_calendar_action(event, false);
                 }
                 Err(e) => self.notice(e.to_string(), true),
             },
@@ -3144,9 +3169,11 @@ impl App {
                     return Task::none();
                 }
                 if let Some(event) = &self.editing_event {
-                    self.send(Command::DeleteEvent(event.clone()));
+                    self.begin_calendar_action(event.clone(), true);
                 }
             }
+            Message::DismissCalendarChange(request) => self.dismiss_calendar_change(request),
+            Message::InspectCalendarChange(request) => self.inspect_calendar_change(request),
             Message::ExportAttachment(index) => {
                 self.open(Dialog::Export);
                 self.export_index = Some(index);
@@ -3756,8 +3783,10 @@ impl App {
                 .iter()
                 .find(|s| s.id == event.source_id);
             anyhow::ensure!(
-                !source
-                    .is_some_and(|s| s.kind == CalendarKind::CalDav && event.remote_url.is_none()),
+                self.calendar_rejected_create(event)
+                    || !source.is_some_and(
+                        |s| s.kind == CalendarKind::CalDav && event.remote_url.is_none()
+                    ),
                 "Edit recurring events on your calendar server."
             );
         }
@@ -4340,6 +4369,10 @@ impl App {
         data["account_reconnect_count"] = serde_json::json!(self.workspace.account_reconnect.len());
         data["account_count"] = serde_json::json!(self.workspace.accounts.len());
         data["calendar_count"] = serde_json::json!(self.workspace.calendars.len());
+        #[cfg(feature = "test-support")]
+        {
+            data["calendar_actions"] = self.calendar_actions.observation();
+        }
         data["removed_google_calendars"] =
             serde_json::json!(self.workspace.removed_google_calendars);
         data["credential_cleanup"] = serde_json::json!(self.workspace.credential_cleanup);

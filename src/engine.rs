@@ -116,6 +116,8 @@ pub enum Command {
     SyncCalendar,
     SaveEvent(CalendarEvent),
     DeleteEvent(CalendarEvent),
+    CalendarAction(u64, CalendarEvent, bool),
+    InspectCalendarAction(u64, CalendarEvent),
     Backup(BackupTarget, SecretString),
     AutomaticBackup(BackupTarget),
     BackupIncluded(u64, String, BackupTarget),
@@ -165,6 +167,8 @@ impl Command {
             }
             Self::Send(d) => Some(format!("send:{}", d.id)),
             Self::SaveEvent(e) | Self::DeleteEvent(e) => Some(format!("event:{}", e.key())),
+            Self::CalendarAction(_, e, _) => Some(format!("event:{}", e.key())),
+            Self::InspectCalendarAction(_, e) => Some(format!("event:{}", e.key())),
             Self::Flags(request, m, _) => Some(format!("flags:{}:{request}", m.id)),
             Self::UndoMove(request, m, _) => Some(format!("undo:{}:{request}", m.id)),
             Self::Move(request, m, _) => Some(format!("move:{}:{request}", m.id)),
@@ -289,8 +293,28 @@ pub enum Event {
     OutgoingChanged,
     ReviewOutgoing(String, u64),
     CalendarEventSaved(String),
+    CalendarActionFinished(u64, CalendarActionResult),
+    CalendarActionObserved(u64, Result<CalendarObservation, String>),
     ConnectionTest(ConnectionTarget, Result<String, String>),
 }
+#[derive(Debug, Clone)]
+pub struct CalendarObservation {
+    pub revision: u64,
+    pub events: Arc<Vec<CalendarEvent>>,
+    pub current: Option<CalendarEvent>,
+}
+
+#[derive(Debug, Clone)]
+pub enum CalendarActionResult {
+    Applied {
+        event: Box<CalendarEvent>,
+        revision: Option<u64>,
+        warning: Option<String>,
+    },
+    Rejected(String),
+    Uncertain(String),
+}
+
 #[derive(Clone)]
 struct Engine {
     profiles: Option<crate::profiles::Session>,
@@ -540,6 +564,23 @@ impl Engine {
             }),
         })
     }
+    async fn reconcile_calendar_observation(
+        &self,
+        provider: &dyn CalendarProvider,
+        source: &CalendarSource,
+        original: &CalendarEvent,
+    ) -> anyhow::Result<Option<CalendarEvent>> {
+        anyhow::ensure!(
+            source.id == original.source_id,
+            "This event belongs to another calendar."
+        );
+        let current = provider.read_event(source, original).await?;
+        self.store
+            .reconcile_calendar_event(original.clone(), current.clone())
+            .await?;
+        Ok(current)
+    }
+
     async fn complete_calendar_write(
         &self,
         event: &CalendarEvent,
@@ -547,7 +588,7 @@ impl Engine {
         deleting: bool,
         committed: bool,
         output: &mut Output,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<u64> {
         let needs_refresh = !deleting && committed && saved.etag.is_none();
         let cache_result = if deleting {
             self.store
@@ -564,7 +605,10 @@ impl Engine {
         cache_result.context(if committed {
             "The calendar change was saved, but the local cache could not be updated. Sync calendar to reload it."
         } else { "Could not save the calendar change locally." })?;
-        self.send_calendar(output).await?;
+        let (revision, events) = self.store.calendar_snapshot().await?;
+        output
+            .send(Event::Calendar(revision, Arc::new(events)))
+            .await?;
         output
             .send(Event::Notice(
                 if deleting {
@@ -577,7 +621,7 @@ impl Engine {
                 .into(),
             ))
             .await?;
-        Ok(())
+        Ok(revision)
     }
 
     async fn backup_provider(
@@ -622,7 +666,14 @@ impl Engine {
     }
     async fn execute(&self, command: Command, mut output: Output) -> anyhow::Result<()> {
         let explicit_draft = matches!(&command, Command::SaveDraft(_));
-        let deleting_event = matches!(&command, Command::DeleteEvent(_));
+        let deleting_event = matches!(
+            &command,
+            Command::DeleteEvent(_) | Command::CalendarAction(_, _, true)
+        );
+        let calendar_request = match &command {
+            Command::CalendarAction(request, ..) => Some(*request),
+            _ => None,
+        };
         match command {
             Command::ProfileSync(_) => anyhow::bail!("Profile sync reached the wrong worker"),
             Command::Database(_) => anyhow::bail!("Database transfer reached the wrong worker"),
@@ -630,19 +681,12 @@ impl Engine {
                 return self.profiles_command(request, action, output).await;
             }
             Command::ReviewSelection(serial, id, revision, visible) => {
-                let result = async {
-                    let frozen = self.store.freeze_selection(id, revision).await?;
-                    match self.store.selection_snapshot(frozen.id, visible).await {
-                        Ok(snapshot) => Ok(snapshot),
-                        Err(error) => {
-                            let _ = self.store.release_selection(frozen.id).await;
-                            Err(error)
-                        }
-                    }
-                }
-                .await
-                .map(Arc::new)
-                .map_err(|e: anyhow::Error| format!("{e:#}"));
+                let result = self
+                    .store
+                    .review_selection(id, revision, visible)
+                    .await
+                    .map(Arc::new)
+                    .map_err(|e: anyhow::Error| format!("{e:#}"));
                 output.send(Event::BulkReview(serial, result)).await?;
             }
             Command::ReleaseSelection(id) => self.store.release_selection(id).await?,
@@ -1315,40 +1359,113 @@ impl Engine {
                 }
                 self.send_calendar(&mut output).await?;
             }
-            Command::SaveEvent(event) | Command::DeleteEvent(event) => {
-                let _google = self.google_connection_lock.read().await;
-                anyhow::ensure!(
-                    deleting_event || event.end > event.start,
-                    "The event must end after it starts."
-                );
-                let _guard = self.calendar_access(&event.source_id).await;
-                let source = self
-                    .store
-                    .get::<Vec<CalendarSource>>("calendars")
-                    .await?
-                    .into_iter()
-                    .find(|s| s.id == event.source_id)
-                    .context("Choose a connected calendar")?;
-                providers::calendar::ensure_event_access(&source, &event, deleting_event)?;
-                let saved = if self.demo {
-                    event.clone()
-                } else {
+            Command::InspectCalendarAction(request, event) => {
+                let result = async {
+                    let _google = self.google_connection_lock.read().await;
+                    let _guard = self.calendar_access(&event.source_id).await;
+                    let source = self
+                        .store
+                        .get::<Vec<CalendarSource>>("calendars")
+                        .await?
+                        .into_iter()
+                        .find(|source| source.id == event.source_id)
+                        .context("Choose a connected calendar")?;
                     let provider = self.calendar_provider(&source).await?;
-                    if deleting_event {
-                        provider.delete_event(&source, &event).await?;
+                    let current = self
+                        .reconcile_calendar_observation(provider.as_ref(), &source, &event)
+                        .await?;
+                    let (revision, events) = self.store.calendar_snapshot().await?;
+                    Ok::<_, anyhow::Error>(CalendarObservation {
+                        revision,
+                        events: Arc::new(events),
+                        current,
+                    })
+                }
+                .await;
+                output
+                    .send(Event::CalendarActionObserved(
+                        request,
+                        result.map_err(|error| format!("{error:#}")),
+                    ))
+                    .await?;
+            }
+            Command::SaveEvent(event)
+            | Command::DeleteEvent(event)
+            | Command::CalendarAction(_, event, _) => {
+                let mut attempted = false;
+                let mut committed = None;
+                let result = async {
+                    let _google = self.google_connection_lock.read().await;
+                    anyhow::ensure!(
+                        deleting_event || event.end > event.start,
+                        "The event must end after it starts."
+                    );
+                    let _guard = self.calendar_access(&event.source_id).await;
+                    let source = self
+                        .store
+                        .get::<Vec<CalendarSource>>("calendars")
+                        .await?
+                        .into_iter()
+                        .find(|s| s.id == event.source_id)
+                        .context("Choose a connected calendar")?;
+                    providers::calendar::ensure_event_access(&source, &event, deleting_event)?;
+                    let saved = if self.demo {
                         event.clone()
                     } else {
-                        provider.save_event(&source, &event).await?
+                        let provider = self.calendar_provider(&source).await?;
+                        attempted = true;
+                        if deleting_event {
+                            provider.delete_event(&source, &event).await?;
+                            event.clone()
+                        } else {
+                            provider.save_event(&source, &event).await?
+                        }
+                    };
+                    if !self.demo {
+                        committed = Some(saved.clone());
                     }
-                };
-                self.complete_calendar_write(
-                    &event,
-                    saved,
-                    deleting_event,
-                    !self.demo,
-                    &mut output,
-                )
-                .await?;
+                    let revision = self
+                        .complete_calendar_write(
+                            &event,
+                            saved,
+                            deleting_event,
+                            !self.demo,
+                            &mut output,
+                        )
+                        .await?;
+                    Ok::<_, anyhow::Error>(revision)
+                }
+                .await;
+                if let Some(request) = calendar_request {
+                    let outcome = match result {
+                        Ok(revision) => CalendarActionResult::Applied {
+                            event: Box::new(committed.unwrap_or(event)),
+                            revision: Some(revision),
+                            warning: None,
+                        },
+                        Err(error) => {
+                            let uncertain =
+                                attempted && providers::calendar::mutation_is_uncertain(&error);
+                            let error = format!("{error:#}");
+                            if let Some(event) = committed {
+                                CalendarActionResult::Applied {
+                                    event: Box::new(event),
+                                    revision: None,
+                                    warning: Some(error),
+                                }
+                            } else if uncertain {
+                                CalendarActionResult::Uncertain(error)
+                            } else {
+                                CalendarActionResult::Rejected(error)
+                            }
+                        }
+                    };
+                    output
+                        .send(Event::CalendarActionFinished(request, outcome))
+                        .await?;
+                } else {
+                    result?;
+                }
             }
             Command::ProbeSftp(request, settings) => {
                 let result = if self.demo {
@@ -1555,6 +1672,143 @@ mod calendar_tests {
             etag: None,
             remote_url: None,
         }
+    }
+
+    #[tokio::test]
+    async fn calendar_exact_observation_is_mocked_scoped_and_keeps_unrelated_events() {
+        for mode in [
+            "present",
+            "absent",
+            "wrong-source",
+            "fetch-error",
+            "cache-error",
+            "wrong-response",
+        ] {
+            let engine = engine();
+            let original = event("home");
+            let unrelated = event("work");
+            engine.store.save_event(original.clone()).await.unwrap();
+            engine.store.save_event(unrelated.clone()).await.unwrap();
+            let source = CalendarSource {
+                id: if mode == "wrong-source" {
+                    "other"
+                } else {
+                    "home"
+                }
+                .into(),
+                name: "Home".into(),
+                kind: CalendarKind::CalDav,
+                url: "https://calendar.example.test/".into(),
+                username: "fixture".into(),
+                access: Default::default(),
+            };
+            let mut provider = providers::MockCalendarProvider::new();
+            if mode != "wrong-source" {
+                let mut observed = original.clone();
+                observed.title = "Remote edit".into();
+                if mode == "wrong-response" {
+                    observed.source_id = "other".into();
+                }
+                provider
+                    .expect_read_event()
+                    .times(1)
+                    .return_once(move |_, _| match mode {
+                        "fetch-error" => Err(anyhow::anyhow!("Network unavailable")),
+                        "absent" => Ok(None),
+                        _ => Ok(Some(observed)),
+                    });
+            }
+            if mode == "cache-error" {
+                engine
+                    .store
+                    .run(|c| {
+                        c.execute("DROP TABLE events", [])?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
+            }
+            let result = engine
+                .reconcile_calendar_observation(&provider, &source, &original)
+                .await;
+            assert_eq!(
+                result.is_ok(),
+                matches!(mode, "present" | "absent"),
+                "{mode}"
+            );
+            if mode == "cache-error" {
+                continue;
+            }
+            let rows = engine.store.events().await.unwrap();
+            assert!(
+                rows.iter().any(|event| event.key() == unrelated.key()),
+                "{mode}"
+            );
+            let local = rows.iter().find(|event| event.key() == original.key());
+            match mode {
+                "present" => assert_eq!(local.unwrap().title, "Remote edit"),
+                "absent" => assert!(local.is_none()),
+                _ => assert_eq!(local.unwrap().title, original.title),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn calendar_action_rejects_missing_source_with_its_request_identity() {
+        let engine = engine();
+        let (output, mut events) = futures::channel::mpsc::channel(8);
+        engine
+            .execute(Command::CalendarAction(71, event("missing"), false), output)
+            .await
+            .unwrap();
+        assert!(
+            matches!(events.next().await, Some(Event::CalendarActionFinished(71, CalendarActionResult::Rejected(error))) if error.contains("connected calendar"))
+        );
+        assert!(events.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn calendar_action_completion_refers_to_the_published_cache_revision() {
+        let engine = engine();
+        engine
+            .store
+            .save_source(CalendarSource {
+                id: "home".into(),
+                name: "Home".into(),
+                kind: CalendarKind::CalDav,
+                url: "https://calendar.example.test/".into(),
+                username: "test".into(),
+                access: Default::default(),
+            })
+            .await
+            .unwrap();
+        let (output, mut events) = futures::channel::mpsc::channel(8);
+        engine
+            .execute(Command::CalendarAction(72, event("home"), false), output)
+            .await
+            .unwrap();
+        let mut observed = None;
+        let mut completed = false;
+        while let Some(event) = events.next().await {
+            match event {
+                Event::Calendar(revision, rows) => {
+                    observed = Some(revision);
+                    assert_eq!(rows.len(), 1);
+                }
+                Event::CalendarActionFinished(
+                    72,
+                    CalendarActionResult::Applied {
+                        revision, warning, ..
+                    },
+                ) => {
+                    assert_eq!(revision, observed);
+                    assert!(warning.is_none());
+                    completed = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(completed);
     }
 
     #[tokio::test]

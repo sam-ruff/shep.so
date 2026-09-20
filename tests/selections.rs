@@ -52,6 +52,88 @@ async fn selected_ids(store: &Store, id: MailSelectionId, revision: u64) -> Vec<
 }
 
 #[tokio::test]
+async fn review_ten_choices_from_large_capture_uses_selected_index() {
+    let store = Store::memory().unwrap();
+    store
+        .upsert((0..10).map(|id| message(id, "work", "INBOX")).collect())
+        .await
+        .unwrap();
+    let source = MailSelectionId::default();
+    let captured = store
+        .capture_selection(source, 0, MailQuery::default(), true, vec![])
+        .await
+        .unwrap();
+    assert_eq!(captured.selected, 10);
+    store
+        .run(move |connection| {
+            connection.execute(
+                "WITH RECURSIVE numbers(value) AS (SELECT 10 UNION ALL SELECT value + 1 FROM numbers WHERE value < 99999)
+                 INSERT INTO scratch.mail_selection_rows(selection,id,position,selected)
+                 SELECT ?,printf('missing-%d',value),value,0 FROM numbers",
+                [source.to_string()],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let visible = vec!["work:INBOX:0".to_owned(), "missing-10".to_owned()];
+    let review = store.review_selection(source, 0, visible).await.unwrap();
+    assert_eq!(
+        (review.selected, review.available, review.total),
+        (10, 10, 10)
+    );
+    assert_eq!(review.visible.len(), 1);
+    assert!(review.visible.contains("work:INBOX:0"));
+    let observed = &review.observed["work:INBOX:0"];
+    assert_eq!(
+        (observed.account.as_str(), observed.folder.as_str()),
+        ("work", "INBOX")
+    );
+    assert!(observed.unread);
+    assert!(observed.starred);
+    assert_eq!(selected_ids(&store, review.id, 0).await.len(), 10);
+}
+
+#[tokio::test]
+async fn failed_review_does_not_leave_a_frozen_selection() {
+    let store = Store::memory().unwrap();
+    store
+        .upsert(vec![message(0, "work", "INBOX")])
+        .await
+        .unwrap();
+    let source = MailSelectionId::default();
+    store
+        .capture_selection(source, 0, MailQuery::default(), true, vec![])
+        .await
+        .unwrap();
+    assert!(store.review_selection(source, 1, vec![]).await.is_err());
+    assert_eq!(
+        store
+            .selection_snapshot(source, vec![])
+            .await
+            .unwrap()
+            .revision,
+        0
+    );
+    assert!(
+        store
+            .review_selection(source, 0, vec!["work:INBOX:0".into(); PAGE_SIZE + 1])
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        store
+            .selection_snapshot(source, vec![])
+            .await
+            .unwrap()
+            .revision,
+        0
+    );
+    let review = store.review_selection(source, 0, vec![]).await.unwrap();
+    assert_eq!(review.selected, 1);
+}
+
+#[tokio::test]
 async fn full_selection_has_identical_scope_and_order_to_every_inbox_page() {
     let store = Store::memory().unwrap();
     fixture(&store).await;

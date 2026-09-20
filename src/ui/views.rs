@@ -1174,7 +1174,11 @@ impl App {
                 .style(card)
         ]
         .spacing(18);
-        container(column![header, body.height(Length::Fill)].spacing(23))
+        let mut content = column![header].spacing(23);
+        if self.calendar_actions.has_changes() {
+            content = content.push(self.calendar_changes_view());
+        }
+        container(content.push(body.height(Length::Fill)))
             .padding([27, 28])
             .height(Length::Fill)
             .into()

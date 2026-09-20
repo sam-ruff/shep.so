@@ -26,6 +26,7 @@ impl App {
             || !self.move_recovery.pending.is_empty()
             || self.removal.removing.is_some()
             || self.calendar_setup.saving.is_some()
+            || self.calendar_actions.has_changes()
             || self.composer.discard_pending
             || self.composer.forward_pending.is_some()
             || self.composer.io.is_some()

@@ -4265,6 +4265,69 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+1"), check("tab", "Mail"), wait(80), key("ctrl+k"), check("focused_input", "search"), type_text("prototype"), check("total", 1), key("Escape"), check("dialog", None),
                        check("reply_count", 1), check("attachment_count", 4), shot("reply-layout"))
 
+    def test_bulk_ten_delete_reviews_and_projects_before_pending_read_finishes(self):
+        result = self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Pending read bulk evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("unread", True), click(740,100), check("unread",False),
+                       {"type":"click","x":400,"y":mail_row_y(0),"modifiers":["ctrl"]},
+                       check("mail_selection.mode",True), check("mail_selection.drawn",True),
+                       {"type":"click","x":400,"y":mail_row_y(9),"modifiers":["shift"]},
+                       check("mail_selection.count",10), check("mail_selection.pending",False),
+                       key("ctrl+d"), check("dialog","BulkReview"), check("bulk.review_count",10),
+                       {"type":"assert","path":"mail_pending","value":1},
+                       key("Return"), check("dialog",None), check("total",110),
+                       check("action_toast.label","Deleted 10 messages"),
+                       {"type":"assert","path":"mail_pending","value":1},
+                       {"type":"assert","path":"bulk.staging","op":"ne","value":None},
+                       shot("bulk-ten-delete-before-read-finishes"),
+                       {**check("mail_pending",0),"timeout_ms":5000}, check("bulk.staging",None))
+        for completed in range(1, 11):
+            self.mcp.batch({**check("bulk.jobs.0.completed",completed,"gte"),"timeout_ms":5000})
+        self.mcp.batch(check("bulk.jobs.0.remaining",0), check("bulk.jobs.0.failed",0),
+                       check("total",110), shot("bulk-ten-delete-background-complete"))
+
+    def test_bulk_pending_read_undo_before_admission_in_dark(self):
+        result = self.mcp.call("desktop.start", mail_actions="slow")
+        print(f"Deferred bulk Undo evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(80),
+                       click(690,366), check("dark",True), key("ctrl+1"), check("tab","Mail"),
+                       check("unread",True), click(740,100), check("unread",False),
+                       {"type":"click","x":400,"y":mail_row_y(0),"modifiers":["ctrl"]},
+                       check("mail_selection.mode",True), check("mail_selection.drawn",True),
+                       {"type":"click","x":400,"y":mail_row_y(1),"modifiers":["shift"]},
+                       check("mail_selection.count",2), check("mail_selection.pending",False),
+                       key("ctrl+d"), check("dialog","BulkReview"), check("bulk.review_count",2),
+                       key("Return"), check("dialog",None), check("total",118),
+                       {"type":"assert","path":"mail_pending","value":1},
+                       {"type":"assert","path":"bulk.staging","op":"ne","value":None},
+                       click(1340,874), check("total",120), check("action_toast.label","Restored 2 messages"),
+                       {"type":"assert","path":"mail_pending","value":1}, check("bulk.staging",None),
+                       {"type":"assert","path":"bulk.jobs","value":[]},
+                       shot("bulk-dark-undo-before-admission"),
+                       {**check("mail_pending",0),"timeout_ms":5000},
+                       check("mail_rows.0.unread",False), check("total",120), check("bulk.jobs",[]),
+                       {"type":"resize","width":900,"height":640}, wait(150),
+                       shot("bulk-dark-undo-before-admission-compact"))
+
+    def test_bulk_pending_read_failure_keeps_delete_recovery_visible(self):
+        result = self.mcp.call("desktop.start", mail_actions="fail")
+        print(f"Deferred bulk failure evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("unread",True), click(740,100), check("unread",False),
+                       {"type":"click","x":400,"y":mail_row_y(0),"modifiers":["ctrl"]},
+                       check("mail_selection.mode",True), check("mail_selection.drawn",True),
+                       {"type":"click","x":400,"y":mail_row_y(1),"modifiers":["shift"]},
+                       check("mail_selection.count",2), check("mail_selection.pending",False),
+                       key("ctrl+d"), check("dialog","BulkReview"), check("bulk.review_count",2),
+                       key("Return"), check("dialog",None), check("total",118), check("action_toast.count",2),
+                       {"type":"assert","path":"mail_pending","value":1},
+                       shot("bulk-delete-before-read-failure"),
+                       {**check("mail_pending",0),"timeout_ms":5000}, check("bulk.staging",None),
+                       {**check("bulk.jobs.0.failed",2),"timeout_ms":5000},
+                       check("bulk.jobs.0.remaining",0), check("total",120), check("mail_rows.0.unread",True),
+                       check("notice","2 messages could not be confirmed","contains"),
+                       shot("bulk-delete-after-read-failure"), click(1330,36), check("dialog","BulkHistory"),
+                       shot("bulk-delete-after-read-failure-history"))
+
     def test_bulk_archive_review_cancellation_immediate_undo_and_delete_review(self):
         result = self.mcp.call("desktop.start", mail_actions="slow")
         print(f"Bulk review and Undo evidence: {result['artifacts']}", flush=True)
@@ -5659,6 +5722,22 @@ class NativeFlows(unittest.TestCase):
                        wait(80), type_text("A real calendar flow"), check("fields.title", "A real calendar flow"),
                        click(510, 677), check("dialog", None), check("events", 6), shot("saved-calendar-event"))
 
+    def test_calendar_save_projects_while_provider_capacity_is_held(self):
+        started = self.mcp.call("desktop.start", held_provider_slots=True)
+        print(f"Calendar immediate feedback evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80), double_click(700, 474),
+                       check("dialog", "Event"), wait(80), type_text("Visible before the server"),
+                       click(510, 677), check("dialog", None), check("events", 6),
+                       check("calendar_actions.0.title", "Visible before the server"),
+                       check("calendar_actions.0.acknowledged", False),
+                       shot("calendar-pending-save"), key("ctrl+1"), check("tab", "Mail"),
+                       key("ctrl+2"), check("tab", "Calendar"), check("events", 6),
+                       check("calendar_actions.0.acknowledged", False), shot("calendar-pending-save-after-navigation"),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690,366), check("dark", True), key("ctrl+2"), check("tab", "Calendar"),
+                       {"type":"resize","width":900,"height":640}, wait(150),
+                       check("events", 6), shot("calendar-pending-save-compact-dark"))
+
     def test_calendar_same_uid_in_different_calendars_edits_and_deletes_correct_event(self):
         self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80),
                        click(1260, 348), check("dialog", "Event"),
@@ -5670,6 +5749,18 @@ class NativeFlows(unittest.TestCase):
                        shot("calendar-scoped-deletion"), click(1260, 234), check("dialog", "Event"),
                        check("fields.title", "A quiet start"), check("fields.source", "preview-calendar"),
                        key("Escape"), check("dialog", None))
+
+    def test_calendar_delete_projects_while_provider_capacity_is_held(self):
+        started = self.mcp.call("desktop.start", held_provider_slots=True)
+        print(f"Calendar immediate delete evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80),
+                       click(1260, 348), check("dialog", "Event"),
+                       check("fields.title", "A little time outside"),
+                       click(925, 708), check("dialog", None), check("events", 4),
+                       check("calendar_actions.0.deleting", True),
+                       check("calendar_actions.0.acknowledged", False), shot("calendar-pending-delete"),
+                       key("ctrl+1"), check("tab", "Mail"), key("ctrl+2"), check("tab", "Calendar"),
+                       check("events", 4), check("calendar_actions.0.acknowledged", False))
 
     def test_keyboard_pane_navigation_and_full_reader(self):
         self.mcp.batch(key("Down"), check("selected", "Your weekly workspace digest"),

@@ -1,5 +1,21 @@
 # Conversation request audit
 
+**20 September immediate actions across the app:** Sam reported slow preparation
+and deletion for about ten selected messages, accepted background server work
+provided review and UI feedback are fast, then requested an architecture proposal
+covering the whole app. The [proposal](agents/IMMEDIATE_ACTIONS.md) recommends
+shared local admission, projection, background execution and conditional rollback,
+with domain-specific handling for sends, credentials and uncertain results.
+Sam approved implementation and consistent adoption, including AGENTS.md updates
+and actual production changes. The first native mail/calendar migration is in
+progress; app-wide adoption and durable recovery remain open. Existing
+confirmation boundaries and the earlier device-only refused-move policy remain.
+The first native migration includes bounded selection review, immediate group
+feedback with ordered admission and Undo, and calendar save/delete with exact
+read-only recovery. The 1,365-test Rust suite and 38 native scenarios pass,
+including five new flows; shipping verification is in progress. App-wide adoption, durable
+session recovery and measured mailbox-scale latency remain active requirements.
+
 **14 September mail sync speed and reliable moves (R100/R101):** Sam reports
 the related-messages notice after archiving (fixed, `3dabf16`) and a failed
 move whose notice names a missing folder namespace on `sam@shep.so`. Sam's

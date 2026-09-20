@@ -2,7 +2,13 @@
 //! returning only counts and bounded metadata pages to the native UI.
 use super::*;
 use rusqlite::OptionalExtension;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+
+const SELECTED_COUNT_SQL: &str =
+    "SELECT COUNT(*) FROM scratch.mail_selection_rows WHERE selection=? AND selected=1";
+const FREEZE_SELECTION_SQL: &str =
+    "INSERT INTO scratch.mail_selection_rows(selection,id,position,selected)
+    SELECT ?,id,position,1 FROM scratch.mail_selection_rows WHERE selection=? AND selected=1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MailSelectionId(uuid::Uuid);
@@ -43,6 +49,13 @@ pub struct SelectionGroup {
     pub unread: usize,
 }
 #[derive(Debug, Clone)]
+pub struct SelectionObservation {
+    pub account: String,
+    pub folder: String,
+    pub unread: bool,
+    pub starred: bool,
+}
+#[derive(Debug, Clone)]
 pub struct SelectionSnapshot {
     pub id: MailSelectionId,
     pub revision: u64,
@@ -58,6 +71,8 @@ pub struct SelectionSnapshot {
     pub groups: Vec<SelectionGroup>,
     /// Selected, still-available IDs among one requested visible page.
     pub visible: HashSet<String>,
+    /// Current metadata for selected visible IDs, bounded by one requested page.
+    pub observed: HashMap<String, SelectionObservation>,
     /// Captured ordinals for observed rows, including unselected rows.
     pub positions: std::collections::HashMap<String, u64>,
 }
@@ -208,11 +223,12 @@ fn snapshot(
     );
     let (revision, frozen) = version(c, id)?;
     let key = id.to_string();
-    let (total, selected): (i64, i64) = c.query_row(
-        "SELECT COUNT(*),COALESCE(SUM(selected),0) FROM scratch.mail_selection_rows WHERE selection=?",
+    let total: i64 = c.query_row(
+        "SELECT COUNT(*) FROM scratch.mail_selection_rows WHERE selection=?",
         [&key],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+        |r| r.get(0),
     )?;
+    let selected: i64 = c.query_row(SELECTED_COUNT_SQL, [&key], |r| r.get(0))?;
     let (available, unread, starred): (i64, i64, i64) = c.query_row(
         "SELECT COUNT(*),COALESCE(SUM(m.unread),0),COALESCE(SUM(m.starred),0)
         FROM scratch.mail_selection_rows s JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
@@ -229,14 +245,24 @@ fn snapshot(
     let groups = c.prepare("SELECT m.account,m.folder,COUNT(*),SUM(m.unread) FROM scratch.mail_selection_rows s JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1 GROUP BY m.account,m.folder")?
         .query_map([&key],|r|Ok(SelectionGroup { account:r.get(0)?,folder:r.get(1)?,total:r.get::<_,i64>(2)? as usize,unread:r.get::<_,i64>(3)? as usize }))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut observed = HashSet::new();
+    let mut observed = HashMap::new();
     let mut statement = c.prepare(
-        "SELECT EXISTS(SELECT 1 FROM scratch.mail_selection_rows s
-        JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.id=? AND s.selected=1)",
+        "SELECT m.account,m.folder,m.unread,m.starred FROM scratch.mail_selection_rows s
+        JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.id=? AND s.selected=1",
     )?;
     for mail in visible {
-        if statement.query_row(params![key, mail], |r| r.get::<_, bool>(0))? {
-            observed.insert(mail.clone());
+        if let Some(value) = statement
+            .query_row(params![key, mail], |r| {
+                Ok(SelectionObservation {
+                    account: r.get(0)?,
+                    folder: r.get(1)?,
+                    unread: r.get(2)?,
+                    starred: r.get(3)?,
+                })
+            })
+            .optional()?
+        {
+            observed.insert(mail.clone(), value);
         }
     }
     let mut positions = std::collections::HashMap::new();
@@ -263,7 +289,8 @@ fn snapshot(
         starred: starred as usize,
         accounts,
         groups,
-        visible: observed,
+        visible: observed.keys().cloned().collect(),
+        observed,
         positions,
     })
 }
@@ -387,19 +414,37 @@ impl Store {
         source: MailSelectionId,
         expected: u64,
     ) -> anyhow::Result<SelectionSnapshot> {
+        self.review_selection(source, expected, Vec::new()).await
+    }
+
+    /// Freeze and summarise a review in one database-worker turn.
+    pub async fn review_selection(
+        &self,
+        source: MailSelectionId,
+        expected: u64,
+        visible: Vec<String>,
+    ) -> anyhow::Result<SelectionSnapshot> {
         self.run(move |c| {
             let tx = c.transaction()?;
             let (revision, _) = version(&tx, source)?;
-            anyhow::ensure!(revision == expected, "The selection changed. Review it again.");
+            anyhow::ensure!(
+                revision == expected,
+                "The selection changed. Review it again."
+            );
             let id = MailSelectionId::default();
-            tx.execute("INSERT INTO scratch.mail_selections(id,revision,frozen) VALUES(?,0,1)", [id.to_string()])?;
-            tx.execute("INSERT INTO scratch.mail_selection_rows(selection,id,position,selected)
-                SELECT ?,id,position,1 FROM scratch.mail_selection_rows WHERE selection=? AND selected=1",
-                params![id.to_string(),source.to_string()])?;
-            let result = snapshot(&tx,id,&[])?;
+            tx.execute(
+                "INSERT INTO scratch.mail_selections(id,revision,frozen) VALUES(?,0,1)",
+                [id.to_string()],
+            )?;
+            tx.execute(
+                FREEZE_SELECTION_SQL,
+                params![id.to_string(), source.to_string()],
+            )?;
+            let result = snapshot(&tx, id, &visible)?;
             tx.commit()?;
             Ok(result)
-        }).await
+        })
+        .await
     }
 
     pub async fn selected_mail_page(
@@ -460,5 +505,50 @@ impl Store {
             Ok(())
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn selected_count_uses_the_selected_membership_index() {
+        let store = Store::memory().unwrap();
+        store
+            .run(|connection| {
+                let sql = format!("EXPLAIN QUERY PLAN {SELECTED_COUNT_SQL}");
+                let plan: Vec<String> = connection
+                    .prepare(&sql)?
+                    .query_map([MailSelectionId::default().to_string()], |row| row.get(3))?
+                    .collect::<rusqlite::Result<_>>()?;
+                assert!(
+                    plan.iter()
+                        .any(|step| step.contains("mail_selection_chosen")
+                            && step.contains("selected=?")),
+                    "{plan:?}"
+                );
+                let freeze = format!("EXPLAIN QUERY PLAN {FREEZE_SELECTION_SQL}");
+                let freeze_plan: Vec<String> = connection
+                    .prepare(&freeze)?
+                    .query_map(
+                        [
+                            MailSelectionId::default().to_string(),
+                            MailSelectionId::default().to_string(),
+                        ],
+                        |row| row.get(3),
+                    )?
+                    .collect::<rusqlite::Result<_>>()?;
+                assert!(
+                    freeze_plan
+                        .iter()
+                        .any(|step| step.contains("mail_selection_chosen")
+                            && step.contains("selected=?")),
+                    "{freeze_plan:?}"
+                );
+                Ok(())
+            })
+            .await
+            .unwrap();
     }
 }
