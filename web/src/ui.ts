@@ -3,6 +3,7 @@ import { DraftSession } from "./draft_session";
 import { observeDraft } from "./draft_revision";
 import { connectionActivity, connectionStatus } from "./connection_activity";
 import { folderStatus } from "./folder_actions";
+import { calendarAfter, calendarBefore, calendarStatus } from "./calendar_actions";
 import { folderSteps, type FolderAction, type FolderMutationReview } from "./folder_mutations";
 import {
   dialogShortcuts,
@@ -336,10 +337,10 @@ export function mount(
       activityAgain = false;
       let summary: string;
       try {
-        const [page, connections, folders] = await Promise.all([
-          gateway.actionActivity.page(), connectionActivity(gateway), gateway.folderActivity?.page(),
+        const [page, connections, folders, calendars] = await Promise.all([
+          gateway.actionActivity.page(), connectionActivity(gateway), gateway.folderActivity?.page(), gateway.calendar?.journal.summary(),
         ]);
-        const count = page.rows.length + connections.rows.length + (folders?.rows.length ?? 0);
+        const count = page.rows.length + connections.rows.length + (folders?.rows.length ?? 0) + (calendars?.pending ?? 0);
         summary = count ? `${count}${page.next || connections.more || folders?.next ? "+" : ""}` : "";
       } catch { summary = "!"; }
       if (summary !== activitySummary) { activitySummary = summary; render(); }
@@ -506,6 +507,7 @@ export function mount(
     if (groupUI) controls.append(button("Group history", () => { d.close(); groupUI.history(); }));
     controls.append(button("Outbox", () => { d.close(); void outbox(); }));
     if (gateway.folderActivity) controls.append(button("Folder changes", () => { d.close(); void folderActivity(); }));
+    if (gateway.calendar) controls.append(button("Calendar changes", () => { d.close(); void calendarActivity(); }));
     controls.append(button("Accounts and profile sync", () => { d.close(); tab = "Preferences"; w.changed(); }));
     d.append(content, status, controls);
     async function draw() {
@@ -1487,58 +1489,130 @@ export function mount(
     setControls(!!gateway);
     void updateDelivery();
   }
-  function editEvent(original?: CalendarEntry) {
-    const day = new Date(
-      month.getFullYear(),
-      month.getMonth(),
-      original ? new Date(original.start).getDate() : 1,
-    );
+  function editEvent(original?: CalendarEntry, retained?: import("./calendar_actions").ProviderEvent) {
+    let baseline = original ? structuredClone(original) : null;
+    let revision = 0, persistedRevision = 0, busy = false, requestId = crypto.randomUUID();
+    let saveAttempt: { entry: CalendarEntry; before: CalendarEntry | null; revision: number; id: string } | undefined;
+    let deleteAttempt: { entry: CalendarEntry; id: string } | undefined;
+    const chosen = gateway?.calendar?.sources.find(source => source.id === (retained?.source_id ?? gateway.calendar?.source));
     const entry: CalendarEntry = original
-      ? { ...original }
+      ? structuredClone(original)
       : {
           id: crypto.randomUUID(),
+          localKey: crypto.randomUUID(),
           title: "",
-          start: day.toISOString(),
-          end: new Date(+day + 86400000).toISOString(),
-          calendar: "Personal",
+          start: new Date(Date.UTC(month.getFullYear(), month.getMonth(), 1)).toISOString(),
+          end: new Date(Date.UTC(month.getFullYear(), month.getMonth(), 2)).toISOString(),
+          calendar: chosen?.name ?? "Personal",
           location: "",
           readOnly: false,
         };
+    if (!original && chosen) entry.provider = { id: entry.id, source_id: chosen.id, title: entry.title, start: entry.start, end: entry.end, location: entry.location, description: "", all_day: true, etag: null, remote_url: null };
+    if (retained && entry.provider) {
+      entry.title = retained.title; entry.location = retained.location; entry.start = retained.start; entry.end = retained.end;
+      entry.provider = { ...retained, id: entry.provider.id, source_id: entry.provider.source_id, etag: entry.provider.etag, remote_url: entry.provider.remote_url };
+    }
+    if (!original && gateway) entry.readOnly = !chosen || chosen.read_only;
+    const startDate = new Date(entry.start);
+    const day = entry.provider?.all_day
+      ? new Date(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate())
+      : startDate;
     const d = modal(
       entry.readOnly ? "View event" : original ? "Edit event" : "New event",
     );
+    const requestClose = () => {
+      if (busy) return;
+      if (revision === persistedRevision) { d.close(); return; }
+      const review = modal("Discard unsaved event edits?");
+      review.append(el("p", "", "These edits have not been saved on this browser. Keep the editor open to retry, or discard them explicitly."), button("Keep editing", () => review.close()), button("Discard event edits", () => { review.close(); d.close(); }));
+    };
+    d.addEventListener("cancel", event => { event.preventDefault(); requestClose(); });
+    d.querySelector<HTMLButtonElement>(".dialog-heading button")!.onclick = requestClose;
     const status = el("p", "form-status");
     status.setAttribute("role", "status");
     d.append(
       el(
         "p",
         "muted",
-        `${day.toLocaleDateString(undefined, { dateStyle: "long" })} · All day`,
+        `${day.toLocaleDateString(undefined, { dateStyle: "long" })} · ${entry.provider?.all_day === false ? `${new Date(entry.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} to ${new Date(entry.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "All day"}`,
       ),
-      field("Event title", entry.title, (v) => (entry.title = v)),
-      field("Location", entry.location, (v) => (entry.location = v)),
+      field("Event title", entry.title, (v) => { entry.title = v; revision++; }),
+      field("Location", entry.location, (v) => { entry.location = v; revision++; }),
     );
+    if (entry.provider) d.append(field("Description", entry.provider.description, value => { entry.provider!.description = value; revision++; }, true));
+    if (entry.provider?.all_day) {
+      const start = field("Starts on", entry.start.slice(0, 10), value => { entry.start = `${value}T00:00:00.000Z`; revision++; });
+      const end = field("Ends on", new Date(Date.parse(entry.end) - 86400000).toISOString().slice(0, 10), value => { const stamp = Date.parse(`${value}T00:00:00.000Z`); entry.end = Number.isFinite(stamp) ? new Date(stamp + 86400000).toISOString() : ""; revision++; });
+      start.querySelector("input")!.type = "date"; end.querySelector("input")!.type = "date"; d.append(start, end);
+    }
     if (entry.readOnly) {
       for (const input of d.querySelectorAll("input")) input.readOnly = true;
-      d.append(el("p", "muted", "This calendar is read-only."));
+      for (const input of d.querySelectorAll("textarea")) input.readOnly = true;
+      d.append(el("p", "muted", chosen ? "This calendar is read-only." : "Refresh Calendar and choose a writable calendar before creating an event."));
     } else
       d.append(
         button("Save event", async () => {
-          if (!entry.title.trim()) {
+          if (busy) return;
+          if (!saveAttempt && !entry.title.trim()) {
             status.textContent = "Enter an event title.";
             return;
           }
-          try {
-            await w.repository.saveEvent(entry);
-            w.events = [...w.events.filter((e) => e.id !== entry.id), entry];
-            d.close();
-            w.changed();
-          } catch {
-            status.textContent =
-              "Event could not be saved. Keep the form open and retry.";
+          busy = true;
+          if (!saveAttempt) {
+            const captured = structuredClone(entry);
+            if (captured.provider) captured.provider = { ...captured.provider, title: captured.title, location: captured.location, start: captured.start, end: captured.end };
+            saveAttempt = { entry: captured, before: structuredClone(baseline), revision, id: requestId };
           }
+          const attempt = saveAttempt, savedRevision = attempt.revision, captured = attempt.entry;
+          status.textContent = "Saving on this browser…";
+          try {
+            const admitted = await w.repository.saveEvent(captured, attempt.before, attempt.id);
+            if (admitted && ["Rejected", "Cancelled", "Dismissed"].includes(admitted.status)) {
+              saveAttempt = undefined; requestId = crypto.randomUUID();
+              status.textContent = `${calendarStatus(admitted)}. Your entered edits remain here. Review Calendar changes before saving again.`;
+              return;
+            }
+            if (admitted?.status === "Succeeded" && admitted.receipt?.after) {
+              const current = admitted.receipt.after;
+              captured.id = current.id; captured.provider = structuredClone(current);
+              captured.title = current.title; captured.location = current.location; captured.start = current.start; captured.end = current.end;
+              if (entry.provider) {
+                entry.id = current.id;
+                entry.provider = { ...entry.provider, id: current.id, source_id: current.source_id, etag: current.etag, remote_url: current.remote_url };
+              }
+            }
+            baseline = captured; persistedRevision = savedRevision; requestId = crypto.randomUUID();
+            saveAttempt = undefined;
+            w.events = gateway ? structuredClone(gateway.events) : [...w.events.filter((e) => e.id !== captured.id), captured];
+            if (revision === savedRevision) d.close();
+            else status.textContent = "Earlier edits saved. Your newer edits are still here; save them when ready.";
+            w.changed();
+          } catch (error) { status.textContent = error instanceof Error ? error.message : "Event could not be saved. Keep the form open and retry."; }
+          finally { busy = false; }
         }),
       );
+    if (original && !entry.readOnly && gateway) d.append(button("Delete event", () => {
+      if (saveAttempt) { status.textContent = "Retry Save event to confirm the earlier saved request before deleting this event. Your newer edits will stay here."; return; }
+      if (!baseline) return;
+      const review = modal("Delete event?");
+      review.append(el("p", "", `Delete “${original.title}” from ${original.calendar}? This change will sync in the background.`), button("Delete this event", async () => {
+        if (busy) return; busy = true;
+        deleteAttempt ??= { entry: structuredClone(baseline!), id: crypto.randomUUID() };
+        const attempt = deleteAttempt;
+        try {
+          const admitted = await gateway.deleteEvent(attempt.entry, attempt.id);
+          if (["Rejected", "Cancelled", "Dismissed"].includes(admitted.status)) {
+            deleteAttempt = undefined;
+            status.textContent = `${calendarStatus(admitted)}. The event remains open. Review Calendar changes before deleting again.`;
+            review.close();
+            return;
+          }
+          review.close(); d.close(); w.events = structuredClone(gateway.events); w.changed();
+        }
+        catch (error) { status.textContent = error instanceof Error ? error.message : "The delete could not be saved. Retry."; review.close(); }
+        finally { busy = false; }
+      }));
+    }));
     d.append(status);
   }
   function sidebar() {
@@ -1566,6 +1640,7 @@ export function mount(
         () => {
           void w.finishReading();
           tab = name;
+          if (name === "Calendar") void showCalendar();
           fullReader = false;
           w.changed();
         },
@@ -2642,6 +2717,78 @@ export function mount(
     );
     return panel;
   }
+  let calendarLoading = false;
+  const calendarWindow = (): [string, string] => [new Date(month.getFullYear(), month.getMonth(), 1).toISOString(), new Date(month.getFullYear(), month.getMonth() + 1, 1).toISOString()];
+  async function showCalendar(refresh = false) {
+    if (!gateway?.calendar || calendarLoading && refresh) return;
+    if (refresh) { calendarLoading = true; w.changed(); }
+    try {
+      if (refresh) await gateway.calendar.refresh(...calendarWindow());
+      else await gateway.calendar.show(...calendarWindow());
+      w.events = structuredClone(gateway.calendar.events);
+    } catch (error) { gateway.calendar.error = error instanceof Error ? error.message : "Calendar could not load."; }
+    finally { if (refresh) calendarLoading = false; w.changed(); }
+  }
+  async function calendarActivity() {
+    if (!gateway?.calendar) return;
+    const calendar = gateway.calendar, d = modal("Calendar changes"), content = el("div", "outbox-entries"), status = el("p", "form-status");
+    d.classList.add("calendar-activity");
+    status.role = "status";
+    let after: string | undefined, next: string | undefined, completed = false, generation = 0, busy = false;
+    const older = button("Next Calendar changes", () => { after = next; void draw(); });
+    const recent = button("Recent Calendar changes", () => { completed = !completed; after = undefined; recent.textContent = completed ? "Pending Calendar changes" : "Recent Calendar changes"; void draw(); });
+    const controls = el("div", "outbox-actions");
+    controls.append(button("Refresh Calendar changes", () => { void gateway!.resumeActions(); void draw(); }), recent, older);
+    d.append(content, status, controls);
+    async function draw() {
+      const observed = ++generation;
+      try {
+        const page = await calendar.journal.page(after, completed);
+        if (!d.isConnected || observed !== generation) return;
+        next = page.next; older.disabled = !next; content.replaceChildren();
+        if (!page.rows.length) content.append(el("p", "empty", "No Calendar changes in this view."));
+        for (const job of page.rows) {
+          const entry = calendarAfter(job.requested) ?? calendarBefore(job.requested)!;
+          const card = el("section", "settings-card");
+          card.append(el("h3", "", entry.title || "Untitled event"), el("p", "", calendarStatus(job)));
+          if (job.error) card.append(el("p", "", job.error));
+          const decide = async (decision: "retry" | "repair" | "check" | "adopt" | "cancel") => {
+            if (busy) return; busy = true;
+            for (const control of card.querySelectorAll("button")) control.disabled = true;
+            try { await calendar.decide(job, decision); status.textContent = "Decision saved."; void gateway!.resumeActions(); await draw(); }
+            catch (error) { calendar.error = status.textContent = error instanceof Error ? error.message : "This Calendar decision could not be saved. Keep the change and retry."; }
+            finally { busy = false; for (const control of card.querySelectorAll("button")) control.disabled = false; w.changed(); }
+          };
+          if (["Waiting", "Rejected"].includes(job.status)) card.append(button(`Retry ${entry.title}`, () => void decide("retry")));
+          if (["Queued", "Waiting"].includes(job.status)) card.append(button(`Cancel ${entry.title}`, () => void decide("cancel")));
+          if (["Uncertain", "Repair", "Rejected"].includes(job.status)) card.append(button(`Check ${entry.title}`, () => void decide("check")));
+          if (job.status === "Repair") card.append(button(`Finish saving ${entry.title}`, () => void decide("repair")));
+          if (job.observation) card.append(button(`Review checked state for ${entry.title}`, () => {
+            const review = modal("Use checked Calendar state?");
+            review.append(el("p", "", job.observation!.current ? `The checked event is “${job.observation!.current.title}”.` : "The exact event is absent from this calendar."),
+              el("p", "", "This replaces the local projection with the checked server state. It does not repeat a save or delete, or confirm an unknown provider result. Saved newer edits remain available in Calendar changes."),
+              button("Use checked server state", () => { review.close(); void decide("adopt"); }));
+          }));
+          if (["Rejected", "Uncertain", "Repair", "Dismissed"].includes(job.status)) card.append(button(`Review saved edits for ${entry.title}`, () => {
+            const review = modal("Saved Calendar edits");
+            review.append(el("p", "", entry.title), el("p", "", entry.location), el("p", "", entry.description), el("p", "muted", "These are the retained requested edits. Check the event before applying them to its current version."));
+            if (calendarAfter(job.requested) && ["Rejected", "Dismissed"].includes(job.status)) review.append(button("Edit retained version", async () => {
+              const current = await calendar.journal.currentEvent(job.key);
+              if (!current) {
+                review.append(el("p", "form-status", "The original event is absent. Creating a new event will use a new saved request."), button("Create a new event from these edits", () => { review.close(); d.close(); editEvent(undefined, calendarAfter(job.requested)!); }));
+                return;
+              }
+              const source = calendar.sources.find(source => source.id === current.event.source_id);
+              review.close(); d.close();
+              editEvent({ id: current.event.id, localKey: current.key, provider: current.event, title: current.event.title, location: current.event.location, start: current.event.start, end: current.event.end, calendar: source?.name ?? "Calendar", readOnly: source?.read_only ?? true }, calendarAfter(job.requested)!);
+            }));
+          }));
+          content.append(card);
+        }
+      } catch (error) { status.textContent = error instanceof Error ? error.message : "Calendar changes could not load. Retry Refresh."; }
+    }
+    await draw();
+  }
   function calendar() {
     const panel = el("section", "calendar-panel");
     const heading = el("div", "calendar-heading");
@@ -2656,6 +2803,7 @@ export function mount(
         "Previous month",
         () => {
           month = new Date(month.getFullYear(), month.getMonth() - 1, 1);
+          void showCalendar();
           w.changed();
         },
         "back",
@@ -2665,6 +2813,7 @@ export function mount(
         "Next month",
         () => {
           month = new Date(month.getFullYear(), month.getMonth() + 1, 1);
+          void showCalendar();
           w.changed();
         },
         "chevron",
@@ -2672,7 +2821,24 @@ export function mount(
       ),
       button("New event", () => editEvent(), "calendar"),
     );
+    if (gateway?.calendar) {
+      const refresh = button("Refresh Calendar", () => void showCalendar(true));
+      refresh.disabled = calendarLoading;
+      heading.append(refresh, button("Calendar changes", () => void calendarActivity()), button("Choose calendar", () => {
+        const choices = modal("Choose calendar");
+        for (const source of gateway.calendar!.sources) choices.append(button(source.name + (source.read_only ? " (read-only)" : ""), () => {
+          gateway.calendar!.source = source.id; choices.close(); void showCalendar(true);
+        }));
+        if (!gateway.calendar!.sources.length) choices.append(el("p", "", "Refresh Calendar to load the calendars granted in Preferences."));
+      }));
+      for (const control of heading.querySelectorAll("button")) control.dataset.stable = `calendar-heading:${control.getAttribute("aria-label") ?? control.textContent}`;
+    }
     panel.append(heading);
+    if (gateway?.calendar) {
+      const status = el("p", "calendar-owned-status", gateway.calendar.error ? "Calendar could not refresh. Retry or review Calendar changes." : gateway.calendar.attention ? `${gateway.calendar.attention} Calendar change${gateway.calendar.attention === 1 ? " needs" : "s need"} attention.` : gateway.calendar.pending ? `${gateway.calendar.pending} Calendar change${gateway.calendar.pending === 1 ? " is" : "s are"} saved and syncing.` : "");
+      status.role = "status"; panel.append(status);
+    }
+    if (gateway?.calendar && !gateway.calendar.sources.length) panel.append(el("p", "empty", "Connect Google Calendar in Preferences, then choose Refresh Calendar."));
     const grid = el("div", "calendar-grid");
     for (const day of ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
       grid.append(el("div", "weekday", day));
@@ -2690,17 +2856,19 @@ export function mount(
         cell.append(el("span", "", `${day}`));
         for (const event of w.events.filter((e) => {
           const d = new Date(e.start);
+          const allDay = e.provider?.all_day;
           return (
-            d.getFullYear() === month.getFullYear() &&
-            d.getMonth() === month.getMonth() &&
-            d.getDate() === day
+            (allDay ? d.getUTCFullYear() : d.getFullYear()) === month.getFullYear() &&
+            (allDay ? d.getUTCMonth() : d.getMonth()) === month.getMonth() &&
+            (allDay ? d.getUTCDate() : d.getDate()) === day
           );
         }))
-          cell.append(button(event.title, () => editEvent(event)));
+          { const control = button(event.title, () => editEvent(event)); control.dataset.stable = `calendar-event:${event.localKey ?? event.id}`; cell.append(control); }
       }
       grid.append(cell);
     }
     panel.append(grid);
+    if (gateway?.calendar?.error) { const status = el("p", "form-status", gateway.calendar.error); status.role = "status"; panel.append(status); }
     return panel;
   }
   function render() {

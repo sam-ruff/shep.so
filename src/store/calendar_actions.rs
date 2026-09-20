@@ -5,6 +5,16 @@ use shep_action_core::Status;
 
 pub const CAPACITY: usize = 32;
 
+const ACTIVE_COUNT_SQL: &str = "SELECT COUNT(*) FROM (SELECT 1 FROM calendar_actions INDEXED BY calendar_action_status WHERE status IN ('queued','running','waiting','rejected','uncertain','repair') LIMIT 33)";
+const ACTIVE_JOBS_SQL: &str = "SELECT data FROM calendar_actions INDEXED BY calendar_action_status WHERE status IN ('queued','running','waiting','rejected','uncertain','repair') ORDER BY rowid LIMIT 32";
+const NEXT_SQL: &str = "SELECT a.id FROM calendar_actions a INDEXED BY calendar_action_status LEFT JOIN calendar_actions p ON p.id=a.previous
+    WHERE a.status IN ('repair','queued','waiting') AND
+    ((a.status='repair' AND json_extract(a.data,'$.checked')=0 AND json_extract(a.data,'$.cache_applied')=0) OR
+    ((a.status='queued' OR a.status='waiting' AND json_extract(a.data,'$.retry_at')<=unixepoch()) AND (p.id IS NULL OR p.status IN ('succeeded','rejected','cancelled'))))
+    ORDER BY a.rowid LIMIT 1";
+// Compare the latest logical and physical matches without scanning their histories.
+const PREVIOUS_SQL: &str = "WITH logical AS (SELECT rowid FROM calendar_actions INDEXED BY calendar_action_origin WHERE origin=?1 ORDER BY rowid DESC LIMIT 1), physical AS (SELECT rowid FROM calendar_actions INDEXED BY calendar_action_physical WHERE source=?3 AND json_extract(data,'$.event.id')=?2 ORDER BY rowid DESC LIMIT 1) SELECT id FROM calendar_actions WHERE rowid=(SELECT MAX(rowid) FROM (SELECT rowid FROM logical UNION ALL SELECT rowid FROM physical))";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CalendarJob {
     pub id: String,
@@ -37,18 +47,15 @@ pub(crate) fn schema(c: &Connection) -> anyhow::Result<()> {
         CREATE INDEX IF NOT EXISTS calendar_action_status ON calendar_actions(status);
         CREATE INDEX IF NOT EXISTS calendar_action_origin ON calendar_actions(origin);
         CREATE INDEX IF NOT EXISTS calendar_action_source ON calendar_actions(source);
-        CREATE INDEX IF NOT EXISTS calendar_action_previous ON calendar_actions(previous);",
+        CREATE INDEX IF NOT EXISTS calendar_action_previous ON calendar_actions(previous);
+        CREATE INDEX IF NOT EXISTS calendar_action_physical ON calendar_actions(source,json_extract(data,'$.event.id'));",
     )?;
     Ok(())
 }
 
 pub(crate) fn fence_import(c: &Connection, import_id: &str, note: &str) -> anyhow::Result<()> {
     schema(c)?;
-    let count: i64 = c.query_row(
-        "SELECT COUNT(*) FROM calendar_actions WHERE status NOT IN ('succeeded','cancelled')",
-        [],
-        |r| r.get(0),
-    )?;
+    let count: i64 = c.query_row(ACTIVE_COUNT_SQL, [], |r| r.get(0))?;
     anyhow::ensure!(
         count <= CAPACITY as i64,
         "This calendar journal exceeds the supported capacity."
@@ -97,8 +104,10 @@ fn read(c: &Connection, id: &str) -> anyhow::Result<CalendarJob> {
 }
 
 fn jobs(c: &Connection) -> anyhow::Result<Vec<CalendarJob>> {
-    c.prepare("SELECT data FROM calendar_actions WHERE status NOT IN ('succeeded','cancelled') ORDER BY rowid LIMIT 32")?
-        .query_map([],|r|r.get::<_,String>(0))?.map(|row|Ok(serde_json::from_str(&row?)?)).collect()
+    c.prepare(ACTIVE_JOBS_SQL)?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .map(|row| Ok(serde_json::from_str(&row?)?))
+        .collect()
 }
 
 fn rebind_children(c: &Connection, job: &CalendarJob) -> anyhow::Result<()> {
@@ -188,27 +197,73 @@ impl Store {
     ) -> anyhow::Result<CalendarJob> {
         self.run(move |c| {
             let tx = c.transaction()?;
-            if let Some(data) = tx.query_row("SELECT data FROM calendar_actions WHERE id=?", [&id], |r| r.get::<_,String>(0)).optional()? {
+            if let Some(data) = tx
+                .query_row("SELECT data FROM calendar_actions WHERE id=?", [&id], |r| {
+                    r.get::<_, String>(0)
+                })
+                .optional()?
+            {
                 let job: CalendarJob = serde_json::from_str(&data)?;
-                anyhow::ensure!(serde_json::to_string(&job.request)? == serde_json::to_string(&event)? && job.deleting == deleting, "This calendar request ID already belongs to another change.");
+                anyhow::ensure!(
+                    serde_json::to_string(&job.request)? == serde_json::to_string(&event)?
+                        && job.deleting == deleting,
+                    "This calendar request ID already belongs to another change."
+                );
                 return Ok(job);
             }
-            anyhow::ensure!(deleting || event.end > event.start, "The event must end after it starts.");
+            anyhow::ensure!(
+                deleting || event.end > event.start,
+                "The event must end after it starts."
+            );
             connections::allow(&tx, ConnectionKind::Calendar, &event.source_id)?;
-            let source = get::<Vec<CalendarSource>>(&tx,"calendars")?.into_iter().find(|source| source.id == event.source_id).context("Choose a connected calendar")?;
-            crate::providers::calendar::ensure_event_access(&source,&event,deleting)?;
-            let previous = tx.query_row("SELECT id FROM calendar_actions WHERE origin=? OR json_extract(data,'$.event.id')=? AND source=? ORDER BY rowid DESC LIMIT 1", params![event.key(),event.id,event.source_id],|r|r.get::<_,String>(0)).optional()?;
-            if let Some(previous)=&previous {
-                let mut before=read(&tx,previous)?;
-                if before.status=="rejected" {before.status="cancelled".into();write(&tx,&mut before)?;}
+            let source = get::<Vec<CalendarSource>>(&tx, "calendars")?
+                .into_iter()
+                .find(|source| source.id == event.source_id)
+                .context("Choose a connected calendar")?;
+            crate::providers::calendar::ensure_event_access(&source, &event, deleting)?;
+            let previous = tx
+                .query_row(
+                    PREVIOUS_SQL,
+                    params![event.key(), event.id, event.source_id],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()?;
+            if let Some(previous) = &previous {
+                let mut before = read(&tx, previous)?;
+                if before.status == "rejected" {
+                    before.status = "cancelled".into();
+                    write(&tx, &mut before)?;
+                }
             }
-            let count: i64 = tx.query_row("SELECT COUNT(*) FROM calendar_actions WHERE status NOT IN ('succeeded','cancelled')",[],|r|r.get(0))?;
-            anyhow::ensure!(count < CAPACITY as i64, "Finish or review an existing calendar change before adding another.");
-            let mut job = CalendarJob { id, origin:event.key(), source, request:event.clone(), event, deleting, status:"queued".into(), receipt:None, cache_applied:false, checked:false, observed:None, revision:0, previous, error:None, attempts:0, wait_reason:None, retry_at:None };
-            write(&tx,&mut job)?;
+            let count: i64 = tx.query_row(ACTIVE_COUNT_SQL, [], |r| r.get(0))?;
+            anyhow::ensure!(
+                count < CAPACITY as i64,
+                "Finish or review an existing calendar change before adding another."
+            );
+            let mut job = CalendarJob {
+                id,
+                origin: event.key(),
+                source,
+                request: event.clone(),
+                event,
+                deleting,
+                status: "queued".into(),
+                receipt: None,
+                cache_applied: false,
+                checked: false,
+                observed: None,
+                revision: 0,
+                previous,
+                error: None,
+                attempts: 0,
+                wait_reason: None,
+                retry_at: None,
+            };
+            write(&tx, &mut job)?;
             tx.commit()?;
             Ok(job)
-        }).await
+        })
+        .await
     }
 
     pub async fn calendar_jobs(&self) -> anyhow::Result<Vec<CalendarJob>> {
@@ -239,8 +294,8 @@ impl Store {
     }
 
     pub async fn next_calendar_action(&self) -> anyhow::Result<Option<String>> {
-        self.run(|c| Ok(c.query_row("SELECT a.id FROM calendar_actions a LEFT JOIN calendar_actions p ON p.id=a.previous
-            WHERE a.status='repair' AND json_extract(a.data,'$.checked')=0 AND json_extract(a.data,'$.cache_applied')=0 OR (a.status='queued' OR a.status='waiting' AND json_extract(a.data,'$.retry_at')<=unixepoch()) AND (p.id IS NULL OR p.status IN ('succeeded','rejected','cancelled')) ORDER BY a.rowid LIMIT 1",[],|r|r.get(0)).optional()?)).await
+        self.run(|c| Ok(c.query_row(NEXT_SQL, [], |r| r.get(0)).optional()?))
+            .await
     }
 
     pub async fn claim_calendar_action(&self, id: String) -> anyhow::Result<CalendarJob> {
@@ -498,5 +553,112 @@ impl Store {
             Ok(job)
         })
         .await
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+
+    #[test]
+    fn scheduler_seeks_live_work_and_preserves_dependency_and_retry_gates() -> anyhow::Result<()> {
+        let c = Connection::open_in_memory()?;
+        schema(&c)?;
+        c.execute("WITH RECURSIVE history(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM history WHERE n<100000)
+            INSERT INTO calendar_actions(id,origin,source,status,data)
+            SELECT printf('history-%06d',n),'history','home','succeeded','{}' FROM history", [])?;
+        let next = || -> anyhow::Result<Option<String>> {
+            let mut statement = c.prepare(NEXT_SQL)?;
+            let result = statement.query_row([], |row| row.get(0)).optional()?;
+            assert!(statement.get_status(rusqlite::StatementStatus::VmStep) < 1000);
+            assert_eq!(
+                statement.get_status(rusqlite::StatementStatus::FullscanStep),
+                0
+            );
+            Ok(result)
+        };
+        assert_eq!(next()?, None);
+        c.execute(
+            "INSERT INTO calendar_actions VALUES('parent','parent','home','uncertain',NULL,'{}')",
+            [],
+        )?;
+        c.execute(
+            "INSERT INTO calendar_actions VALUES('child','child','home','queued','parent','{}')",
+            [],
+        )?;
+        c.execute("INSERT INTO calendar_actions VALUES('retry','retry','home','waiting',NULL,json_object('retry_at',unixepoch()+3600))", [])?;
+        c.execute("INSERT INTO calendar_actions VALUES('repair','repair','home','repair','parent',json_object('checked',0,'cache_applied',0))", [])?;
+        assert_eq!(next()?.as_deref(), Some("repair"));
+        c.execute("UPDATE calendar_actions SET data=json_object('checked',1,'cache_applied',0) WHERE id='repair'", [])?;
+        assert_eq!(next()?, None);
+        c.execute("UPDATE calendar_actions SET data=json_object('retry_at',unixepoch()-1) WHERE id='retry'", [])?;
+        assert_eq!(next()?.as_deref(), Some("retry"));
+        c.execute(
+            "UPDATE calendar_actions SET status='succeeded' WHERE id='parent'",
+            [],
+        )?;
+        assert_eq!(next()?.as_deref(), Some("child"));
+        c.execute(
+            "UPDATE calendar_actions SET status='succeeded' WHERE id IN ('child','retry')",
+            [],
+        )?;
+        assert_eq!(next()?, None);
+        c.execute("UPDATE calendar_actions SET data=json_object('checked',0,'cache_applied',1) WHERE id='repair'", [])?;
+        assert_eq!(next()?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn active_and_predecessor_queries_stay_bounded_by_live_work() -> anyhow::Result<()> {
+        let c = Connection::open_in_memory()?;
+        schema(&c)?;
+        c.execute("WITH RECURSIVE history(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM history WHERE n<100000)
+            INSERT INTO calendar_actions(id,origin,source,status,data)
+            SELECT printf('history-%06d',n),'same-origin','home','succeeded',json_object('event',json_object('id','same-physical')) FROM history", [])?;
+        c.execute("UPDATE calendar_actions SET status=CASE rowid WHEN 1 THEN 'queued' WHEN 2 THEN 'uncertain' ELSE 'waiting' END WHERE rowid<=3", [])?;
+        for sql in [ACTIVE_COUNT_SQL, ACTIVE_JOBS_SQL] {
+            let mut statement = c.prepare(sql)?;
+            let mut rows = statement.query([])?;
+            let mut count = 0;
+            while rows.next()?.is_some() {
+                count += 1;
+            }
+            drop(rows);
+            assert_eq!(count, if sql == ACTIVE_COUNT_SQL { 1 } else { 3 });
+            assert!(statement.get_status(rusqlite::StatementStatus::VmStep) < 1000);
+        }
+        assert_eq!(
+            c.query_row(ACTIVE_COUNT_SQL, [], |row| row.get::<_, i64>(0))?,
+            3
+        );
+        for (origin, physical, source, expected) in [
+            ("same-origin", "absent", "home", Some("history-100000")),
+            ("absent", "same-physical", "home", Some("history-100000")),
+            ("absent", "same-physical", "other", None),
+        ] {
+            let mut statement = c.prepare(PREVIOUS_SQL)?;
+            let actual = statement
+                .query_row(params![origin, physical, source], |row| {
+                    row.get::<_, String>(0)
+                })
+                .optional()?;
+            assert_eq!(actual.as_deref(), expected);
+            assert!(statement.get_status(rusqlite::StatementStatus::VmStep) < 1000);
+            assert_eq!(statement.get_status(rusqlite::StatementStatus::Sort), 0);
+        }
+        c.execute("UPDATE calendar_actions SET origin='new-origin',data=json_object('event',json_object('id','new-physical')) WHERE id='history-100000'", [])?;
+        let selected: String = c.query_row(
+            PREVIOUS_SQL,
+            params!["new-origin", "same-physical", "home"],
+            |row| row.get(0),
+        )?;
+        assert_eq!(selected, "history-100000");
+        let selected: String = c.query_row(
+            PREVIOUS_SQL,
+            params!["same-origin", "new-physical", "home"],
+            |row| row.get(0),
+        )?;
+        assert_eq!(selected, "history-100000");
+        Ok(())
     }
 }

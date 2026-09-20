@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, expect, test, vi } from "vitest";
 import { BrowserStore } from "./storage";
-import { executeFolderCreation, folderConnection, type Mailbox, type FolderProvider } from "./folder_actions";
+import { executeFolderCreation, folderConnection, readFolderPlan, type Mailbox, type FolderProvider } from "./folder_actions";
 import type { Account } from "./provider";
 import { removalPreview, reviewStores } from "./account_removal";
 
@@ -150,6 +150,19 @@ test("failed receipt persistence leaves a started request that cannot execute ag
   expect(await executeFolderCreation(journal, started, provider, () => false)).toEqual(started);
   expect(provider.create).toHaveBeenCalledTimes(1);
   expect(provider.inspect).not.toHaveBeenCalled();
+});
+
+test.each([true, false])("only confirmed plan rejection retires waiting status: %s", async rejected => {
+  const { input, journal } = await fixture();
+  const provider: FolderProvider = {
+    plan: vi.fn(async () => readFolderPlan(rejected ? { state: "rejected" } : { state: "unknown" })),
+    create: vi.fn(), inspect: vi.fn(),
+  };
+  const result = await executeFolderCreation(journal, await journal.admit(input), provider, () => false);
+  expect(result.status).toBe(rejected ? "Rejected" : "Waiting");
+  expect(result.target).toBeUndefined(); expect(result.receipt).toBeUndefined();
+  expect(provider.create).not.toHaveBeenCalled(); expect(provider.inspect).not.toHaveBeenCalled();
+  expect(readFolderPlan(target)).toEqual(target);
 });
 
 test("read failures and stop before dispatch preserve a safely queued request", async () => {

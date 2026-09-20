@@ -1,5 +1,6 @@
 import 'selection.dart';
 import 'groups.dart';
+import 'folders.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'attachments.dart';
@@ -40,6 +41,7 @@ class NativeRepository
         MailActivityRepository,
         DurableAccountRepository,
         DurableCalendarRepository,
+        FolderCreationRepository,
         DurableMutationRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
@@ -790,6 +792,91 @@ class NativeRepository
   @override
   Future<void> resumeMailAction(MailActivity action) async =>
       _mutate(action.mail, action.fields, action.id);
+
+  @override
+  Future<List<FolderAccount>> folderOptions() async =>
+      (await call({'op': 'folder_options'}) as List)
+          .map(
+            (value) => FolderAccount(Map<String, dynamic>.from(value as Map)),
+          )
+          .toList();
+
+  @override
+  Future<List<FolderCreation>> folderCreations() async =>
+      (await call({'op': 'folder_creations'}) as List)
+          .map(
+            (value) => FolderCreation(Map<String, dynamic>.from(value as Map)),
+          )
+          .toList();
+
+  @override
+  Future<FolderCreation> admitFolder(
+    String id,
+    FolderAccount account,
+    String? parent,
+    String name,
+  ) async => FolderCreation(
+    Map<String, dynamic>.from(
+      await call({
+            'op': 'admit_folder',
+            'id': id,
+            'account': account.id,
+            'connection': account.connection,
+            'parent': parent,
+            'name': name,
+          })
+          as Map,
+    ),
+  );
+
+  @override
+  Future<FolderCreation> executeFolder(FolderCreation request) async {
+    final account = mailAccounts
+        .where((account) => account.id == request.account)
+        .firstOrNull;
+    Map<String, Object?> credentials = {};
+    if (!request.hasReceipt && account?.protocol != 'Pop3') {
+      try {
+        if (account == null) throw StateError('Account unavailable');
+        credentials = await _incoming(account);
+      } catch (_) {
+        await call({
+          'op': 'wait_folder',
+          'id': request.id,
+          'revision': request.revision,
+        });
+        rethrow;
+      }
+    }
+    final result = FolderCreation(
+      Map<String, dynamic>.from(
+        await callBackground({
+              'op': 'execute_folder',
+              'id': request.id,
+              ...credentials,
+            })
+            as Map,
+      ),
+    );
+    if (result.status == 'succeeded') await refreshProfileAccounts();
+    return result;
+  }
+
+  @override
+  Future<FolderCreation> decideFolder(
+    FolderCreation request,
+    String decision,
+  ) async => FolderCreation(
+    Map<String, dynamic>.from(
+      await call({
+            'op': 'decide_folder',
+            'id': request.id,
+            'revision': request.revision,
+            'decision': decision,
+          })
+          as Map,
+    ),
+  );
 
   @override
   Future<void> cancelMailAction(String id) async {

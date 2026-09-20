@@ -295,22 +295,23 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
         parent: Option<&str>,
         name: &str,
     ) -> anyhow::Result<Mailbox> {
-        creation::valid_path(name)?;
+        creation::valid_path(name).map_err(|error| creation::PlanRejected(error.to_string()))?;
         let connection = connection(&mut self.session, self.encoding, false);
         let root = creation::discover_namespace(&connection, parent.unwrap_or("")).await?;
         let parent = match parent {
             Some(path) => {
-                creation::valid_path(path)?;
-                Some(
-                    connection
-                        .inspect(path.into())
-                        .await?
-                        .context("The parent folder no longer exists. Refresh folders.")?,
-                )
+                creation::valid_path(path)
+                    .map_err(|error| creation::PlanRejected(error.to_string()))?;
+                Some(connection.inspect(path.into()).await?.ok_or_else(|| {
+                    creation::PlanRejected(
+                        "The parent folder no longer exists. Refresh folders.".into(),
+                    )
+                })?)
             }
             None => None,
         };
         creation::plan(&root, parent.as_ref(), name)
+            .map_err(|error| creation::PlanRejected(error.to_string()).into())
     }
 }
 
@@ -318,6 +319,42 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
 mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[tokio::test]
+    async fn invalid_child_name_is_a_typed_plan_rejection_before_create() {
+        script(
+            vec![(
+                "LIST \"\" \"\"",
+                "* LIST (\\NoSelect) \"/\" \"\"\r\n$TAG OK namespace\r\n",
+            )],
+            async |folders| {
+                let error = folders
+                    .plan_folder(None, "invalid/child")
+                    .await
+                    .expect_err("invalid leaf");
+                assert!(error.downcast_ref::<creation::PlanRejected>().is_some());
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn incomplete_namespace_read_does_not_reject_the_requested_name() {
+        script(
+            vec![(
+                "LIST \"\" \"\"",
+                "* LIST (\\NoSelect) \"/\" \"\"\r\n$TAG NO unavailable\r\n",
+            )],
+            async |folders| {
+                let error = folders
+                    .plan_folder(None, "Projects")
+                    .await
+                    .expect_err("incomplete read");
+                assert!(error.downcast_ref::<creation::PlanRejected>().is_none());
+            },
+        )
+        .await;
+    }
 
     #[tokio::test]
     async fn changed_encoding_rejects_saved_target_before_any_wire_command() {

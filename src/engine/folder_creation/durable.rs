@@ -76,14 +76,16 @@ async fn execute_observed(
             let target = match target {
                 Ok(target) => target,
                 Err(error) => {
+                    let stage = if error
+                        .downcast_ref::<crate::folder_actions::creation::PlanRejected>()
+                        .is_some()
+                    {
+                        CreationStage::Rejected
+                    } else {
+                        CreationStage::Waiting
+                    };
                     return store
-                        .update_creation(
-                            job,
-                            CreationStage::Waiting,
-                            None,
-                            None,
-                            Some(format!("{error:#}")),
-                        )
+                        .update_creation(job, stage, None, None, Some(format!("{error:#}")))
                         .await;
                 }
             };

@@ -10,6 +10,8 @@ import '../data/outgoing.dart';
 import '../data/printing.dart';
 import 'mail.dart';
 import 'mail_groups.dart';
+import 'folder_creations.dart';
+import '../data/folders.dart';
 import 'mail_selection.dart';
 import 'move_feedback.dart';
 import 'preferences.dart';
@@ -47,6 +49,13 @@ class Workspace extends ChangeNotifier {
   final GoogleConnection? google;
   final ProfileDiscovery? profileDiscovery;
   final MailRepository repository;
+  late final FolderCreations? folderCreation =
+      repository is FolderCreationRepository
+      ? FolderCreations(
+          repository as FolderCreationRepository,
+          changed: _changed,
+        )
+      : null;
   List<MailActivity> mailActivities = const [];
   List<CalendarActivity> calendarActivities = const [];
   List<CalendarSource> calendarSources = const [];
@@ -335,6 +344,7 @@ class Workspace extends ChangeNotifier {
   void setForeground(bool active) {
     if (!active) unawaited(finishReading());
     _foreground = active;
+    folderCreation?.foreground(active);
   }
 
   AccountRepository? get accountRepository =>
@@ -577,6 +587,7 @@ class Workspace extends ChangeNotifier {
     // Saved groups recover at startup: runnable ones continue, paused ones
     // wait for an explicit decision in History.
     unawaited(groups?.refreshHistory());
+    unawaited(folderCreation?.initialise());
     _changed();
   }
 
@@ -2189,6 +2200,7 @@ class Workspace extends ChangeNotifier {
     moves.dispose();
     selection?.dispose();
     groups?.dispose();
+    folderCreation?.dispose();
     _searchTimer?.cancel();
     _syncTimer?.cancel();
     super.dispose();

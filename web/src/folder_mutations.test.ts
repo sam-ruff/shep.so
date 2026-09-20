@@ -215,7 +215,7 @@ test("schema 17 closes older writers and preserves the cache clock and existing 
   expect(await store.get("cacheState", "mail")).toEqual({ epoch: "retained-cache", revision: 17, floor: 3 });
   expect(await store.folderActions.get("receipt")).toMatchObject({ status: "Repair", receiptOrigin: "acknowledged" });
   const db = await openMailDatabase(profile);
-  expect(db.version).toBe(17);
+  expect(db.version).toBe(18);
   expect(db.transaction("folderMembers").objectStore("folderMembers").indexNames.contains("jobFolderId")).toBe(true);
   expect(db.transaction("mailMetadata").objectStore("mailMetadata").indexNames.contains("accountFolderId")).toBe(true);
   db.close();

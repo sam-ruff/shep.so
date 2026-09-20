@@ -3,6 +3,16 @@
 This records the Flutter mutation owners and the current adoption of the common
 action lifecycle. The target contract is in [Immediate actions](IMMEDIATE_ACTIONS.md).
 
+## CalDAV migration in progress
+
+Schema 22 introduces saved setup attempts and connection identities. Shared HTTP
+code confines requests to the selected collection, checks exact resource versions
+and preserves uncertain results without replay. The integration review adds
+recurring-write refusal, collection-scoped discovery and duration/UID regressions.
+Connection replacement and credential cleanup need their lost-reply fences before
+the Dart controls and event dispatcher are considered complete. This prerequisite
+does not establish CalDAV client parity or live-provider verification.
+
 ## Mail
 
 Individual Archive, Trash, Spam, Move, read and star controls enter through

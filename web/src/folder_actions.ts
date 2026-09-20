@@ -49,6 +49,13 @@ export interface FolderProvider {
   inspect(target: Mailbox): Promise<Mailbox | null>;
   create(target: Mailbox): Promise<FolderCreationReply>;
 }
+class FolderPlanRejected extends Error {}
+export function readFolderPlan(value: unknown): Mailbox {
+  if (value && typeof value === "object" && "state" in value && value.state === "rejected")
+    throw new FolderPlanRejected("The folder name or parent is unavailable. Review this request before retrying.");
+  if (!validMailbox(value)) throw Error("Invalid folder plan received.");
+  return value;
+}
 export const folderConnection = (a: Account) => JSON.stringify([
   a.id, a.email, a.protocol, a.host, a.port, a.username,
   a.incoming_security ?? "Tls", a.incoming_auth ?? "Password",
@@ -86,7 +93,7 @@ export async function executeFolderCreation(journal: BrowserFolders, initial: Fo
       job = await journal.update(job, { target, error: undefined });
     }
   } catch (error) {
-    return journal.update(job, { status: "Waiting", error: errorText(error) });
+    return journal.update(job, { status: error instanceof FolderPlanRejected ? "Rejected" : "Waiting", error: errorText(error) });
   }
   if (stopping()) return job;
   job = await journal.update(job, { status: "Running", error: undefined });

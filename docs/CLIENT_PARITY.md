@@ -18,8 +18,23 @@ passes 153 tests after shared HTTP extraction, including stale sync, receipt
 repair and safe successive edits. Flutter passes 234 tests and 29 final focused
 controls/FFI cases for lost replies, bounded pending requests and editor close.
 The shared HTTP adapter passes eight tests; authenticated Calendar transport and
-common Drive/Calendar renewal pass 67 backend tests. CalDAV, browser calendar
+common Drive/Calendar renewal pass 67 backend tests. Flutter/browser CalDAV
 controls, live Google and Apple execution remain open.
+
+Browser Calendar schema 18 now admits Google event changes through the common
+background owner. It retains exact requests, receipt identities, pending
+cancellation and checked recovery, including lost replies while newer text is
+entered. Root verification passes 250 units, 20 combined control scenarios and
+13 Calendar/storage scenarios; desktop light and compact dark recovery captures
+are reviewed. Calendar Undo after acknowledgement, timed creation, recurrence
+editing and final performance remain active gaps.
+
+CalDAV schema 22 integration is in progress. Its shared provider now passes 19
+parser/HTTP tests, including collection-specific privileges, recurring write
+refusal, lost replies, UID decoding and daylight-saving durations. The initial
+integrated native setup slice passes 159 Rust tests. Connection replacement,
+credential cleanup, provider routing and Dart controls are still under review;
+these results do not close the CalDAV parity gap.
 
 Native group flag writes now retain provider receipts before cache updates;
 cache-only repair preserves Undo and never repeats a provider write. Native
@@ -69,8 +84,12 @@ in progress. Folder creation also admits locally and retains a logical pending
 row, receipt-first repair and explicit uncertain-result inspection. Browser schema
 16 creation and its real authenticated gateway now pass 77 focused unit tests,
 49 backend tests (one fixture prerequisite ignored), and 12 Chromium controls
-covering creation, upgrades, removal fences and preferences. Checked folder
-Move/Delete/Rename and mobile folder adoption remain open. Browser now saves
+covering creation, upgrades, removal fences and preferences. Flutter schema
+23 now admits folder requests locally, shows nonselectable pending sidebar rows
+and exposes bounded recovery through its existing account/provider owner.
+Host bridge, failure/restart and compact control evidence are recorded in
+[Mobile folder creation](agents/MOBILE_FOLDERS.md); live-provider, Android and
+Apple folder execution remain open. Browser now saves
 queued Send before provider reservation, retains connection-attempt recovery and
 atomically saves preference values with intent revisions.
 Browser Activity also reads a bounded connection-attempt page from its existing

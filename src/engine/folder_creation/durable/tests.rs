@@ -424,6 +424,26 @@ async fn definite_refusal_can_retry_same_target_but_stale_decision_cannot_dispat
 }
 
 #[tokio::test]
+async fn invalid_folder_plan_requires_review_without_provider_create() {
+    let (store, job) = fixture().await;
+    let mut api = MockCreationApi::new();
+    api.expect_plan().times(1).returning(|_, _| {
+        Err(crate::folder_actions::creation::PlanRejected(
+            "The parent cannot contain folders.".into(),
+        )
+        .into())
+    });
+    api.expect_inspect().never();
+    api.expect_create().never();
+    let saved = execute(&store, job, &api, &Default::default())
+        .await
+        .expect("retained review");
+    assert_eq!(saved.stage, CreationStage::Rejected);
+    assert!(saved.target.is_none());
+    assert!(saved.receipt.is_none());
+}
+
+#[tokio::test]
 async fn planning_failure_waits_without_create_and_stopped_owner_leaves_queued_work() {
     let (store, job) = fixture().await;
     let mut api = MockCreationApi::new();

@@ -150,6 +150,17 @@ fn observation<T: Serialize>(result: anyhow::Result<T>) -> Response {
     }
 }
 
+fn planned(result: anyhow::Result<Mailbox>) -> Response {
+    if result.as_ref().err().is_some_and(|error| {
+        error
+            .downcast_ref::<shep_mail_core::folder_actions::creation::PlanRejected>()
+            .is_some()
+    }) {
+        return Json(Creation::Rejected).into_response();
+    }
+    observation(result)
+}
+
 async fn read_catalog(provider: &dyn FolderProvider) -> anyhow::Result<Vec<Mailbox>> {
     let catalog = provider.catalog().await?;
     anyhow::ensure!(
@@ -195,7 +206,7 @@ async fn plan(
             "Choose a valid folder name and parent.",
         );
     }
-    observation(
+    planned(
         async {
             let provider = state.mail.transport.folders(&request.connection).await?;
             provider.plan(request.parent, request.name).await
@@ -230,6 +241,41 @@ async fn inspect(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn planning_distinguishes_proven_rejection_from_failed_discovery() {
+        for rejected in [false, true] {
+            let mut provider = MockFolderProvider::new();
+            provider.expect_plan().times(1).return_once(move |_, _| {
+                if rejected {
+                    Err(shep_mail_core::folder_actions::creation::PlanRejected(
+                        "private provider detail".into(),
+                    )
+                    .into())
+                } else {
+                    Err(anyhow::anyhow!("private discovery failure"))
+                }
+            });
+            provider.expect_create().never();
+            let response = planned(provider.plan(None, "Projects".into()).await);
+            assert_eq!(
+                response.status(),
+                if rejected {
+                    StatusCode::OK
+                } else {
+                    StatusCode::BAD_GATEWAY
+                }
+            );
+            let body = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .expect("bounded body");
+            let body = String::from_utf8(body.to_vec()).expect("JSON");
+            assert!(!body.contains("private"));
+            if rejected {
+                assert_eq!(body, r#"{"state":"rejected"}"#);
+            }
+        }
+    }
 
     #[tokio::test]
     async fn catalog_keeps_exact_names_and_metadata() {

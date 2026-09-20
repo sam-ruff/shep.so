@@ -38,6 +38,9 @@ pub struct Operations {
     #[cfg(test)]
     pub(crate) provider: std::sync::Mutex<Option<Arc<dyn shep_mail_core::providers::MailProvider>>>,
     #[cfg(test)]
+    pub(crate) folder_provider:
+        std::sync::Mutex<Option<Arc<dyn crate::folders::execute::CreationApi>>>,
+    #[cfg(test)]
     pub(crate) mutation_waiting: tokio::sync::Notify,
 }
 
@@ -90,6 +93,8 @@ impl Operations {
             sent: crate::sent::Runtime::default(),
             #[cfg(test)]
             provider: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            folder_provider: std::sync::Mutex::new(None),
             #[cfg(test)]
             mutation_waiting: tokio::sync::Notify::new(),
         }
@@ -179,6 +184,29 @@ pub enum Request {
         binding: shep_profile_core::history::Binding,
     },
     Accounts,
+    FolderCreations,
+    FolderOptions,
+    WaitFolder {
+        id: String,
+        revision: i64,
+    },
+    AdmitFolder {
+        id: String,
+        account: String,
+        connection: String,
+        parent: Option<String>,
+        name: String,
+    },
+    DecideFolder {
+        id: String,
+        revision: i64,
+        decision: String,
+    },
+    ExecuteFolder {
+        id: String,
+        credential_slot: Option<String>,
+        password: Option<SecretString>,
+    },
     ValidateProfileOperation {
         record: String,
     },
@@ -206,6 +234,15 @@ pub enum Request {
     CalendarActionAdmission {
         id: String,
     },
+    AdmitCalDavAction {
+        id: String,
+        mutation: shep_calendar_core::Mutation,
+        connection_id: String,
+        connection_revision: i64,
+    },
+    CalDavActionAdmission {
+        id: String,
+    },
     CalendarActions {
         #[serde(default)]
         offset: u32,
@@ -224,6 +261,10 @@ pub enum Request {
         access_token: SecretString,
         subject: String,
     },
+    ExecuteCalDavAction {
+        id: String,
+        password: SecretString,
+    },
     RepairCalendarAction {
         id: String,
     },
@@ -232,12 +273,45 @@ pub enum Request {
         access_token: SecretString,
         subject: String,
     },
+    InspectCalDavAction {
+        id: String,
+        password: SecretString,
+    },
     WaitCalendarAction {
         id: String,
         error: String,
     },
     CancelCalendarAction {
         id: String,
+    },
+    PrepareCalendarConnection {
+        id: String,
+        request: crate::calendar::connections::ConnectionRequest,
+    },
+    CalendarConnectionAttempt {
+        id: String,
+    },
+    CalendarConnectionAttempts,
+    PendingCalendarConnectionAttempts,
+    ActivateCalendarConnection {
+        id: String,
+        password: SecretString,
+        start: chrono::DateTime<chrono::Utc>,
+        end: chrono::DateTime<chrono::Utc>,
+    },
+    CancelCalendarConnection {
+        id: String,
+    },
+    ActiveCalendarConnection {
+        id: String,
+    },
+    RemoveCalendarConnection {
+        id: String,
+        revision: i64,
+    },
+    CalendarCredentialCleanup,
+    CalendarCredentialCleanupDone {
+        slot: String,
     },
     CancelMailAction {
         id: String,
@@ -658,6 +732,74 @@ async fn value<T: serde::Serialize>(result: Result<T>) -> Result<Value> {
 pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
     let db = &profile.database;
     match request {
+        Request::FolderCreations => db.read(|db| Ok(serde_json::to_value(crate::folders::history(db)?)?)).await,
+        Request::FolderOptions => db.read(crate::folders::options).await,
+        Request::WaitFolder { id, revision } => db.write(move |db| {
+            let before = crate::folders::get(db, &id)?.context("This folder request is no longer available.")?;
+            anyhow::ensure!(before.revision == revision, "This folder request changed. Refresh its status.");
+            let mut after = before.clone();
+            if matches!(after.status.as_str(), "queued" | "waiting") { after.status = "waiting".into(); }
+            anyhow::ensure!(matches!(after.status.as_str(), "waiting" | "checking" | "repair"), "This folder request needs review.");
+            after.error = Some("Reconnect this account to continue its saved folder request.".into());
+            Ok(serde_json::to_value(crate::folders::save(db, &before, &after)?)?)
+        }).await,
+        Request::AdmitFolder { id, account, connection, parent, name } => db.write(move |db| Ok(serde_json::to_value(crate::folders::admit(db, &id, &account, &connection, parent, name)?)?)).await,
+        Request::DecideFolder { id, revision, decision } => {
+            let _owner = if decision == "check" {
+                let lookup = id.clone();
+                let job = db.read(move |db| crate::folders::get(db, &lookup)?.context("This folder request is no longer available.")).await?;
+                Some(profile.operations.try_account(&job.account).await?)
+            } else { None };
+            db.write(move |db| Ok(serde_json::to_value(crate::folders::decide(db, &id, revision, &decision)?)?)).await
+        },
+        Request::ExecuteFolder { id, credential_slot, password } => {
+            let lookup = id.clone();
+            let initial = db.read(move |db| crate::folders::get(db, &lookup)?.context("This folder request is no longer available.")).await?;
+            let Ok(_account_owner) = profile.operations.try_account(&initial.account).await else {
+                return db.write(move |db| Ok(serde_json::to_value(crate::folders::wait(db, &initial)?)?)).await;
+            };
+            let job = db.read(move |db| crate::folders::get(db, &id)?.context("This folder request is no longer available.")).await?;
+            anyhow::ensure!(matches!(job.status.as_str(), "queued" | "waiting" | "checking" | "repair"), "Review this folder request before continuing.");
+            if job.receipt.is_some() && matches!(job.status.as_str(), "repair" | "checking") {
+                return db.write(move |db| Ok(serde_json::to_value(crate::folders::apply_receipt(db, &job)?)?)).await;
+            }
+            let checked = job.clone();
+            let account = match db.read(move |db| crate::folders::checked_account(db, &checked)).await {
+                Ok(account) => account,
+                Err(_) => return db.write(move |db| {
+                    let mut after = job.clone();
+                    after.status = if job.acknowledged { "repair" } else if matches!(job.status.as_str(), "queued" | "waiting") { "rejected" } else { "uncertain" }.into();
+                    after.error = Some("The account connection changed. Stop tracking this request and open New folder again.".into());
+                    Ok(serde_json::to_value(crate::folders::save(db, &job, &after)?)?)
+                }).await,
+            };
+            if account.protocol == Protocol::Pop3 {
+                return db.write(move |db| Ok(serde_json::to_value(crate::folders::create_local(db, &job)?)?)).await;
+            }
+            anyhow::ensure!(matches!(job.status.as_str(), "queued" | "waiting" | "checking" | "repair"), "Review this folder request before continuing.");
+            let Ok(_slot) = profile.operations.slots.clone().try_acquire_owned() else {
+                return db.write(move |db| Ok(serde_json::to_value(crate::folders::wait(db, &job)?)?)).await;
+            };
+            let account_id = account.id.clone();
+            if db.read(move |db| crate::connections::check_binding(db, &account_id, credential_slot.as_deref())).await.is_err() || password.is_none() {
+                return db.write(move |db| {
+                    let mut after = job.clone();
+                    if matches!(after.status.as_str(), "queued" | "waiting") { after.status = "waiting".into(); }
+                    after.error = Some("Reconnect this account to continue its saved folder request.".into());
+                    Ok(serde_json::to_value(crate::folders::save(db, &job, &after)?)?)
+                }).await;
+            }
+            let password = password.context("Reconnect this account before creating its folder.")?;
+            let provider = crate::folders::ImapCreation { account, password };
+            #[cfg(test)]
+            {
+                let injected = profile.operations.folder_provider.lock().expect("folder provider").clone();
+                if let Some(provider) = injected {
+                    return Ok(serde_json::to_value(crate::folders::execute(db, provider.as_ref(), job).await?)?);
+                }
+            }
+            Ok(serde_json::to_value(crate::folders::execute(db, &provider, job).await?)?)
+        }
         Request::OpenProfileDiscovery { session, access_token, namespace, expected_principal } => {
             Ok(serde_json::to_value(profile.operations.profile_discovery.open(&db.path,session,access_token,namespace,expected_principal).await?)?)
         }
@@ -926,6 +1068,12 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::CalendarActionAdmission{id} => db.read(move|db| {
             Ok(serde_json::to_value(crate::calendar::action_admission(db,&id)?)?)
         }).await,
+        Request::AdmitCalDavAction{id,mutation,connection_id,connection_revision} => db.write(move|db| {
+            Ok(serde_json::to_value(crate::calendar::admit_caldav(db,&id,&mutation,&connection_id,connection_revision)?)?)
+        }).await,
+        Request::CalDavActionAdmission{id} => db.read(move|db| {
+            Ok(serde_json::to_value(crate::calendar::caldav_action_admission(db,&id)?)?)
+        }).await,
         Request::CalendarActions{offset} => db.read(move|db|Ok(serde_json::to_value(crate::calendar::activities(db,offset)?)?)).await,
         Request::CalendarEvents => db.read(move|db|Ok(serde_json::to_value(crate::calendar::events(db)?)?)).await,
         Request::CalendarSources => db.read(move|db|Ok(serde_json::to_value(crate::calendar::sources(db)?)?)).await,
@@ -945,17 +1093,80 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         }).await,
         Request::ExecuteCalendarAction{id,access_token,subject} => {
             let (_guard,_slot)=profile.operations.calendar_capacity().await?;
+            let lookup=id.clone();
+            db.read(move|db|crate::calendar::ensure_google_action(db,&lookup)).await?;
             let provider=crate::calendar::GoogleCalendarProvider::new()?;
             crate::calendar::execute_bound(db,&provider,id.clone(),access_token.expose_secret().to_owned(),subject).await?;
+            Ok(json!({"id":id}))
+        }
+        Request::ExecuteCalDavAction{id,password} => {
+            let (_guard,_slot)=profile.operations.calendar_capacity().await?;
+            let lookup=id.clone();
+            let admission=db.read(move|db|crate::calendar::caldav_action_admission(db,&lookup)).await?
+                .context("This CalDAV change no longer exists.")?;
+            let active=db.read({let connection=admission.connection_id.clone();move|db|crate::calendar::connections::active(db,&connection)}).await?;
+            let provider=shep_calendar_core::caldav::CalDavProvider::new(active.connection)?;
+            crate::calendar::execute_bound(db,&provider,id.clone(),password.expose_secret().to_owned(),String::new()).await?;
             Ok(json!({"id":id}))
         }
         Request::RepairCalendarAction{id} => db.write(move|db|{crate::calendar::repair(db,&id)?;Ok(json!({"id":id}))}).await,
         Request::InspectCalendarAction{id,access_token,subject} => {
             let (_guard,_slot)=profile.operations.calendar_capacity().await?;
+            let lookup=id.clone();
+            db.read(move|db|crate::calendar::ensure_google_action(db,&lookup)).await?;
             let provider=crate::calendar::GoogleCalendarProvider::new()?;
             crate::calendar::inspect_bound(db,&provider,id.clone(),access_token.expose_secret().to_owned(),subject).await?;
             Ok(json!({"id":id}))
         }
+        Request::InspectCalDavAction{id,password} => {
+            let (_guard,_slot)=profile.operations.calendar_capacity().await?;
+            let lookup=id.clone();
+            let admission=db.read(move|db|crate::calendar::caldav_action_admission(db,&lookup)).await?
+                .context("This CalDAV change no longer exists.")?;
+            let active=db.read({let connection=admission.connection_id.clone();move|db|crate::calendar::connections::active(db,&connection)}).await?;
+            let provider=shep_calendar_core::caldav::CalDavProvider::new(active.connection)?;
+            crate::calendar::inspect_bound(db,&provider,id.clone(),password.expose_secret().to_owned(),String::new()).await?;
+            Ok(json!({"id":id}))
+        }
+        Request::PrepareCalendarConnection{id,request} => db.write(move|db| {
+            Ok(serde_json::to_value(crate::calendar::connections::prepare(db,&id,&request)?)?)
+        }).await,
+        Request::CalendarConnectionAttempt{id} => db.read(move|db| {
+            Ok(serde_json::to_value(crate::calendar::connections::attempt(db,&id)?)?)
+        }).await,
+        Request::CalendarConnectionAttempts => db.read(move|db| {
+            Ok(serde_json::to_value(crate::calendar::connections::attempts(db)?)?)
+        }).await,
+        Request::PendingCalendarConnectionAttempts => db.read(move|db| {
+            Ok(serde_json::to_value(crate::calendar::connections::pending_attempts(db)?)?)
+        }).await,
+        Request::ActivateCalendarConnection{id,password,start,end} => {
+            let (_guard,_slot)=profile.operations.calendar_capacity().await?;
+            let lookup=id.clone();
+            let attempt=db.read(move|db|crate::calendar::connections::attempt(db,&lookup)).await?
+                .context("This calendar setup no longer exists.")?;
+            let provider=shep_calendar_core::caldav::CalDavProvider::new(attempt.request.connection)?;
+            let cleanup=crate::calendar::connections::probe(db,&provider,id.clone(),password.expose_secret().to_owned(),start,end).await?;
+            Ok(json!({"id":id,"status":"active","cleanup":cleanup}))
+        }
+        Request::CancelCalendarConnection{id} => db.write(move|db| {
+            let slot=crate::calendar::connections::cancel(db,&id)?;
+            Ok(json!({"id":id,"status":"cancelled","cleanup":slot}))
+        }).await,
+        Request::ActiveCalendarConnection{id} => db.read(move|db| {
+            Ok(serde_json::to_value(crate::calendar::connections::active(db,&id)?)?)
+        }).await,
+        Request::RemoveCalendarConnection{id,revision} => db.write(move|db| {
+            let cleanup=crate::calendar::connections::remove(db,&id,revision)?;
+            Ok(json!({"id":id,"status":"removed","cleanup":cleanup}))
+        }).await,
+        Request::CalendarCredentialCleanup => db.read(move|db| {
+            Ok(serde_json::to_value(crate::calendar::connections::cleanup_slots(db)?)?)
+        }).await,
+        Request::CalendarCredentialCleanupDone{slot} => db.write(move|db| {
+            crate::calendar::connections::cleanup_done(db,&slot)?;
+            Ok(json!({"slot":slot}))
+        }).await,
         Request::MailActions{offset,runnable,after_created,after_id} => db.read(move|db| {
             let saved=if runnable {
                 anyhow::ensure!(after_created.is_some()==after_id.is_some(),"The runnable action cursor is incomplete.");
@@ -1804,7 +2015,7 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                         if !pop {let tx=db.transaction()?;for(id,unread,starred)in flags{tx.execute("UPDATE mail SET unread=?2,starred=?3 WHERE account_id || ':' || folder || ':' || remote_id = ?1 AND moved=0",params![id,unread,starred])?;}tx.commit()?;}Ok(())
                     }).await,
                     // Mobile caches selectable names only; the hierarchy is a desktop feature.
-                    MailSyncItem::Folders(account,folders)=>db.write(move|db|{let names:Vec<&str>=folders.iter().filter(|folder|folder.selectable).map(|folder|folder.name.as_str()).collect();db.execute("INSERT INTO folders VALUES(?1,?2) ON CONFLICT(account_id) DO UPDATE SET names=excluded.names",params![account,serde_json::to_string(&names)?])?;Ok(())}).await,
+                    MailSyncItem::Folders(account,folders)=>db.write(move|db|{let tx=db.transaction()?;crate::folders::save_catalogue(&tx,&account,&folders)?;tx.commit()?;Ok(())}).await,
                     MailSyncItem::InboxSyncStarted{..}|MailSyncItem::InboxSyncFinished{..}=>Ok(()),
                     MailSyncItem::Reconcile{account,folder,live_ids}=>{reconcile.push((account,folder,live_ids));Ok(())},
                     MailSyncItem::SkippedLarge=>{skipped+=1;Ok(())},

@@ -1,5 +1,41 @@
 # Shep development instructions
 
+Shared CalDAV HTTP code lives in `shared/calendar-core/src/caldav.rs` behind
+`http`. Discovery accepts only successful properties for the exact collection;
+another response cannot grant write access. Existing writes require an explicit
+resource URL and a strong single ETag. Expanded recurring events cannot derive a
+write URL from their UID. Preserve escaped UID round trips, nominal-day duration
+across DST, all-day end defaults, bounded bodies and uncertain lost-write replies.
+Flutter CalDAV setup, event dispatch and secure credential lifecycle remain an
+active migration until real controls and restart tests establish the full path.
+
+Native calendar active-action reads use the status index and a 33-row capacity
+probe. Predecessor lookup seeks the latest logical and physical matches separately
+before choosing the newer row; preserve the expression index and 100,000-history
+VM-step regression. Completed history must not delay a new local admission.
+The next-action query also seeks positive runnable statuses through that index;
+retain its empty-queue, dependency, retry-deadline and cache-repair query bounds.
+
+Shared folder planning uses `PlanRejected` only for proven target/namespace
+validation failures. Native, Flutter and browser turn it into a reviewable
+rejection; connection and incomplete discovery failures remain Waiting. The
+gateway returns a tagged rejected plan without private provider error text.
+Neither planning outcome authorises CREATE; preserve protocol and actual-control
+tests for both paths.
+
+Browser calendar schema 18 stores exact admissions, dependencies and receipts in
+the existing profile database and uses the common action owner. Keep immutable
+save/delete attempts through lost replies, inspect their current terminal status,
+and use completed create receipts before admitting newer edits. Queued cancellation
+is a local revision/status transaction and cannot wait behind provider capacity;
+a running claim refuses it. Retain dependent newer edits for explicit review.
+Fence refresh/view/summary publication across asynchronous reads. Capture the
+calendar revision before server inspection and recheck it when saving the exact
+observation, then again at adoption; newer intent, sync or permissions invalidate
+the review. Checked adoption does not claim an unknown provider success.
+Preserve real held-input, lost-reply,
+terminal-rejection, schema-upgrade and compact recovery tests.
+
 `shared/calendar-core` owns portable event/mutation/receipt and typed failure
 contracts. Include it in coordinated version stamping. Flutter schema 21 saves
 calendar intent through the existing native cache owner before token access or

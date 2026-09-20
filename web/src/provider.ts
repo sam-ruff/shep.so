@@ -2,8 +2,9 @@ import { samePhysical, metadataIdentity } from "./mail_lineage";
 import { DraftConflict, observeDraft, sameDraftObservation, type DraftObservation } from "./draft_revision";
 import type { MailAction } from "./mail_activity";
 import { ActionWake, runAccountActions, type ActionSource } from "./action_scheduler";
+import { CalendarRepository } from "./calendar_repository";
 import { folderSteps, localFolderPlan, mutationJob, type FolderAction, type FolderMutationReview, type FolderPlan, type FolderStep } from "./folder_mutations";
-import { executeFolderCreation, folderConnection, validMailbox, type FolderCreation, type FolderCreationReply, type FolderCatalog, type Mailbox } from "./folder_actions";
+import { executeFolderCreation, folderConnection, readFolderPlan, validMailbox, type FolderCreation, type FolderCreationReply, type FolderCatalog, type Mailbox } from "./folder_actions";
 import type { CacheMail } from "./cache_changes";
 import { BrowserGroups } from "./bulk_client";
 import { MailboxWorkerClient } from "./mailbox_worker_client";
@@ -339,6 +340,7 @@ async function* lines(response: Response): AsyncGenerator<unknown> {
   }
 }
 export class GatewayRepository implements Repository, SelectionRepository {
+  readonly calendar?: CalendarRepository;
   private readonly actionOwner = crypto.randomUUID();
   private actionReady?: Promise<void>;
   private releaseActions?: () => void;
@@ -388,6 +390,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
       const page = await this.store.folderActions!.page(after);
       return { next: page.next, rows: page.rows.map(folder => ({ id: folder.id, account: folder.account, eligible: this.folderRunnable(folder), run: () => this.resumeFolder(folder) })) };
     } });
+    if (this.calendar) sources.push(this.calendar.sourceWork());
     await runAccountActions(sources, this.actionWake, () => this.actionsClosed);
   }
   get folderActivity() { return this.store.folderActions; }
@@ -507,9 +510,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
         };
         await executeFolderCreation(journal, current, {
           plan: async (parent, name) => {
-            const value = await read("plan", { parent, name });
-            if (!validMailbox(value)) throw Error("Invalid folder plan received.");
-            return value;
+            return readFolderPlan(await read("plan", { parent, name }));
           },
           inspect: async target => {
             const value = await read("inspect", { target });
@@ -818,6 +819,14 @@ export class GatewayRepository implements Repository, SelectionRepository {
       throw Error(
         "This mail cache belongs to another browser profile. Reopen Shep.",
       );
+    if (store.calendar) this.calendar = new CalendarRepository(store.calendar, this.actionOwner,
+      async operation => {
+        const response = await this.response("/api/calendar", { binding: this.session.user_id, operation });
+        if ([401, 403, 429].includes(response.status)) return { state: "waiting", error: "Reconnect Google Calendar in Preferences, then retry this saved change." };
+        if (!response.ok) throw Error("The Calendar gateway response could not be confirmed.");
+        return response.json();
+      }, (scope, work, wait) => this.exclusive(scope, work, wait), () => this.actionsClosed,
+      () => { this.events = this.calendar?.events ?? []; this.actionProgress?.(); });
   }
   private exclusive<T>(scope: string, fn: () => Promise<T>, wait = true) {
     return this.lock(`shep.${this.session.user_id}.${scope}`, fn, wait);
@@ -828,6 +837,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
       this.store.all<Draft>("drafts"),
     ]);
     await this.loadFolderCatalogs();
+    await this.calendar?.load();
     for (const draft of this.drafts)
       draft.attachments = (await this.files(draft.id)).map((f) => f.info);
     await this.reloadMail();
@@ -2819,7 +2829,16 @@ export class GatewayRepository implements Repository, SelectionRepository {
   async delivery(draft: Draft) {
     return this.store.get<Outgoing>("outgoing", draft.id);
   }
-  async saveEvent(): Promise<void> {
-    throw new Error("Calendar providers are not connected in this beta yet.");
+  async saveEvent(event: CalendarEntry, before: CalendarEntry | null = null, requestId: string = crypto.randomUUID()) {
+    if (!this.calendar || this.actionsClosed) throw Error("Calendar is unavailable. Reopen Shep and keep your edits.");
+    await this.holdActionOwner();
+    try { return await this.calendar.save(event, before, requestId); }
+    finally { void this.resumeActions(); }
+  }
+  async deleteEvent(event: CalendarEntry, requestId: string = crypto.randomUUID()) {
+    if (!this.calendar || this.actionsClosed) throw Error("Calendar is unavailable. Reopen Shep.");
+    await this.holdActionOwner();
+    try { return await this.calendar.remove(event, requestId); }
+    finally { void this.resumeActions(); }
   }
 }

@@ -8,6 +8,8 @@ use shep_calendar_core::http::MockCalendarProvider;
 pub use shep_calendar_core::http::{CalendarProvider, GoogleCalendarProvider};
 use shep_calendar_core::{Event, FailureKind, Mutation, Receipt, Source};
 
+pub mod connections;
+
 const HISTORY_LIMIT: u32 = 50;
 
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +38,53 @@ pub struct CalendarAdmission {
     pub mutation: Mutation,
     pub subject: String,
     pub receipt: Option<Receipt>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct CalDavAdmission {
+    pub id: String,
+    pub status: String,
+    pub mutation: Mutation,
+    pub connection_id: String,
+    pub connection_revision: i64,
+    pub credential_slot: String,
+    pub receipt: Option<Receipt>,
+}
+
+type SavedCalDavAdmission = (
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+);
+
+pub fn caldav_action_admission(db: &Connection, id: &str) -> Result<Option<CalDavAdmission>> {
+    let saved: Option<SavedCalDavAdmission> = db
+        .query_row(
+            "SELECT a.status,COALESCE(a.admission_request,a.mutation),a.connection_id,a.connection_revision,a.credential_slot,r.receipt FROM calendar_actions a LEFT JOIN calendar_action_receipts r ON r.action=a.id WHERE a.id=?1",
+            [id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
+        )
+        .optional()?;
+    let Some((status, request, connection_id, connection_revision, credential_slot, receipt)) =
+        saved
+    else {
+        return Ok(None);
+    };
+    Ok(Some(CalDavAdmission {
+        id: id.to_owned(),
+        status,
+        mutation: serde_json::from_str(&request)?,
+        connection_id: connection_id.context("This is not a CalDAV action.")?,
+        connection_revision: connection_revision
+            .context("This CalDAV action has no connection revision.")?,
+        credential_slot: credential_slot.context("This CalDAV action has no credential slot.")?,
+        receipt: receipt
+            .map(|value| serde_json::from_str(&value))
+            .transpose()?,
+    }))
 }
 
 pub fn action_admission(db: &Connection, id: &str) -> Result<Option<CalendarAdmission>> {
@@ -106,7 +155,7 @@ pub fn admit_bound(
     );
     let source: String = tx
         .query_row(
-            "SELECT source FROM calendar_sources WHERE id=?1",
+            "SELECT source FROM calendar_sources WHERE id=?1 AND connection_id IS NULL",
             [&requested.source_id],
             |row| row.get(0),
         )
@@ -213,6 +262,160 @@ pub fn admit_bound(
         status: "queued".into(),
         mutation: mutation.clone(),
         subject: subject.to_owned(),
+        receipt: None,
+    })
+}
+
+pub fn admit_caldav(
+    db: &mut Connection,
+    id: &str,
+    mutation: &Mutation,
+    connection_id: &str,
+    observed_revision: i64,
+) -> Result<CalDavAdmission> {
+    let tx = db.transaction()?;
+    if let Some(saved) = caldav_action_admission(&tx, id)? {
+        anyhow::ensure!(
+            saved.mutation == *mutation
+                && saved.connection_id == connection_id
+                && saved.connection_revision == observed_revision,
+            "This calendar request identity already belongs to another change."
+        );
+        tx.commit()?;
+        return Ok(saved);
+    }
+    let connection = connections::active(&tx, connection_id)?;
+    anyhow::ensure!(
+        connection.revision == observed_revision,
+        "This calendar connection changed. Refresh before changing events."
+    );
+    let count: i64 = tx.query_row("SELECT count(*) FROM calendar_actions WHERE status IN ('queued','running','waiting','repair','rejected','uncertain')", [], |row| row.get(0))?;
+    anyhow::ensure!(
+        count < 32,
+        "Calendar changes are catching up. Retry shortly."
+    );
+    let (before, requested) = match mutation {
+        Mutation::Save { before, after } => (before.as_ref(), after),
+        Mutation::Delete { before } => (Some(before), before),
+    };
+    anyhow::ensure!(
+        requested.is_bounded() && before.is_none_or(Event::is_bounded),
+        "This event contains oversized calendar metadata."
+    );
+    let source: String = tx
+        .query_row(
+            "SELECT source FROM calendar_sources WHERE id=?1 AND connection_id=?2",
+            params![requested.source_id, connection_id],
+            |row| row.get(0),
+        )
+        .context("Sync this CalDAV calendar before changing events.")?;
+    anyhow::ensure!(
+        !serde_json::from_str::<Source>(&source)?.read_only,
+        "This calendar is read only."
+    );
+    let existing: Option<(String, String, String)> = tx
+        .query_row(
+            "SELECT a.id,a.status,a.mutation FROM calendar_intents i JOIN calendar_actions a ON a.id=i.action WHERE i.source_id=?1 AND i.event_id=?2",
+            params![requested.source_id, requested.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let mut admitted = mutation.clone();
+    if let Some((existing_id, status, raw)) = existing {
+        anyhow::ensure!(
+            matches!(status.as_str(), "queued" | "waiting"),
+            "This event already has a provider change in progress. Review it before saving again."
+        );
+        let previous: Mutation = serde_json::from_str(&raw)?;
+        let (
+            Mutation::Save {
+                before: confirmed,
+                after: prior_requested,
+            },
+            Mutation::Save {
+                before: Some(observed),
+                after: replacement,
+            },
+        ) = (previous, mutation)
+        else {
+            anyhow::bail!(
+                "This event already has a pending change. Wait for it to finish or review it first."
+            );
+        };
+        anyhow::ensure!(
+            observed == &prior_requested,
+            "This event changed after it was shown. Reopen it before saving."
+        );
+        admitted = Mutation::Save {
+            before: confirmed,
+            after: replacement.clone(),
+        };
+        tx.execute(
+            "UPDATE calendar_actions SET status='cancelled',error='Replaced by a newer local edit before provider dispatch.' WHERE id=?1 AND status IN ('queued','waiting')",
+            [&existing_id],
+        )?;
+        tx.execute(
+            "DELETE FROM calendar_intents WHERE action=?1",
+            [&existing_id],
+        )?;
+    }
+    if let Mutation::Save {
+        before: Some(before),
+        after,
+    } = &admitted
+    {
+        anyhow::ensure!(
+            before.source_id == after.source_id
+                && before.id == after.id
+                && before.etag == after.etag
+                && before.remote_url == after.remote_url,
+            "An edit must preserve its provider identity. Reopen the event before saving."
+        );
+    }
+    if let Mutation::Save {
+        before: Some(before),
+        ..
+    }
+    | Mutation::Delete { before } = &admitted
+    {
+        let current: Option<String> = tx
+            .query_row(
+                "SELECT event FROM calendar_events WHERE source_id=?1 AND id=?2",
+                params![before.source_id, before.id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        anyhow::ensure!(
+            current
+                .as_deref()
+                .map(serde_json::from_str::<Event>)
+                .transpose()?
+                .as_ref()
+                == Some(before),
+            "This event changed. Reopen it before saving."
+        );
+    }
+    tx.execute(
+        "INSERT INTO calendar_actions(id,status,error,created,mutation,subject,admission_request,connection_id,connection_revision,credential_slot) VALUES(?1,'queued',NULL,unixepoch('subsec')*1000,?2,NULL,?3,?4,?5,?6)",
+        params![id,serde_json::to_string(&admitted)?,serde_json::to_string(mutation)?,connection_id,observed_revision,connection.credential_slot],
+    )?;
+    let event = match &admitted {
+        Mutation::Save { after, .. } => after,
+        Mutation::Delete { before } => before,
+    };
+    tx.execute("INSERT INTO calendar_intents(source_id,event_id,action) VALUES(?1,?2,?3) ON CONFLICT(source_id,event_id) DO UPDATE SET action=excluded.action",params![event.source_id,event.id,id])?;
+    tx.execute(
+        "UPDATE calendar_clock SET revision=revision+1 WHERE id=1",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(CalDavAdmission {
+        id: id.to_owned(),
+        status: "queued".into(),
+        mutation: mutation.clone(),
+        connection_id: connection_id.to_owned(),
+        connection_revision: observed_revision,
+        credential_slot: connection.credential_slot,
         receipt: None,
     })
 }
@@ -397,11 +600,11 @@ pub async fn sync_bound(
         let current:i64=tx.query_row("SELECT revision FROM calendar_clock WHERE id=1",[],|row|row.get(0))?;
         let current_subject:Option<String>=tx.query_row("SELECT subject FROM calendar_binding WHERE id=1",[],|row|row.get(0)).optional()?;
         anyhow::ensure!(current==revision&&current_subject==prior,"Calendar changed while sync was running. Refresh again.");
-        tx.execute("DELETE FROM calendar_sources", [])?;
-        tx.execute("DELETE FROM calendar_events", [])?;
+        tx.execute("DELETE FROM calendar_events WHERE source_id IN (SELECT id FROM calendar_sources WHERE connection_id IS NULL)", [])?;
+        tx.execute("DELETE FROM calendar_sources WHERE connection_id IS NULL", [])?;
         for source in saved_sources {
             tx.execute(
-                "INSERT INTO calendar_sources(id,source) VALUES(?1,?2)",
+                "INSERT INTO calendar_sources(id,source,connection_id) VALUES(?1,?2,NULL)",
                 params![source.id, serde_json::to_string(&source)?],
             )?;
         }
@@ -542,12 +745,17 @@ pub async fn execute_bound(
     let saved = id.clone();
     let claimed=db.write(move |db| {
         let tx=db.transaction()?;
-        let (raw,bound):(String,Option<String>)=tx.query_row("SELECT mutation,subject FROM calendar_actions WHERE id=?1 AND status IN ('queued','waiting')", [&saved], |row|Ok((row.get(0)?,row.get(1)?))).context("This calendar change is no longer runnable.")?;
-        let current:String=tx.query_row("SELECT subject FROM calendar_binding WHERE id=1",[],|row|row.get(0)).context("Google Calendar must be reconnected.")?;
-        if bound.as_deref()!=Some(subject.as_str())||current!=subject{return Err(ClaimWaiting("Reconnect the original Google account to continue this change.").into());}
+        let (raw,bound,connection_id,connection_revision,credential_slot):(String,Option<String>,Option<String>,Option<i64>,Option<String>)=tx.query_row("SELECT mutation,subject,connection_id,connection_revision,credential_slot FROM calendar_actions WHERE id=?1 AND status IN ('queued','waiting')", [&saved], |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).context("This calendar change is no longer runnable.")?;
+        if let Some(connection_id)=connection_id.as_deref() {
+            let active=connections::active(&tx,connection_id).map_err(|_|ClaimWaiting("Reconnect the original CalDAV calendar to continue this change."))?;
+            if Some(active.revision)!=connection_revision||Some(active.credential_slot.as_str())!=credential_slot.as_deref(){return Err(ClaimWaiting("Reconnect the original CalDAV calendar to continue this change.").into());}
+        } else {
+            let current:String=tx.query_row("SELECT subject FROM calendar_binding WHERE id=1",[],|row|row.get(0)).context("Google Calendar must be reconnected.")?;
+            if bound.as_deref()!=Some(subject.as_str())||current!=subject{return Err(ClaimWaiting("Reconnect the original Google account to continue this change.").into());}
+        }
         let mutation=serde_json::from_str::<Mutation>(&raw)?;
         let event=match &mutation {Mutation::Save{after,..}=>after,Mutation::Delete{before}=>before};
-        let source:String=tx.query_row("SELECT source FROM calendar_sources WHERE id=?1",[&event.source_id],|row|row.get(0)).context("This calendar source was removed.")?;
+        let source:String=if let Some(connection_id)=connection_id.as_deref(){tx.query_row("SELECT source FROM calendar_sources WHERE id=?1 AND connection_id=?2",params![&event.source_id,connection_id],|row|row.get(0)).context("This calendar source was removed.")?}else{tx.query_row("SELECT source FROM calendar_sources WHERE id=?1 AND connection_id IS NULL",[&event.source_id],|row|row.get(0)).context("This calendar source was removed.")?};
         if serde_json::from_str::<Source>(&source)?.read_only{return Err(ClaimRejected("This calendar is read only.").into());}
         if let Mutation::Save{before:Some(before),after}=&mutation
             && (before.source_id!=after.source_id||before.id!=after.id||before.etag!=after.etag||before.remote_url!=after.remote_url) {
@@ -595,7 +803,7 @@ pub async fn execute_bound(
             let saved = id.clone();
             db.write(move |db| { let tx=db.transaction()?;
                 tx.execute("INSERT INTO calendar_action_receipts(action,receipt) VALUES(?1,?2)",params![&saved,serde_json::to_string(&receipt)?])?;
-                tx.execute("UPDATE calendar_actions SET status='repair',error='Google saved this event. Finish saving it on this device.' WHERE id=?1 AND status='running'",[&saved])?;tx.commit()?;Ok(())}).await?;
+                tx.execute("UPDATE calendar_actions SET status='repair',error='The calendar provider saved this event. Finish saving it on this device.' WHERE id=?1 AND status='running'",[&saved])?;tx.commit()?;Ok(())}).await?;
             let saved = id;
             db.write(move |db| repair(db, &saved)).await
         }
@@ -610,6 +818,16 @@ pub async fn execute_bound(
             db.write(move|db| {let tx=db.transaction()?;tx.execute("UPDATE calendar_actions SET status=?2,error=?3 WHERE id=?1 AND status='running'",params![&saved,status,message])?;if status=="rejected"{tx.execute("DELETE FROM calendar_intents WHERE action=?1",[&saved])?;tx.execute("UPDATE calendar_clock SET revision=revision+1 WHERE id=1",[])?;}tx.commit()?;Ok(())}).await
         }
     }
+}
+
+pub fn ensure_google_action(db: &Connection, id: &str) -> Result<()> {
+    let google: bool = db.query_row(
+        "SELECT subject IS NOT NULL AND connection_id IS NULL FROM calendar_actions WHERE id=?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    anyhow::ensure!(google, "This action belongs to another calendar provider.");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -632,34 +850,43 @@ pub async fn inspect_bound(
     let saved = id.clone();
     let mutation = db
         .read(move |db| {
-            let (status, raw, bound): (String, String, Option<String>) = db.query_row(
-                "SELECT status,mutation,subject FROM calendar_actions WHERE id=?1",
+            let (status, raw, bound, connection_id, connection_revision, credential_slot): (String, String, Option<String>,Option<String>,Option<i64>,Option<String>) = db.query_row(
+                "SELECT status,mutation,subject,connection_id,connection_revision,credential_slot FROM calendar_actions WHERE id=?1",
                 [saved],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
             )?;
             anyhow::ensure!(
                 status == "uncertain",
                 "This calendar change does not need inspection."
             );
-            let current: String = db
-                .query_row(
-                    "SELECT subject FROM calendar_binding WHERE id=1",
-                    [],
-                    |row| row.get(0),
-                )
-                .context("Google Calendar must be reconnected.")?;
-            anyhow::ensure!(
-                bound.as_deref() == Some(subject.as_str()) && current == subject,
-                "Reconnect the original Google account to inspect this change."
-            );
-            Ok(serde_json::from_str::<Mutation>(&raw)?)
+            if let Some(connection_id)=connection_id.as_deref() {
+                let active=connections::active(db,connection_id).context("Reconnect the original CalDAV calendar to inspect this change.")?;
+                anyhow::ensure!(Some(active.revision)==connection_revision&&Some(active.credential_slot.as_str())==credential_slot.as_deref(),"Reconnect the original CalDAV calendar to inspect this change.");
+            } else {
+                let current: String = db
+                    .query_row(
+                        "SELECT subject FROM calendar_binding WHERE id=1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .context("Google Calendar must be reconnected.")?;
+                anyhow::ensure!(
+                    bound.as_deref() == Some(subject.as_str()) && current == subject,
+                    "Reconnect the original Google account to inspect this change."
+                );
+            }
+            Ok((
+                serde_json::from_str::<Mutation>(&raw)?,
+                connection_id.is_some(),
+            ))
         })
         .await?;
+    let (mutation, caldav) = mutation;
     let mut expected = match &mutation {
         Mutation::Save { after, .. } => after.clone(),
         Mutation::Delete { before } => before.clone(),
     };
-    if expected.is_create() {
+    if expected.is_create() && !caldav {
         expected.id = format!("shep{}", id.replace('-', ""));
     }
     let observed = provider.read(&token, &expected).await?;
@@ -671,7 +898,7 @@ pub async fn inspect_bound(
     };
     if !proven {
         let saved = id;
-        db.write(move|db|{let tx=db.transaction()?;tx.execute("UPDATE calendar_actions SET status='rejected',error='Google does not contain the exact saved event. Reopen the event before trying again.' WHERE id=?1 AND status='uncertain'",[&saved])?;tx.execute("DELETE FROM calendar_intents WHERE action=?1",[&saved])?;tx.execute("UPDATE calendar_clock SET revision=revision+1 WHERE id=1",[])?;tx.commit()?;Ok(())}).await?;
+        db.write(move|db|{db.execute("UPDATE calendar_actions SET error='The provider no longer matches the requested event. Keep this change for review until you explicitly accept the current state.' WHERE id=?1 AND status='uncertain'",[&saved])?;Ok(())}).await?;
         return Ok(());
     }
     let receipt = Receipt {
@@ -685,7 +912,7 @@ pub async fn inspect_bound(
     let saved = id.clone();
     db.write(move|db|{let tx=db.transaction()?;
         tx.execute("INSERT OR IGNORE INTO calendar_action_receipts(action,receipt) VALUES(?1,?2)",params![&saved,serde_json::to_string(&receipt)?])?;
-        tx.execute("UPDATE calendar_actions SET status='repair',error='The exact Google event was found. Finish saving it on this device.' WHERE id=?1 AND status='uncertain'",[&saved])?;tx.commit()?;Ok(())}).await?;
+        tx.execute("UPDATE calendar_actions SET status='repair',error='The exact provider event was found. Finish saving it on this device.' WHERE id=?1 AND status='uncertain'",[&saved])?;tx.commit()?;Ok(())}).await?;
     db.write(move |db| repair(db, &id)).await
 }
 
@@ -750,6 +977,149 @@ mod tests {
         .await
         .expect("source");
         (directory, db)
+    }
+
+    #[tokio::test]
+    async fn caldav_admission_freezes_connection_revision_and_credential_slot() {
+        let (directory, db) = database().await;
+        let request = connections::ConnectionRequest {
+            connection: shep_calendar_core::caldav::CalDavConnection {
+                id: "caldav-home".into(),
+                url: "https://calendar.example.test/home/".into(),
+                username: "sam".into(),
+            },
+            credential_slot: "calendar-setup".into(),
+            observed_revision: None,
+            observed_credential_slot: None,
+        };
+        db.write({
+            let request = request.clone();
+            move |db| {
+                connections::prepare(db, "setup", &request)?;
+                connections::claim_probe(db, "setup")?;
+                connections::activate(
+                    db,
+                    "setup",
+                    &request,
+                    &[Source {
+                        id: "caldav-home".into(),
+                        name: "Home".into(),
+                        read_only: false,
+                    }],
+                    &[],
+                )?;
+                Ok(())
+            }
+        })
+        .await
+        .expect("connection");
+        let mut requested = event("local", None);
+        requested.source_id = "caldav-home".into();
+        let mutation = Mutation::Save {
+            before: None,
+            after: requested,
+        };
+        let admission = db
+            .write({
+                let mutation = mutation.clone();
+                move |db| admit_caldav(db, "action", &mutation, "caldav-home", 1)
+            })
+            .await
+            .expect("admission");
+        assert_eq!(admission.connection_revision, 1);
+        assert_eq!(admission.credential_slot, "calendar-setup");
+        let reconciled = db
+            .read(move |db| {
+                assert!(ensure_google_action(db, "action").is_err());
+                caldav_action_admission(db, "action")
+            })
+            .await
+            .expect("lookup")
+            .expect("saved");
+        assert_eq!(reconciled, admission);
+        drop(db);
+        drop(directory);
+    }
+
+    #[tokio::test]
+    async fn caldav_action_dispatch_rechecks_frozen_connection_and_saves_receipt() {
+        let (directory, db) = database().await;
+        let request = connections::ConnectionRequest {
+            connection: shep_calendar_core::caldav::CalDavConnection {
+                id: "caldav-home".into(),
+                url: "https://calendar.example.test/home/".into(),
+                username: "sam".into(),
+            },
+            credential_slot: "calendar-setup".into(),
+            observed_revision: None,
+            observed_credential_slot: None,
+        };
+        db.write({
+            let request = request.clone();
+            move |db| {
+                connections::prepare(db, "setup", &request)?;
+                connections::claim_probe(db, "setup")?;
+                connections::activate(
+                    db,
+                    "setup",
+                    &request,
+                    &[Source {
+                        id: "caldav-home".into(),
+                        name: "Home".into(),
+                        read_only: false,
+                    }],
+                    &[],
+                )?;
+                Ok(())
+            }
+        })
+        .await
+        .expect("connection");
+        let mut requested = event("local", None);
+        requested.source_id = "caldav-home".into();
+        let mutation = Mutation::Save {
+            before: None,
+            after: requested.clone(),
+        };
+        db.write({
+            let mutation = mutation.clone();
+            move |db| admit_caldav(db, "action", &mutation, "caldav-home", 1).map(|_| ())
+        })
+        .await
+        .expect("admission");
+        let mut provider = MockCalendarProvider::new();
+        provider
+            .expect_save()
+            .with(eq("secret"), eq("action"), eq(requested.clone()))
+            .times(1)
+            .return_once(|_, _, event| {
+                let mut event = event.clone();
+                event.etag = Some("\"v1\"".into());
+                event.remote_url = Some("local.ics".into());
+                Box::pin(async move { Ok(event) })
+            });
+        execute_bound(
+            &db,
+            &provider,
+            "action".into(),
+            "secret".into(),
+            String::new(),
+        )
+        .await
+        .expect("execute");
+        let saved = db
+            .read(|db| {
+                Ok(db.query_row(
+                    "SELECT status,EXISTS(SELECT 1 FROM calendar_action_receipts WHERE action='action') FROM calendar_actions WHERE id='action'",
+                    [],
+                    |row| Ok((row.get::<_,String>(0)?,row.get::<_,bool>(1)?)),
+                )?)
+            })
+            .await
+            .expect("saved");
+        assert_eq!(saved, ("succeeded".into(), true));
+        drop(db);
+        drop(directory);
     }
 
     #[tokio::test]
@@ -1383,6 +1753,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nonmatching_inspection_retains_uncertainty_and_local_ownership() {
+        for missing in [true, false] {
+            let (_directory, db) = database().await;
+            let requested = event("local", None);
+            db.write({
+                let requested = requested.clone();
+                move |db| {
+                    admit(
+                        db,
+                        "action",
+                        &Mutation::Save {
+                            before: None,
+                            after: requested,
+                        },
+                    )
+                }
+            })
+            .await
+            .expect("admit");
+            let mut provider = MockCalendarProvider::new();
+            provider.expect_save().times(1).return_once(|_, _, _| {
+                Box::pin(async { Err(ProviderFailure::uncertain("lost reply")) })
+            });
+            execute(&db, &provider, "action".into(), "token".into())
+                .await
+                .expect("uncertain");
+            let mut observed = requested;
+            observed.id = "shepaction".into();
+            observed.title = "A later server edit".into();
+            observed.etag = Some("v2".into());
+            observed.remote_url = Some("shepaction".into());
+            provider.expect_read().times(1).return_once(move |_, _| {
+                Box::pin(async move { Ok((!missing).then_some(observed)) })
+            });
+            inspect(&db, &provider, "action".into(), "token".into())
+                .await
+                .expect("inspect");
+            let state = db.read(|db| {
+                Ok(db.query_row(
+                    "SELECT status,EXISTS(SELECT 1 FROM calendar_intents WHERE action='action'),EXISTS(SELECT 1 FROM calendar_action_receipts WHERE action='action') FROM calendar_actions WHERE id='action'",
+                    [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?, row.get::<_, bool>(2)?))
+                )?)
+            }).await.expect("state");
+            assert_eq!(state, ("uncertain".into(), true, false));
+            assert!(
+                execute(&db, &provider, "action".into(), "token".into())
+                    .await
+                    .is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn definite_refusal_rejects_while_predispatch_wait_remains_runnable() {
         let (_directory, db) = database().await;
         let requested = event("local", None);
@@ -1599,6 +2022,11 @@ mod tests {
     #[tokio::test]
     async fn discovery_commits_bounded_sources_with_events() {
         let (_directory, db) = database().await;
+        db.write(|db| {
+            db.execute("INSERT INTO calendar_connections(id,config,credential_slot,revision) VALUES('caldav-home','{}','calendar-existing',1)",[])?;
+            db.execute("INSERT INTO calendar_sources(id,source,connection_id) VALUES('caldav-home',?1,'caldav-home')",[serde_json::to_string(&Source{id:"caldav-home".into(),name:"Home".into(),read_only:false})?])?;
+            Ok(())
+        }).await.expect("CalDAV source");
         let source = Source {
             id: "primary".into(),
             name: "Personal".into(),
@@ -1643,7 +2071,7 @@ mod tests {
             })
             .await
             .expect("counts");
-        assert_eq!(counts, (1, 1));
+        assert_eq!(counts, (2, 1));
     }
 
     #[tokio::test]

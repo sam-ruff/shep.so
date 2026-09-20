@@ -7,6 +7,7 @@ mod operations;
 mod tests;
 
 mod drafts;
+mod folders;
 #[cfg(test)]
 mod forward_tests;
 

@@ -1,5 +1,50 @@
 # Completion audit
 
+## Calendar and mobile folder continuation, 21 September 2026
+
+This checkpoint adds browser Calendar admission, background execution, durable
+receipts, cancellation and checked recovery; Flutter folder creation with
+immediate local admission; shared CalDAV transport and Flutter native journal
+prerequisites; and indexed desktop calendar admission/scheduling queries.
+The implementation commit and normal-hook result are recorded after shipping.
+The full immediate-actions request remains active.
+
+### Verification
+
+- Root Flutter passes 178 Rust tests and all 243 Flutter tests. Nine focused
+  controls/actual bridge tests pass. The light folder form, pending sidebar and
+  compact dark recovery images match the lane's hashes and were reviewed.
+- Browser passes 257 unit tests and the production build. Eight Calendar control
+  scenarios cover held providers, lost admission replies, terminal refusal,
+  cancellation and all-day dates west of UTC. Calendar journal/repository tests
+  also cover restart adoption of exact changed/absent state and invalidation
+  when sync, permissions or newer intent change during server inspection.
+- Folder planning passes 13 desktop lifecycle tests, 13 browser units, six
+  backend folder tests and two real browser controls. Proven target refusal
+  requires review; unavailable discovery remains Waiting, with no CREATE.
+  The complete backend suite passes 68 tests, one configured browser integration
+  prerequisite ignored. Backend/Flutter Clippy, focused Dart analysis and strict
+  docs pass.
+- Shared CalDAV passes 19 parser/owned HTTP tests, including exact collection
+  discovery, strong ETags, recurrence write refusal, duration/UID preservation
+  and uncertain lost-write replies. Desktop calendar's two 100,000-history query
+  tests and seven lifecycle integrations pass. These query bounds are not a
+  new end-to-end latency measurement.
+
+### Assumptions and remaining scope
+
+- Provider evidence uses mocks and owned loopback fixtures, not live accounts.
+- CalDAV Flutter controls are still under review for structured observations,
+  stale-read rejection and secure credential lifecycle ordering.
+- Native Activity and checked mobile folder rename/move/delete remain isolated
+  migrations; their unfinished code is not included here.
+- Browser CalDAV, broader Undo/lifecycle adoption and final performance remain
+  active requirements. Apple, Android suspension and other browser/platform
+  execution are not established by these host tests.
+- Existing mail confirmations and conservative unknown-outcome handling remain
+  required. This checkpoint does not establish complete app-wide adoption or
+  replace the installed personal application.
+
 ## Immediate-action checkpoint, 20 September 2026
 
 Implementation [`8db87f1`](https://github.com/sam-ruff/shep.so/commit/8db87f19bb8582c8b603804c44a4f42bc3d4a329)
