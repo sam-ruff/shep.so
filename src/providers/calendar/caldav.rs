@@ -11,6 +11,55 @@ pub struct CalDav {
 }
 
 impl CalDav {
+    async fn read(
+        &self,
+        source: &CalendarSource,
+        event: &CalendarEvent,
+        secret: &str,
+    ) -> anyhow::Result<Option<CalendarEvent>> {
+        anyhow::ensure!(
+            source.id == event.source_id,
+            "This event belongs to another calendar."
+        );
+        let base = validate_caldav_url(&source.url)?;
+        let url = match event.remote_url.as_deref() {
+            Some(remote) => base.join(remote)?,
+            None => {
+                let mut url = base.clone();
+                url.path_segments_mut()
+                    .map_err(|_| anyhow::anyhow!("Invalid calendar URL"))?
+                    .pop_if_empty()
+                    .push(&format!("{}.ics", event.id));
+                url
+            }
+        };
+        anyhow::ensure!(
+            url.origin() == base.origin(),
+            "Refusing to send calendar credentials to another server."
+        );
+        let response = self
+            .http
+            .get(url.clone())
+            .basic_auth(&source.username, Some(secret))
+            .send()
+            .await?;
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::GONE
+        ) {
+            return Ok(None);
+        }
+        let response = super::successful(response)?;
+        let etag = strong_etag(&response);
+        let text = response_text(response).await?;
+        let mut events = super::parse_resource(&text, source, url.as_str(), etag)?;
+        anyhow::ensure!(
+            events.len() == 1 && events[0].id == event.id && events[0].remote_url.is_some(),
+            "The calendar resource could not be verified as this event."
+        );
+        Ok(events.pop())
+    }
+
     async fn fetch(
         &self,
         source: &CalendarSource,
@@ -124,12 +173,13 @@ impl CalDav {
                 self.http.put(url.clone()).header("If-None-Match", "*"),
             )
         };
-        let response = request
-            .basic_auth(&source.username, Some(secret))
-            .header("Content-Type", "text/calendar; charset=utf-8")
-            .body(body)
-            .send()
-            .await?;
+        let response = super::send_mutation(
+            request
+                .basic_auth(&source.username, Some(secret))
+                .header("Content-Type", "text/calendar; charset=utf-8")
+                .body(body),
+        )
+        .await?;
         if response.status() == reqwest::StatusCode::PRECONDITION_FAILED {
             let (current, _) = self.resource(source, &url, secret).await?;
             anyhow::ensure!(
@@ -138,7 +188,7 @@ impl CalDav {
             );
             return Ok(current);
         }
-        let response = super::successful(response)?;
+        let response = super::mutation_successful(response)?;
         let mut saved = event.clone();
         saved.etag = strong_etag(&response);
         saved.remote_url = Some(url.to_string());
@@ -173,18 +223,18 @@ impl CalDav {
             .etag
             .as_deref()
             .context("Sync calendar before deleting this event.")?;
-        let response = self
-            .http
-            .delete(url)
-            .basic_auth(&source.username, Some(secret))
-            .header("If-Match", etag)
-            .send()
-            .await?;
+        let response = super::send_mutation(
+            self.http
+                .delete(url)
+                .basic_auth(&source.username, Some(secret))
+                .header("If-Match", etag),
+        )
+        .await?;
         if !matches!(
             response.status(),
             reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::GONE
         ) {
-            super::successful(response)?;
+            super::mutation_successful(response)?;
         }
         Ok(())
     }
@@ -201,6 +251,15 @@ fn strong_etag(response: &reqwest::Response) -> Option<String> {
 
 #[async_trait]
 impl CalendarProvider for CalDav {
+    async fn read_event(
+        &self,
+        source: &CalendarSource,
+        event: &CalendarEvent,
+    ) -> anyhow::Result<Option<CalendarEvent>> {
+        let secret = self.credentials.read(&source.id).await?;
+        self.read(source, event, secret.expose_secret()).await
+    }
+
     async fn events(
         &self,
         source: &CalendarSource,
@@ -240,6 +299,107 @@ mod tests {
         calendar::encode_ical(&test_server::event())
             .replace("BEGIN:VEVENT", "X-WR-CALNAME:Home\r\nBEGIN:VTIMEZONE\r\nTZID:Europe/London\r\nBEGIN:STANDARD\r\nDTSTART:19701025T020000\r\nTZOFFSETFROM:+0100\r\nTZOFFSETTO:+0000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT")
             .replace("END:VEVENT", "SEQUENCE:4\r\nORGANIZER:mailto:owner@example.com\r\nATTENDEE;CN=Friend:mailto:friend@example.com\r\nX-HOME-NOTE:retain me\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Keep this alarm\r\nEND:VALARM\r\nEND:VEVENT")
+    }
+
+    #[tokio::test]
+    async fn caldav_mutation_outcomes_distinguish_preflight_rejection_and_lost_response() {
+        let mut server = Server::start(vec![
+            Reply::new(403, ""),
+            Reply::disconnect(),
+            Reply::new(503, ""),
+            Reply::new(412, ""),
+        ])
+        .await;
+        let provider = CalDav {
+            credentials: Default::default(),
+            http: test_server::client(),
+        };
+        let source = test_server::source(&server.url);
+        let mut event = test_server::event();
+        let preflight = provider
+            .delete(&source, &event, "fixture")
+            .await
+            .expect_err("missing resource");
+        assert!(!calendar::mutation_is_uncertain(&preflight));
+        let rejected = provider
+            .save(&source, &event, "fixture")
+            .await
+            .expect_err("permission refused");
+        assert!(!calendar::mutation_is_uncertain(&rejected));
+        let disconnected = provider
+            .save(&source, &event, "fixture")
+            .await
+            .expect_err("lost response");
+        assert!(calendar::mutation_is_uncertain(&disconnected));
+        event.etag = Some("old".into());
+        event.remote_url = Some("walk.ics".into());
+        let unavailable = provider
+            .delete(&source, &event, "fixture")
+            .await
+            .expect_err("server unavailable");
+        assert!(calendar::mutation_is_uncertain(&unavailable));
+        let conflict = provider
+            .delete(&source, &event, "fixture")
+            .await
+            .expect_err("stale ETag");
+        assert!(!calendar::mutation_is_uncertain(&conflict));
+        server.finish().await;
+        assert_eq!(server.requests().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn caldav_exact_read_checks_identity_without_a_date_window_or_etag() {
+        let event = test_server::event();
+        let mut moved = event.clone();
+        moved.start += chrono::Duration::days(900);
+        moved.end += chrono::Duration::days(900);
+        let mut foreign = moved.clone();
+        foreign.id = "someone-else".into();
+        let mut server = Server::start(vec![
+            Reply::new(200, calendar::encode_ical(&moved)),
+            Reply::new(200, calendar::encode_ical(&foreign)),
+            Reply::new(410, ""),
+            Reply::new(403, ""),
+        ])
+        .await;
+        let provider = CalDav {
+            credentials: Default::default(),
+            http: test_server::client(),
+        };
+        let source = test_server::source(&server.url);
+        let saved = provider
+            .read(&source, &event, "fixture")
+            .await
+            .expect("read")
+            .expect("present");
+        assert_eq!(saved.start, moved.start);
+        assert!(saved.etag.is_none());
+        assert!(saved.remote_url.is_some());
+        assert!(provider.read(&source, &event, "fixture").await.is_err());
+        assert!(
+            provider
+                .read(&source, &event, "fixture")
+                .await
+                .expect("missing")
+                .is_none()
+        );
+        assert!(provider.read(&source, &event, "fixture").await.is_err());
+        let mut foreign_origin = event.clone();
+        foreign_origin.remote_url = Some("https://another.example/event.ics".into());
+        assert!(
+            provider
+                .read(&source, &foreign_origin, "fixture")
+                .await
+                .is_err()
+        );
+        server.finish().await;
+        assert!(
+            server
+                .requests()
+                .iter()
+                .all(|request| request.method == "GET"
+                    && request.target.ends_with(&format!("{}.ics", event.id)))
+        );
     }
 
     #[tokio::test]

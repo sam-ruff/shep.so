@@ -3,6 +3,13 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "immediate-actions-background-sync",
+      "contract": "After existing confirmation and local validation, paint the requested result promptly while provider work continues in the background. Preserve newer intent through old results, cancel unsent work on Undo, and distinguish rejection from uncertainty and acknowledged cache repair. Retire projections only after their authoritative revision is observed. Durable admission and restart recovery belong to one domain owner.",
+      "desktop": "Bounded bulk review during pending flags, immediate group confirmation and pre-admission Undo; calendar save/delete projections and exact read-only recovery; shared projection policy. Unit/protocol tests and five new native scenarios pass with light/compact-dark visual evidence. OPEN: durable deferred admission/calendar recovery, wider domain adoption and mailbox-scale native latency evidence.",
+      "mobile": "OPEN: adopt the common lifecycle through native domain owners and verify held-provider, failure, Undo and suspension flows using real controls.",
+      "browser": "Existing individual intents and bulk receipt journals remain authoritative. OPEN: lifecycle adoption audit across all domains and equivalent ten-message review, calendar and stale-result UI verification."
+    },
+    {
       "id": "large-incoming-receipt",
       "contract": "Do not skip incoming mail solely because it exceeds 25 MiB. Receive smaller mail first, validate complete downloads before atomic cache publication, retain exact raw source, and open large-attachment and large-text messages. Inactivity deadlines reset on real download progress. Never stage plaintext for an encrypted profile.",
       "desktop": "Staged IMAP partial FETCH and POP3 receipt, native incremental SQLite blobs and paged text previews. Owned 26 MiB protocol/cache/reader tests and native fixture. OPEN: encrypted staging, complete streaming reader/attachments and complete body search.",

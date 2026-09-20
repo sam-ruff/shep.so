@@ -243,6 +243,8 @@ async fn network_operation<Fut: std::future::Future<Output = anyhow::Result<()>>
             | Command::RepairOutgoing
             | Command::IndexConversations
             | Command::ConnectCalendars(..)
+            | Command::CalendarAction(..)
+            | Command::InspectCalendarAction(..)
             | Command::SaveAccount(..)
             | Command::RemoveConnection(..)
             | Command::CleanupCredentials

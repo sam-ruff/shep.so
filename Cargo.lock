@@ -6414,6 +6414,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "shep-action-core",
  "shep-html-pixbuf",
  "shep-mail-core",
  "shep-profile-core",
@@ -6435,6 +6436,10 @@ dependencies = [
  "zeroize",
  "zstd",
 ]
+
+[[package]]
+name = "shep-action-core"
+version = "0.1.0"
 
 [[package]]
 name = "shep-html-pixbuf"

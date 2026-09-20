@@ -18,6 +18,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 MANIFESTS = {
     "Cargo.toml": "shep",
+    "shared/action-core/Cargo.toml": "shep-action-core",
     "shared/mail-core/Cargo.toml": "shep-mail-core",
     "shared/mail-content/Cargo.toml": "shep-mail-content",
     "shared/profile-core/Cargo.toml": "shep-profile-core",
@@ -76,7 +77,7 @@ def version_updates(version, root):
     for path in LOCKS:
         text = (root / path).read_text(encoding="utf-8")
         packages = tomllib.loads(text).get("package", [])
-        expected = names if path == "Cargo.lock" else names - {"shep"}
+        expected = names if path == "Cargo.lock" else names - {"shep", "shep-action-core"}
         local = [package["name"] for package in packages if package["name"] in names and "source" not in package]
         if set(local) != expected or len(local) != len(expected):
             raise ValueError(f"Missing or repeated local packages in {path}")

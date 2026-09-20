@@ -14,6 +14,7 @@ Read the repository's [AGENTS.md](https://github.com/sam-ruff/shep.so/blob/main/
 ## Detailed reference
 
 - [Development and architecture](development.md): commands, release setup, worker boundaries and extension points.
+- [Immediate actions proposal](IMMEDIATE_ACTIONS.md): a common lifecycle for instant local feedback, durable background work, Undo and safe failure recovery; awaiting review.
 - [Installation](installation.md): installer options, platform services and asset conventions.
 - [Mail](mail.md): navigation, drafts, delivery recovery, Sent copies and reading behavior.
 - [Calendar](calendar.md): discovery, access, write acknowledgments, conflicts and connection removal.

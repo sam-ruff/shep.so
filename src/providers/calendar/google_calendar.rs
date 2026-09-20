@@ -23,6 +23,50 @@ struct Api<'a> {
 }
 
 impl Api<'_> {
+    async fn read(
+        &self,
+        source: &CalendarSource,
+        event: &CalendarEvent,
+    ) -> anyhow::Result<Option<CalendarEvent>> {
+        anyhow::ensure!(
+            source.id == event.source_id,
+            "This event belongs to another calendar."
+        );
+        let creating = event.etag.is_none() && event.remote_url.is_none();
+        let id = if creating {
+            format!("shep{:x}", Sha256::digest(event.key().as_bytes()))
+        } else {
+            event.id.clone()
+        };
+        let response = self
+            .http
+            .get(self.url(source, &id)?)
+            .bearer_auth(self.token)
+            .send()
+            .await?;
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::GONE
+        ) {
+            return Ok(None);
+        }
+        let data = super::response_json(response).await?;
+        anyhow::ensure!(
+            data["id"].as_str() == Some(id.as_str()),
+            "The calendar resource belongs to another event."
+        );
+        if data["status"] == "cancelled" {
+            return Ok(None);
+        }
+        anyhow::ensure!(
+            !creating
+                || data["extendedProperties"]["private"]["shepCreateId"].as_str()
+                    == Some(event.key().as_str()),
+            "The calendar resource belongs to another event."
+        );
+        Ok(Some(parse_event(&data, source)?))
+    }
+
     fn url(&self, source: &CalendarSource, suffix: &str) -> anyhow::Result<url::Url> {
         let mut url = self.base.clone();
         let mut path = url
@@ -115,7 +159,7 @@ impl Api<'_> {
             body["extendedProperties"] = json!({"private": {"shepCreateId": event.key()}});
             self.http.post(self.url(source, "")?)
         };
-        let response = request.bearer_auth(self.token).json(&body).send().await?;
+        let response = super::send_mutation(request.bearer_auth(self.token).json(&body)).await?;
         if response.status() == reqwest::StatusCode::CONFLICT
             || response.status() == reqwest::StatusCode::PRECONDITION_FAILED
         {
@@ -139,7 +183,7 @@ impl Api<'_> {
             );
             return Ok(saved);
         }
-        let response = super::successful(response)?;
+        let response = super::mutation_successful(response)?;
         // The server has committed at this point. A missing/malformed response body
         // requires a refresh, not another create operation.
         if let Ok(data) = super::response_json(response).await
@@ -165,18 +209,18 @@ impl Api<'_> {
             .etag
             .as_deref()
             .context("Sync calendar before deleting this event.")?;
-        let response = self
-            .http
-            .delete(self.url(source, &event.id)?)
-            .bearer_auth(self.token)
-            .header("If-Match", etag)
-            .send()
-            .await?;
+        let response = super::send_mutation(
+            self.http
+                .delete(self.url(source, &event.id)?)
+                .bearer_auth(self.token)
+                .header("If-Match", etag),
+        )
+        .await?;
         if !matches!(
             response.status(),
             reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::GONE
         ) {
-            super::successful(response)?;
+            super::mutation_successful(response)?;
         }
         Ok(())
     }
@@ -228,6 +272,27 @@ fn event_body(event: &CalendarEvent) -> Value {
 
 #[async_trait]
 impl CalendarProvider for GoogleCalendar {
+    async fn read_event(
+        &self,
+        source: &CalendarSource,
+        event: &CalendarEvent,
+    ) -> anyhow::Result<Option<CalendarEvent>> {
+        let token = self
+            .google
+            .token_for(
+                &self.preferences,
+                crate::providers::google::Service::CalendarRead,
+            )
+            .await?;
+        Api {
+            http: &self.google.http,
+            base: self.google.api_base.join("calendar/v3/calendars/")?,
+            token: token.expose_secret(),
+        }
+        .read(source, event)
+        .await
+    }
+
     async fn events(
         &self,
         source: &CalendarSource,
@@ -302,6 +367,86 @@ mod tests {
         body["etag"] = json!(etag);
         body["extendedProperties"] = json!({"private": {"shepCreateId": event.key()}});
         body
+    }
+
+    #[tokio::test]
+    async fn google_calendar_mutation_outcomes_distinguish_rejection_from_lost_response() {
+        let mut server = Server::start(vec![
+            Reply::new(403, ""),
+            Reply::disconnect(),
+            Reply::new(503, ""),
+            Reply::new(412, ""),
+        ])
+        .await;
+        let http = test_server::client();
+        let source = test_server::source(&server.url);
+        let api = Api {
+            http: &http,
+            base: server.url.clone(),
+            token: "fixture",
+        };
+        let mut event = test_server::event();
+        let preflight = api.delete(&source, &event).await.expect_err("missing ETag");
+        assert!(!super::super::mutation_is_uncertain(&preflight));
+        let rejected = api
+            .save(&source, &event)
+            .await
+            .expect_err("permission refused");
+        assert!(!super::super::mutation_is_uncertain(&rejected));
+        let disconnected = api.save(&source, &event).await.expect_err("lost response");
+        assert!(super::super::mutation_is_uncertain(&disconnected));
+        event.etag = Some("old".into());
+        let unavailable = api
+            .delete(&source, &event)
+            .await
+            .expect_err("server unavailable");
+        assert!(super::super::mutation_is_uncertain(&unavailable));
+        let conflict = api.delete(&source, &event).await.expect_err("stale ETag");
+        assert!(!super::super::mutation_is_uncertain(&conflict));
+        server.finish().await;
+        assert_eq!(server.requests().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn google_calendar_exact_read_checks_create_identity_and_reads_moved_dates() {
+        let event = test_server::event();
+        let id = format!("shep{:x}", Sha256::digest(event.key().as_bytes()));
+        let mut moved = event.clone();
+        moved.start += chrono::Duration::days(900);
+        moved.end += chrono::Duration::days(900);
+        let mut foreign = remote(&moved, &id, "new");
+        foreign["extendedProperties"]["private"]["shepCreateId"] = json!("someone-else");
+        let mut server = Server::start(vec![
+            Reply::new(200, remote(&moved, &id, "new").to_string()),
+            Reply::new(200, foreign.to_string()),
+            Reply::new(404, ""),
+            Reply::new(403, ""),
+        ])
+        .await;
+        let http = test_server::client();
+        let source = test_server::source(&server.url);
+        let api = Api {
+            http: &http,
+            base: server.url.clone(),
+            token: "fixture",
+        };
+        let saved = api
+            .read(&source, &event)
+            .await
+            .expect("read")
+            .expect("present");
+        assert_eq!(saved.start, moved.start);
+        assert_eq!(saved.id, id);
+        assert!(api.read(&source, &event).await.is_err());
+        assert!(api.read(&source, &event).await.expect("missing").is_none());
+        assert!(api.read(&source, &event).await.is_err());
+        server.finish().await;
+        assert!(
+            server
+                .requests()
+                .iter()
+                .all(|request| request.method == "GET" && request.target.ends_with(&id))
+        );
     }
 
     #[tokio::test]

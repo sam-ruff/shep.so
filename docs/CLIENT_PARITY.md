@@ -1,5 +1,14 @@
 # Client parity
 
+20 September immediate actions: the approved common lifecycle is being adopted
+on desktop, starting with bulk review during pending mail writes and calendar
+save/delete projections. `shared/action-core` defines projection outcomes but
+does not provide durable admission. Flutter and browser adapters, equivalent
+held-provider UI scenarios, and an audit of every mutation domain remain active
+gaps in TODO. Native unit/protocol tests and five new real-control scenarios pass,
+with reviewed light and compact dark captures. Existing browser ownership and receipt journals remain authoritative;
+the shared type alone establishes neither behavioural nor provider parity.
+
 13 September desktop follow-up: verify fresh Move/Delete after a kept recovery
 copy's original reappears, library-backed HTML word/line selection, selectable
 subjects, large-message receipt and the standard Spam shortcut. Browser and

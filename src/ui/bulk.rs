@@ -45,6 +45,7 @@ pub(super) struct State {
     action: Option<BulkAction>,
     retiring: Option<crate::store::MailSelectionId>,
     pub staging: Option<String>,
+    deferred_start: Option<Command>,
     stop_requested: bool,
     pub stopped: bool,
     pub waiting_reader: Option<String>,
@@ -78,10 +79,43 @@ struct Prediction {
     action: BulkAction,
     origin: MailQuery,
     selected: HashSet<String>,
-    threshold: Option<u64>,
+    projection: shep_action_core::Projection,
     groups: Vec<crate::store::SelectionGroup>,
+    observed: HashMap<String, crate::store::SelectionObservation>,
 }
 impl App {
+    pub(super) fn reconcile_bulk_flags(&mut self, confirmed: &Mail) {
+        if let Some(review) = &mut self.bulk.review {
+            let review = Arc::make_mut(review);
+            if let Some(before) = review.observed.get(&confirmed.id) {
+                add_count(
+                    &mut review.unread,
+                    isize::from(confirmed.unread) - isize::from(before.unread),
+                );
+                add_count(
+                    &mut review.starred,
+                    isize::from(confirmed.starred) - isize::from(before.starred),
+                );
+            }
+            reconcile_group_flags(&mut review.groups, &mut review.observed, confirmed);
+        }
+        if let Some(prediction) = &mut self.bulk.prediction {
+            reconcile_group_flags(&mut prediction.groups, &mut prediction.observed, confirmed);
+            if let Some(hint) = self.bulk.hints.get_mut(&prediction.id) {
+                hint.groups.clone_from(&prediction.groups);
+            }
+        }
+        for (_, original) in self
+            .bulk
+            .originals
+            .iter_mut()
+            .filter(|(_, mail)| mail.id == confirmed.id)
+        {
+            original.unread = confirmed.unread;
+            original.starred = confirmed.starred;
+        }
+    }
+
     pub(super) fn bulk_action_label(&self, action: &BulkAction, count: Option<usize>) -> String {
         if let BulkAction::Move { account, folder } = action {
             let name = self.workspace.folder_label(account.as_deref(), folder);
@@ -189,8 +223,7 @@ impl App {
         if self.bulk.intent.is_some()
             && self.bulk.freeze_pending.is_none()
             && self.bulk.review.is_none()
-            && self.mail_actions.pending() == 0
-            && !self.mail_selection.busy()
+            && self.mail_selection.ready_for_drag()
         {
             let Some(snapshot) = self
                 .mail_selection
@@ -202,7 +235,13 @@ impl App {
                 return;
             };
             let serial = self.bulk.serial + 1;
-            let visible = self.page.rows.iter().map(|m| m.id.clone()).collect();
+            let mut visible = self.mail_actions.flag_ids();
+            for mail in &self.page.rows {
+                if !visible.contains(&mail.id) {
+                    visible.push(mail.id.clone());
+                }
+            }
+            visible.truncate(PAGE_SIZE);
             if self.try_command(Command::ReviewSelection(
                 serial,
                 snapshot.id,
@@ -212,6 +251,16 @@ impl App {
                 self.bulk.serial = serial;
                 self.bulk.freeze_pending = Some(serial);
             }
+        }
+        if self.mail_actions.pending() == 0
+            && let Some(command) = self.bulk.deferred_start.take()
+            && !self.try_command(command)
+            && let Some(id) = self.bulk.staging.clone()
+        {
+            self.bulk_event(Event::BulkStarted(
+                id,
+                Err("The local action queue is unavailable. Please retry.".into()),
+            ));
         }
         self.bulk.tokens.retain(|token, _| {
             self.action_toasts
@@ -253,7 +302,10 @@ impl App {
                     return Task::none();
                 };
                 let id = uuid::Uuid::new_v4().to_string();
-                if !self.try_command(Command::BulkStart(id.clone(), review.id, action.clone())) {
+                let start = Command::BulkStart(id.clone(), review.id, action.clone());
+                if self.mail_actions.pending() > 0 {
+                    self.bulk.deferred_start = Some(start);
+                } else if !self.try_command(start) {
                     return Task::none();
                 }
                 if let BulkAction::Move { account, folder } = &action {
@@ -278,8 +330,9 @@ impl App {
                     action,
                     origin: self.query.clone(),
                     selected: self.mail_selection.visible.clone(),
-                    threshold: None,
+                    projection: shep_action_core::Projection::Pending,
                     groups: review.groups.clone(),
+                    observed: review.observed.clone(),
                 });
                 self.bulk.hints.insert(
                     id.clone(),
@@ -414,20 +467,39 @@ impl App {
                             return;
                         };
                         let foreign = matches!(intent, Intent::Move { foreign: true, .. });
+                        self.bulk.review = Some(review);
+                        for confirmed in self.mail_actions.confirmed_flag_states() {
+                            self.reconcile_bulk_flags(&confirmed);
+                        }
+                        let Some(review) = self.bulk.review.clone() else {
+                            return;
+                        };
+                        let mut unread = review.unread;
+                        let mut starred = review.starred;
+                        for (id, before) in &review.observed {
+                            let current = self.mail_actions.selection_state(id, before);
+                            add_count(
+                                &mut unread,
+                                isize::from(current.unread) - isize::from(before.unread),
+                            );
+                            add_count(
+                                &mut starred,
+                                isize::from(current.starred) - isize::from(before.starred),
+                            );
+                        }
                         self.bulk.action = Some(match intent {
                             Intent::Move {
                                 account, folder, ..
                             } => BulkAction::Move { account, folder },
                             Intent::Read => BulkAction::Flags(Flags {
-                                unread: Some(review.unread == 0),
+                                unread: Some(unread == 0),
                                 starred: None,
                             }),
                             Intent::Star => BulkAction::Flags(Flags {
                                 unread: None,
-                                starred: Some(review.starred < review.available),
+                                starred: Some(starred < review.available),
                             }),
                         });
-                        self.bulk.review = Some(review.clone());
                         if review.selected == 1 && !foreign {
                             let _ = self.handle_bulk(Message::Confirm);
                         }
@@ -448,7 +520,8 @@ impl App {
                         if let Some(prediction) =
                             self.bulk.prediction.as_mut().filter(|p| p.id == id)
                         {
-                            prediction.threshold = Some(job.revision);
+                            prediction.projection =
+                                shep_action_core::Projection::acknowledge(Some(job.revision));
                         }
                         self.remember_job(job);
                         self.send(Command::BulkRun(id));
@@ -614,6 +687,28 @@ impl App {
         );
     }
     fn request_group_undo(&mut self, id: String) -> bool {
+        if self.bulk.deferred_start.as_ref().is_some_and(
+            |command| matches!(command, Command::BulkStart(pending, ..) if pending == &id),
+        ) {
+            self.bulk.deferred_start = None;
+            self.bulk.staging = None;
+            self.bulk.retiring = self.bulk.staged_review.take();
+            self.bulk.prediction = None;
+            self.bulk.hints.remove(&id);
+            self.bulk.undo.remove(&id);
+            self.bulk.tokens.retain(|_, job| job != &id);
+            self.bulk.originals.retain(|(job, _)| job != &id);
+            self.bulk.current_ids.retain(|source, _| {
+                self.bulk
+                    .originals
+                    .iter()
+                    .any(|(_, mail)| &mail.id == source)
+            });
+            self.invalidate_action_snapshot();
+            self.project_mail_flags();
+            self.request_page();
+            return true;
+        }
         if self.bulk.stopped {
             if !self.try_command(Command::BulkResume(id.clone())) {
                 return false;
@@ -651,8 +746,7 @@ impl App {
     pub(super) fn project_bulk(&mut self) {
         let mut page = (*self.page).clone();
         if self.bulk.prediction.as_ref().is_some_and(|p| {
-            page.bulk_observed.contains_key(&p.id)
-                || p.threshold.is_some_and(|r| page.bulk_revision >= r)
+            page.bulk_observed.contains_key(&p.id) || p.projection.observed_at(page.bulk_revision)
         }) {
             self.bulk.prediction = None;
         }
@@ -662,7 +756,7 @@ impl App {
                 origin: prediction.origin.clone(),
                 groups: prediction.groups.clone(),
             };
-            self.apply_group_counts(&mut page, &hint, false);
+            self.apply_group_counts(&mut page, &hint, false, Some(&prediction.observed));
             page.rows.retain_mut(|mail| {
                 if !prediction.selected.contains(&mail.id) {
                     return true;
@@ -681,7 +775,7 @@ impl App {
             if page.bulk_observed.get(id) != Some(&false) {
                 continue;
             }
-            self.apply_group_counts(&mut page, hint, true);
+            self.apply_group_counts(&mut page, hint, true, None);
             let originals: Vec<_> = self
                 .bulk
                 .originals
@@ -763,10 +857,17 @@ impl App {
             },
         )
     }
-    fn apply_group_counts(&self, page: &mut MailPage, hint: &Hint, undo: bool) {
+    fn apply_group_counts(
+        &self,
+        page: &mut MailPage,
+        hint: &Hint,
+        undo: bool,
+        observed: Option<&HashMap<String, crate::store::SelectionObservation>>,
+    ) {
         let sign = if undo { -1_isize } else { 1 };
         let mut total_delta = 0_isize;
         let mut unread_delta = 0_isize;
+        let mut inbox_delta = std::collections::BTreeMap::<String, isize>::new();
         for group in &hint.groups {
             let (account, folder, unread) = match &hint.action {
                 BulkAction::Move { account, folder } => (
@@ -785,16 +886,11 @@ impl App {
             let before_inbox = group.folder.eq_ignore_ascii_case("INBOX");
             let after_inbox = folder.eq_ignore_ascii_case("INBOX");
             if before_inbox {
-                add_count(
-                    page.inbox_unread.entry(group.account.clone()).or_default(),
-                    -sign * (group.unread as isize),
-                );
+                *inbox_delta.entry(group.account.clone()).or_default() -=
+                    sign * group.unread as isize;
             }
             if after_inbox {
-                add_count(
-                    page.inbox_unread.entry(account.into()).or_default(),
-                    sign * (unread as isize),
-                );
+                *inbox_delta.entry(account.into()).or_default() += sign * unread as isize;
             }
             // Captured search membership is known only in the original query.
             // Other folder-only scopes can be projected exactly from aggregates.
@@ -816,6 +912,75 @@ impl App {
             unread_delta += sign
                 * ((if after { unread } else { 0 }) as isize
                     - (if before { group.unread } else { 0 }) as isize);
+        }
+        if let Some(observed) = observed {
+            for (id, before) in observed {
+                let current = self.mail_actions.selection_state(id, before);
+                let effect = |state: &crate::store::SelectionObservation| {
+                    let mut after = state.clone();
+                    match &hint.action {
+                        BulkAction::Move { account, folder } => {
+                            if let Some(account) = account {
+                                after.account.clone_from(account);
+                            }
+                            after.folder.clone_from(folder);
+                        }
+                        BulkAction::Flags(flags) => {
+                            if let Some(unread) = flags.unread {
+                                after.unread = unread;
+                            }
+                            if let Some(starred) = flags.starred {
+                                after.starred = starred;
+                            }
+                        }
+                    }
+                    after
+                };
+                let original_after = effect(before);
+                let current_after = effect(&current);
+                for (state, direction) in [
+                    (before, 1),
+                    (&original_after, -1),
+                    (&current, -1),
+                    (&current_after, 1),
+                ] {
+                    if state.unread && state.folder.eq_ignore_ascii_case("INBOX") {
+                        *inbox_delta.entry(state.account.clone()).or_default() += direction;
+                    }
+                }
+                if same_scope(&self.query, &hint.origin) {
+                    let visible = |state: &crate::store::SelectionObservation| {
+                        self.bulk_scope_contains(&self.query, &state.account, &state.folder)
+                            && !(self.query.unread_only && !state.unread
+                                || self.query.read_only && state.unread
+                                || self.query.starred_only && !state.starred)
+                    };
+                    let counted_before =
+                        self.bulk_scope_contains(&self.query, &before.account, &before.folder);
+                    let counted_after = self.bulk_scope_contains(
+                        &self.query,
+                        &original_after.account,
+                        &original_after.folder,
+                    ) && !matches!(&hint.action, BulkAction::Flags(flags) if
+                            self.query.unread_only && flags.unread == Some(false)
+                            || self.query.read_only && flags.unread == Some(true)
+                            || self.query.starred_only && flags.starred == Some(false));
+                    for (state, direction, included) in [
+                        (before, 1, counted_before),
+                        (&original_after, -1, counted_after),
+                        (&current, -1, visible(&current)),
+                        (&current_after, 1, visible(&current_after)),
+                    ] {
+                        if included {
+                            total_delta += direction;
+                            unread_delta += direction * isize::from(state.unread);
+                        }
+                    }
+                }
+            }
+        }
+        for (account, delta) in inbox_delta {
+            add_count(page.inbox_unread.entry(account).or_default(), delta);
         }
         add_count(&mut page.total, total_delta);
         add_count(&mut page.unread, unread_delta);
@@ -1205,6 +1370,30 @@ fn history_top() -> Task<super::Message> {
     )
 }
 
+fn reconcile_group_flags(
+    groups: &mut [crate::store::SelectionGroup],
+    observed: &mut HashMap<String, crate::store::SelectionObservation>,
+    confirmed: &Mail,
+) {
+    let Some(before) = observed.get_mut(&confirmed.id) else {
+        return;
+    };
+    if before.account != confirmed.account_id || before.folder != confirmed.folder {
+        return;
+    }
+    if let Some(group) = groups
+        .iter_mut()
+        .find(|group| group.account == before.account && group.folder == before.folder)
+    {
+        add_count(
+            &mut group.unread,
+            isize::from(confirmed.unread) - isize::from(before.unread),
+        );
+    }
+    before.unread = confirmed.unread;
+    before.starred = confirmed.starred;
+}
+
 fn message_count(count: usize) -> String {
     format!(
         "{count} {}",
@@ -1230,6 +1419,203 @@ fn same_scope(a: &MailQuery, b: &MailQuery) -> bool {
 mod tests {
     use super::*;
     use crate::store::{MailSelectionId, Store};
+
+    async fn pending_review(
+        unread_only: bool,
+    ) -> (App, Store, tokio::sync::mpsc::Receiver<Command>, u64, Mail) {
+        let store = Store::memory().expect("fixture store");
+        let mail = (0..12)
+            .map(|i| {
+                parse_mail(
+                    "work",
+                    &i.to_string(),
+                    "INBOX",
+                    format!("From: fixture@example.test\r\nSubject: {i:03}\r\n\r\nBody")
+                        .into_bytes(),
+                    true,
+                    false,
+                )
+                .expect("fixture mail")
+            })
+            .collect();
+        store.upsert(mail).await.expect("fixture mail saved");
+        let (sender, mut commands, mut network) = engine::CommandSender::close_test_channels();
+        let (mut app, _) = App::new();
+        app.tx = Some(sender);
+        app.query.sort = MailSort::Subject;
+        app.query.unread_only = unread_only;
+        app.set_mail_page(Arc::new(
+            store.query(app.query.clone()).await.expect("page"),
+        ));
+        let ids: Vec<_> = app
+            .page
+            .rows
+            .iter()
+            .take(10)
+            .map(|mail| mail.id.clone())
+            .collect();
+        let source = MailSelectionId::default();
+        store
+            .capture_selection(source, 0, app.query.clone(), false, ids.clone())
+            .await
+            .expect("capture");
+        let snapshot = store
+            .change_selection(
+                source,
+                0,
+                crate::store::SelectionChange::Range {
+                    anchor: ids[0].clone(),
+                    target: ids[9].clone(),
+                    additive: false,
+                },
+                ids.clone(),
+            )
+            .await
+            .expect("ten selected");
+        app.mail_selection.mode = true;
+        app.mail_selection.count = 10;
+        app.mail_selection.visible = ids.into_iter().collect();
+        app.mail_selection.snapshot = Some(Arc::new(snapshot));
+        app.toggle_mail_flag(app.page.rows[0].clone(), true);
+        let Command::Flags(request, sent, _) = network.try_recv().expect("read dispatched") else {
+            panic!("Expected read action");
+        };
+        app.begin_bulk(Intent::Move {
+            account: None,
+            folder: "Trash".into(),
+            foreign: false,
+        });
+        app.pump_bulk();
+        let Command::ReviewSelection(serial, id, revision, visible) =
+            commands.try_recv().expect("review does not await read")
+        else {
+            panic!("Expected local review");
+        };
+        let review = store
+            .review_selection(id, revision, visible)
+            .await
+            .expect("review");
+        app.bulk_event(Event::BulkReview(serial, Ok(Arc::new(review))));
+        assert_eq!(app.mail_actions.pending(), 1);
+        assert_eq!(
+            app.bulk.review.as_ref().map(|review| review.selected),
+            Some(10)
+        );
+        (app, store, commands, request, sent)
+    }
+
+    #[tokio::test]
+    async fn review_and_delete_paint_before_prior_read_finishes_without_double_counting() {
+        for unread_only in [false, true] {
+            for success in [false, true] {
+                let (mut app, store, mut commands, request, sent) =
+                    pending_review(unread_only).await;
+                let _ = app.handle_bulk(Message::Confirm);
+                assert!(app.dialog.is_none());
+                assert!(app.bulk.deferred_start.is_some());
+                assert_eq!((app.page.total, app.page.unread), (2, 2));
+                assert_eq!(app.page.inbox_unread.get("work"), Some(&2));
+                assert_eq!(
+                    app.action_toasts
+                        .current
+                        .as_ref()
+                        .map(|toast| toast.label()),
+                    Some("Deleted 10 messages".into())
+                );
+                assert!(
+                    commands.try_recv().is_err(),
+                    "provider-dependent staging stays behind the prior write"
+                );
+                if success {
+                    store
+                        .patch_flags(
+                            sent.clone(),
+                            Flags {
+                                unread: Some(false),
+                                starred: None,
+                            },
+                        )
+                        .await
+                        .expect("saved read");
+                }
+                let result = if success {
+                    Ok(())
+                } else {
+                    Err("Rejected read".into())
+                };
+                let _ = app.flags_finished(request, sent, result);
+                assert_eq!((app.page.total, app.page.unread), (2, 2));
+                assert_eq!(app.page.inbox_unread.get("work"), Some(&2));
+                app.pump_bulk();
+                let Command::BulkStart(id, selection, action) =
+                    commands.try_recv().expect("ordered start")
+                else {
+                    panic!("Expected ordered local admission");
+                };
+                let job = store
+                    .start_bulk(id.clone(), selection, action)
+                    .await
+                    .expect("admitted");
+                app.bulk_event(Event::BulkStarted(id, Ok(Arc::new(job))));
+                app.set_mail_page(Arc::new(
+                    store
+                        .query(app.query.clone())
+                        .await
+                        .expect("projected page"),
+                ));
+                assert_eq!((app.page.total, app.page.unread), (2, 2));
+                assert_eq!(app.page.inbox_unread.get("work"), Some(&2));
+                assert!(app.bulk.prediction.is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn undo_before_group_admission_cancels_only_the_group_and_releases_review() {
+        let (mut app, store, mut commands, _, _) = pending_review(false).await;
+        let _ = app.handle_bulk(Message::Confirm);
+        let id = app.bulk.staging.clone().expect("group staging");
+        let token = app
+            .bulk
+            .tokens
+            .iter()
+            .find_map(|(token, job)| (job == &id).then_some(*token))
+            .expect("group toast token");
+        assert!(app.request_group_undo(id));
+        assert!(app.bulk.staging.is_none());
+        assert!(app.bulk.deferred_start.is_none());
+        assert!(app.bulk.hints.is_empty());
+        assert!(app.bulk.tokens.is_empty());
+        assert!(app.bulk.originals.is_empty());
+        assert_eq!(app.mail_actions.pending(), 1, "read remains independent");
+        assert_eq!((app.page.total, app.page.unread), (12, 11));
+        app.pump_bulk();
+        let Command::ReleaseSelection(selection) = commands.try_recv().expect("release review")
+        else {
+            panic!("Undo must not submit or address a nonexistent group");
+        };
+        store.release_selection(selection).await.expect("release");
+        app.undo_combined_actions(vec![token]);
+        assert!(store.bulk_jobs(0).await.expect("jobs").is_empty());
+        assert!(
+            commands.try_recv().is_err(),
+            "a stale toast cannot address the nonexistent group"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_group_admission_restores_rows_and_preserves_successful_read() {
+        let (mut app, _, commands, request, sent) = pending_review(false).await;
+        let _ = app.handle_bulk(Message::Confirm);
+        drop(commands);
+        let _ = app.flags_finished(request, sent, Ok(()));
+        app.pump_bulk();
+        assert!(app.bulk.staging.is_none());
+        assert!(app.bulk.prediction.is_none());
+        assert_eq!((app.page.total, app.page.unread), (12, 11));
+        assert!(app.action_toasts.current.is_none());
+        assert!(app.notice.as_ref().is_some_and(|(_, error, _)| *error));
+    }
 
     fn job(id: &str, revision: u64, remaining: usize) -> Arc<Job> {
         Arc::new(Job {
@@ -1398,7 +1784,8 @@ mod tests {
             origin: query.clone(),
             groups: frozen.groups.clone(),
             selected: original.rows.iter().map(|m| m.id.clone()).collect(),
-            threshold: None,
+            observed: frozen.observed.clone(),
+            projection: shep_action_core::Projection::Pending,
         });
         app.project_mail_flags();
         assert_eq!(

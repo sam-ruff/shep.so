@@ -34,8 +34,8 @@ pub use drafts::DraftState;
 pub use folder_actions::FolderLease;
 use rusqlite::{Connection, params};
 pub use selection::{
-    MailSelectionId, SelectedMail, SelectionChange, SelectionGroup, SelectionPage,
-    SelectionSnapshot,
+    MailSelectionId, SelectedMail, SelectionChange, SelectionGroup, SelectionObservation,
+    SelectionPage, SelectionSnapshot,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use std::{path::Path, sync::Arc};
@@ -1048,6 +1048,41 @@ impl Store {
                     serde_json::to_string(&event)?
                 ],
             )?;
+            calendar_changed(&tx)?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+    pub async fn reconcile_calendar_event(
+        &self,
+        original: CalendarEvent,
+        current: Option<CalendarEvent>,
+    ) -> anyhow::Result<()> {
+        self.run(move |c| {
+            anyhow::ensure!(
+                current
+                    .as_ref()
+                    .is_none_or(|event| event.source_id == original.source_id),
+                "Calendar observation belongs to another source."
+            );
+            let tx = c.transaction()?;
+            connections::allow(&tx, ConnectionKind::Calendar, &original.source_id)?;
+            tx.execute(
+                "DELETE FROM events WHERE source=? AND json_extract(data, '$.id')=?",
+                params![original.source_id, original.id],
+            )?;
+            if let Some(event) = current {
+                tx.execute(
+                    "INSERT OR REPLACE INTO events VALUES(?,?,?,?)",
+                    params![
+                        event.key(),
+                        event.source_id,
+                        event.start.timestamp(),
+                        serde_json::to_string(&event)?
+                    ],
+                )?;
+            }
             calendar_changed(&tx)?;
             tx.commit()?;
             Ok(())

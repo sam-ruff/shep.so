@@ -520,6 +520,67 @@ mod tests {
         .map_err(|e| e.to_string());
         app.selection_finished(serial, result);
     }
+
+    #[tokio::test]
+    async fn review_freezes_small_selection_once_and_rolls_back_invalid_observation() {
+        let (app, store, _) = fixture().await;
+        let source = crate::store::MailSelectionId::default();
+        let visible: Vec<_> = app
+            .page
+            .rows
+            .iter()
+            .take(10)
+            .map(|m| m.id.clone())
+            .collect();
+        store
+            .capture_selection(source, 0, app.query.clone(), false, Vec::new())
+            .await
+            .unwrap();
+        let mut revision = 0;
+        for id in &visible {
+            let changed = store
+                .change_selection(
+                    source,
+                    revision,
+                    crate::store::SelectionChange::Set {
+                        id: id.clone(),
+                        selected: true,
+                        clear_others: false,
+                    },
+                    Vec::new(),
+                )
+                .await
+                .unwrap();
+            revision = changed.revision;
+        }
+        assert!(
+            store
+                .review_selection(source, revision, vec![visible[0].clone(); 51])
+                .await
+                .is_err()
+        );
+        let review = store
+            .review_selection(source, revision, visible.clone())
+            .await
+            .unwrap();
+        assert!(review.frozen);
+        assert_eq!(review.selected, 10);
+        assert_eq!(review.available, 10);
+        assert_eq!(review.visible.len(), 10);
+        assert_eq!(review.total, 10);
+        let frozen_count: i64 = store
+            .run(|c| {
+                c.query_row(
+                    "SELECT COUNT(*) FROM scratch.mail_selections WHERE frozen=1",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .await
+            .unwrap();
+        assert_eq!(frozen_count, 1);
+    }
     #[tokio::test]
     async fn selected_move_search_uses_membership_account_instead_of_unrelated_reader() {
         let (mut app, store, mut commands) = fixture().await;

@@ -180,6 +180,44 @@ The `test_live_*` family runs the same flows against a real server. `desktop.sta
 
 ## Strict responsiveness and usability requirements
 
+**20 September approved action architecture:** implement
+[the common action lifecycle](docs/agents/IMMEDIATE_ACTIONS.md) consistently for
+every mutation. Validate locally, show bounded optimistic feedback immediately,
+admit intent through an independent local writer, then synchronise in the
+background. Reviews and visible feedback must not wait for unrelated provider
+work. Keep conflicts ordered behind the scenes, including read-before-move.
+Rows, counters, badges and Undo must project the same intent exactly once.
+Remove only a failed action's effect; older receipts or failures must preserve
+newer edits. Unknown remote outcomes require verification, while acknowledged
+remote changes with cache errors require repair without re-sending. Retain
+specialised journals, one dispatcher per action, the refused-move local fallback,
+send uncertainty and checked credential activation. Never label queued mail
+Sent, restore a removed account after credential cleanup fails, or undo a saved
+preference because cloud publication failed. Each migrated action needs delayed
+success, rejection, later-intent, Undo and local-admission failure tests plus
+real control evidence. Track restart and platform gaps explicitly until their
+durable integration is verified; shared vocabulary alone is not completion.
+
+`shared/action-core::Projection` owns the common display outcomes: pending,
+committed at a cache revision, rejected, uncertain and acknowledged cache repair.
+Retire committed projections only after observing their revision. Neither repair
+nor uncertainty permits a fresh provider write. Domain owners retain their
+request correlation and journals; include this crate in coordinated releases.
+Native bulk review uses one transactional frozen snapshot and at most 50 observed
+metadata records. Pending individual flags must not block review or confirmation;
+defer ordered admission, reconcile counts once and cancel unsent groups on Undo.
+The deferred command remains session state until journal admission, so preserve
+the close guard and track durable admission separately.
+
+Native `ui/calendar_actions.rs` correlates save/delete and exact read-only recovery
+by request ID. Keep definite provider rejection separate from dispatched writes
+whose result is unknown. A cache error after acknowledgement must retain the
+projection. Recovery reads one provider identity, atomically reconciles only that
+event and offers explicit adoption; ordinary refresh or cached absence is not
+proof. Preserve remapped Google identities, later server edits and events outside
+the normal sync window. Pending recovery currently lives in session state, so
+close, restore and source removal retain guards until durable recovery is added.
+
 **Optimistic interaction is an app-wide requirement.** For reversible actions, show the expected successful result immediately and reconcile persistence/server state in the background. Archive/move removes a message from the current folder immediately; flags and read/unread indicators update immediately. Do not wait for SQLite, credentials, network requests or account sync before displaying that change. If an operation fails, restore the affected state and show an actionable error. Preserve newer user intent when older results arrive; keep pending changes through background refreshes and test slow success, failure/rollback and rapid repeated input. Responsiveness takes priority over waiting for confirmation, while correctness must converge and failures remain visible. This does not turn a pending operation into a confirmed server success.
 
 Read-on-leave and action feedback requirements: selecting an inbox message and then leaving it marks it read; explicit mark-unread intent must survive. Archive/delete/move toasts appear in the same optimistic UI update, refresh their timeout and increment their count on repeated actions. Each offers Undo, including while the original write is pending. Track original account/folder and acknowledged server identities for reversal; never reuse an obsolete IMAP UID after moving. Rollbacks and failures remain visible. Read-on-leave, immediate counted feedback and session Undo are delivered. Preserve their protocol/cache/native regressions when changing mail actions.

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["shared/mail-core", "shared/mail-content", "shared/profile-core"]
-default-members = [".", "shared/mail-core", "shared/mail-content", "shared/profile-core"]
+members = ["shared/action-core", "shared/mail-core", "shared/mail-content", "shared/profile-core"]
+default-members = [".", "shared/action-core", "shared/mail-core", "shared/mail-content", "shared/profile-core"]
 exclude = ["backend", "flutter/rust"]
 
 [package]
@@ -75,6 +75,7 @@ unicode-normalization = "0.1"
 fs2 = "0.4.3"
 nucleo-matcher = "0.3.1"
 interprocess = { version = "2.4.4", features = ["tokio"] }
+shep-action-core = { path = "shared/action-core" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "=0.3.6"
