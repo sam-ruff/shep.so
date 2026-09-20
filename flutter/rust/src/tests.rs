@@ -5,7 +5,8 @@ use crate::{
 use rusqlite::params;
 use serde_json::{Value, json};
 use shep_mail_core::model::*;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 pub(crate) async fn profile() -> (tempfile::TempDir, MobileProfile) {
     let directory = tempfile::tempdir().unwrap();
@@ -42,6 +43,65 @@ pub(crate) fn account() -> Account {
         sent_folder: String::new(),
     }
 }
+
+struct FlagInspector {
+    inspections: AtomicUsize,
+    writes: AtomicUsize,
+    started: tokio::sync::Notify,
+    gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
+}
+
+#[async_trait::async_trait]
+impl shep_mail_core::providers::MailProvider for FlagInspector {
+    async fn sync(
+        &self,
+        _account: &Account,
+        _password: &secrecy::SecretString,
+        _known: &std::collections::HashSet<String>,
+        _output: tokio::sync::mpsc::Sender<MailSyncItem>,
+    ) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    async fn move_mail(
+        &self,
+        _account: &Account,
+        _password: &secrecy::SecretString,
+        _mail: &Mail,
+        _folder: &str,
+    ) -> anyhow::Result<Option<String>> {
+        anyhow::bail!("unexpected move")
+    }
+
+    async fn set_flags(
+        &self,
+        _account: &Account,
+        _password: &secrecy::SecretString,
+        _mail: &Mail,
+        _changes: shep_mail_core::mail_actions::Flags,
+    ) -> anyhow::Result<()> {
+        self.writes.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn inspect_flags(
+        &self,
+        _account: &Account,
+        _password: &secrecy::SecretString,
+        _mail: &Mail,
+    ) -> anyhow::Result<shep_mail_core::mail_actions::Flags> {
+        self.inspections.fetch_add(1, Ordering::SeqCst);
+        self.started.notify_one();
+        let gate = self.gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
+        Ok(shep_mail_core::mail_actions::Flags {
+            unread: Some(false),
+            starred: Some(true),
+        })
+    }
+}
 pub(crate) async fn request(profile: &MobileProfile, payload: Value) -> Value {
     let reply: Value =
         serde_json::from_str(&profile.request(payload.to_string()).await.unwrap()).unwrap();
@@ -63,6 +123,82 @@ pub(crate) async fn seed(profile: &MobileProfile, count: usize) {
 }
 fn page(offset: u32) -> Value {
     json!({"op":"page","folder":"Inbox","offset":offset})
+}
+
+#[tokio::test]
+async fn observed_lineage_rejects_a_replacement_and_accepts_a_proven_alias() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    let listed = request(&p, page(0)).await;
+    let id = listed["mail"][0]["id"].as_str().unwrap().to_owned();
+    let observed = listed["mail"][0]["lineage"].as_str().unwrap().to_owned();
+    assert_eq!(
+        request(&p, json!({"op":"detail","id":id})).await["summary"]["lineage"],
+        observed
+    );
+    let replacement = id.clone();
+    p.database
+        .write(move |db| {
+            db.execute(
+                "UPDATE mail SET raw=raw || X'00' WHERE id=?1",
+                [&replacement],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let rejected: Value = serde_json::from_str(
+        &p.request(
+            json!({
+                "op":"mutate","action_id":"stale-observation","id":id,
+                "starred":false,"observed_lineage":observed,"require_observation":true
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        rejected["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed since it was shown")
+    );
+    let current = p
+        .database
+        .read({
+            let id = id.clone();
+            move |db| {
+                Ok(
+                    db.query_row("SELECT token FROM mail_lineage WHERE id=?1", [id], |row| {
+                        row.get::<_, String>(0)
+                    })?,
+                )
+            }
+        })
+        .await
+        .unwrap();
+    let source = observed.clone();
+    p.database
+        .write(move |db| {
+            db.execute(
+                "INSERT INTO mail_lineage_aliases(source,target) VALUES(?1,?2) ON CONFLICT(source) DO UPDATE SET target=excluded.target",
+                params![source, current],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let accepted = request(
+        &p,
+        json!({
+            "op":"mutate","action_id":"proven-observation","id":id,
+            "starred":false,"observed_lineage":observed,"require_observation":true
+        }),
+    )
+    .await;
+    assert_eq!(accepted["status"], "succeeded");
 }
 
 #[tokio::test]
@@ -203,7 +339,7 @@ async fn interrupted_individual_action_requires_review_after_reopen() {
 
 #[tokio::test]
 async fn queued_individual_action_can_cancel_before_provider_dispatch() {
-    let (_dir, p) = profile().await;
+    let (dir, p) = profile().await;
     seed(&p, 1).await;
     p.database
         .write(|db| {
@@ -224,14 +360,53 @@ async fn queued_individual_action_can_cancel_before_provider_dispatch() {
         "waiting"
     );
     assert_eq!(
+        request(
+            &p,
+            json!({"op":"mutate","action_id":"queued-flag","id":"fixture:INBOX:0","unread":false})
+        )
+        .await["status"],
+        "waiting"
+    );
+    drop(p);
+    let p = MobileProfile::open(dir.path().join("mail.sqlite3").to_str().unwrap().into())
+        .await
+        .unwrap();
+    assert_eq!(request(&p, page(0)).await["total"], 0);
+    assert_eq!(
+        request(&p, json!({"op":"page","folder":"Archive"})).await["total"],
+        1
+    );
+    let projected_detail = request(&p, json!({"op":"detail","id":"fixture:INBOX:0"})).await;
+    assert_eq!(projected_detail["summary"]["folder"], "Archive");
+    assert_eq!(projected_detail["summary"]["unread"], false);
+    assert_eq!(
         request(&p, json!({"op":"cancel_mail_action","id":"queued"})).await["status"],
         "cancelled"
     );
     assert_eq!(
-        request(&p, json!({"op":"mail_actions"})).await["actions"][0]["status"],
+        request(&p, json!({"op":"mail_actions"})).await["actions"][1]["status"],
         "cancelled"
     );
     assert_eq!(request(&p, page(0)).await["total"], 1);
+    assert_eq!(
+        request(&p, json!({"op":"page","folder":"Inbox","filter":"Unread"})).await["total"],
+        0
+    );
+    assert_eq!(
+        request(&p, json!({"op":"page","folder":"Archive"})).await["total"],
+        0
+    );
+    assert_eq!(
+        request(&p, json!({"op":"cancel_mail_action","id":"queued-flag"})).await["status"],
+        "cancelled"
+    );
+    assert_eq!(
+        request(&p, json!({"op":"page","folder":"Inbox","filter":"Unread"})).await["total"],
+        1
+    );
+    let restored_detail = request(&p, json!({"op":"detail","id":"fixture:INBOX:0"})).await;
+    assert_eq!(restored_detail["summary"]["folder"], "INBOX");
+    assert_eq!(restored_detail["summary"]["unread"], true);
     assert_eq!(
         p.database
             .read(
@@ -270,7 +445,22 @@ async fn startup_resume_cancels_an_action_superseded_by_newer_field_intent() {
         "waiting"
     );
     assert_eq!(request(&p, first).await["status"], "cancelled");
-    assert_eq!(request(&p, page(0)).await["mail"][0]["folder"], "INBOX");
+    assert_eq!(request(&p, page(0)).await["total"], 0);
+    let trash = request(&p, json!({"op":"page","folder":"Trash"})).await;
+    assert_eq!(trash["total"], 1);
+    assert_eq!(trash["mail"][0]["folder"], "Trash");
+    let physical = p
+        .database
+        .read(|db| {
+            Ok(db.query_row(
+                "SELECT folder FROM mail WHERE id='fixture:INBOX:0'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(physical, "INBOX");
 }
 
 #[tokio::test]
@@ -288,6 +478,516 @@ async fn terminal_individual_action_survives_source_removal() {
         .await
         .unwrap();
     assert_eq!(request(&p, action).await["status"], "succeeded");
+}
+
+#[tokio::test]
+async fn confirmed_individual_action_undo_restores_saved_baseline_once() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    let before = request(&p, page(0)).await;
+    let baseline_unread = before["mail"][0]["unread"].clone();
+    let baseline_starred = before["mail"][0]["starred"].clone();
+    let changed = request(
+        &p,
+        json!({"op":"mutate","action_id":"change","id":"fixture:INBOX:0","folder":"Archive","unread":false,"starred":true}),
+    )
+    .await;
+    assert_eq!(changed["status"], "succeeded");
+    let undo = json!({"op":"undo_mail_action","id":"change"});
+    assert_eq!(request(&p, undo.clone()).await["status"], "succeeded");
+    assert_eq!(request(&p, undo).await["status"], "succeeded");
+    let inbox = request(&p, page(0)).await;
+    assert_eq!(inbox["mail"][0]["folder"], "INBOX");
+    assert_eq!(inbox["mail"][0]["unread"], baseline_unread);
+    assert_eq!(inbox["mail"][0]["starred"], baseline_starred);
+    let actions = request(&p, json!({"op":"mail_actions"})).await;
+    assert_eq!(actions["actions"][0]["id"], "change:undo");
+}
+
+#[tokio::test]
+async fn queued_independent_flags_survive_an_earlier_flag_receipt() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = Arc::new(FlagInspector {
+        inspections: AtomicUsize::new(0),
+        writes: AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        gate: Mutex::new(None),
+    });
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let mut read =
+        json!({"op":"mutate","action_id":"read-first","id":"fixture:INBOX:0","unread":false});
+    let mut flag =
+        json!({"op":"mutate","action_id":"flag-second","id":"fixture:INBOX:0","starred":false});
+    assert_eq!(request(&p, read.clone()).await["status"], "waiting");
+    assert_eq!(request(&p, flag.clone()).await["status"], "waiting");
+    read["password"] = json!("secret");
+    flag["password"] = json!("secret");
+    assert_eq!(request(&p, read).await["status"], "succeeded");
+    assert_eq!(request(&p, flag).await["status"], "succeeded");
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 2);
+    let detail = request(&p, json!({"op":"detail","id":"fixture:INBOX:0"})).await;
+    assert_eq!(detail["summary"]["unread"], false);
+    assert_eq!(detail["summary"]["starred"], false);
+}
+
+#[tokio::test]
+async fn queued_provider_claim_rechecks_newer_intent_after_account_wait() {
+    let (_dir, profile) = profile().await;
+    let p = Arc::new(profile);
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = Arc::new(FlagInspector {
+        inspections: AtomicUsize::new(0),
+        writes: AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        gate: Mutex::new(None),
+    });
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let first = json!({"op":"mutate","action_id":"older-queued","id":"fixture:INBOX:0","unread":false,"password":"secret"});
+    let guard = p.operations.account("fixture").await;
+    let worker = p.clone();
+    let pending = tokio::spawn(async move { request(&worker, first).await });
+    p.operations.mutation_waiting.notified().await;
+    let mut newer =
+        json!({"op":"mutate","action_id":"newer-queued","id":"fixture:INBOX:0","unread":true});
+    assert_eq!(request(&p, newer.clone()).await["status"], "waiting");
+    drop(guard);
+    assert_eq!(pending.await.unwrap()["status"], "cancelled");
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 0);
+    newer["password"] = json!("secret");
+    assert_eq!(request(&p, newer).await["status"], "succeeded");
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn duplicate_queued_action_claims_the_provider_once() {
+    let (_dir, profile) = profile().await;
+    let p = Arc::new(profile);
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = Arc::new(FlagInspector {
+        inspections: AtomicUsize::new(0),
+        writes: AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        gate: Mutex::new(None),
+    });
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let action = json!({"op":"mutate","action_id":"duplicate","id":"fixture:INBOX:0","unread":false,"password":"secret"});
+    let guard = p.operations.account("fixture").await;
+    let worker = p.clone();
+    let first = action.clone();
+    let one = tokio::spawn(async move { request(&worker, first).await });
+    p.operations.mutation_waiting.notified().await;
+    let worker = p.clone();
+    let two = tokio::spawn(async move { request(&worker, action).await });
+    p.operations.mutation_waiting.notified().await;
+    drop(guard);
+    assert_eq!(one.await.unwrap()["status"], "succeeded");
+    let second = two.await.unwrap();
+    assert!(matches!(
+        second["status"].as_str(),
+        Some("running" | "succeeded")
+    ));
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn queued_flag_follows_an_acknowledged_move_but_rejects_replaced_content() {
+    for replace in [false, true] {
+        let (_dir, p) = profile().await;
+        seed(&p, 1).await;
+        p.database
+            .write(|db| {
+                db.execute(
+                    "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let provider = Arc::new(FlagInspector {
+            inspections: AtomicUsize::new(0),
+            writes: AtomicUsize::new(0),
+            started: tokio::sync::Notify::new(),
+            gate: Mutex::new(None),
+        });
+        *p.operations.provider.lock().unwrap() = Some(provider.clone());
+        let mut action =
+            json!({"op":"mutate","action_id":"after-move","id":"fixture:INBOX:0","starred":false});
+        assert_eq!(request(&p, action.clone()).await["status"], "waiting");
+        p.database
+            .write(move |db| {
+                let tx = db.transaction()?;
+                let source = operations::stored_mail(&tx, "fixture:INBOX:0")?;
+                let raw: Vec<u8> =
+                    tx.query_row("SELECT raw FROM mail WHERE id=?1", [&source.id], |row| {
+                        row.get(0)
+                    })?;
+                let receipt = shep_mail_core::mail_actions::MoveReceipt::server(
+                    &source,
+                    "fixture",
+                    "Archive",
+                    Some("41.2".into()),
+                    shep_mail_core::mail_actions::Fingerprint::of(&raw),
+                );
+                operations::save_move(&tx, &source.id, &receipt)?;
+                if replace {
+                    tx.execute(
+                        "UPDATE mail SET raw=?2 WHERE id=?1",
+                        params![
+                            source.id,
+                            b"Different message with reused identity".as_slice()
+                        ],
+                    )?;
+                }
+                tx.commit()?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        action["password"] = json!("secret");
+        let result = request(&p, action).await;
+        assert_eq!(
+            result["status"],
+            if replace { "rejected" } else { "succeeded" }
+        );
+        assert_eq!(
+            provider.writes.load(Ordering::SeqCst),
+            usize::from(!replace)
+        );
+        if !replace {
+            let mail = p
+                .database
+                .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+                .await
+                .unwrap();
+            assert_eq!(mail.folder, "Archive");
+            assert_eq!(mail.remote_id, "41.2");
+            assert!(!mail.starred);
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_later_action_is_saved_while_an_earlier_move_needs_checking() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            db.execute(
+                "INSERT INTO pending_moves(id,destination) VALUES('fixture:INBOX:0','Archive')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let action = json!({"op":"mutate","action_id":"later-flag","id":"fixture:INBOX:0","starred":false,"password":"secret"});
+    let result = request(&p, action).await;
+    assert_eq!(result["status"], "waiting");
+    assert_eq!(result["committed"], true);
+    assert_eq!(
+        request(&p, json!({"op":"mail_actions"})).await["actions"][0]["id"],
+        "later-flag"
+    );
+    assert_eq!(
+        request(&p, json!({"op":"detail","id":"fixture:INBOX:0"})).await["summary"]["starred"],
+        false
+    );
+    request(&p, json!({"op":"cancel_mail_action","id":"later-flag"})).await;
+    assert_eq!(
+        request(&p, json!({"op":"detail","id":"fixture:INBOX:0"})).await["summary"]["starred"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn uncertain_flag_inspection_reads_provider_without_replaying_write() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let action =
+        json!({"op":"mutate","action_id":"flag-review","id":"fixture:INBOX:0","unread":false});
+    assert_eq!(request(&p, action).await["status"], "waiting");
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE individual_mail_actions SET status='uncertain',error='Inspect flags.' WHERE id='flag-review'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let provider = Arc::new(FlagInspector {
+        inspections: AtomicUsize::new(0),
+        writes: AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        gate: Mutex::new(None),
+    });
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let inspected = request(
+        &p,
+        json!({"op":"inspect_mail_action","id":"flag-review","password":"secret"}),
+    )
+    .await;
+    assert_eq!(inspected["status"], "succeeded");
+    assert_eq!(provider.inspections.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 0);
+    let inbox = request(&p, page(0)).await;
+    assert_eq!(inbox["mail"][0]["unread"], false);
+}
+
+#[tokio::test]
+async fn mismatched_move_receipt_cannot_prove_inspection_continuity() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(request(&p,json!({"op":"mutate","action_id":"move-review","id":"fixture:INBOX:0","folder":"Archive"})).await["status"],"waiting");
+    p.database
+        .write(|db| {
+            let source = operations::stored_mail(db, "fixture:INBOX:0")?;
+            let raw: Vec<u8> =
+                db.query_row("SELECT raw FROM mail WHERE id=?1", [&source.id], |r| {
+                    r.get(0)
+                })?;
+            let receipt = shep_mail_core::mail_actions::MoveReceipt::server(
+                &source,
+                "fixture",
+                "Trash",
+                Some("wrong".into()),
+                shep_mail_core::mail_actions::Fingerprint::of(&raw),
+            );
+            db.execute(
+                "UPDATE mail SET folder='Archive',remote_id='replacement' WHERE id=?1",
+                [&source.id],
+            )?;
+            db.execute(
+                "INSERT INTO move_receipts(id,receipt) VALUES(?1,?2)",
+                params![source.id, serde_json::to_string(&receipt)?],
+            )?;
+            db.execute(
+                "UPDATE individual_mail_actions SET status='uncertain' WHERE id='move-review'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        request(
+            &p,
+            json!({"op":"inspect_mail_action","id":"move-review","password":"secret"})
+        )
+        .await["status"],
+        "cancelled"
+    );
+}
+
+#[tokio::test]
+async fn delayed_flag_inspection_cannot_overwrite_newer_intent_or_replacement() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        request(
+            &p,
+            json!({"op":"mutate","action_id":"flag-review","id":"fixture:INBOX:0","unread":false})
+        )
+        .await["status"],
+        "waiting"
+    );
+    p.database.write(|db| {
+        db.execute("UPDATE individual_mail_actions SET status='uncertain',error='Inspect flags.' WHERE id='flag-review'",[])?;
+        Ok(())
+    }).await.unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let provider = Arc::new(FlagInspector {
+        inspections: AtomicUsize::new(0),
+        writes: AtomicUsize::new(0),
+        started: tokio::sync::Notify::new(),
+        gate: Mutex::new(Some(release.clone())),
+    });
+    *p.operations.provider.lock().unwrap() = Some(provider.clone());
+    let inspect = p.request(
+        json!({"op":"inspect_mail_action","id":"flag-review","password":"secret"}).to_string(),
+    );
+    let supersede = async {
+        provider.started.notified().await;
+        p.database.write(|db| {
+            db.execute("UPDATE mail SET remote_id='replacement' WHERE id='fixture:INBOX:0'",[])?;
+            db.execute("UPDATE group_clock SET revision=revision+1 WHERE id=1",[])?;
+            let revision:i64=db.query_row("SELECT revision FROM group_clock WHERE id=1",[],|r|r.get(0))?;
+            db.execute("INSERT INTO mail_intents(mail,field,revision) VALUES('fixture:INBOX:0','unread',?1) ON CONFLICT(mail,field) DO UPDATE SET revision=excluded.revision",[revision])?;
+            Ok(())
+        }).await.unwrap();
+        release.notify_one();
+    };
+    let (reply, ()) = tokio::join!(inspect, supersede);
+    let reply: Value = serde_json::from_str(&reply.unwrap()).unwrap();
+    assert_eq!(reply["data"]["status"], "cancelled");
+    assert_eq!(provider.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(request(&p, page(0)).await["mail"][0]["unread"], true);
+}
+
+#[tokio::test]
+async fn queued_undo_yields_to_a_newer_same_value_decision() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE accounts SET settings=json_set(settings,'$.protocol','Imap')",
+                [],
+            )?;
+            db.execute(
+                "INSERT INTO individual_mail_actions(id,mail,account,fields,physical,intent_revision,status,created) VALUES('original','fixture:INBOX:0','fixture','{\"folder\":null,\"unread\":false,\"starred\":null}','{\"account\":\"fixture\",\"folder\":\"INBOX\",\"remote_id\":\"0\",\"unread\":true,\"starred\":true}',1,'succeeded',1)",
+                [],
+            )?;
+            db.execute("INSERT INTO mail_intents(mail,field,revision) VALUES('fixture:INBOX:0','unread',1)",[])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let undo = json!({"op":"undo_mail_action","id":"original"});
+    assert_eq!(request(&p, undo.clone()).await["status"], "waiting");
+    assert_eq!(
+        request(
+            &p,
+            json!({"op":"mutate","action_id":"newer","id":"fixture:INBOX:0","unread":true})
+        )
+        .await["status"],
+        "waiting"
+    );
+    assert_eq!(request(&p, undo).await["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn undo_refuses_a_newer_same_value_decision_before_admission() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    let original =
+        json!({"op":"mutate","action_id":"original","id":"fixture:INBOX:0","unread":false});
+    assert_eq!(request(&p, original).await["status"], "succeeded");
+    assert_eq!(
+        request(
+            &p,
+            json!({"op":"mutate","action_id":"newer","id":"fixture:INBOX:0","unread":false})
+        )
+        .await["status"],
+        "succeeded"
+    );
+    let reply: Value = serde_json::from_str(
+        &p.request(json!({"op":"undo_mail_action","id":"original"}).to_string())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(reply["error"].as_str().unwrap().contains("newer decision"));
+    assert!(
+        request(&p, json!({"op":"mail_actions"})).await["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|action| action["id"] != "original:undo")
+    );
+}
+
+#[tokio::test]
+async fn undo_refuses_source_replacement_before_admission() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    assert_eq!(
+        request(
+            &p,
+            json!({"op":"mutate","action_id":"original","id":"fixture:INBOX:0","unread":false})
+        )
+        .await["status"],
+        "succeeded"
+    );
+    p.database
+        .write(|db| {
+            db.execute(
+                "UPDATE mail SET remote_id='replacement' WHERE id='fixture:INBOX:0'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let reply: Value = serde_json::from_str(
+        &p.request(json!({"op":"undo_mail_action","id":"original"}).to_string())
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(
+        reply["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed identity")
+    );
 }
 
 #[tokio::test]
@@ -421,7 +1121,7 @@ async fn existing_submission_never_calls_smtp_or_allows_draft_revival() {
     // No account exists, so accidentally entering the SMTP path would fail.
     let status = request(
         &reopened,
-        json!({"op":"send","id":"draft-one","revision":1,"password":"fixture-only-not-a-real-password"}),
+        json!({"op":"admit_send","attempt":"00000000-0000-4000-8000-000000000020","id":"draft-one","revision":1}),
     )
     .await;
     assert_eq!(status["state"], "submitting");
@@ -748,12 +1448,20 @@ async fn unacknowledged_and_legacy_moves_cannot_reuse_a_uid_after_restart() {
             .unwrap(),
     )
     .unwrap();
+    assert_eq!(response["data"]["status"], "waiting");
     assert!(
-        response["error"]
+        response["data"]["warning"]
             .as_str()
             .unwrap()
-            .contains("not moved again")
+            .contains("earlier move needs checking")
     );
+    let cached = p
+        .database
+        .read(|db| operations::stored_mail(db, "fixture:INBOX:0"))
+        .await
+        .unwrap();
+    assert_eq!(cached.folder, "INBOX");
+    assert_eq!(cached.remote_id, "0");
     p.database
         .write(|db| {
             db.execute("DELETE FROM pending_moves", [])?;
@@ -899,7 +1607,7 @@ async fn attachments_survive_source_deletion_text_autosave_reopen_and_exact_mime
     message["revision"] = 3.into();
     message["attachments"] = added["attachments"].clone();
     request(&reopened, json!({"op":"save_draft","draft":message})).await;
-    let mismatch:Value=serde_json::from_str(&reopened.request(json!({"op":"send","id":"draft-one","revision":3,"file_revision":1,"password":"fixture"}).to_string()).await.unwrap()).unwrap();
+    let mismatch:Value=serde_json::from_str(&reopened.request(json!({"op":"admit_send","attempt":"00000000-0000-4000-8000-000000000021","id":"draft-one","revision":3,"file_revision":1}).to_string()).await.unwrap()).unwrap();
     assert!(
         mismatch["error"]
             .as_str()

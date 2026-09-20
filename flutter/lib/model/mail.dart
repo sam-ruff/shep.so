@@ -53,6 +53,7 @@ class Mail {
     this.fileError,
     this.accountId = '',
     this.bodyLoaded = true,
+    this.lineage,
   });
   final String id, sender, address, subject, preview, body, account, folder;
   final DateTime date;
@@ -62,6 +63,7 @@ class Mail {
   final String? fileError;
   final String accountId;
   final bool bodyLoaded;
+  final String? lineage;
 
   Mail patch(Map<String, Object> fields) => Mail(
     id: fields['id'] as String? ?? id,
@@ -80,6 +82,7 @@ class Mail {
     fileError: fileError,
     accountId: accountId,
     bodyLoaded: bodyLoaded,
+    lineage: lineage,
   );
 
   Mail withoutBody() => Mail(
@@ -99,6 +102,7 @@ class Mail {
     files: files,
     fileError: fileError,
     bodyLoaded: false,
+    lineage: lineage,
   );
 
   Mail withDetail(Mail detail) => Mail(
@@ -118,6 +122,7 @@ class Mail {
     files: detail.files,
     fileError: detail.fileError,
     bodyLoaded: true,
+    lineage: detail.lineage ?? lineage,
   );
 
   Object field(String name) => switch (name) {

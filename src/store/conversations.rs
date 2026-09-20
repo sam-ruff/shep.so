@@ -10,6 +10,7 @@ mod ranking;
 
 #[derive(Debug, Clone, Default)]
 pub struct ConversationPage {
+    pub lineages: std::collections::HashMap<String, String>,
     pub anchor: String,
     pub rows: Vec<Mail>,
     pub offset: usize,
@@ -199,8 +200,13 @@ impl Store {
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?;
             ranking::clear(&tx)?;
+            let lineages = rows
+                .iter()
+                .map(|mail| Ok((mail.id.clone(), mail_lineage::get(&tx, &mail.id)?)))
+                .collect::<anyhow::Result<_>>()?;
             tx.commit()?;
             Ok(ConversationPage {
+                lineages,
                 anchor,
                 rows,
                 total,

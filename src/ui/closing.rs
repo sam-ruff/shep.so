@@ -70,6 +70,69 @@ impl App {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn resumed_input_requires_its_own_stop_acknowledgement_before_close() {
+        let (mut app, mut commands, detail, store) =
+            super::super::mail_actions::tests::fixture_store().await;
+        let window = iced::window::Id::unique();
+        let _ = app.update(Message::WindowClose(window));
+        let Command::BulkStop(first) = commands.try_recv().expect("first stop") else {
+            panic!("stop")
+        };
+        app.toggle_mail_flag(detail.summary.clone(), false);
+        app.pump_bulk();
+        assert!(matches!(commands.try_recv(), Ok(Command::BulkResume(_))));
+        let Command::AdmitMail(id, mail, action, proof) = commands.try_recv().expect("admission")
+        else {
+            panic!("admission")
+        };
+        let Command::BulkStop(second) = commands.try_recv().expect("replacement stop") else {
+            panic!("stop")
+        };
+        assert!(second > first);
+        let _ = app.update(Message::Backend(Event::BulkStopped(first)));
+        assert!(!app.bulk.stopped);
+        let _ = app.update(Message::Backend(Event::BulkResumed(String::new())));
+        let job = store
+            .start_observed_mail_action(id.clone(), mail, action, proof.expect("observed source"))
+            .await
+            .expect("saved input");
+        let _ = app.update(Message::Backend(Event::MailAdmitted(id, Ok(Arc::new(job)))));
+        assert_eq!(app.pending_close, Some(window));
+        assert!(
+            !app.tray.exiting,
+            "The earlier stop cannot drain resumed work"
+        );
+        let _ = app.update(Message::Backend(Event::BulkStopped(second)));
+        assert!(app.pending_close.is_none());
+        assert!(app.tray.exiting);
+    }
+
+    #[test]
+    fn abandoned_close_acknowledgement_cannot_complete_a_later_close() {
+        let (mut app, _) = App::new();
+        let (sender, mut commands, _network) = engine::CommandSender::close_test_channels();
+        app.tx = Some(sender);
+        let window = iced::window::Id::unique();
+        let _ = app.update(Message::WindowClose(window));
+        let Command::BulkStop(first) = commands.try_recv().expect("first stop") else {
+            panic!("stop")
+        };
+        let _ = app.update(Message::Backend(Event::Error(
+            "A save needs attention".into(),
+        )));
+        app.resume_folder_close_barrier();
+        let _ = app.update(Message::WindowClose(window));
+        let Command::BulkStop(second) = commands.try_recv().expect("second stop") else {
+            panic!("stop")
+        };
+        let _ = app.update(Message::Backend(Event::BulkStopped(first)));
+        assert_eq!(app.pending_close, Some(window));
+        assert!(!app.bulk.stopped);
+        let _ = app.update(Message::Backend(Event::BulkStopped(second)));
+        assert!(app.pending_close.is_none());
+    }
+
     #[test]
     fn pending_move_recovery_is_coalesced_and_close_waits_from_admission() {
         let (mut app, _) = App::new();
@@ -163,13 +226,13 @@ mod tests {
             app.calendar_setup.generation = 7;
             let _ = app.update(Message::WindowClose(window));
             assert_eq!(app.pending_close, Some(window));
-            assert!(matches!(commands.try_recv().unwrap(), Command::BulkStop));
+            assert!(matches!(commands.try_recv().unwrap(), Command::BulkStop(1)));
             if save_first {
                 let _ = app.update(Message::Backend(Event::CalendarsConnected(7, Ok(()))));
                 assert_eq!(app.pending_close, Some(window));
-                let _ = app.update(Message::Backend(Event::BulkStopped));
+                let _ = app.update(Message::Backend(Event::BulkStopped(1)));
             } else {
-                let _ = app.update(Message::Backend(Event::BulkStopped));
+                let _ = app.update(Message::Backend(Event::BulkStopped(1)));
                 assert_eq!(app.pending_close, Some(window));
                 let _ = app.update(Message::Backend(Event::CalendarsConnected(7, Ok(()))));
             }
@@ -190,7 +253,7 @@ mod tests {
         app.calendar_setup.generation = 4;
         app.calendar_setup.saving = Some(4);
         let _ = app.update(Message::WindowClose(iced::window::Id::unique()));
-        assert!(matches!(commands.try_recv().unwrap(), Command::BulkStop));
+        assert!(matches!(commands.try_recv().unwrap(), Command::BulkStop(1)));
         let _ = app.update(Message::Backend(Event::CalendarsConnected(
             4,
             Err("Credentials unavailable".into()),
@@ -200,7 +263,7 @@ mod tests {
             app.calendar_setup.error.as_deref(),
             Some("Credentials unavailable")
         );
-        let _ = app.update(Message::Backend(Event::BulkStopped));
+        let _ = app.update(Message::Backend(Event::BulkStopped(1)));
         assert!(app.pending_close.is_none());
         assert_eq!(app.dialog, Some(Dialog::Calendar));
     }

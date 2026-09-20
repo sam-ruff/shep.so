@@ -687,7 +687,9 @@ mod tests {
             assert!(!app.tray.exiting);
             assert!(app.pending_close.is_none());
             assert!(app.notice.as_ref().unwrap().1);
-            let _ = app.update(Message::Backend(crate::engine::Event::BulkStopped));
+            let _ = app.update(Message::Backend(crate::engine::Event::BulkStopped(
+                app.bulk.stop_generation,
+            )));
             assert!(!app.tray.exiting);
         }
     }
@@ -856,7 +858,9 @@ mod tests {
             "send:one".into(),
             false,
         )));
-        let _ = app.update(Message::Backend(crate::engine::Event::BulkStopped));
+        let _ = app.update(Message::Backend(crate::engine::Event::BulkStopped(
+            app.bulk.stop_generation,
+        )));
         assert_eq!(app.tray.window, restored);
         assert!(!app.tray.exiting);
     }

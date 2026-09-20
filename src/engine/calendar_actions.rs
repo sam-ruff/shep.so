@@ -2,53 +2,50 @@ use super::*;
 use crate::store::CalendarJob;
 
 impl Engine {
-    pub(super) async fn drain_calendar_jobs(&self, mut output: Output) {
-        while !self.bulk_control.stopping.get() {
-            let id = match self.store.next_calendar_action().await {
-                Ok(Some(id)) => id,
-                Ok(None) => break,
-                Err(error) => {
-                    let _ = output
-                        .send(Event::Error(format!(
-                            "Could not read pending calendar changes. {error:#}"
-                        )))
-                        .await;
-                    break;
-                }
-            };
-            self.bulk_control.active.set(true);
-            let result = self.perform_calendar_job(&id, &mut output).await;
-            self.bulk_control.active.set(false);
-            match result {
-                Ok(Some(job)) => {
-                    let _ = output.send(Event::CalendarJob(id, Ok(Arc::new(job)))).await;
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    if let Ok(mut job) = self.store.calendar_job(id.clone()).await {
-                        if job.status == "running"
+    pub(super) async fn execute_calendar_work(&self, id: String, output: &mut Output) -> bool {
+        let activity = self.bulk_control.active.enter();
+        let before = self
+            .store
+            .calendar_job(id.clone())
+            .await
+            .ok()
+            .map(|j| j.revision);
+        let result = self.perform_calendar_job(&id, output).await;
+        let progressed = result
+            .as_ref()
+            .ok()
+            .and_then(|j| j.as_ref())
+            .is_some_and(|j| Some(j.revision) != before);
+        drop(activity);
+        match result {
+            Ok(Some(job)) => {
+                let _ = output.send(Event::CalendarJob(id, Ok(Arc::new(job)))).await;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                if let Ok(mut job) = self.store.calendar_job(id.clone()).await {
+                    if job.status == "running"
                             && let Ok(uncertain) = self.store.fail_calendar_action(id.clone(),job.revision,true,format!("The server result could not be recorded. Check this event. {error:#}")).await
                         {
                             job = uncertain;
                         }
-                        let _ = output
-                            .send(Event::CalendarJob(id.clone(), Ok(Arc::new(job))))
-                            .await;
-                    }
                     let _ = output
-                        .send(Event::CalendarJob(id, Err(format!("{error:#}"))))
+                        .send(Event::CalendarJob(id.clone(), Ok(Arc::new(job))))
                         .await;
-                    if self.bulk_control.stopping.get() {
-                        let _ = output.send(Event::BulkStopped).await;
-                    }
-                    break;
                 }
-            }
-            if self.bulk_control.stopping.get() {
-                let _ = output.send(Event::BulkStopped).await;
-                break;
+                let _ = output
+                    .send(Event::CalendarJob(id, Err(format!("{error:#}"))))
+                    .await;
+                if let Some(event) = self.bulk_control.stopped_event() {
+                    let _ = output.send(event).await;
+                }
+                return false;
             }
         }
+        if let Some(event) = self.bulk_control.stopped_event() {
+            let _ = output.send(event).await;
+        }
+        progressed
     }
 
     async fn perform_calendar_job(

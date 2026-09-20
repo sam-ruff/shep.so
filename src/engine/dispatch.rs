@@ -68,7 +68,9 @@ impl CommandSender {
 
     #[cfg(test)]
     pub(crate) fn network_test_channel() -> (Self, mpsc::Receiver<Command>) {
-        let (sender, inputs) = Self::channel();
+        let (mut sender, inputs) = Self::channel();
+        sender.selections = sender.network.clone();
+        sender.bulk = sender.network.clone();
         (sender, inputs.network)
     }
 
@@ -89,7 +91,9 @@ impl CommandSender {
 
     #[cfg(test)]
     pub(crate) fn move_test_channels() -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>) {
-        let (sender, inputs) = Self::channel();
+        let (mut sender, inputs) = Self::channel();
+        sender.selections = sender.network.clone();
+        sender.bulk = sender.network.clone();
         (sender, inputs.network, inputs.reads)
     }
 
@@ -191,9 +195,10 @@ impl CommandSender {
             | Command::ReviewSelection(..)
             | Command::ReleaseSelection(_)
             | Command::BulkStart(..)
+            | Command::AdmitMail(..)
             | Command::BulkUndo(_)
             | Command::BulkResolve(_)
-            | Command::BulkStop
+            | Command::BulkStop(_)
             | Command::BulkResume(_) => &self.selections,
             Command::BulkRun(_) => &self.bulk,
             Command::Query(_, _, true) | Command::Detail { prefetch: true, .. } => &self.prefetch,

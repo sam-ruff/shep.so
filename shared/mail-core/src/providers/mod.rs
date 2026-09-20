@@ -39,4 +39,20 @@ pub trait MailProvider: Send + Sync {
         mail: &Mail,
         changes: crate::mail_actions::Flags,
     ) -> anyhow::Result<()>;
+    async fn inspect_flags(
+        &self,
+        _account: &Account,
+        _password: &SecretString,
+        _mail: &Mail,
+    ) -> anyhow::Result<crate::mail_actions::Flags> {
+        anyhow::bail!("This provider cannot inspect one message's flags.")
+    }
+    async fn inspect_move(
+        &self,
+        _account: &Account,
+        _password: &SecretString,
+        _receipt: &crate::mail_actions::MoveReceipt,
+    ) -> anyhow::Result<Mail> {
+        anyhow::bail!("This provider cannot inspect a moved message.")
+    }
 }

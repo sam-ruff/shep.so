@@ -1,9 +1,11 @@
 import 'mail_action_banner.dart';
+import 'mail_activity.dart';
 import 'mail_error.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../model/mail.dart';
 import '../data/outgoing.dart';
+import '../data/repository.dart';
 import 'outbox.dart';
 import '../model/workspace.dart';
 import 'calendar.dart';
@@ -261,6 +263,20 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                           context,
                           MaterialPageRoute<void>(
                             builder: (_) => OutboxScreen(workspace: w),
+                          ),
+                        );
+                      },
+                    ),
+                  if (w.repository is MailActivityRepository)
+                    sidebarItem(
+                      'Mail Activity',
+                      icon: 'clock',
+                      onTap: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => MailActivityScreen(workspace: w),
                           ),
                         );
                       },

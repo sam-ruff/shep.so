@@ -569,6 +569,42 @@ impl MailProvider for Imap {
     ) -> anyhow::Result<()> {
         flags_imap_session(imap(account, password).await?, mail, changes).await
     }
+    async fn inspect_flags(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        mail: &Mail,
+    ) -> anyhow::Result<crate::mail_actions::Flags> {
+        inspect_flags_imap_session(imap(account, password).await?, mail).await
+    }
+    async fn inspect_move(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        receipt: &crate::mail_actions::MoveReceipt,
+    ) -> anyhow::Result<Mail> {
+        Ok(recovery::resolve(account, password, receipt).await?.summary)
+    }
+}
+
+async fn inspect_flags_imap_session<
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+>(
+    mut session: async_imap::Session<T>,
+    mail: &Mail,
+) -> anyhow::Result<crate::mail_actions::Flags> {
+    let mailbox = session.select(&mail.folder).await?;
+    let uid = validate_uid(mail, mailbox.uid_validity)?;
+    let numeric_uid = uid.parse::<u32>().context("Invalid message UID")?;
+    let fetched = sync_queries::fetch(&mut session, &uid, "(UID FLAGS)").await?;
+    let current = fetched
+        .into_iter()
+        .find(|entry| entry.uid == Some(numeric_uid))
+        .context("The message is no longer present in this folder.")?;
+    Ok(crate::mail_actions::Flags {
+        unread: Some(current.unread),
+        starred: Some(current.starred),
+    })
 }
 
 async fn flags_imap_session<
@@ -580,17 +616,32 @@ async fn flags_imap_session<
 ) -> anyhow::Result<()> {
     let mailbox = session.select(&mail.folder).await?;
     let uid = validate_uid(mail, mailbox.uid_validity)?;
+    let mut acknowledged = false;
     for (flag, value) in [
         ("\\Seen", changes.unread.map(|v| !v)),
         ("\\Flagged", changes.starred),
     ] {
         if let Some(set) = value {
-            session
+            let result = session
                 .run_command_and_check_ok(format!(
                     "UID STORE {uid} {}FLAGS.SILENT ({flag})",
                     if set { "+" } else { "-" }
                 ))
-                .await?;
+                .await;
+            if let Err(error) = result {
+                if !acknowledged
+                    && matches!(
+                        error,
+                        async_imap::error::Error::No(_)
+                            | async_imap::error::Error::Bad(_)
+                            | async_imap::error::Error::Validate(_)
+                    )
+                {
+                    return Err(crate::mail_actions::FlagsRejected(error.to_string()).into());
+                }
+                return Err(error.into());
+            }
+            acknowledged = true;
         }
     }
     // Acknowledged STORE is committed even if the connection closes on logout.
@@ -1253,7 +1304,92 @@ mod tests {
             .unwrap();
             let result = flags_imap_session(session, &mail.summary, changes).await;
             assert_eq!(result.is_err(), reject);
+            if let Err(error) = result {
+                assert!(error.is::<crate::mail_actions::FlagsRejected>());
+            }
             server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn imap_flag_refusal_requires_no_prior_acknowledgement() {
+        use crate::mail_actions::{Flags, FlagsRejected};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        for (first_status, second_status, rejected) in [
+            (Some("NO refused"), None, true),
+            (Some("BAD invalid"), None, true),
+            (None, None, false),
+            (Some("OK stored"), Some("NO refused"), false),
+            (Some("OK stored"), None, false),
+        ] {
+            let (client, server) = tokio::io::duplex(4096);
+            let server = tokio::spawn(async move {
+                let mut server = BufReader::new(server);
+                let mut stores = 0;
+                loop {
+                    let mut line = String::new();
+                    if server.read_line(&mut line).await.expect("command") == 0 {
+                        break;
+                    }
+                    let (tag, command) = line.trim_end().split_once(' ').expect("tag");
+                    let status = if command.starts_with("UID STORE ") {
+                        stores += 1;
+                        let status = if stores == 1 {
+                            first_status
+                        } else {
+                            second_status
+                        };
+                        let Some(status) = status else { break };
+                        status
+                    } else {
+                        "OK completed"
+                    };
+                    let prefix = if command.starts_with("SELECT ") {
+                        "* 1 EXISTS\r\n* OK [UIDVALIDITY 42] valid\r\n"
+                    } else {
+                        ""
+                    };
+                    server
+                        .get_mut()
+                        .write_all(format!("{prefix}{tag} {status}\r\n").as_bytes())
+                        .await
+                        .expect("response");
+                    if stores > 0 && !status.starts_with("OK") {
+                        break;
+                    }
+                }
+                assert!((1..=2).contains(&stores));
+            });
+            let session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .expect("login");
+            let mail = parse_mail(
+                "fixture",
+                "42.7",
+                "INBOX",
+                b"From: fixture@example.test\r\nSubject: Flags\r\n\r\nBody".to_vec(),
+                true,
+                false,
+            )
+            .expect("message");
+            let error = flags_imap_session(
+                session,
+                &mail.summary,
+                Flags {
+                    unread: Some(false),
+                    starred: Some(true),
+                },
+            )
+            .await
+            .expect_err("failed STORE");
+            assert_eq!(error.is::<FlagsRejected>(), rejected, "{error:#}");
+            assert_eq!(
+                crate::mail_actions::classify_move_failure(&error),
+                crate::mail_actions::MoveFailure::Uncertain,
+                "flag refusal must not authorise a device-only move"
+            );
+            server.await.expect("mock server");
         }
     }
 

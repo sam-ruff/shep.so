@@ -78,6 +78,7 @@ impl Engine {
         self.submit_outgoing(&info.attempt, output).await
     }
 
+    #[cfg(test)]
     pub(super) async fn drain_outgoing(&self, mut output: Output) {
         while !self.bulk_control.stopping.get() {
             let attempt = match self.store.next_queued_outgoing().await {
@@ -92,9 +93,9 @@ impl Engine {
                     break;
                 }
             };
-            self.bulk_control.active.set(true);
+            let activity = self.bulk_control.active.enter();
             let result = self.submit_outgoing(&attempt, &mut output).await;
-            self.bulk_control.active.set(false);
+            drop(activity);
             if let Err(error) = result {
                 let _ = output
                     .send(Event::Error(format!(
@@ -104,12 +105,16 @@ impl Engine {
                 break;
             }
         }
-        if self.bulk_control.stopping.get() {
-            let _ = output.send(Event::BulkStopped).await;
+        if let Some(event) = self.bulk_control.stopped_event() {
+            let _ = output.send(event).await;
         }
     }
 
-    async fn submit_outgoing(&self, attempt: &str, output: &mut Output) -> anyhow::Result<()> {
+    pub(super) async fn submit_outgoing(
+        &self,
+        attempt: &str,
+        output: &mut Output,
+    ) -> anyhow::Result<()> {
         let initial = self.store.outgoing_info(attempt.into()).await?;
         let _slot = tokio::select! {
             biased;
@@ -844,7 +849,13 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let mut mail = engine.store.detail(info.local_id()).await.unwrap().summary;
+        let mut mail = engine
+            .store
+            .detail(info.local_id())
+            .await
+            .unwrap()
+            .content
+            .summary;
         mail.starred = true;
         engine
             .execute(
@@ -864,7 +875,13 @@ mod tests {
             .execute(Command::Move(2, mail, "Archive".into()), output)
             .await
             .unwrap();
-        let mail = engine.store.detail(info.local_id()).await.unwrap().summary;
+        let mail = engine
+            .store
+            .detail(info.local_id())
+            .await
+            .unwrap()
+            .content
+            .summary;
         assert!(mail.starred);
         assert_eq!(mail.folder, "Archive");
         assert_eq!(state.sent_connections.load(Ordering::SeqCst), 0);

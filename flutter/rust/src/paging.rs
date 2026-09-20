@@ -8,6 +8,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
 
+fn with_lineage(db: &Connection, message: &shep_mail_core::model::Mail) -> Result<Value> {
+    let mut value = serde_json::to_value(message)?;
+    value["lineage"] = db
+        .query_row(
+            "SELECT token FROM mail_lineage WHERE id=?1",
+            [&message.id],
+            |row| row.get::<_, String>(0),
+        )?
+        .into();
+    Ok(value)
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Edit {
@@ -44,9 +56,26 @@ const GROUP_INTENT: &str = "group_active AS (
           (SELECT starred FROM group_active a WHERE a.id=g.id AND a.starred IS NOT NULL ORDER BY a.seq DESC LIMIT 1) AS starred
           FROM (SELECT DISTINCT id FROM group_active) g)";
 
+const INDIVIDUAL_INTENT: &str = "individual_intent AS (
+          SELECT a.mail AS id,
+          MAX(CASE WHEN mi.field='folder' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.folder') END) AS folder,
+          MAX(CASE WHEN mi.field='unread' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.unread') END) AS unread,
+          MAX(CASE WHEN mi.field='starred' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.starred') END) AS starred
+          FROM individual_mail_actions a JOIN mail_intents mi ON mi.mail=a.mail
+          WHERE a.status IN ('queued','waiting','running','uncertain','repair')
+          GROUP BY a.mail)";
+
 pub(crate) fn group_intent_active(db: &Connection) -> Result<bool> {
     Ok(db.query_row(
         "SELECT EXISTS(SELECT 1 FROM group_items WHERE state IN ('pending','sending','undoing','reversing'))",
+        [],
+        |r| r.get(0),
+    )?)
+}
+
+fn individual_intent_active(db: &Connection) -> Result<bool> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM individual_mail_actions WHERE status IN ('queued','waiting','running','uncertain','repair'))",
         [],
         |r| r.get(0),
     )?)
@@ -96,23 +125,30 @@ impl Plan {
             confirmed.push(message);
         }
         let grouped = group_intent_active(db)?;
-        let projected = !edits.is_empty() || grouped;
+        let individual = individual_intent_active(db)?;
+        let server_intent = grouped || individual;
+        let projected = !edits.is_empty() || server_intent;
         let data = serde_json::to_string(&edits)?;
         // Individual edits are newer than any approved group intent, so they
         // take precedence per field; unprojected rows keep the indexed query.
-        let prefix = if grouped {
+        let prefix = if server_intent {
             format!(
-                "WITH {GROUP_INTENT}, projected AS (
+                "WITH {GROUP_INTENT}, {INDIVIDUAL_INTENT}, server_ids AS (
+          SELECT id FROM group_intent UNION SELECT id FROM individual_intent),
+        server_intent AS (
+          SELECT s.id,COALESCE(i.folder,g.folder) AS folder,COALESCE(i.unread,g.unread) AS unread,COALESCE(i.starred,g.starred) AS starred
+          FROM server_ids s LEFT JOIN individual_intent i ON i.id=s.id LEFT JOIN group_intent g ON g.id=s.id),
+        projected AS (
           SELECT rowid,id,account_id,remote_id,folder,sender,recipient,subject,preview,
           timestamp,unread,starred,attachment_count,moved FROM mail
-          WHERE id NOT IN (SELECT key FROM json_each(?6)) AND id NOT IN (SELECT id FROM group_intent)
+          WHERE id NOT IN (SELECT key FROM json_each(?6)) AND id NOT IN (SELECT id FROM server_intent)
           UNION ALL SELECT m.rowid AS rowid,m.id,m.account_id,m.remote_id,
           COALESCE(json_extract(e.value,'$.folder'),g.folder,m.folder) AS folder,
           m.sender,m.recipient,m.subject,m.preview,m.timestamp,
           COALESCE(json_extract(e.value,'$.unread'),g.unread,m.unread) AS unread,
           COALESCE(json_extract(e.value,'$.starred'),g.starred,m.starred) AS starred,
-          m.attachment_count,m.moved FROM (SELECT key AS id FROM json_each(?6) UNION SELECT id FROM group_intent) k
-          JOIN mail m ON m.id=k.id LEFT JOIN json_each(?6) e ON e.key=k.id LEFT JOIN group_intent g ON g.id=k.id) "
+          m.attachment_count,m.moved FROM (SELECT key AS id FROM json_each(?6) UNION SELECT id FROM server_intent) k
+          JOIN mail m ON m.id=k.id LEFT JOIN json_each(?6) e ON e.key=k.id LEFT JOIN server_intent g ON g.id=k.id) "
             )
         } else if projected {
             "WITH projected AS (
@@ -245,6 +281,14 @@ pub(crate) fn page(
                 .insert(message.folder.clone());
         }
     }
+    let mail = mail
+        .iter()
+        .map(|message| with_lineage(&tx, message))
+        .collect::<Result<Vec<_>>>()?;
+    let confirmed = confirmed
+        .iter()
+        .map(|message| with_lineage(&tx, message))
+        .collect::<Result<Vec<_>>>()?;
     Ok(
         json!({"mail":mail,"total":total,"unread":unread,"aliases":aliases,"folder_membership":folder_membership,"confirmed":confirmed}),
     )

@@ -21,6 +21,26 @@ impl Signal {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct Activity(std::sync::atomic::AtomicUsize);
+
+impl Activity {
+    pub fn get(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire) != 0
+    }
+    pub fn enter(&self) -> Active<'_> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Active(self)
+    }
+}
+
+pub(crate) struct Active<'a>(&'a Activity);
+impl Drop for Active<'_> {
+    fn drop(&mut self) {
+        self.0.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
 /// Runs `exit` after `grace` unless the process has already ended. iced drops
 /// its Tokio runtime after the event loop stops, and that drop joins every
 /// running blocking task; a stalled transfer or credential call must not keep
@@ -40,6 +60,16 @@ pub fn bound_exit(grace: std::time::Duration, exit: impl FnOnce() + Send + 'stat
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn close_activity_remains_owned_until_the_last_independent_step_finishes() {
+        let active = Activity::default();
+        let first = active.enter();
+        let second = active.enter();
+        drop(first);
+        assert!(active.get());
+        drop(second);
+        assert!(!active.get());
+    }
     #[tokio::test]
     async fn stop_before_wait_and_stop_while_waiting_both_wake() {
         let signal = Signal::default();

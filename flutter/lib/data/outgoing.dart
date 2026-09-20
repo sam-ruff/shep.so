@@ -22,6 +22,7 @@ class OutgoingEntry {
       canCheckSent && delivered && sentPolicy == 'Automatic';
   bool get uncertain => state == 'uncertain' && !marked && sent != 'saved';
   bool get active => state == 'submitting';
+  bool get canCancel => state == 'queued' || state == 'waiting';
   bool get delivered => state == 'delivered' || marked || sent == 'saved';
   String get label => sent == 'saved' && state == 'uncertain'
       ? 'Matching copy confirmed in Sent'
@@ -29,6 +30,8 @@ class OutgoingEntry {
       ? 'Recorded as sent after review'
       : switch (state) {
           'submitting' => 'Delivery in progress',
+          'queued' => 'Queued for delivery',
+          'waiting' => 'Waiting for account access',
           'rejected' => 'Not sent',
           'delivered' => 'Delivery confirmed',
           _ => 'Delivery not confirmed',
@@ -87,4 +90,6 @@ abstract interface class OutgoingRepository {
     OutgoingAction action, {
     bool confirmed = false,
   });
+  Future<void> cancelOutgoing(String id);
+  Future<void> resumeOutgoing(String id);
 }

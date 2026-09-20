@@ -454,7 +454,7 @@ mod tests {
         .unwrap()
         .summary;
         handle.0.borrow_mut().session = Some(Session {
-            payload: Arc::new(Payload::Single(Box::new(mail))),
+            payload: Arc::new(Payload::Single(Box::new(mail), None)),
             origin: Point::ORIGIN,
             active: true,
             cancelled: false,

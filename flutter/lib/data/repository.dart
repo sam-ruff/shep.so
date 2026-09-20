@@ -21,21 +21,43 @@ class MailActivity {
   String get status => data['status'] as String;
   String? get error => data['error'] as String?;
   Map<String, Object> get fields {
-    final fields = Map<String, Object>.from(data['fields'] as Map)
+    final fields = Map<String, dynamic>.from(data['fields'] as Map)
       ..removeWhere((_, value) => value == null);
     if (fields['folder'] == 'INBOX') fields['folder'] = 'Inbox';
-    return fields;
+    return Map<String, Object>.from(fields);
   }
 
   bool get needsReview =>
       const {'rejected', 'uncertain', 'repair'}.contains(status);
   bool get canResume => const {'queued', 'waiting'}.contains(status);
+  bool get canUndo => status == 'succeeded';
 }
 
 abstract interface class MailActivityRepository {
-  Future<List<MailActivity>> mailActions();
+  Future<List<MailActivity>> mailActions({int offset = 0});
+  Future<List<MailActivity>> runnableMailActions();
   Future<void> resumeMailAction(MailActivity action);
   Future<void> cancelMailAction(String id);
+  Future<void> undoMailAction(
+    MailActivity action, {
+    void Function()? onAdmitted,
+  });
+  Future<void> inspectMailAction(MailActivity action);
+}
+
+abstract interface class DurableMutationRepository {
+  Future<void> admitMutation(
+    String id,
+    Map<String, Object> fields,
+    String actionId,
+    String observedLineage,
+  );
+  Future<void> executeMutation(
+    String id,
+    Map<String, Object> fields,
+    String actionId,
+  );
+  Future<void> cancelAdmittedMutation(String actionId);
 }
 
 /// Production startup is empty until the native provider adapter is connected.

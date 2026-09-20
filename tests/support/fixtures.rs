@@ -953,7 +953,7 @@ mod sync_tests {
         assert_eq!(rows.len(), 1);
         let id = rows[0].0.clone();
         // A read acknowledged after the listing began survives the repeat.
-        let mail = store.detail(id.clone()).await.unwrap().summary;
+        let mail = store.detail(id.clone()).await.unwrap().content.summary;
         store
             .patch_flags(
                 mail.clone(),

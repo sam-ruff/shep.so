@@ -921,7 +921,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch({"type":"mouse_up"},check("total",119),check("mail_pending",1),
                        check("action_toast.label","Archived 1 message"),
                        key("ctrl+comma"),check("tab","Preferences"),shot("drag-failure-preferences-usable"),
-                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","remains in Inbox","contains"),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","Open History","contains"),
                        key("ctrl+1"),check("tab","Mail"),check("total",120),
                        check("mail_rows.1.subject","Your weekly workspace digest"),shot("drag-failure-restored"))
 
@@ -995,7 +995,13 @@ class NativeFlows(unittest.TestCase):
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         database = Path(started["artifacts"]) / "fixture.sqlite"
         with sqlite3.connect(database.as_uri()+"?mode=ro", uri=True) as cache:
-            self.assertEqual(cache.execute("SELECT unread FROM messages WHERE id=?", (message,)).fetchone(), (0,))
+            self.assertEqual(cache.execute("SELECT COALESCE(e.unread,m.unread) FROM messages m LEFT JOIN bulk_effects e ON e.id=m.id WHERE m.id=?", (message,)).fetchone(), (0,))
+            saved = cache.execute("SELECT i.status FROM bulk_items i JOIN bulk_jobs j ON j.id=i.job WHERE i.id=? AND json_extract(j.action,'$.Flags.unread')=0", (message,)).fetchall()
+            self.assertTrue(saved, "Read-on-leave must be durably admitted before close")
+            self.assertTrue(all(status in ("queued", "done", "repair") for (status,) in saved), saved)
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("mail_rows.0.id", message), check("mail_rows.0.unread", False),
+                       shot("closed-read-projection-survives-restart"))
 
     def test_flag_completes_beside_held_readonly_sync_without_interrupting_it(self):
         started = self.mcp.call("desktop.start", held_account_sync=True)
@@ -1012,11 +1018,11 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("account_sync_waiting", True), check("mail_rows.0.starred",True),
                        click(570,215), check("mail_rows.0.starred",False), check("mail_pending",1),
                        check("mail_pending",0), check("account_sync_waiting",True),
-                       check("mail_rows.0.starred",True), check("notice","Fixture","contains"),
+                       check("mail_rows.0.starred",True), check("notice","Open History","contains"),
                        shot("held-sync-write-failure"), click(570,215),
                        check("mail_rows.0.starred",False), check("mail_pending",1),
                        check("mail_pending",0), check("mail_rows.0.starred",True),
-                       check("account_sync_waiting",True), check("notice","Fixture","contains"),
+                       check("account_sync_waiting",True), check("notice","Open History","contains"),
                        shot("held-sync-retry-failure"))
 
     def open_color_preferences(self, compact=False):
@@ -2621,7 +2627,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("desktop_badge.visible",True),check("unread",True))
         count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
         self.mcp.batch(click(652,100),check("mail_pending",1),check("desktop_badge.count",count-1),
-                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","remains in Inbox","contains"),
+                       {**check("mail_pending",0),"timeout_ms":5000},check("notice","Open History","contains"),
                        check("desktop_badge.count",count),shot("badge-failed-archive"))
 
     def test_background_sync_failure_allows_manual_retry(self):
@@ -2743,7 +2749,7 @@ class NativeFlows(unittest.TestCase):
         scroll = self.mcp.call("desktop.state")["inbox_scroll"]
         self.mcp.batch({**check("mail_pending", 0), "timeout_ms": 5000},
                        check("selected_id", rows[22]["id"]), check("total", 120),
-                       check("inbox_scroll", scroll), check("notice", "remains in Inbox", "contains"),
+                       check("inbox_scroll", scroll), check("notice", "Open History", "contains"),
                        shot("delete-failure-keeps-new-reader"))
 
     def test_deletion_selection_follows_filtered_order_then_clears_empty_reader(self):
@@ -2819,7 +2825,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("BackSpace"), check("total", 119), check("mail_pending", 1),
                        shot("archive-optimistic-before-failure"),
                        {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 120),
-                       check("notice", "remains in Inbox", "contains"), shot("archive-rollback"),
+                       check("notice", "Open History", "contains"), shot("archive-rollback"),
                        click(420, 246), click(652, 100), check("total", 119),
                        click(84, 398), check("folder", "Archive"),
                        {**check("mail_pending", 0), "timeout_ms": 5000},
@@ -2874,7 +2880,7 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+d"), check("action_toast.label","Deleted 1 message"),
                        check("total",118), check("mail_pending",2), shot("latest-action-before-failure"),
                        {**check("mail_pending",0),"timeout_ms":5000}, check("total",120),
-                       check("action_toast",None), check("notice","remains in Inbox","contains"), shot("action-toast-failure"))
+                       check("action_toast",None), check("notice","Open History","contains"), shot("action-toast-failure"))
 
     def test_compact_dark_action_toast_and_cross_account_slow_failure(self):
         self.mcp.call("desktop.start",mail_actions="fail")
@@ -2888,7 +2894,7 @@ class NativeFlows(unittest.TestCase):
                        check("total",119),check("mail_pending",1),check("action_toast.label","Archived 1 message"),
                        shot("cross-account-toast-pending"),
                        {**check("mail_pending",0),"timeout_ms":5000},check("total",120),check("action_toast",None),
-                       check("notice","Fixture server rejected","contains"),
+                       check("notice","Open History","contains"),
                        click(1390,900),
                        {"type":"resize","width":900,"height":640},wait(150),
                        key("ctrl+d"),check("total",119),check("action_toast.label","Deleted 1 message"),
@@ -2913,18 +2919,34 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(85, 398), check("folder", "Archive"), check("total", 0))
 
     def test_delete_undo_failure_has_persistent_retry_and_restores_after_retry(self):
-        self.mcp.call("desktop.start", mail_actions="slow", undo_failure_once=True)
+        started = self.mcp.call("desktop.start", persistent=True, mail_actions="slow", undo_failure_once=True)
+        print(f"Individual Undo history evidence: {started['artifacts']}", flush=True)
         subject = self.selected_mail_subject()
         self.mcp.batch(key("ctrl+d"), check("action_toast.label", "Deleted 1 message"),
                        {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 119),
                        click(1340, 874), check("total", 120), check("action_toast.label", "Restored 1 message"),
-                       check("mail_pending", 1), shot("undo-delete-pending"),
-                       {**check("undo_failures", 1), "timeout_ms": 5000}, check("total", 119),
-                       check("mail_pending", 0), check("notice", "Fixture server rejected Undo", "contains"),
-                       shot("undo-failed-retry-control"), click(1308, 874),
-                       check("undo_failures", 0), check("total", 120), check("mail_pending", 1),
-                       {**check("mail_pending", 0), "timeout_ms": 5000}, check("total", 120),
-                       check("notice", None), shot("undo-delete-retried"))
+                       shot("undo-delete-pending"),
+                       {**check("bulk.jobs.0.failed", 1), "timeout_ms": 5000}, check("total", 119),
+                       check("bulk.jobs.0.uncertain", 0), check("mail_pending", 0),
+                       shot("undo-failed-history-recovery"), {"type": "restart"},
+                       check("total", 119), check("bulk.jobs.0.failed", 1),
+                       click(1330, 36), check("dialog", "BulkHistory"), wait(80), click(700, 490),
+                       check("bulk.items.0.status", "failed"), shot("undo-failed-retry-control"))
+        database = Path(started["artifacts"]) / "fixture.sqlite"
+        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as cache:
+            failed = cache.execute("SELECT job,position,receipt,undo,status FROM bulk_items WHERE undo=1").fetchall()
+            self.assertEqual(len(failed), 1)
+            self.assertEqual(failed[0][3:], (1, "failed"))
+            self.assertIsNotNone(failed[0][2])
+        self.mcp.batch(wait(80), click(575, 486),
+                       check("bulk.jobs.0.failed", 0),
+                       {**check("bulk.jobs.0.restored", 1), "timeout_ms": 5000},
+                       check("bulk.jobs.0.remaining", 0), check("total", 120),
+                       shot("undo-delete-retried"), key("Escape"), {"type": "restart"},
+                       check("total", 120), check("bulk.jobs.0.restored", 1))
+        with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as cache:
+            restored = cache.execute("SELECT job,position,receipt,undo,status FROM bulk_items WHERE undo=1").fetchall()
+            self.assertEqual(restored, [(*failed[0][:4], "done")])
         self.assertIn(subject, [m["subject"] for m in self.mcp.call("desktop.state")["mail_rows"]])
         self.mcp.batch(click(85, 438), check("folder", "Trash"), check("total", 0))
 
@@ -2989,7 +3011,8 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(click(420,246), check("selected", "A little more room to think"),
                        click(84,398), check("folder", "Archive"), check("mail_pending",1),
                        {**check("mail_pending",0),"timeout_ms":5000},
-                       check("notice","Could not update this message","contains"), check("folder","Archive"),
+                       check("bulk.jobs.0.failed",1), check("bulk.jobs.0.uncertain",0),
+                       check("notice","Open History","contains"), check("folder","Archive"),
                        shot("read-on-leave-failure"), click(84,278), check("folder","INBOX"),
                        check("mail_rows.0.unread",True), check("mail_pending",0))
 
@@ -4306,7 +4329,7 @@ class NativeFlows(unittest.TestCase):
                        key("Return"), check("dialog",None), check("total",110),
                        check("action_toast.label","Deleted 10 messages"),
                        {"type":"assert","path":"mail_pending","value":1},
-                       {"type":"assert","path":"bulk.staging","op":"ne","value":None},
+                       check("bulk.staging",None),
                        shot("bulk-ten-delete-before-read-finishes"),
                        {**check("mail_pending",0),"timeout_ms":5000}, check("bulk.staging",None))
         for completed in range(1, 11):
@@ -4327,15 +4350,40 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+d"), check("dialog","BulkReview"), check("bulk.review_count",2),
                        key("Return"), check("dialog",None), check("total",118),
                        {"type":"assert","path":"mail_pending","value":1},
-                       {"type":"assert","path":"bulk.staging","op":"ne","value":None},
+                       check("bulk.staging",None),
                        click(1340,874), check("total",120), check("action_toast.label","Restored 2 messages"),
                        {"type":"assert","path":"mail_pending","value":1}, check("bulk.staging",None),
-                       {"type":"assert","path":"bulk.jobs","value":[]},
                        shot("bulk-dark-undo-before-admission"),
                        {**check("mail_pending",0),"timeout_ms":5000},
-                       check("mail_rows.0.unread",False), check("total",120), check("bulk.jobs",[]),
+                       check("mail_rows.0.unread",False), check("total",120),
                        {"type":"resize","width":900,"height":640}, wait(150),
                        shot("bulk-dark-undo-before-admission-compact"))
+        state = self.wait_state(lambda s: any(job["cancelled"] == 2 for job in s["bulk"]["jobs"]))
+        self.assertTrue(any(job["cancelled"] == 2 for job in state["bulk"]["jobs"]))
+
+    def test_individual_actions_admit_and_undo_before_provider_capacity_survive_restart(self):
+        result = self.mcp.call("desktop.start", held_provider_slots=True, persistent=True)
+        print(f"Durable individual admission evidence: {result['artifacts']}", flush=True)
+        self.mcp.batch(check("unread", True), click(740, 100), check("unread", False),
+                       check("mail_rows.0.starred", True),
+                       click(570, mail_row_y(0)), check("mail_rows.0.starred", False),
+                       click(570, mail_row_y(0)), check("mail_rows.0.starred", True),
+                       key("ctrl+d"), check("total", 119), check("action_toast.label", "Deleted 1 message"),
+                       click(1340, 874), check("total", 120), check("action_toast.label", "Restored 1 message"),
+                       check("mail_rows.0.unread", False), check("mail_rows.0.starred", True),
+                       shot("individual-admission-held-capacity-undo"))
+        self.wait_state(lambda s: len(s["bulk"]["jobs"]) == 4 and any(job["cancelled"] == 1 for job in s["bulk"]["jobs"]))
+        with sqlite3.connect((Path(result["artifacts"]) / "fixture.sqlite").as_uri() + "?mode=ro", uri=True) as cache:
+            self.assertEqual(cache.execute("SELECT COUNT(*) FROM bulk_jobs").fetchone()[0], 4)
+            self.assertEqual(cache.execute("SELECT COUNT(*) FROM bulk_items WHERE status='running'").fetchone()[0], 0)
+            self.assertEqual(cache.execute("SELECT COUNT(*) FROM bulk_items i JOIN bulk_jobs j ON j.id=i.job WHERE i.status='cancelled' AND json_extract(j.action,'$.Move.folder')='Trash'").fetchone()[0], 1)
+        self.mcp.call("desktop.restart", crash=True)
+        self.mcp.batch(check("total", 120), check("mail_rows.0.unread", False),
+                       check("mail_rows.0.starred", True), shot("individual-admission-after-crash"),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True), key("ctrl+1"),
+                       {"type":"resize", "width":900, "height":640}, wait(150),
+                       shot("individual-admission-compact-dark"))
 
     def test_bulk_pending_read_failure_keeps_delete_recovery_visible(self):
         result = self.mcp.call("desktop.start", mail_actions="fail")
@@ -4445,23 +4493,20 @@ class NativeFlows(unittest.TestCase):
                        {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
                        check("bulk.jobs.0.failed",0),check("total",120),shot("bulk-dark-undo-complete"))
 
-    def test_bulk_pending_rows_reject_conflicting_context_actions_and_enable_after_completion(self):
-        result=self.mcp.call("desktop.start", mail_actions="slow")
-        print(f"Bulk conflict evidence: {result['artifacts']}", flush=True)
+    def test_bulk_pending_rows_accept_newer_row_and_context_field_choices(self):
+        result=self.mcp.call("desktop.start", held_provider_slots=True)
+        print(f"Bulk newer field evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
                        click(274,mail_row_y(1)),click(274,mail_row_y(2)),check("mail_selection.count",2),
                        check("mail_selection.pending",False),key("s"),check("dialog","BulkReview"),
-                       key("Return"),check("dialog",None),check("bulk.jobs.0.running",1),
-                       check("mail_rows.1.group_pending",True),check("selected","A little more room to think"),
-                       click(568,mail_row_y(1)),check("mail_pending",0),check("selected","A little more room to think"),
+                       key("Return"),check("dialog",None),check("bulk.jobs.0.remaining",2),
+                       check("mail_rows.1.starred",True),check("selected","A little more room to think"),
+                       click(568,mail_row_y(1)),check("mail_rows.1.starred",False),check("selected","A little more room to think"),
                        {"type":"click","x":400,"y":mail_row_y(1),"button":3},check("context_menu",None,"ne"),
                        key("Down"),key("Down"),key("Down"),key("Return"),check("context_menu",None),
-                       check("notice","part of a group change","contains"),check("mail_pending",0),
-                       shot("bulk-row-conflict-keeps-group"),
-                       {**check("bulk.jobs.0.remaining",0),"timeout_ms":5000},
-                       check("bulk.jobs.0.failed",0),check("mail_rows.1.group_pending",False),wait(80),
-                       click(568,mail_row_y(1)),check("mail_rows.1.starred",False),check("mail_pending",1),
-                       check("mail_pending",0),shot("bulk-row-controls-restored"))
+                       check("mail_rows.1.unread",False),check("mail_rows.1.starred",False),
+                       check("mail_rows.2.starred",True),check("mail_pending",2),
+                       shot("bulk-row-newer-field-choices-held"))
 
     def test_selection_mode_row_clicks_toggle_without_clearing_other_pages(self):
         self.mcp.batch(check("selected", "A little more room to think"),
@@ -4842,7 +4887,8 @@ class NativeFlows(unittest.TestCase):
                                {**check("mail_pending", 0), "timeout_ms":5000})
             else:
                 self.mcp.batch(check("mail_pending", 0), check("total", 0),
-                               check("notice", "remains in Inbox", "contains"), shot("destination-failure"))
+                               check("bulk.jobs.0.failed", 1), check("bulk.jobs.0.uncertain", 0),
+                               check("notice", "Open History", "contains"), shot("destination-failure"))
             self.mcp.batch(check("total", 0), click(85, 115), check("folder", "INBOX"), check("total", 120))
 
     def test_cross_account_destination_is_visible_during_transfer(self):

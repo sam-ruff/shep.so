@@ -1077,6 +1077,9 @@ async fn step(
                 "group:{job}:{position}:{}",
                 if inverse { "undo" } else { "forward" }
             ),
+            parent_action: None,
+            observed_lineage: None,
+            require_observation: false,
             credential_slot,
             id: mail.clone(),
             password,

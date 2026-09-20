@@ -164,6 +164,15 @@ void main() {
     expect(activity.single.id, 'dart-waiting-action');
     expect(activity.single.status, 'succeeded');
     expect(activity.single.canResume, false);
+    var undoAdmitted = false;
+    await repository.undoMailAction(
+      activity.single,
+      onAdmitted: () => undoAdmitted = true,
+    );
+    expect(undoAdmitted, isTrue);
+    final afterUndo = await repository.mailActions();
+    expect(afterUndo.first.id, 'dart-waiting-action:undo');
+    expect(afterUndo.first.status, 'succeeded');
     await expectLater(
       repository.cancelMailAction(activity.single.id),
       throwsA(isA<Exception>()),
@@ -406,14 +415,23 @@ void main() {
             revision: 1,
           ),
         ),
-        throwsStateError,
+        completes,
       );
+      await repository.sendCaptured.future;
       expect(credentials.reads, before);
       expect(repository.submitted!['password'], '');
       expect(repository.submitted!['credential_slot'], account.id);
       expect(repository.submitted!['incoming_password'], isNull);
-      expect(await repository.delivery('no-auth-draft'), isNull);
-      expect(repository.submitted!['id'], 'no-auth-draft');
+      expect(await repository.delivery('no-auth-draft'), 'queued');
+      expect(repository.submitted!['attempt'], isNotEmpty);
+      expect((await repository.outbox()).rows.single.state, 'queued');
+      await repository.cancelOutgoing(
+        repository.submitted!['attempt'] as String,
+      );
+      expect((await repository.outbox()).rows, isEmpty);
+      expect((await repository.call({'op': 'drafts'}) as List), isNotEmpty);
+      repository.sendRelease.complete();
+      await repository.sendSettled.future;
     },
   );
   test(
@@ -712,8 +730,20 @@ void main() {
         oldest: false,
         offset: 0,
       );
-      expect(inbox.mail.single.id, remote);
-      expect(inbox.mail.single.starred, isFalse);
+      expect(inbox.mail, isEmpty);
+      final waiting = (await repository.mailActions())
+          .where((action) => action.mail == remote && action.canResume)
+          .toList();
+      expect(waiting, hasLength(2));
+      final pending = await repository.detail(remote);
+      expect(pending.folder, 'Archive');
+      expect(pending.starred, isTrue);
+      for (final action in waiting) {
+        await repository.cancelMailAction(action.id);
+      }
+      final restored = await repository.detail(remote);
+      expect(restored.folder, 'Inbox');
+      expect(restored.starred, isFalse);
     },
   );
   test(
@@ -762,6 +792,11 @@ void main() {
         repository.mutate(provider, {'starred': true}),
         throwsA(predicate((e) => '$e'.contains('saved password is missing'))),
       );
+      expect((await repository.detail(local)).starred, isTrue);
+      final pending = (await repository.mailActions()).single;
+      expect(pending.status, 'waiting');
+      expect(pending.mail, local);
+      await repository.cancelMailAction(pending.id);
       expect((await repository.detail(local)).starred, isFalse);
     },
   );

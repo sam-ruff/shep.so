@@ -4,14 +4,34 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shep_mobile/data/outgoing.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/ui/app.dart';
+import 'package:shep_mobile/ui/outbox.dart';
 import 'support/preview_repository.dart';
 import 'workspace_test.dart' show MemorySettings;
 
 class ControlledOutbox extends PreviewRepository implements OutgoingRepository {
-  ControlledOutbox({this.total = 1, this.sent = false})
-    : super(delay: Duration.zero);
+  @override
+  Future<void> cancelOutgoing(String id) async {}
+  final resumed = <String>[];
+  String? resumeError;
+  Completer<void>? resumeGate;
+  @override
+  Future<void> resumeOutgoing(String id) async {
+    resumed.add(id);
+    await resumeGate?.future;
+    outgoingError = resumeError;
+  }
+
+  ControlledOutbox({
+    this.total = 1,
+    this.sent = false,
+    this.state = 'uncertain',
+  }) : super(delay: Duration.zero);
   int total;
   final bool sent;
+  String state;
+  final states = <int, String>{};
+  final sentStates = <int, String>{};
+  String? outgoingError;
   final actions = <OutgoingAction>[];
   bool failRecovery = true;
   final offsets = <int>[];
@@ -30,8 +50,9 @@ class ControlledOutbox extends PreviewRepository implements OutgoingRepository {
           subject: 'Review ${offset + i}',
           to: 'recipient@example.test',
           from: 'sender@example.test',
-          state: sent ? 'delivered' : 'uncertain',
-          sent: sent ? 'uncertain' : null,
+          state: states[offset + i] ?? (sent ? 'delivered' : state),
+          sentError: outgoingError,
+          sent: sentStates[offset + i] ?? (sent ? 'uncertain' : null),
           protocol: sent ? 'Imap' : null,
           sentPolicy: sent ? 'Automatic' : null,
         ),
@@ -174,4 +195,140 @@ void main() {
       expect(find.textContaining('Free storage and retry'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'waiting delivery resumes the same attempt and keeps errors visible',
+    (tester) async {
+      final repository = ControlledOutbox(state: 'waiting')
+        ..resumeError = 'credential store is locked';
+      final workspace = Workspace(repository, MemorySettings());
+      addTearDown(workspace.dispose);
+      await tester.pumpWidget(
+        MaterialApp(home: OutboxScreen(workspace: workspace)),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text('Resume delivery'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(repository.resumed, ['entry-0']);
+      expect(find.textContaining('credential store is locked'), findsOneWidget);
+      expect(find.text('Resume delivery'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'active delivery refreshes its bounded page and reveals failure',
+    (tester) async {
+      final repository = ControlledOutbox(state: 'submitting');
+      final workspace = Workspace(repository, MemorySettings());
+      addTearDown(workspace.dispose);
+      await tester.pumpWidget(
+        MaterialApp(home: OutboxScreen(workspace: workspace)),
+      );
+      await tester.pump();
+      await tester.pump();
+      repository
+        ..state = 'rejected'
+        ..outgoingError = 'SMTP refused this recipient';
+
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+
+      expect(repository.offsets, [0, 0]);
+      expect(
+        find.textContaining('SMTP refused this recipient'),
+        findsOneWidget,
+      );
+      expect(find.text('Resume delivery'), findsNothing);
+    },
+  );
+
+  testWidgets('polling preserves a mixed-page review and action error', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = ControlledOutbox(total: 2, state: 'waiting')
+      ..states[1] = 'uncertain'
+      ..resumeError = 'credential store is locked';
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: OutboxScreen(workspace: workspace)),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.ensureVisible(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pump();
+    await tester.tap(find.text('Resume delivery'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('credential store is locked'), findsWidgets);
+
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      isTrue,
+    );
+    expect(find.textContaining('credential store is locked'), findsWidgets);
+  });
+
+  testWidgets('disposing during Resume ignores the late result', (
+    tester,
+  ) async {
+    final repository = ControlledOutbox(state: 'waiting')
+      ..resumeGate = Completer<void>();
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: OutboxScreen(workspace: workspace)),
+    );
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.text('Resume delivery'));
+    await tester.pumpWidget(const SizedBox());
+    repository.resumeGate!.complete();
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('polling invalidates review when the Sent copy phase changes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = ControlledOutbox(total: 2, sent: true)
+      ..states[0] = 'queued';
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: OutboxScreen(workspace: workspace)),
+    );
+    await tester.pump();
+    await tester.pump();
+    final review = find.byType(CheckboxListTile);
+    await tester.ensureVisible(review);
+    await tester.pumpAndSettle();
+    await tester.tap(review);
+    await tester.pump();
+    expect(tester.widget<CheckboxListTile>(review).value, isTrue);
+
+    repository.sentStates[1] = 'appending';
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+
+    expect(tester.widget<CheckboxListTile>(review).value, isFalse);
+  });
 }

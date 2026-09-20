@@ -46,11 +46,13 @@ pub(super) fn relocate(c: &Connection, source: &Mail, destination: &Mail) -> any
     folder_actions::idle(c, &source.account_id)?;
     folder_actions::idle(c, &destination.account_id)?;
     let present: bool = c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM messages WHERE id=? AND account=? AND folder=?)",
-        params![source.id, source.account_id, source.folder],
+        "SELECT EXISTS(SELECT 1 FROM messages WHERE id=? AND account=? AND folder=? AND json_extract(data,'$.remote_id')=?)",
+        params![source.id, source.account_id, source.folder, source.remote_id],
         |r| r.get(0),
     )?;
     anyhow::ensure!(present, "The cached source changed. Refresh its folders.");
+    let lineage = mail_lineage::get(c, &source.id)?;
+    mail_lineage::remember(c, source, &lineage)?;
     if source.id == destination.id {
         anyhow::ensure!(
             source.account_id == destination.account_id
@@ -66,7 +68,7 @@ pub(super) fn relocate(c: &Connection, source: &Mail, destination: &Mail) -> any
             ],
         )?;
     } else {
-        let collision: Option<bool> = c.query_row("SELECT raw=(SELECT raw FROM messages WHERE id=?1) AND account=?2 AND folder=?3 FROM messages WHERE id=?4", params![source.id, destination.account_id, destination.folder, destination.id], |r| r.get(0)).optional()?;
+        let collision: Option<bool> = c.query_row("SELECT raw=(SELECT raw FROM messages WHERE id=?1) AND account=?2 AND folder=?3 AND json_extract(data,'$.remote_id')=?5 FROM messages WHERE id=?4", params![source.id, destination.account_id, destination.folder, destination.id, destination.remote_id], |r| r.get(0)).optional()?;
         anyhow::ensure!(
             collision != Some(false),
             "The destination identity contains a different message. Refresh its folders."
@@ -99,6 +101,11 @@ pub(super) fn relocate(c: &Connection, source: &Mail, destination: &Mail) -> any
             now,
         )?;
     }
+    mail_lineage::inherit(c, &destination.id, &lineage)?;
+    if source.id != destination.id {
+        c.execute("DELETE FROM bulk_effects WHERE id=? AND EXISTS(SELECT 1 FROM bulk_admissions a WHERE a.job=bulk_effects.job AND a.position=bulk_effects.position)", [&source.id])?;
+    }
+    bulk::reproject_lineage(c, &lineage)?;
     Ok(())
 }
 

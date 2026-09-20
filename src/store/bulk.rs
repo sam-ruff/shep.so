@@ -4,6 +4,16 @@
 use super::*;
 use crate::bulk::{Action, Item, Job, Receipt};
 use rusqlite::OptionalExtension;
+mod intents;
+
+pub(super) fn reproject_lineage(c: &Connection, lineage: &str) -> anyhow::Result<()> {
+    let item: Option<(String, i64)> = c.query_row("SELECT job,position FROM bulk_admissions WHERE lineage=? ORDER BY sequence DESC LIMIT 1", [lineage], |r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    if let Some((job, position)) = item {
+        intents::refresh_scope(c, &job, Some(position))?;
+        bump(c)?;
+    }
+    Ok(())
+}
 
 pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     c.execute_batch(
@@ -42,7 +52,7 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
         COALESCE(e.starred,m.starred) AS starred,m.data,m.raw
         FROM messages m LEFT JOIN bulk_effects e ON e.id=m.id;",
     )?;
-    Ok(())
+    intents::schema(c)
 }
 fn bump(c: &Connection) -> anyhow::Result<u64> {
     let revision: u64 = get(c, "bulk_revision")?;
@@ -134,6 +144,14 @@ fn parse_item(job: &str, row: StoredItem) -> anyhow::Result<Item> {
     })
 }
 fn inverse_effect(c: &Connection, item: &Item) -> anyhow::Result<()> {
+    let bound: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM bulk_admissions WHERE job=? AND position=?)",
+        params![item.job, item.position as i64],
+        |r| r.get(0),
+    )?;
+    if bound {
+        return Ok(());
+    }
     let original = item
         .original
         .as_ref()
@@ -164,7 +182,7 @@ fn inverse_effect(c: &Connection, item: &Item) -> anyhow::Result<()> {
             before.unread,
             before.starred,
         ),
-        Receipt::Unchanged => return Ok(()),
+        Receipt::Unchanged | Receipt::Superseded => return Ok(()),
     };
     c.execute("INSERT INTO bulk_effects(id,job,position,account,folder,unread,starred) VALUES(?,?,?,?,?,?,?)",
         params![id,item.job,item.position as i64,account,folder,unread,starred])
@@ -172,7 +190,7 @@ fn inverse_effect(c: &Connection, item: &Item) -> anyhow::Result<()> {
     Ok(())
 }
 
-const ACCOUNT_ITEMS: &str = "SELECT i.job,i.position FROM bulk_items i JOIN bulk_jobs j ON j.id=i.job WHERE json_extract(i.original,'$.account_id')=?1 OR json_extract(j.action,'$.Move.account')=?1 OR json_extract(i.receipt,'$.Move.account')=?1";
+const ACCOUNT_ITEMS: &str = "SELECT i.job,i.position FROM bulk_items i JOIN bulk_jobs j ON j.id=i.job WHERE json_extract(i.original,'$.account_id')=?1 OR json_extract(j.action,'$.Move.account')=?1 OR json_extract(i.receipt,'$.Move.account')=?1 OR EXISTS(SELECT 1 FROM bulk_admissions a WHERE a.job=i.job AND a.position=i.position AND json_extract(a.original,'$.account_id')=?1)";
 pub(super) fn account_review(
     c: &Connection,
     account: &str,
@@ -252,9 +270,10 @@ fn existing_admission(
 }
 
 fn publish_admission(c: &Connection, id: &str, action: &Action) -> anyhow::Result<Job> {
-    let (account, folder, unread, starred) = match action {
-        Action::Move { account, folder } => (account.clone(), Some(folder.clone()), None, None),
-        Action::Flags(flags) => (None, None, flags.unread, flags.starred),
+    intents::admit(c, id, action)?;
+    let account = match action {
+        Action::Move { account, .. } => account.clone(),
+        Action::Flags(_) => None,
     };
     for account in c.prepare("SELECT DISTINCT json_extract(original,'$.account_id') FROM bulk_items WHERE job=? AND original IS NOT NULL")?
         .query_map([id], |row| row.get::<_, String>(0))? {
@@ -266,11 +285,12 @@ fn publish_admission(c: &Connection, id: &str, action: &Action) -> anyhow::Resul
         connections::allow(c, ConnectionKind::Account, account)?;
         folder_actions::idle(c, account)?;
     }
-    c.execute(
-        "INSERT INTO bulk_effects(id,job,position,account,folder,unread,starred)
-         SELECT id,job,position,?,?,?,? FROM bulk_items WHERE job=? AND status='queued'",
-        params![account, folder, unread, starred, id],
-    ).context("Some messages already have pending changes. Wait for them, or review their group in History.")?;
+    anyhow::ensure!(!c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM bulk_items i JOIN bulk_effects e ON e.id=i.id
+          WHERE i.job=? AND NOT EXISTS(SELECT 1 FROM bulk_admissions a WHERE a.job=e.job AND a.position=e.position))",
+        [id], |r| r.get::<_, bool>(0))?,
+        "A message has an older pending operation. Review its group in History first.");
+    intents::refresh(c, id)?;
     bump(c)?;
     let result = job(c, id)?;
     anyhow::ensure!(result.total > 0, "Select at least one message");
@@ -278,6 +298,22 @@ fn publish_admission(c: &Connection, id: &str, action: &Action) -> anyhow::Resul
 }
 
 impl Store {
+    pub async fn accepted_bulk_flags(
+        &self,
+        item: Item,
+        mut flags: crate::mail_actions::Flags,
+    ) -> anyhow::Result<crate::mail_actions::Flags> {
+        self.run(move |c| {
+            if !intents::owns(c, &item, "unread")? {
+                flags.unread = None;
+            }
+            if !intents::owns(c, &item, "starred")? {
+                flags.starred = None;
+            }
+            Ok(flags)
+        })
+        .await
+    }
     /// Individual and selected mail actions share one journal and provider owner.
     pub async fn start_individual_mail_action(
         &self,
@@ -285,14 +321,41 @@ impl Store {
         original: Mail,
         action: Action,
     ) -> anyhow::Result<Job> {
+        self.admit_mail_action(id, original, action, None).await
+    }
+
+    pub async fn start_observed_mail_action(
+        &self,
+        id: String,
+        original: Mail,
+        action: Action,
+        expected_lineage: String,
+    ) -> anyhow::Result<Job> {
+        anyhow::ensure!(
+            !expected_lineage.is_empty(),
+            "Refresh this message before trying again."
+        );
+        self.admit_mail_action(id, original, action, Some(expected_lineage))
+            .await
+    }
+
+    async fn admit_mail_action(
+        &self,
+        id: String,
+        original: Mail,
+        action: Action,
+        expected_lineage: Option<String>,
+    ) -> anyhow::Result<Job> {
         self.run(move |c| {
             let tx = c.transaction()?;
-            let source = serde_json::to_string(&(
+            let source = if let Some(lineage) = &expected_lineage {
+                serde_json::to_string(&(&original.id,&original.account_id,&original.folder,&original.remote_id,lineage))?
+            } else { serde_json::to_string(&(
                 &original.id,
                 &original.account_id,
                 &original.folder,
                 &original.remote_id,
-            ))?;
+            ))? };
             if let Some(existing) = existing_admission(&tx, &id, &source, &action)? {
                 return Ok(existing);
             }
@@ -305,24 +368,38 @@ impl Store {
             {
                 connections::allow(&tx, ConnectionKind::Account, account)?;
             }
-            let current: Option<String> = tx
+            let mut current: Option<String> = tx
                 .query_row(
                     "SELECT json_set(m.data,'$.account_id',m.account,'$.folder',m.folder,
                     '$.unread',json(CASE m.unread WHEN 1 THEN 'true' ELSE 'false' END),
                     '$.starred',json(CASE m.starred WHEN 1 THEN 'true' ELSE 'false' END))
-                 FROM selectable_mail m WHERE m.id=? AND m.account=? AND m.folder=?
-                    AND json_extract(m.data,'$.remote_id')=?",
+                 FROM selectable_mail m LEFT JOIN bulk_effects e ON e.id=m.id JOIN mail_lineage l ON l.id=m.id
+                 WHERE m.id=?1 AND (?5 IS NOT NULL OR (m.account=?2 OR COALESCE(e.account,m.account)=?2)
+                    AND (m.folder=?3 OR COALESCE(e.folder,m.folder)=?3))
+                    AND json_extract(m.data,'$.remote_id')=?4
+                    AND (?5 IS NULL OR l.lineage=COALESCE((SELECT lineage FROM mail_lineage_alias WHERE alias=?5),?5))",
                     params![
                         original.id,
                         original.account_id,
                         original.folder,
-                        original.remote_id
+                        original.remote_id,
+                        expected_lineage
                     ],
                     |row| row.get(0),
                 )
                 .optional()?;
+            if current.is_none() && let Some(lineage) = &expected_lineage {
+                current = tx.query_row("SELECT json_set(m.data,'$.account_id',m.account,'$.folder',m.folder,
+                        '$.unread',json(CASE m.unread WHEN 1 THEN 'true' ELSE 'false' END),
+                        '$.starred',json(CASE m.starred WHEN 1 THEN 'true' ELSE 'false' END))
+                    FROM mail_identity_history h JOIN mail_lineage l ON l.lineage=COALESCE((SELECT lineage FROM mail_lineage_alias WHERE alias=h.lineage),h.lineage)
+                    JOIN selectable_mail m ON m.id=l.id WHERE h.id=?1 AND h.remote=?2
+                    AND l.lineage=COALESCE((SELECT lineage FROM mail_lineage_alias WHERE alias=?3),?3) LIMIT 1",
+                    params![original.id,original.remote_id,lineage], |r|r.get(0)).optional()?;
+            }
             let current = current
                 .context("This message changed or is unavailable. Refresh before trying again.")?;
+            let actual: Mail = serde_json::from_str(&current)?;
             tx.execute(
                 "INSERT INTO bulk_jobs(id,action,source,created) VALUES(?,?,?,?)",
                 params![
@@ -334,7 +411,7 @@ impl Store {
             )?;
             tx.execute(
                 "INSERT INTO bulk_items(job,position,id,original,status) VALUES(?,0,?,?,'queued')",
-                params![id, original.id, current],
+                params![id, actual.id, current],
             )?;
             let result = publish_admission(&tx, &id, &action)?;
             tx.commit()?;
@@ -344,8 +421,8 @@ impl Store {
     }
 
     /// Atomically copy reviewed membership and original metadata, then publish
-    /// pending effects. Missing members remain explicit failed items. No MIME is
-    /// materialized and an overlapping active job rejects the whole transaction.
+    /// pending effects. Missing members remain explicit failed items. Overlapping
+    /// work reserves field ownership and waits for its predecessor receipts.
     pub async fn start_bulk(
         &self,
         id: String,
@@ -362,12 +439,15 @@ impl Store {
             anyhow::ensure!(frozen,"Review the selected messages before changing them");
             tx.execute("INSERT INTO bulk_jobs(id,action,source,created) VALUES(?,?,?,?)",params![id,serde_json::to_string(&action)?,selection.to_string(),chrono::Utc::now().timestamp_millis()])?;
             tx.execute("INSERT INTO bulk_items(job,position,id,original,status,error)
-                SELECT ?,s.position,s.id,CASE WHEN m.id IS NULL THEN NULL ELSE json_set(m.data,
+                SELECT ?,s.position,COALESCE(m.id,s.id),CASE WHEN m.id IS NULL THEN NULL ELSE json_set(m.data,
                 '$.account_id',m.account,'$.folder',m.folder,'$.unread',json(CASE m.unread WHEN 1 THEN 'true' ELSE 'false' END),
                 '$.starred',json(CASE m.starred WHEN 1 THEN 'true' ELSE 'false' END)) END,
                 CASE WHEN m.id IS NULL THEN 'failed' ELSE 'queued' END,
                 CASE WHEN m.id IS NULL THEN 'This message is unavailable. Refresh its folder or review its pending move.' END
-                FROM scratch.mail_selection_rows s LEFT JOIN selectable_mail m ON m.id=s.id WHERE s.selection=? AND s.selected=1",
+                FROM scratch.mail_selection_rows s
+                LEFT JOIN scratch.mail_review_lineage r ON r.selection=s.selection AND r.id=s.id
+                LEFT JOIN mail_lineage l ON l.lineage=COALESCE((SELECT lineage FROM mail_lineage_alias WHERE alias=r.lineage),r.lineage)
+                LEFT JOIN selectable_mail m ON m.id=l.id WHERE s.selection=? AND s.selected=1",
                 params![id,selection.to_string()])?;
             let result = publish_admission(&tx, &id, &action)?;
             tx.execute("DELETE FROM scratch.mail_selections WHERE id=?",[selection.to_string()])?;
@@ -396,16 +476,38 @@ impl Store {
     /// Persist running before contacting a provider. A lost process can never
     /// silently replay this non-idempotent step as a fresh queued operation.
     pub async fn claim_bulk_item(&self, id: String) -> anyhow::Result<Option<Item>> {
+        self.claim_bulk_item_at(id, None).await
+    }
+
+    pub(crate) async fn claim_bulk_item_at(
+        &self,
+        id: String,
+        position: Option<u64>,
+    ) -> anyhow::Result<Option<Item>> {
         self.run(move |c| {
             let tx=c.transaction()?;
             if job(&tx,&id)?.paused { return Ok(None); }
             if tx.query_row("SELECT EXISTS(SELECT 1 FROM bulk_items WHERE job=? AND status IN ('running','repair'))", [&id], |r|r.get::<_,bool>(0))? { return Ok(None); }
-            let next=tx.query_row("SELECT position,id,original,undo,status,receipt,error FROM bulk_items WHERE job=? AND status='queued' ORDER BY position LIMIT 1",[&id],read_item).optional()?;
-            let Some(next)=next else{return Ok(None)};
+            for _ in 0..50 {
+            let next=tx.query_row("SELECT position,id,original,undo,status,receipt,error FROM bulk_items i WHERE job=?1 AND status='queued' AND (?2 IS NULL OR position=?2)
+                AND NOT EXISTS(SELECT 1 FROM bulk_admissions a JOIN bulk_admissions prior ON prior.lineage=a.lineage AND prior.sequence<a.sequence
+                    JOIN bulk_items p ON p.job=prior.job AND p.position=prior.position
+                    WHERE a.job=i.job AND a.position=i.position AND p.status IN ('queued','running','repair','uncertain'))
+                ORDER BY position LIMIT 1",params![id,position.map(|v|v as i64)],read_item).optional()?;
+            let Some(next)=next else{tx.commit()?; return Ok(None)};
             let mut item=parse_item(&id,next)?;
+            if let Err(error) = intents::prepare(&tx, &mut item) {
+                tx.execute("UPDATE bulk_items SET status='failed',error=? WHERE job=? AND position=?", params![error.to_string(),id,item.position as i64])?;
+                intents::refresh_item(&tx, &item)?;
+                bump(&tx)?;
+                continue;
+            }
             tx.execute("UPDATE bulk_items SET status='running' WHERE job=? AND position=? AND status='queued'",params![id,item.position as i64])?;
             item.status="running".into();
-            tx.commit()?; Ok(Some(item))
+            tx.commit()?; return Ok(Some(item));
+            }
+            tx.commit()?;
+            Ok(None)
         }).await
     }
     /// Persist provider acknowledgement before attempting the cache transaction.
@@ -472,6 +574,14 @@ impl Store {
             tx.execute("DELETE FROM bulk_effects WHERE job=? AND position=?",params![item.job,item.position as i64])?;
             match result {
                 Ok(receipt) => {
+                    if matches!(receipt, Receipt::Superseded) {
+                        tx.execute("UPDATE bulk_items SET status='cancelled',error='A newer decision owns this field. This change was not sent.' WHERE job=? AND position=?", params![item.job,item.position as i64])?;
+                        intents::refresh_item(&tx, &item)?;
+                        bump(&tx)?;
+                        let result = job(&tx, &item.job)?;
+                        tx.commit()?;
+                        return Ok(result);
+                    }
                     // Retain the forward receipt for auditing even after Undo.
                     let saved = if item.undo { item.receipt.clone().unwrap() } else { receipt };
                     tx.execute("UPDATE bulk_items SET status='done',receipt=?,error=NULL WHERE job=? AND position=?",params![serde_json::to_string(&saved)?,item.job,item.position as i64])?;
@@ -488,12 +598,15 @@ impl Store {
                     }
                 }
                 Err((error,uncertain)) => {
-                    tx.execute("UPDATE bulk_items SET status=?,error=? WHERE job=? AND position=?",params![if uncertain {"uncertain"} else {"failed"},error,item.job,item.position as i64])?;
+                    let cancelled = !uncertain && !item.undo && job(&tx,&item.job)?.undo_requested;
+                    let status = if uncertain {"uncertain"} else if cancelled {"cancelled"} else {"failed"};
+                    tx.execute("UPDATE bulk_items SET status=?,error=? WHERE job=? AND position=?",params![status,error,item.job,item.position as i64])?;
                     if uncertain {
                         for id in claimed { tx.execute("INSERT INTO bulk_effects(id,job,position) VALUES(?,?,?)",params![id,item.job,item.position as i64])?; }
                     }
                 }
             }
+            intents::refresh_item(&tx, &item)?;
             bump(&tx)?;let result=job(&tx,&item.job)?;tx.commit()?;Ok(result)
         }).await
     }
@@ -526,6 +639,12 @@ impl Store {
                     tx.execute("UPDATE bulk_items SET undo=1,status='queued',error=NULL WHERE job=? AND position=?",params![id,after])?;
                 }
             }
+            tx.execute("UPDATE bulk_items SET status='cancelled',error='A newer decision owns these fields. Undo was not sent.'
+                WHERE job=? AND status='queued' AND undo=1
+                AND EXISTS(SELECT 1 FROM bulk_admissions a WHERE a.job=bulk_items.job AND a.position=bulk_items.position)
+                AND NOT EXISTS(SELECT 1 FROM bulk_admissions a JOIN bulk_field_owners o ON o.sequence=a.sequence
+                    WHERE a.job=bulk_items.job AND a.position=bulk_items.position)", [&id])?;
+            intents::refresh(&tx, &id)?;
             bump(&tx)?;let result=job(&tx,&id)?;tx.commit()?;Ok(result)
         }).await
     }
@@ -537,7 +656,17 @@ impl Store {
             let current: (String,bool)=tx.query_row("SELECT status,undo FROM bulk_items WHERE job=? AND position=?",
                 params![item.job,item.position as i64],|r|Ok((r.get(0)?,r.get(1)?)))?;
             anyhow::ensure!(current == ("running".into(),item.undo),"This group operation is no longer current");
+            if matches!(job(&tx, &item.job)?.action, Action::Move { .. }) && !intents::owns(&tx, &item, "location")? {
+                return Err(crate::bulk::Superseded.into());
+            }
             anyhow::ensure!(item.undo || id==item.id,"The forward message identity changed");
+            let bound: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM bulk_admissions WHERE job=? AND position=?)", params![item.job,item.position as i64], |r|r.get(0))?;
+            let unresolved_move = item.undo && matches!(&item.receipt, Some(Receipt::Move(receipt)) if receipt.current.is_none());
+            anyhow::ensure!(!unresolved_move || id != item.id, "The move destination has not been verified. Refresh its folder before Undo.");
+            if bound && !unresolved_move {
+                anyhow::ensure!(tx.query_row("SELECT EXISTS(SELECT 1 FROM bulk_admissions a JOIN mail_lineage l ON l.lineage=a.lineage WHERE a.job=? AND a.position=? AND l.id=?)", params![item.job,item.position as i64,id], |r|r.get::<_,bool>(0))?, "The message was replaced. Refresh before trying again.");
+                return Ok(());
+            }
             let inserted=tx.execute("INSERT INTO bulk_effects(id,job,position) VALUES(?,?,?) ON CONFLICT(id) DO NOTHING",
                 params![id,item.job,item.position as i64])?;
             let owner: (String,i64)=tx.query_row("SELECT job,position FROM bulk_effects WHERE id=?",[&id],|r|Ok((r.get(0)?,r.get(1)?)))?;
@@ -549,6 +678,11 @@ impl Store {
     }
     pub async fn bulk_owner(&self, id: String) -> anyhow::Result<Option<String>> {
         self.run(move |c| {
+            let owner = c.query_row("SELECT a.job FROM bulk_admissions a
+                JOIN mail_lineage l ON l.lineage=a.lineage JOIN bulk_items i ON i.job=a.job AND i.position=a.position
+                WHERE l.id=? AND i.status IN ('queued','running','repair','uncertain')
+                ORDER BY a.sequence LIMIT 1", [&id], |r|r.get::<_, String>(0)).optional()?;
+            if owner.is_some() { return Ok(owner); }
             Ok(
                 c.query_row("SELECT job FROM bulk_effects WHERE id=?", [id], |r| {
                     r.get(0)
@@ -621,9 +755,11 @@ impl Store {
         self.run(move |c| {
             let tx=c.transaction()?;
             tx.execute("UPDATE bulk_effects SET account=NULL,folder=NULL,unread=NULL,starred=NULL WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status='running' AND NOT EXISTS(SELECT 1 FROM bulk_flag_receipts r WHERE r.job=bulk_items.job AND r.position=bulk_items.position))",params![id,id])?;
-            tx.execute("UPDATE bulk_items SET status='uncertain',error='Shep closed before this change was acknowledged. Refresh and check the source and destination folders before resolving it.' WHERE job=? AND status='running' AND NOT EXISTS(SELECT 1 FROM bulk_flag_receipts r WHERE r.job=bulk_items.job AND r.position=bulk_items.position)",[&id])?;
+            let recovered = tx.execute("UPDATE bulk_items SET status='uncertain',error='Shep closed before this change was acknowledged. Refresh and check the source and destination folders before resolving it.' WHERE job=? AND status='running' AND NOT EXISTS(SELECT 1 FROM bulk_flag_receipts r WHERE r.job=bulk_items.job AND r.position=bulk_items.position)",[&id])?;
+            let paused = job(&tx, &id)?.paused;
             tx.execute("UPDATE bulk_jobs SET paused=0 WHERE id=?",[&id])?;
-            bump(&tx)?;let result=job(&tx,&id)?;tx.commit()?;Ok(result)
+            if recovered > 0 || paused { intents::refresh(&tx, &id)?; bump(&tx)?; }
+            let result=job(&tx,&id)?;tx.commit()?;Ok(result)
         }).await
     }
     /// Resolving an uncertain result is an explicit acceptance of the current
@@ -638,6 +774,7 @@ impl Store {
             let tx=c.transaction()?;
             tx.execute("DELETE FROM bulk_effects WHERE job=? AND position IN (SELECT position FROM bulk_items WHERE job=? AND status='uncertain')",params![id,id])?;
             tx.execute("UPDATE bulk_items SET status='cancelled',error=? WHERE job=? AND status='uncertain'",params![crate::bulk::ACCEPTED_STATE_NOTE,id])?;
+            intents::refresh(&tx, &id)?;
             bump(&tx)?;let result=job(&tx,&id)?;tx.commit()?;Ok(result)
         }).await
     }
