@@ -2,6 +2,16 @@
 
 ## Current immediate-action continuation
 
+Checkpoint `f6d9462d558bffe45353a82fe18c7f99f70b267e` is pushed to main with
+1,597 normal-hook Rust executions passing, 15 ignored. Root gates: Flutter260,
+Flutter Rust185, browser266 units, three Undo control scenarios, build, analysis,
+Clippy and strict docs. The full goal remains active. Next integrate frozen
+folder24 from `artifacts/worktrees/action-flutter-folders/artifacts/folder24-v1.apply.patch`
+(SHA `28ef42d4a774cf312ef0c4b1968e8f2c062839dcabbfef9d46fa65892b9f5af6`),
+preserving root Calendar inspection/cleanup changes. action_scope starts a fresh
+f6d9462 worktree for connection/Calendar lifecycle fences; review_ordering finishes
+Activity, then shared Google restoration. bulk_trace continues browser CalDAV19.
+
 Flutter CalDAV consolidated text is integrated from
 `artifacts/caldav22-folder23-consolidated.patch` (SHA-256
 `eca7ce4434a799d5ebc591a9210d4b6acd6b6e93e162f914f5e4f06fd266b60c`).
@@ -18,13 +28,13 @@ wrapped in ListenableBuilder and the recovery control must disappear after Retry
 Final full Flutter passes260, Rust185, analysis/Clippy/strict docs pass. Browser
 passes266 units, build and three guarded Undo controls. Shipping hooks are next.
 
-Root has uncommitted browser acknowledged Calendar Undo in calendar_actions.ts,
+Root shipped browser acknowledged create/edit Calendar Undo in calendar_actions.ts,
 calendar_repository.ts and ui.ts. Optional undoOf/undoAction fields link an atomic
 normal queued inverse to its original receipt. Exact cache/latest ownership and
 permissions are rechecked; local failure rolls back both records. Nine new units,
-three real held-provider create/edit/delete Undo controls and build pass
+three real held-provider create/edit and deleted-event guard controls and build pass
 (`actions-browser-calendar-undo-*`); root reviewed calendar-undo-pending-light.png.
-Before shipping this Undo work, complete deleted-event restore fidelity: the
+Complete deleted-event restore fidelity before enabling its Undo control: the
 portable event currently omits Google attendee/recurrence and other writable
 metadata, so recreating only represented fields is not a complete inverse.
 Unknown-result deferred Undo also remains open. bulk_trace knows the new optional
