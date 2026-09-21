@@ -1,5 +1,12 @@
 # Conversation request audit
 
+The next architecture continuation integrates checked Flutter folder changes and
+desktop Activity through existing owners. Mobile integrated gates pass198 Rust
+and265 Flutter tests; desktop application library passes1,076 with two ignored.
+Four actual Activity flows and six shortcut regressions pass; shipping remains
+open, as recorded in
+[Completion](COMPLETION.md). This does not complete the original app-wide request.
+
 The 21 September continuation integrates Flutter CalDAV controls, credential
 cleanup recovery and exact checked-state adoption, plus browser acknowledged
 create/edit Undo. Regression coverage and remaining restoration/provider gaps are

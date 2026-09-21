@@ -24,9 +24,10 @@ pub enum Action {
     Find,
     Forward,
     Print,
+    Activity,
 }
 impl Action {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Move,
         Self::Compose,
         Self::Reply,
@@ -48,6 +49,7 @@ impl Action {
         Self::Find,
         Self::Forward,
         Self::Print,
+        Self::Activity,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -72,6 +74,7 @@ impl Action {
             Self::Find => "Find in message",
             Self::Forward => "Forward message",
             Self::Print => "Print message",
+            Self::Activity => "Open Activity",
         }
     }
 }
@@ -189,6 +192,7 @@ impl Default for Keymap {
                     "Mod+F",
                     "F",
                     "Mod+P",
+                    "",
                 ])
                 .map(|(a, k)| (a, k.into()))
                 .collect(),

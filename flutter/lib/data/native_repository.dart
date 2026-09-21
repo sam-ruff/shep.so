@@ -42,7 +42,7 @@ class NativeRepository
         DurableAccountRepository,
         DurableCalendarRepository,
         DurableCalDavRepository,
-        FolderCreationRepository,
+        FolderChangeRepository,
         DurableMutationRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
@@ -803,6 +803,32 @@ class NativeRepository
           .toList();
 
   @override
+  Future<Map<String, dynamic>> reviewFolderChange(
+    FolderAccount account,
+    String source,
+    Object action,
+  ) async => Map<String, dynamic>.from(
+    await call({
+          'op': 'review_folder_change',
+          'account': account.id,
+          'source': source,
+          'action': action,
+        })
+        as Map,
+  );
+
+  @override
+  Future<FolderCreation> admitFolderChange(
+    String id,
+    Map<String, dynamic> review,
+  ) async => FolderCreation(
+    Map<String, dynamic>.from(
+      await call({'op': 'admit_folder_change', 'id': id, 'review': review})
+          as Map,
+    ),
+  );
+
+  @override
   Future<List<FolderCreation>> folderCreations() async =>
       (await call({'op': 'folder_creations'}) as List)
           .map(
@@ -836,7 +862,10 @@ class NativeRepository
         .where((account) => account.id == request.account)
         .firstOrNull;
     Map<String, Object?> credentials = {};
-    if (!request.hasReceipt && account?.protocol != 'Pop3') {
+    if (request.mutation?['prepared'] != false &&
+        (!request.hasReceipt ||
+            request.mutation != null && request.status == 'checking') &&
+        account?.protocol != 'Pop3') {
       try {
         if (account == null) throw StateError('Account unavailable');
         credentials = await _incoming(account);

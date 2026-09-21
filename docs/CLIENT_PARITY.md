@@ -1,5 +1,12 @@
 # Client parity
 
+Desktop Activity schema11 is integrated for combined verification. Its fixed
+visible control and remappable shortcut observe existing journal owners, retain
+review targets through refresh and open exact folder/backup recovery records.
+Root verification passes four native Activity scenarios and six shortcut
+regressions, with reviewed captures and clean Clippy. Browser and Flutter common-domain
+Activity parity and final platform/latency verification remain active.
+
 Desktop schema 10 removal hides the committed account/calendar before provider
 drain and exposes failed local cleanup with Retry; ten integrated native scenarios
 and 47 bulk/calendar/connection tests pass. Browser schema 17 adds checked subtree
@@ -88,8 +95,9 @@ row, receipt-first repair and explicit uncertain-result inspection. Browser sche
 16 creation and its real authenticated gateway now pass 77 focused unit tests,
 49 backend tests (one fixture prerequisite ignored), and 12 Chromium controls
 covering creation, upgrades, removal fences and preferences. Flutter schema
-23 now admits folder requests locally, shows nonselectable pending sidebar rows
-and exposes bounded recovery through its existing account/provider owner.
+24 admits creation and checked rename/move/delete locally, shows logical pending
+sidebar entries and exposes bounded recovery through its existing account/provider
+owner. Exact reviewed membership and cache repair use batches of 50 rows.
 Host bridge, failure/restart and compact control evidence are recorded in
 [Mobile folder creation](agents/MOBILE_FOLDERS.md); live-provider, Android and
 Apple folder execution remain open. Browser now saves

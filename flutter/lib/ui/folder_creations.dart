@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/folders.dart';
 import '../model/folder_creations.dart';
 import 'icons.dart';
+export 'folder_changes.dart' show showFolderChange;
 
 Future<void> showNewFolder(
   BuildContext context,

@@ -27,6 +27,7 @@ fn compose_binding(
                         | Action::Mail
                         | Action::Calendar
                         | Action::Settings
+                        | Action::Activity
                 )
             });
     if navigation {

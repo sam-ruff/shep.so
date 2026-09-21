@@ -231,7 +231,7 @@ class Desktop:
             time.sleep(.02)
         self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
 
-    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False, live_imap=False, activation=None, draft_save_failure_once=False, preference_save_failure_once=False, selection_mailbox=False, store_truth=True):
+    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False, live_imap=False, activation=None, draft_save_failure_once=False, preference_save_failure_once=False, selection_mailbox=False, store_truth=True, activity_history=False):
         self.stop()
         if type(draft_save_failure_once) is not bool:
             raise ValueError("Draft save failure fixture must be a boolean.")
@@ -252,6 +252,10 @@ class Desktop:
             raise ValueError("Unknown Google sign-in client fixture.")
         if type(google_legacy_client) is not bool:
             raise ValueError("Legacy Google client fixture must be a boolean.")
+        if type(activity_history) is not bool:
+            raise ValueError("Activity history fixture must be a boolean.")
+        if activity_history and (live_imap or not held_provider_slots):
+            raise ValueError("Activity history needs isolated held provider capacity.")
         if google_legacy_client and google_permissions is None:
             raise ValueError("A legacy Google client fixture needs google_permissions.")
         if profile_passwords not in (None, "ready", "reject"):
@@ -374,6 +378,8 @@ class Desktop:
         self.launch_args = [str(binary), "--demo", *(["--backup-run=" + backup_run] if backup_run else []), *(["--tray-fixture"] if tray else []), *(["--held-provider-slots"] if held_provider_slots else []), *(["--hold-database-import"] if held_database_import else []), *(["--hold-database-export"] if held_database_export else []), *(["--held-account-sync", "--background-sync"] if held_account_sync else []), *(["--folder-actions=" + folder_actions] if folder_actions else []), *(["--move-recovery=" + ("committed" if move_recovery is True else move_recovery)] if move_recovery else []), *(["--notification-delivery=" + notification_delivery] if notification_delivery else []), *(["--idle-navigation"] if idle_navigation else []), *(["--nested-folders"] if nested_folders else []), *(["--pop3-personal"] if pop3_account else []), *(["--persist-demo"] if persistent else []), *(["--bulk-flag-repair"] if bulk_history == "flag-repair" else ["--bulk-history"] if bulk_history else []), "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--reading-mail"] if reading_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--discard-failure-once"] if discard_failure_once else []), *(["--undo-failure-once"] if undo_failure_once else []), *(["--search-mail"] if search_mail else []), *(["--long-mail"] if long_mail else []), *(["--html-mail"] if html_mail else []), *(["--background-sync"] if background_sync else []), *(["--sync-failure-once"] if sync_failure_once else []), *(["--mail-actions=" + mail_actions] if mail_actions in ("slow", "fail", "refuse") else []), *(["--google-permissions=" + google_permissions] if google_permissions else []), *(["--google-legacy-client"] if google_legacy_client else [])]
         if draft_save_failure_once:
             self.launch_args.append("--draft-save-failure-once")
+        if activity_history:
+            self.launch_args.append("--activity-history")
         if preference_save_failure_once:
             self.launch_args.append("--preference-save-failure-once")
         if large_incoming:
@@ -1097,6 +1103,10 @@ next(tool for tool in TOOLS if tool["name"] == "desktop.start")["inputSchema"]["
 next(tool for tool in TOOLS if tool["name"] == "desktop.start")["inputSchema"]["properties"]["store_truth"] = {
     "type": "boolean", "default": True,
     "description": "Run the full database comparison oracle; disable only for isolated pixel timing.",
+}
+next(tool for tool in TOOLS if tool["name"] == "desktop.start")["inputSchema"]["properties"]["activity_history"] = {
+    "type": "boolean", "default": False,
+    "description": "Seed retained folder and backup recovery beyond the workspace page.",
 }
 
 

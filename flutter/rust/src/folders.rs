@@ -2,12 +2,13 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use shep_mail_core::{folders::Mailbox, mail_actions::connection_key, model::Account};
+pub(crate) mod changes;
 pub(crate) mod execute;
 #[cfg(test)]
 mod tests;
 pub(crate) use execute::{ImapCreation, execute};
 
-const COLUMNS: &str = "id,account_id,connection,parent,name,status,target,receipt,acknowledged,error,revision,created";
+const COLUMNS: &str = "id,account_id,connection,parent,name,status,target,receipt,acknowledged,error,revision,created,mutation";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Creation {
@@ -23,6 +24,7 @@ pub struct Creation {
     pub error: Option<String>,
     pub revision: i64,
     pub created: i64,
+    pub mutation: Option<changes::Mutation>,
 }
 
 fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<Creation> {
@@ -52,6 +54,18 @@ fn decode(row: &rusqlite::Row<'_>) -> rusqlite::Result<Creation> {
         error: row.get(9)?,
         revision: row.get(10)?,
         created: row.get(11)?,
+        mutation: row
+            .get::<_, Option<String>>(12)?
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        12,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })
+            })
+            .transpose()?,
     })
 }
 
@@ -94,13 +108,28 @@ pub fn options(db: &Connection) -> Result<serde_json::Value> {
         let (settings, names, catalogue) = row?;
         let account: Account = serde_json::from_str(&settings)?;
         let catalogue: Vec<Mailbox> = serde_json::from_str(&catalogue)?;
-        let labels: std::collections::BTreeMap<_, _> = catalogue
+        let mut labels: std::collections::BTreeMap<_, _> = catalogue
             .iter()
-            .map(|mailbox| (&mailbox.name, mailbox.encoding.display(&mailbox.name)))
+            .map(|mailbox| {
+                (
+                    mailbox.name.clone(),
+                    mailbox.encoding.display(&mailbox.name).into_owned(),
+                )
+            })
             .collect();
+        let tree = shep_mail_core::folders::Tree::new(&catalogue);
+        for node in &tree.nodes {
+            labels.insert(node.path.clone(), node.display_path.clone());
+        }
+        let change_names: Vec<String> =
+            if catalogue.is_empty() || account.protocol == shep_mail_core::model::Protocol::Pop3 {
+                serde_json::from_str(&names)?
+            } else {
+                tree.nodes.iter().map(|node| node.path.clone()).collect()
+            };
         result.push(serde_json::json!({ "account": account.id, "label":account.name, "email":account.email,
             "connection":connection_key(&account), "protocol":account.protocol,
-            "names":serde_json::from_str::<Vec<String>>(&names)?, "catalogue":catalogue, "parent_labels":labels }));
+            "names":serde_json::from_str::<Vec<String>>(&names)?, "change_names":change_names, "catalogue":catalogue, "parent_labels":labels }));
     }
     Ok(serde_json::to_value(result)?)
 }
@@ -174,6 +203,7 @@ pub fn admit(
         return Ok(saved);
     }
     let settings = crate::operations::stored_account(&tx, account)?;
+    changes::available(&tx, account)?;
     anyhow::ensure!(
         settings.protocol != shep_mail_core::model::Protocol::Pop3 || !name.contains('/'),
         "Use a single folder name and select its parent separately."
@@ -229,7 +259,7 @@ pub fn save(db: &Connection, before: &Creation, after: &Creation) -> Result<Crea
         .as_ref()
         .map(serde_json::to_string)
         .transpose()?;
-    anyhow::ensure!(db.execute("UPDATE folder_creations SET status=?1,target=?2,receipt=?3,acknowledged=?4,error=?5,revision=revision+1 WHERE id=?6 AND revision=?7", params![after.status,target,receipt,after.acknowledged,after.error,before.id,before.revision])? == 1,
+    anyhow::ensure!(db.execute("UPDATE folder_creations SET status=?1,target=?2,receipt=?3,acknowledged=?4,error=?5,revision=revision+1,mutation=?8 WHERE id=?6 AND revision=?7", params![after.status,target,receipt,after.acknowledged,after.error,before.id,before.revision,after.mutation.as_ref().map(serde_json::to_string).transpose()?])? == 1,
         "This folder request changed. Refresh Folder activity.");
     get(db, &before.id)?.context("The folder request was removed.")
 }
@@ -237,6 +267,11 @@ pub fn save(db: &Connection, before: &Creation, after: &Creation) -> Result<Crea
 pub fn decide(db: &mut Connection, id: &str, revision: i64, decision: &str) -> Result<Creation> {
     let tx = db.transaction()?;
     let before = get(&tx, id)?.context("This folder request is no longer available.")?;
+    if before.mutation.is_some() {
+        let saved = changes::decide(&tx, &before, revision, decision)?;
+        tx.commit()?;
+        return Ok(saved);
+    }
     anyhow::ensure!(
         before.revision == revision,
         "This folder request changed. Refresh Folder activity."
@@ -276,7 +311,7 @@ pub fn decide(db: &mut Connection, id: &str, revision: i64, decision: &str) -> R
 }
 
 pub fn recover(db: &Connection) -> Result<()> {
-    db.execute("UPDATE folder_creations SET status=CASE WHEN acknowledged=1 OR receipt IS NOT NULL THEN 'repair' WHEN status='planning' THEN 'queued' ELSE 'uncertain' END,error='The app closed before this request finished. Check its saved state before continuing.',revision=revision+1 WHERE status IN ('planning','running','checking')", [])?;
+    db.execute("UPDATE folder_creations SET status=CASE WHEN mutation IS NOT NULL THEN CASE WHEN json_extract(mutation,'$.receipt') IS NOT NULL THEN 'repair' WHEN status='planning' THEN 'queued' ELSE 'uncertain' END WHEN acknowledged=1 OR receipt IS NOT NULL THEN 'repair' WHEN status='planning' THEN 'queued' ELSE 'uncertain' END,error='The app closed before this request finished. Check its saved state before continuing.',revision=revision+1 WHERE status IN ('planning','running','checking')", [])?;
     Ok(())
 }
 

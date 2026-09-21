@@ -39,7 +39,11 @@ impl CreationApi for ImapCreation {
     }
 }
 
-async fn transition(db: &Database, before: &Creation, after: Creation) -> Result<Creation> {
+pub(super) async fn transition(
+    db: &Database,
+    before: &Creation,
+    after: Creation,
+) -> Result<Creation> {
     let original = before.clone();
     let desired = after.clone();
     let result = db.write(move |db| save(db, &original, &desired)).await;
@@ -54,7 +58,18 @@ async fn transition(db: &Database, before: &Creation, after: Creation) -> Result
         if saved.revision > before.revision && saved == expected {
             return Ok(saved);
         }
-        if saved == *before && after.acknowledged && !before.acknowledged {
+        if saved == *before
+            && after.acknowledged
+            && (!before.acknowledged
+                || after
+                    .mutation
+                    .as_ref()
+                    .is_some_and(|mutation| mutation.receipt.is_some())
+                    && before
+                        .mutation
+                        .as_ref()
+                        .is_some_and(|mutation| mutation.receipt.is_none()))
+        {
             return db.write(move |db| save(db, &saved, &after)).await;
         }
     }

@@ -84,7 +84,7 @@ impl Database {
                     .map_err(|_| anyhow::anyhow!("Cache connection failed. Reopen Shep."))?
                     .query_row("PRAGMA user_version", [], |r| r.get(0))?;
                 anyhow::ensure!(
-                    version <= 23,
+                    version <= 24,
                     "This cache requires a newer Shep version. Update before reopening it."
                 );
                 return Ok(profile);
@@ -107,9 +107,16 @@ impl Database {
             )?;
             let version: u32 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             anyhow::ensure!(
-                version <= 23,
+                version <= 24,
                 "This cache requires a newer Shep version. Update before reopening it."
             );
+            if version > 0 && version < 24 {
+                let existing: bool = writer.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='folder_creations')", [], |row| row.get(0))?;
+                let column: bool = writer.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('folder_creations') WHERE name='mutation')", [], |row| row.get(0))?;
+                if existing && !column {
+                    writer.execute("ALTER TABLE folder_creations ADD COLUMN mutation TEXT", [])?;
+                }
+            }
             if version > 0 && version < 17 {
                 let has_actions: bool = writer.query_row(
                     "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='individual_mail_actions')",

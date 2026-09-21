@@ -270,6 +270,11 @@ pub(crate) fn stored_slot(db: &Connection, id: &str) -> Result<String> {
 }
 /// Call only while holding the account operation lock, before provider work.
 pub(crate) fn check_binding(db: &Connection, id: &str, slot: Option<&str>) -> Result<()> {
+    crate::folders::changes::available(db, id)?;
+    check_folder_binding(db, id, slot)
+}
+
+pub(crate) fn check_folder_binding(db: &Connection, id: &str, slot: Option<&str>) -> Result<()> {
     crate::accounts::available(db, id)?;
     require_connected(db, id)?;
     let current: Option<String> = db

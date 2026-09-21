@@ -1,4 +1,5 @@
 use crate::{model::*, store::Store};
+mod activity;
 pub mod backups;
 mod bulk_history;
 #[path = "html_mail.rs"]
@@ -18,6 +19,9 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
         return Ok(());
     }
     seed_demo_contents(store).await?;
+    if std::env::args().any(|arg| arg == "--activity-history") {
+        activity::seed(store).await?;
+    }
     if std::env::args().any(|arg| arg == "--selection-mailbox") {
         selection_mailbox::seed(store).await?;
     }

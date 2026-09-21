@@ -1,6 +1,7 @@
 mod account;
 mod account_setup;
 mod action_toasts;
+mod activity;
 mod backups;
 mod bulk;
 mod calendar_actions;
@@ -92,6 +93,8 @@ pub enum SettingsTab {
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialog {
+    Activity,
+    ActivityBackup,
     FolderCreation,
     FolderChange,
     FolderHistory,
@@ -131,6 +134,14 @@ enum MailPane {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    OpenActivity,
+    RefreshActivity,
+    ActivityReview(crate::store::activity::Domain),
+    ActivityBackupSettings,
+    ActivityDraft(String),
+    ActivityPreferences,
+    ActivityCalendarConnections,
+    ActivitySettings(SettingsTab),
     FolderCreation(folder_creation::Message),
     TextContext(text_context::Request),
     Folders(folder_controls::Message),
@@ -386,6 +397,7 @@ pub struct App {
     mail_actions: mail_actions::Actions,
     mail_selection: mail_selection::State,
     bulk: bulk::State,
+    activity: activity::State,
     list_focus: bool,
     reader_selection: Option<Box<selectable::Content>>,
     folder_controls: folder_controls::State,
@@ -577,6 +589,7 @@ impl App {
                 mail_actions: Default::default(),
                 mail_selection: Default::default(),
                 bulk: Default::default(),
+                activity: Default::default(),
                 list_focus: true,
                 reader_selection: None,
                 folder_controls: Default::default(),
@@ -1104,9 +1117,37 @@ impl App {
         }
     }
     fn handle(&mut self, message: Message) -> Task<Message> {
+        if matches!(
+            &message,
+            Message::Backend(
+                Event::Changed
+                    | Event::Workspace(_)
+                    | Event::BulkUpdate(_)
+                    | Event::BulkStarted(..)
+                    | Event::MailAdmitted(..)
+                    | Event::BulkFinished(..)
+                    | Event::CreationChanged(_)
+                    | Event::CreationAdmitted(..)
+                    | Event::RemovalChanged(_)
+                    | Event::RemovalAdmitted(..)
+                    | Event::CalendarJob(..)
+                    | Event::CalendarAdmitted(..)
+                    | Event::CalendarJournal(..)
+                    | Event::OutgoingChanged
+                    | Event::SubmissionQueued(..)
+                    | Event::AccountSetupChanged(_)
+                    | Event::AccountSetupAdmitted(..)
+                    | Event::BackupFinished(_)
+            )
+        ) {
+            self.refresh_activity(true);
+        }
         #[cfg(feature = "test-support")]
         if let Message::Backend(event) = &message
-            && !matches!(event, Event::StoreTruth(..))
+            && !matches!(
+                event,
+                Event::StoreTruth(..) | Event::Activity(..) | Event::ActivityRecovery(..)
+            )
         {
             self.store_truth.changed();
         }
@@ -1264,6 +1305,7 @@ impl App {
                 }
                 Event::Ready(tx, workspace, google) => {
                     self.tx = Some(tx);
+                    self.refresh_activity(true);
                     self.load_account_setups(None);
                     self.send(Command::BulkJobs(0, 0));
                     self.send(Command::Folder(engine::folders::Request::History(0, 0)));
@@ -1766,6 +1808,10 @@ impl App {
                     self.continue_removal_review();
                 }
                 Event::OutgoingPage(request, result) => self.outgoing_page(request, result),
+                Event::Activity(request, result) => self.activity_observed(request, result),
+                Event::ActivityRecovery(request, result) => {
+                    return self.activity_recovery_observed(request, result);
+                }
                 Event::OutgoingChanged => {
                     if self.dialog == Some(Dialog::Outbox) {
                         self.load_outbox(self.outbox.page.offset);
@@ -2077,6 +2123,7 @@ impl App {
                 }
             }
             Message::Tick => {
+                self.refresh_activity(false);
                 self.advance_profile_login();
                 self.advance_profile_cycle();
                 self.advance_database_import();
@@ -2186,6 +2233,28 @@ impl App {
                 if tab == SettingsTab::Backups {
                     self.refresh_backup_history();
                 }
+            }
+            Message::OpenActivity => {
+                self.open_activity();
+            }
+            Message::RefreshActivity => self.reload_activity_view(),
+            Message::ActivityReview(domain) => return self.review_activity(domain),
+            Message::ActivityBackupSettings => return self.activity_backup_settings(),
+            Message::ActivityDraft(id) => {
+                self.dialog = None;
+                return self.handle(Message::Draft(id));
+            }
+            Message::ActivityPreferences => {
+                self.dialog = None;
+                return self.handle(Message::Tab(Tab::Preferences));
+            }
+            Message::ActivityCalendarConnections => {
+                self.dialog = None;
+                return self.handle(Message::SettingsTab(SettingsTab::Calendars));
+            }
+            Message::ActivitySettings(tab) => {
+                self.dialog = None;
+                return self.handle(Message::SettingsTab(tab));
             }
             Message::NewMessage => {
                 self.new_composer();
@@ -4165,6 +4234,7 @@ impl App {
                             | Action::Mail
                             | Action::Calendar
                             | Action::Settings
+                            | Action::Activity
                     )
                 ))
         {
@@ -4213,7 +4283,10 @@ impl App {
                         s.section
                             || matches!(
                                 s.action,
-                                Message::ToggleFolderGroup(..) | Message::FolderCreation(_)
+                                Message::ToggleFolderGroup(..)
+                                    | Message::FolderCreation(_)
+                                    | Message::OpenActivity
+                                    | Message::OpenOutbox
                             )
                     })
                 {
@@ -4270,6 +4343,7 @@ impl App {
                 }
                 Action::Calendar => self.handle(Message::Tab(Tab::Calendar)),
                 Action::Settings => self.handle(Message::Tab(Tab::Preferences)),
+                Action::Activity => self.handle(Message::OpenActivity),
                 Action::OpenMessage => {
                     if let Some(id) = self.selected.clone() {
                         self.handle(Message::OpenMessage(id))
@@ -4664,6 +4738,13 @@ impl App {
         }
         data["undo_failures"] = serde_json::json!(self.mail_actions.undo_failures().len());
         data["saved_toast"] = serde_json::json!(self.saved_toast.is_some());
+        data["activity"] = serde_json::json!({
+            "label": self.activity_label(),
+            "error": self.activity.error,
+            "review_error": self.activity.review_error,
+            "refreshing": self.activity.loading.is_some(),
+            "domains": self.activity.snapshot.entries.iter().filter(|entry| entry.pending || entry.attention).map(|entry| serde_json::json!({"name":entry.domain.label(),"pending":entry.pending,"attention":entry.attention})).collect::<Vec<_>>()
+        });
         data["contacts"] = serde_json::json!(self.preferences.contacts);
         data["sidebar_labels"] = serde_json::json!(
             self.sidebar_items()

@@ -46,6 +46,8 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Activity(u64),
+    ActivityRecovery(u64, crate::store::activity::Target),
     AdmitFolderCreation(String, folder_creation::Request),
     DecideFolderCreation(String, u64, bool),
     DismissFolderCreation(String, u64),
@@ -199,6 +201,8 @@ impl Command {
 }
 #[derive(Debug, Clone)]
 pub enum Event {
+    Activity(u64, Result<Arc<crate::store::activity::Snapshot>, String>),
+    ActivityRecovery(u64, Result<crate::store::activity::Recovery, String>),
     FolderCreated(u64, Result<crate::folders::Mailbox, String>),
     CreationAdmitted(u64, String, Result<crate::store::CreationJob, String>),
     CreationChanged(crate::store::CreationJob),
@@ -1434,6 +1438,25 @@ impl Engine {
                     .map(Arc::new)
                     .map_err(|e| e.to_string());
                 output.send(Event::OutgoingPage(request, result)).await?;
+            }
+            Command::Activity(request) => {
+                let result = self
+                    .store
+                    .activity()
+                    .await
+                    .map(Arc::new)
+                    .map_err(|error| error.to_string());
+                output.send(Event::Activity(request, result)).await?;
+            }
+            Command::ActivityRecovery(request, target) => {
+                let result = self
+                    .store
+                    .activity_recovery(target)
+                    .await
+                    .map_err(|error| error.to_string());
+                output
+                    .send(Event::ActivityRecovery(request, result))
+                    .await?;
             }
             Command::ResolveOutgoing(attempt, action, confirmed) => {
                 let result = self
