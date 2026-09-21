@@ -14,6 +14,7 @@ impl App {
                 column![
                     row![
                         action("Close reader", Message::ClosePreview),
+                        action(self.activity_label(), Message::OpenActivity),
                         space().width(Length::Fill),
                         muted(self.preferences.shortcuts.key(Action::ClosePreview))
                     ]
@@ -2425,6 +2426,8 @@ impl App {
     }
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
         let (title, subtitle) = match dialog {
+            Dialog::Activity => ("Activity", ""),
+            Dialog::ActivityBackup => ("Backup activity", ""),
             Dialog::FolderCreation if self.folder_creation_reviewing() => (
                 "Folder request",
                 "Progress and recovery for your saved request.",
@@ -2478,6 +2481,8 @@ impl App {
         .align_y(Alignment::Center);
         let mut body = column![header, line()].spacing(20);
         match dialog {
+            Dialog::Activity => body=body.push(self.activity_form()),
+            Dialog::ActivityBackup => body=body.push(self.activity_backup_form()),
             Dialog::FolderCreation => body=body.push(self.folder_creation_form()),
             Dialog::FolderChange => body=body.push(self.folder_change_form()),
             Dialog::FolderHistory => body=body.push(self.folder_history_form()),
@@ -2559,14 +2564,24 @@ impl App {
             Dialog::Restore=>body=body.push(form_field("Passphrase · encrypted copies only","Leave blank for an unencrypted copy",self.field("passphrase"),"passphrase",true)).push(muted("Existing mail, connection settings and passwords are kept. Missing account passwords are filled from the copy when available. Google sign-in and preferences stay unchanged.").size(11)).push(row![action("Cancel",Message::Close),button(text("Restore & merge").size(12)).padding([12,18]).style(primary).on_press(Message::ConfirmRestore)].spacing(10)),
         }
         if let Some((notice, true, _)) = &self.notice
-            && !matches!(dialog, Dialog::BulkHistory | Dialog::MoveRecovery)
+            && !matches!(
+                dialog,
+                Dialog::Activity
+                    | Dialog::ActivityBackup
+                    | Dialog::BulkHistory
+                    | Dialog::MoveRecovery
+            )
         {
             body = body.push(container(text(notice).size(11)).padding(12).style(subtle));
         }
         container(
             scrollable(container(body).padding(27))
                 .id("dialog-scroll")
-                .height(Length::Shrink),
+                .height(if dialog == Dialog::Activity {
+                    Length::Fixed((self.size.height - 100.).clamp(400., 650.))
+                } else {
+                    Length::Shrink
+                }),
         )
         .max_height((self.size.height - 65.).max(400.))
         .width(570.)

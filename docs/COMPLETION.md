@@ -1,5 +1,31 @@
 # Completion audit
 
+## Folder changes and desktop Activity integration, 21 September 2026
+
+This continuation is verified locally and remains under shipping verification.
+Flutter schema24 adds checked Rename, Move and Delete to the
+existing folder owner. Local confirmation precedes provider capacity and bounded
+50-row preparation/repair. Partial acknowledgements and unknown outcomes retain
+their exact recovery state; pending logical folders cannot become destinations.
+
+Desktop schema11 adds a visible Activity entry and remappable shortcut over the
+existing journals. Observations coalesce and retain displayed review targets;
+older folder requests and backup records open through exact checked identities,
+independently of recent loaded pages or another selected backup destination.
+
+Integrated verification passes 198 Flutter Rust tests and all 265 Flutter tests,
+with clean analysis/Clippy and strict docs. Both new compact folder goldens match
+the reviewed handoff. Desktop library verification passes 1,076 application tests
+with two ignored, plus 157 shared tests with eleven ignored. All four actual
+Activity flows and six affected shortcut regressions pass on the fresh root
+native binary. Root captures `efc6e9c87817`, `c3356c6c94bd` and `0bdc971667fe`
+were reviewed for light, compact dark and exact backup recovery controls.
+
+Evidence uses `actions-folder24-root-*` and `actions-activity11-root-*` logs.
+Limitations remain folder Undo/cross-account moves, broader client Activity
+parity, application lifecycle/Send preparation, live-provider/platform execution
+and final latency measurements. Existing pending requests remain in TODO.
+
 ## CalDAV controls and Calendar Undo continuation, 21 September 2026
 
 Implementation [`f6d9462`](https://github.com/sam-ruff/shep.so/commit/f6d9462d558bffe45353a82fe18c7f99f70b267e)

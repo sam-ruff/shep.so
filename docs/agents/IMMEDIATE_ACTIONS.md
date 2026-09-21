@@ -275,8 +275,10 @@ through bounded repair. Flutter schema23 uses the same creation contract
 through its existing local writer and account/provider ownership, with a
 logical pending sidebar entry and bounded recovery controls. See
 [Mobile folder creation](MOBILE_FOLDERS.md) for evidence and remaining
-platform execution. Checked folder changes beyond creation remain separate
-mobile work.
+platform execution. Flutter schema24 extends this owner to checked folder
+rename/move/delete, with frozen reviews, bounded metadata preparation and cache
+repair, and explicit uncertain-result inspection. Folder Undo and cross-account
+moves remain separate mobile work.
 
 Native group flags now persist their receipt before updating the cache. Cache
 repair and its Undo transition commit together; repair cannot repeat STORE or

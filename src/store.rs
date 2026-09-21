@@ -1,5 +1,6 @@
 pub mod account_setup;
 mod action_work;
+pub mod activity;
 pub(crate) mod backup_history;
 mod bulk;
 pub(crate) use action_work::{ReadyWork, Work, WorkPage};
@@ -56,7 +57,7 @@ pub struct Store(
     Option<Arc<crate::cache_cipher::ownership::Guard>>,
 );
 
-pub(crate) const DATABASE_VERSION: u32 = 10;
+pub(crate) const DATABASE_VERSION: u32 = 11;
 /// Plain-text characters the reader loads per page of a long message.
 pub const READER_BODY_PAGE: usize = 32_000;
 
@@ -263,6 +264,7 @@ impl Store {
         }
         let tx = conn.transaction()?;
         calendar_actions::schema(&tx)?;
+        activity::schema(&tx)?;
         mail_lineage::schema(&tx)?;
         tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
         tx.commit()?;
@@ -1175,6 +1177,8 @@ pub(crate) fn action_schema(c: &Connection) -> anyhow::Result<()> {
     bulk::schema(c)?;
     calendar_actions::schema(c)?;
     folder_creation::schema(c)?;
+    backup_history::schema(c)?;
+    activity::schema(c)?;
     mail_lineage::schema(c)
 }
 

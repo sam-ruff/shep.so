@@ -744,6 +744,7 @@ async fn projected_reads_do_not_request_obsolete_bodies_and_query_carries_intent
     app.request_conversation(None);
     assert!(reads.try_recv().is_err());
     let _ = app.handle(Message::Backend(Event::Changed));
+    assert!(matches!(reads.try_recv().unwrap(), Command::Activity(_)));
     let Command::Query(_, query, false) = reads.try_recv().unwrap() else {
         panic!("Expected query")
     };

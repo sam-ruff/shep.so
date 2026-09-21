@@ -1,5 +1,15 @@
 # Shep development instructions
 
+Desktop Activity observes existing journals and opens their exact retained
+recovery targets. Keep its positive status indexes and coalesced observations;
+an older folder or backup must remain reachable outside recent loaded pages.
+Activity never creates another dispatcher or authorises provider retries itself.
+Flutter schema24 folder changes use the existing folder owner. Admit the checked
+review before provider capacity, freeze and repair at most 50 metadata rows per
+transaction, and retain exact receipts and account fences. An unknown rename
+cannot establish destination UIDs; recovery must preserve cached mail and require
+checked state. Keep source-replacement, partial-delete and restart regressions.
+
 Shared CalDAV HTTP code lives in `shared/calendar-core/src/caldav.rs` behind
 `http`. Discovery accepts only successful properties for the exact collection;
 another response cannot grant write access. Existing writes require an explicit

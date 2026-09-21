@@ -276,6 +276,9 @@ fn validate_schema_in(
         "This database version is not supported. Use matching, current Shep versions on both devices."
     );
     let mut expected = expected.clone();
+    if version < 11 {
+        expected.retain(|name, _| !name.starts_with("activity_"));
+    }
     if version < 10 {
         expected.remove("connection_removal_request");
         expected.remove("connection_removal_pending");

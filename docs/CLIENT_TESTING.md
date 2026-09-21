@@ -1,5 +1,10 @@
 # Client testing
 
+Desktop common Activity regressions are saved as `test_common_activity_*` in
+`scripts/e2e.py`. They use real pointer/keyboard controls, restart, held providers,
+older folder records and exact backup destinations. Keep indexed 100,000-history
+observations separate from input-to-pixel timing claims.
+
 Immediate-action receipt scenarios must cover server acknowledgement followed by
 a failed cache transaction, restart before cache repair, and Undo requested
 during that gap. Repair must preserve the original receipt, touch only accepted

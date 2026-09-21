@@ -43,6 +43,14 @@ fn wrap(message: Message) -> super::Message {
 }
 
 impl App {
+    pub(super) fn open_creation_activity(&mut self, job: crate::store::CreationJob) {
+        if self.folder_creation.removed.contains(&job.account) {
+            self.activity.review_error = Some("This account was removed. Refresh Activity.".into());
+            return;
+        }
+        self.folder_creation.review = Some(job);
+        self.open(Dialog::FolderCreation);
+    }
     pub(super) fn folder_creation_reviewing(&self) -> bool {
         self.folder_creation.review.is_some()
     }
@@ -645,7 +653,7 @@ impl App {
         let state = &self.folder_creation;
         serde_json::json!({"open":self.dialog == Some(Dialog::FolderCreation),
             "account":state.account,"parent":state.parent,"name":state.name,
-            "busy":state.busy,"error":state.error,"saved":self.workspace.creation_jobs})
+            "busy":state.busy,"error":state.error,"saved":self.workspace.creation_jobs,"review":state.review})
     }
 }
 

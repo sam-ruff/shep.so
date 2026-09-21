@@ -212,6 +212,8 @@ impl CommandSender {
             #[cfg(feature = "test-support")]
             Command::StoreTruth(..) => &self.reads,
             Command::Query(..)
+            | Command::Activity(..)
+            | Command::ActivityRecovery(..)
             | Command::BackupHistory(..)
             | Command::Profiles(..)
             | Command::MoveRecoveries(..)

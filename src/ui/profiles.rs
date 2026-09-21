@@ -26,6 +26,9 @@ pub(super) struct State {
     error: Option<String>,
 }
 impl State {
+    pub(super) fn activity(&self) -> (bool, bool) {
+        (self.busy, self.error.is_some())
+    }
     pub fn changing(&self) -> bool {
         self.busy && self.changing
     }

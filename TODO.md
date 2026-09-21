@@ -88,6 +88,19 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   foreground/disposal fences and removes read-only connection probes from the
   global credential lifecycle FIFO. Send preparation and Calendar Undo remain
   explicit later migrations; these checkpoints do not complete the full goal.
+  Root now integrates frozen mobile folder24 and desktop Activity11 together.
+  Folder confirmation freezes scalar review data before 50-row background
+  preparation; Activity opens exact retained recovery targets. Combined Rust,
+  real controls and schema migration gates are running before shipping.
+  Integrated folder24 passes all 198 mobile Rust and 265 Flutter tests, with
+  clean analysis/Clippy and reviewed compact goldens. Desktop Activity's combined
+  library, native build and recovery controls remain the shipping gate.
+  Desktop integration passes 1,076 application library tests plus 157 shared
+  tests, four actual Activity flows and six shortcut regressions. Light/compact
+  dark/exact-backup captures are reviewed and Clippy passes. Shipping hooks are
+  next. Mobile lifecycle v1 remains unintegrated: review found a validation-to-
+  probe race after releasing the credential FIFO; the lane is adding native
+  attempt-bound dispatch before handoff.
 
   First migration implemented: common projection outcomes, native bulk review and
   confirmation during pending individual writes, pre-admission Undo, and calendar

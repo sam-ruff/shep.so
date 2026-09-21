@@ -107,6 +107,9 @@ pub(super) struct State {
     passwords: Option<crate::profile_sync::vault::Report>,
 }
 impl State {
+    pub(super) fn activity_error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
     pub(super) fn connection_removed(&mut self) {
         self.close_account_reviews();
         self.cycle = None;

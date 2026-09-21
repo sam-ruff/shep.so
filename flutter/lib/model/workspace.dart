@@ -347,8 +347,10 @@ class Workspace extends ChangeNotifier {
     'Drafts',
     'Trash',
     'Spam',
-    ...?accountRepository?.folderNames.values.expand(
-      (names) => names.map((n) => n == 'INBOX' ? 'Inbox' : n),
+    ...?accountRepository?.folderNames.entries.expand(
+      (entry) =>
+          (folderCreation?.visibleNames(entry.key, entry.value) ?? entry.value)
+              .map((n) => n == 'INBOX' ? 'Inbox' : n),
     ),
   }.toList();
   void setForeground(bool active) {

@@ -263,7 +263,7 @@ async fn version_eight_drafts_keep_plain_attachments_when_inline_metadata_is_add
         .read(|db| {
             assert_eq!(
                 db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
-                23
+                24
             );
             assert_eq!(
                 db.query_row(

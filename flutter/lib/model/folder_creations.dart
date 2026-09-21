@@ -15,6 +15,54 @@ class FolderCreations extends ChangeNotifier {
   bool _disposed = false, _foreground = true;
   int _observation = 0;
   Timer? _timer;
+  bool get supportsChanges => repository is FolderChangeRepository;
+  Iterable<String> visibleNames(String account, Iterable<String> names) {
+    final hidden = <String>{
+      for (final entry in entries.where(
+        (entry) =>
+            entry.account == account &&
+            entry.pending &&
+            entry.status != 'rejected' &&
+            entry.mutation != null,
+      ))
+        for (final member
+            in (entry.plan?['members'] as List? ?? const []).cast<Map>())
+          member['mailbox']['name'] as String,
+    };
+    return names.where((name) => !hidden.contains(name));
+  }
+
+  Future<Map<String, dynamic>> reviewChange(
+    FolderAccount account,
+    String source,
+    Object action,
+  ) {
+    if (_disposed || !_foreground) {
+      throw StateError('Reopen the workspace before reviewing a folder.');
+    }
+    return (repository as FolderChangeRepository).reviewFolderChange(
+      account,
+      source,
+      action,
+    );
+  }
+
+  Future<void> admitChange(String id, Map<String, dynamic> review) async {
+    if (_disposed || !_foreground) {
+      throw StateError('Reopen the workspace before changing a folder.');
+    }
+    final result = await (repository as FolderChangeRepository)
+        .admitFolderChange(id, review);
+    if (_disposed) return;
+    ++_observation;
+    entries = [
+      result,
+      ...entries.where((entry) => entry.id != result.id),
+    ].take(50).toList();
+    _changed();
+    if (_foreground) unawaited(_execute(result));
+  }
+
   String parentLabel(FolderCreation entry) {
     final parent = entry.parent;
     if (parent == null) return 'Account root';
@@ -137,7 +185,13 @@ class FolderCreations extends ChangeNotifier {
     var completed = false;
     try {
       final result = await repository.executeFolder(entry);
-      completed = result.status == 'succeeded';
+      completed =
+          result.status == 'succeeded' ||
+          result.mutation != null &&
+              (result.status == 'queued' ||
+                  result.status == 'repair' &&
+                      result.hasReceipt &&
+                      result.revision > entry.revision);
       failures.remove(entry.id);
     } catch (_) {
       failures[entry.id] =

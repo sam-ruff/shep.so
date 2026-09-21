@@ -81,6 +81,86 @@ def mail_row_y(index, state=None):
 
 
 class NativeFlows(unittest.TestCase):
+    def test_common_activity_reviews_backup_failure_from_another_selected_destination(self):
+        self.mcp.call("desktop.start", backup_run="recover")
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), click(1080, 334),
+                       check("backup_run.0.status", "Saved"),
+                       check("backup_run.1.status.Failed", "acknowledgment was lost", "contains"),
+                       key("ctrl+1"), check("activity.label", "Activity · attention"),
+                       click(85, 830), check("dialog", "Activity"),
+                       shot("activity-backup-other-destination"), click(530, 454), wait(100),
+                       check("activity.refreshing", False), check("activity.review_error", None),
+                       click(945, 322),
+                       check("dialog", "ActivityBackup"), shot("activity-backup-exact-destination"))
+        state = self.mcp.call("desktop.state")
+        target = state["backup_run"][1]
+        self.assertNotEqual(state["backup_selected"], target["id"])
+        self.mcp.batch(click(560, 555), check("tab", "Preferences"),
+                       check("settings_tab", "Backups"), check("backup_selected", target["id"]),
+                       check("backup_activity.open", True),
+                       check("backup_activity.entries.0.name", "Second copy"),
+                       check("backup_activity.entries.0.outcome", "NeedsReview"),
+                       {"type":"hover", "x":1300, "y":760}, {"type":"scroll", "amount":30},
+                       {"type":"scroll", "amount":-3},
+                       wait(100), shot("activity-backup-recovery-controls"))
+
+    def test_common_activity_opens_older_folder_and_exact_removed_backup_destination(self):
+        self.mcp.call("desktop.start", activity_history=True, held_provider_slots=True)
+        self.mcp.batch(check("activity.label", "Activity · attention"))
+        state = self.mcp.call("desktop.state")
+        self.assertEqual(len(state["folder_creation"]["saved"]), 32)
+        self.assertNotIn("activity-folder-00", [job["id"] for job in state["folder_creation"]["saved"]])
+        self.mcp.batch(click(85, 830), check("dialog", "Activity"),
+                       shot("activity-older-attention"), click(945, 322),
+                       check("dialog", "FolderCreation"),
+                       check("folder_creation.review.id", "activity-folder-00"),
+                       shot("activity-exact-older-folder"), key("Escape"),
+                       click(85, 830), check("dialog", "Activity"),
+                       click(945, 376), check("dialog", "ActivityBackup"),
+                       shot("activity-exact-retired-backup"))
+
+    def test_common_activity_retains_journal_attention_navigation_restart_and_keyboard(self):
+        self.mcp.call("desktop.start", persistent=True, outgoing_mail=True, held_provider_slots=True)
+        self.mcp.batch(check("activity.label", "Activity · attention"),
+                       key("Tab"), check("sidebar_focus", True))
+        state = self.mcp.call("desktop.state")
+        self.mcp.batch(keys(*(["Down"] * len(state["sidebar_rows"]))),
+                       check("dialog", None),
+                       key("Return"), check("dialog", "Activity"),
+                       shot("activity-native-tab-arrow-enter"), key("Escape"))
+        self.mcp.batch(check("activity.label", "Activity · attention"),
+                       click(85, 830), check("dialog", "Activity"), wait(100),
+                       shot("activity-outgoing-light"), {"type":"hover", "x":945, "y":322},
+                       {"type":"mouse_down"}, wait(1200), {"type":"mouse_up"}, check("dialog", "Outbox"),
+                       check("outgoing_rows.0.delivery", "Uncertain"), shot("activity-outbox-recovery"), key("Escape"),
+                       key("ctrl+2"), check("tab", "Calendar"),
+                       check("activity.label", "Activity · attention"),
+                       click(85, 830), check("dialog", "Activity"),
+                       shot("activity-retained-after-navigation"), key("Escape"),
+                       key("ctrl+comma"), check("tab", "Preferences"),
+                       click(645, 156), check("settings_tab", "Shortcuts"),
+                       {"type": "hover", "x": 1190, "y": 760},
+                       {"type": "scroll", "amount": 30}, wait(120),
+                       click(905, 780), key("F8"), check("shortcuts.Activity", "F8"),
+                       check("preferences_saved", True), key("ctrl+1"),
+                       key("F8"), check("dialog", "Activity"),
+                       shot("activity-keyboard-open"), key("Escape"))
+        self.mcp.call("desktop.restart")
+        self.mcp.batch(check("activity.label", "Activity · attention"),
+                       key("F8"), check("dialog", "Activity"),
+                       shot("activity-retained-after-restart"))
+
+    def test_common_activity_dark_compact_attention(self):
+        self.mcp.call("desktop.start", outgoing_mail=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"),
+                       click(690, 366), check("dark", True),
+                       {"type": "resize", "width": 900, "height": 640},
+                       key("ctrl+1"), check("tab", "Mail"),
+                       check("activity.label", "Activity · attention"),
+                       click(85, 550), check("dialog", "Activity"),
+                       wait(100), shot("activity-outgoing-dark-compact"))
+
     def setUp(self):
         self.mcp = McpClient()
         result = self.mcp.call("desktop.start")
@@ -2079,15 +2159,15 @@ class NativeFlows(unittest.TestCase):
                        check("print_pending",False), check("notice","isolated print browser","contains"),
                        click(1400,895), check("notice",None), key("ctrl+comma"), check("tab","Preferences"),
                        click(645,156), check("settings_tab","Shortcuts"), {"type":"hover","x":1110,"y":690},
-                       {"type":"scroll","amount":30}, wait(100), click(905,780), key("F6"),
-                       check("shortcuts.Print","F6"), click(1070,780), key("alt+p"), check("shortcut_secondary.Print","Alt+P"),
+                       {"type":"scroll","amount":30}, wait(100), click(905,720), key("F6"),
+                       check("shortcuts.Print","F6"), click(1070,720), key("alt+p"), check("shortcut_secondary.Print","Alt+P"),
                        check("preferences_saved",True), shot("print-shortcuts"),
                        key("ctrl+1"), check("tab","Mail"), key("ctrl+p"), wait(80), check("print_revision",1),
                        key("F6"), check("print_revision",2), check("print_pending",False),
                        click(1400,895), check("notice",None), key("alt+p"), check("print_revision",3), check("print_pending",False),
                        click(1400,895), check("notice",None), key("ctrl+comma"), check("tab","Preferences"),
                        {"type":"hover","x":1110,"y":690}, {"type":"scroll","amount":30}, wait(100),
-                       click(988,780), check("shortcuts.Print",""), click(1157,780), check("shortcut_secondary.Print",""),
+                       click(988,720), check("shortcuts.Print",""), click(1157,720), check("shortcut_secondary.Print",""),
                        key("ctrl+1"), check("tab","Mail"), key("F6"), key("alt+p"), wait(80), check("print_revision",3))
 
     def test_print_cancel_and_compact_dark_attachment_layout(self):
@@ -2198,8 +2278,8 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+a"), key("BackSpace"), check("total",120), key("Escape"),
                        key("ctrl+comma"), check("tab", "Preferences"), click(645,156), check("settings_tab", "Shortcuts"),
                        {"type":"hover","x":1110,"y":690}, {"type":"scroll","amount":30}, wait(100),
-                       click(905,720), key("F4"), check("shortcuts.Forward", "F4"),
-                       click(1070,720), key("alt+f"), check("shortcut_secondary.Forward", "Alt+F"), check("preferences_saved",True),
+                       click(905,660), key("F4"), check("shortcuts.Forward", "F4"),
+                       click(1070,660), key("alt+f"), check("shortcut_secondary.Forward", "Alt+F"), check("preferences_saved",True),
                        key("ctrl+1"), check("tab", "Mail"), key("ctrl+k"), check("focused_input","search"),
                        key("F4"), key("alt+f"), check("dialog",None), check("query", "f"),
                        key("ctrl+a"), key("BackSpace"),
@@ -2208,8 +2288,8 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"), check("dialog",None), key("alt+f"), check("composer.visible", True),
                        key("Escape"), check("composer.visible",False), check("draft_count",2), key("ctrl+comma"), check("tab","Preferences"),
                        click(645,156), check("settings_tab","Shortcuts"), {"type":"hover","x":1110,"y":690},
-                       {"type":"scroll","amount":30}, wait(100), click(988,720), check("shortcuts.Forward",""),
-                       click(1157,720), check("shortcut_secondary.Forward",""), check("preferences_saved",True),
+                       {"type":"scroll","amount":30}, wait(100), click(988,660), check("shortcuts.Forward",""),
+                       click(1157,660), check("shortcut_secondary.Forward",""), check("preferences_saved",True),
                        key("ctrl+1"), check("tab","Mail"), key("F4"), key("alt+f"), key("f"), check("dialog",None),
                        check("draft_count",2))
 
@@ -2261,15 +2341,15 @@ class NativeFlows(unittest.TestCase):
     def test_find_remap_secondary_binding_disable_and_mouse_close(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(645,156), check("settings_tab", "Shortcuts"),
                        {"type":"hover","x":1200,"y":700}, {"type":"scroll","amount":30}, wait(150), shot("find-shortcut-settings"),
-                       click(905,660), key("F3"), check("shortcuts.Find", "F3"), check("preferences_saved", True),
-                       click(1070,660), key("ctrl+f"), check("shortcut_secondary.Find", "Mod+F"), check("preferences_saved", True),
+                       click(905,600), key("F3"), check("shortcuts.Find", "F3"), check("preferences_saved", True),
+                       click(1070,600), key("ctrl+f"), check("shortcut_secondary.Find", "Mod+F"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), key("F3"), check("find_open", True), check("focused_input", "find-message"),
                        type_text("conversation"), check("find_query", "conversation"), check("find_pending", False),
                        shot("find-remapped-open"), click(1388,158), check("find_open", False),
                        key("ctrl+f"), check("find_open", True), key("Escape"), check("find_open", False),
                        key("ctrl+comma"), check("tab", "Preferences"),
                        {"type":"hover","x":1200,"y":700}, {"type":"scroll","amount":30}, wait(100),
-                       click(988,660), check("shortcuts.Find", ""), click(1157,660), check("shortcut_secondary.Find", ""),
+                       click(988,600), check("shortcuts.Find", ""), click(1157,600), check("shortcut_secondary.Find", ""),
                        check("preferences_saved", True), key("ctrl+1"), check("tab", "Mail"),
                        key("F3"), wait(80), check("find_open", False), key("ctrl+f"), wait(80), check("find_open", False))
 
@@ -4678,7 +4758,7 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+comma"), check("tab", "Preferences"), wait(80),
                        click(690, 366), check("dark", True), click(645, 156), check("settings_tab", "Shortcuts"),
                        {"type":"hover", "x":1200, "y":700}, {"type":"scroll", "amount":30}, wait(150),
-                       click(920, 480), key("alt+a"), check("shortcuts.SelectAll", "Alt+A"),
+                       click(920, 420), key("alt+a"), check("shortcuts.SelectAll", "Alt+A"),
                        check("preferences_saved", True), shot("selection-shortcut-remapped"),
                        key("ctrl+1"), check("tab", "Mail"), wait(80), click(400, mail_row_y(0)),
                        key("ctrl+a"), check("mail_selection.mode", False), key("alt+a"),
@@ -5046,7 +5126,7 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"), key("ctrl+comma"), check("tab","Preferences"), wait(80),
                        click(645,156), check("settings_tab","Shortcuts"),
                        {"type":"hover","x":1200,"y":700},{"type":"scroll","amount":30},wait(150),
-                       click(920,540),key("alt+d"),check("shortcuts.Delete","Alt+D"),check("preferences_saved",True),
+                       click(920,480),key("alt+d"),check("shortcuts.Delete","Alt+D"),check("preferences_saved",True),
                        key("ctrl+1"),check("tab","Mail"),wait(80),
                        click(415,154),type_text("invoice"),check("total",1),key("alt+d"),
                        key("ctrl+a"),key("BackSpace"),check("total",120),check("action_toast",None),
@@ -5064,12 +5144,12 @@ class NativeFlows(unittest.TestCase):
                        click(85, 115), check("folder", "INBOX"), check("total", 121),
                        key("ctrl+comma"), check("tab", "Preferences"), click(645, 156), check("settings_tab", "Shortcuts"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(150), shot("sidebar-inbox-key-settings"),
-                       click(988, 600), check("shortcuts.Inbox", ""), check("shortcuts.Delete", "Mod+D"), check("preferences_saved", True),
+                       click(988, 540), check("shortcuts.Inbox", ""), check("shortcuts.Delete", "Mod+D"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 577), check("folder", "Projects"),
                        key("i"), wait(80), check("folder", "Projects"),
                        key("ctrl+comma"), check("tab", "Preferences"),
                        {"type": "hover", "x": 1200, "y": 700}, {"type": "scroll", "amount": 30}, wait(120),
-                       click(920, 600), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
+                       click(920, 540), key("alt+i"), check("shortcuts.Inbox", "Alt+I"), check("preferences_saved", True),
                        key("ctrl+1"), check("tab", "Mail"), click(100, 577), check("folder", "Projects"), key("alt+i"), check("folder", "INBOX"))
 
     def test_mail_navigation_clears_old_folder_highlight(self):

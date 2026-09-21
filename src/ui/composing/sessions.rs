@@ -22,6 +22,17 @@ impl Session {
 }
 
 impl Composer {
+    pub(in crate::ui) fn activity_target(&self) -> Option<(String, bool)> {
+        let sessions = || std::iter::once(&self.current).chain(self.parked.values());
+        sessions()
+            .find(|session| session.save_error.is_some())
+            .map(|session| (session.draft.id.clone(), true))
+            .or_else(|| {
+                sessions()
+                    .find(|session| session.dirty.is_some() || session.pending.is_some())
+                    .map(|session| (session.draft.id.clone(), false))
+            })
+    }
     pub(in crate::ui) fn save_error(&self, id: &str) -> Option<&str> {
         let session = if self.current.draft.id == id {
             Some(&self.current)

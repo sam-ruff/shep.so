@@ -40,6 +40,9 @@ struct Pending {
     installing: Option<InstallPhase>,
 }
 impl State {
+    pub(super) fn activity(&self) -> (bool, bool) {
+        (self.pending(), self.error.is_some())
+    }
     pub fn pending(&self) -> bool {
         self.pending.is_some()
     }

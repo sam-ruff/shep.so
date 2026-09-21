@@ -26,6 +26,9 @@ pub(super) struct Pending {
 }
 
 impl State {
+    pub(super) fn activity(&self) -> (bool, bool) {
+        (self.pending.is_some(), self.error.is_some())
+    }
     fn begin(&mut self) -> u64 {
         self.serial += 1;
         self.pending = Some(Pending {

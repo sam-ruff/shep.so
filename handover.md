@@ -2,6 +2,27 @@
 
 ## Current immediate-action continuation
 
+Root now has folder24 and native Activity11 integrated, uncommitted. Folder24
+combined Rust passes198; four folder controls/golden regeneration pass and both
+captures match frozen hashes. Full Flutter, native library and fresh native UI
+build are running under `actions-folder24-root-*` and `actions-activity11-root-*`.
+Activity came from `action-native-activity/artifacts/activity-handoff/native.applypatch`
+(SHA `08d770d6adc945f6f38cbe0ec0e4b44183247b59ece47bb13dfde31f4aa39be1`),
+with its stale TODO/docs hunks excluded and merged manually. Preserve the previous
+root indexed calendar queries and checked observation/credential recovery fixes.
+Folder24 final combined gates pass198 Rust and265 Flutter, analysis/Clippy and
+strict docs. Root reviewed both regenerated folder captures. Activity library
+session39453, native build72463 and Clippy log `actions-activity11-root-clippy.log`
+are the pending integrated desktop gates; run four `test_common_activity_*`
+native flows on the freshly built root target/test-ui/shep before shipping.
+Those desktop gates now pass: application1076/shared157, four actual Activity
+flows, six shortcuts and all-target Clippy. Root captures reviewed:
+`efc6e9c87817`, `c3356c6c94bd`, `0bdc971667fe`. Normal commit hooks are next.
+Do not integrate lifecycle-v1: its separate validate/Probe calls leave a removal
+race. action_scope is preparing v2 with native attempt-bound dispatch and
+nonblocking/consistent permit ordering. Browser CalDAV19 and Google restoration
+remain isolated in bulk_trace and review_ordering lanes.
+
 Checkpoint `f6d9462d558bffe45353a82fe18c7f99f70b267e` is pushed to main with
 1,597 normal-hook Rust executions passing, 15 ignored. Root gates: Flutter260,
 Flutter Rust185, browser266 units, three Undo control scenarios, build, analysis,

@@ -255,6 +255,15 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
                       onTap: () => select(() => w.navigate(folder)),
                     ),
                   if (w.folderCreation case final controller?) ...[
+                    if (controller.supportsChanges)
+                      sidebarItem(
+                        'Manage folders',
+                        icon: 'settings',
+                        onTap: () {
+                          Navigator.pop(context);
+                          unawaited(showFolderChange(context, controller));
+                        },
+                      ),
                     sidebarItem(
                       'New folder',
                       icon: 'plus',

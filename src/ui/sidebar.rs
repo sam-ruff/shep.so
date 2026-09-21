@@ -35,6 +35,13 @@ impl App {
         self.sidebar_folder(action)
     }
     pub(super) fn reveal_sidebar_focus(&self) -> Task<Message> {
+        if self
+            .sidebar_items()
+            .get(self.sidebar_index)
+            .is_some_and(|item| matches!(item.action, Message::OpenActivity))
+        {
+            return Task::none();
+        }
         self.sidebar_items()
             .get(self.sidebar_index)
             .map(|item| Task::done(Message::RevealSidebar(item.widget_id(), 0)))
@@ -337,6 +344,15 @@ impl App {
                 }
             }
         }
+        items.push(SidebarItem {
+            account_email: None,
+            label: "Activity".into(),
+            icon: "clock",
+            action: Message::OpenActivity,
+            active: self.dialog == Some(Dialog::Activity),
+            depth: 0,
+            section: false,
+        });
         items
     }
     pub(super) fn sidebar(&self) -> Element<'_, Message> {
@@ -387,6 +403,9 @@ impl App {
         .spacing(3)
         .width(Length::Fill);
         for (index, item) in self.sidebar_items().into_iter().enumerate() {
+            if matches!(item.action, Message::OpenActivity) {
+                continue;
+            }
             let row_id = item.widget_id();
             if item.section {
                 content = content.push(space().height(17));
@@ -534,6 +553,39 @@ impl App {
                             .spacing(4)
                     )),
                 line(),
+                button(
+                    row![
+                        icon("clock", 20.),
+                        column![
+                            text("Activity").size(12).line_height(1.),
+                            text(match self.activity_label() {
+                                "Activity · attention" => "Needs attention",
+                                "Activity · pending" => "Pending work",
+                                _ => "View saved work",
+                            })
+                            .size(11)
+                            .line_height(1.)
+                        ]
+                        .spacing(3)
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                )
+                .padding([12, 10])
+                .width(Length::Fill)
+                .style(
+                    if self.sidebar_focus
+                        && self
+                            .sidebar_items()
+                            .get(self.sidebar_index)
+                            .is_some_and(|item| matches!(item.action, Message::OpenActivity))
+                    {
+                        selected
+                    } else {
+                        ghost
+                    }
+                )
+                .on_press(Message::OpenActivity),
                 button(
                     row![
                         icon("settings", 20.),

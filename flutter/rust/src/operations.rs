@@ -186,6 +186,15 @@ pub enum Request {
     Accounts,
     FolderCreations,
     FolderOptions,
+    ReviewFolderChange {
+        account: String,
+        source: String,
+        action: shep_mail_core::folder_actions::Action,
+    },
+    AdmitFolderChange {
+        id: String,
+        review: crate::folders::changes::Review,
+    },
     WaitFolder {
         id: String,
         revision: i64,
@@ -740,8 +749,10 @@ async fn value<T: serde::Serialize>(result: Result<T>) -> Result<Value> {
 pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
     let db = &profile.database;
     match request {
-        Request::FolderCreations => db.read(|db| Ok(serde_json::to_value(crate::folders::history(db)?)?)).await,
+        Request::FolderCreations => db.write(|db| { crate::folders::changes::cleanup(db)?; Ok(serde_json::to_value(crate::folders::history(db)?)?) }).await,
         Request::FolderOptions => db.read(crate::folders::options).await,
+        Request::ReviewFolderChange { account, source, action } => db.read(move |db| Ok(serde_json::to_value(crate::folders::changes::review(db,&account,&source,action)?)?)).await,
+        Request::AdmitFolderChange { id, review } => db.write(move |db| Ok(serde_json::to_value(crate::folders::changes::admit(db,&id,review)?)?)).await,
         Request::WaitFolder { id, revision } => db.write(move |db| {
             let before = crate::folders::get(db, &id)?.context("This folder request is no longer available.")?;
             anyhow::ensure!(before.revision == revision, "This folder request changed. Refresh its status.");
@@ -768,6 +779,12 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             };
             let job = db.read(move |db| crate::folders::get(db, &id)?.context("This folder request is no longer available.")).await?;
             anyhow::ensure!(matches!(job.status.as_str(), "queued" | "waiting" | "checking" | "repair"), "Review this folder request before continuing.");
+            if job.mutation.as_ref().is_some_and(|mutation| !mutation.prepared) && matches!(job.status.as_str(),"queued"|"waiting") {
+                return db.write(move |db| Ok(serde_json::to_value(crate::folders::changes::prepare(db,&job)?)?)).await;
+            }
+            if job.status != "checking" && job.mutation.as_ref().is_some_and(|mutation| mutation.receipt.is_some() && mutation.observed) {
+                return db.write(move |db| Ok(serde_json::to_value(crate::folders::changes::repair(db,&job)?)?)).await;
+            }
             if job.receipt.is_some() && matches!(job.status.as_str(), "repair" | "checking") {
                 return db.write(move |db| Ok(serde_json::to_value(crate::folders::apply_receipt(db, &job)?)?)).await;
             }
@@ -778,10 +795,14 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
                     let mut after = job.clone();
                     after.status = if job.acknowledged { "repair" } else if matches!(job.status.as_str(), "queued" | "waiting") { "rejected" } else { "uncertain" }.into();
                     after.error = Some("The account connection changed. Stop tracking this request and open New folder again.".into());
+                    if let Some(mutation) = after.mutation.as_mut() { mutation.checked = true; }
                     Ok(serde_json::to_value(crate::folders::save(db, &job, &after)?)?)
                 }).await,
             };
             if account.protocol == Protocol::Pop3 {
+                if job.mutation.is_some() {
+                    return Ok(serde_json::to_value(crate::folders::changes::execute::execute(db,None,job).await?)?);
+                }
                 return db.write(move |db| Ok(serde_json::to_value(crate::folders::create_local(db, &job)?)?)).await;
             }
             anyhow::ensure!(matches!(job.status.as_str(), "queued" | "waiting" | "checking" | "repair"), "Review this folder request before continuing.");
@@ -789,7 +810,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
                 return db.write(move |db| Ok(serde_json::to_value(crate::folders::wait(db, &job)?)?)).await;
             };
             let account_id = account.id.clone();
-            if db.read(move |db| crate::connections::check_binding(db, &account_id, credential_slot.as_deref())).await.is_err() || password.is_none() {
+            if db.read(move |db| crate::connections::check_folder_binding(db, &account_id, credential_slot.as_deref())).await.is_err() || password.is_none() {
                 return db.write(move |db| {
                     let mut after = job.clone();
                     if matches!(after.status.as_str(), "queued" | "waiting") { after.status = "waiting".into(); }
@@ -798,6 +819,10 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
                 }).await;
             }
             let password = password.context("Reconnect this account before creating its folder.")?;
+            if job.mutation.is_some() {
+                let provider = crate::folders::changes::execute::ImapChange { account, password };
+                return Ok(serde_json::to_value(crate::folders::changes::execute::execute(db,Some(&provider),job).await?)?);
+            }
             let provider = crate::folders::ImapCreation { account, password };
             #[cfg(test)]
             {
