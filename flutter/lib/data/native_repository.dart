@@ -41,6 +41,7 @@ class NativeRepository
         MailActivityRepository,
         DurableAccountRepository,
         DurableCalendarRepository,
+        DurableCalDavRepository,
         FolderCreationRepository,
         DurableMutationRepository {
   NativeRepository(this.profile, this.credentials);
@@ -1171,6 +1172,277 @@ class NativeRepository
   );
 
   @override
+  Future<CalDavAttempt> admitCalDavConnection({
+    required String attemptId,
+    required String connectionId,
+    required String url,
+    required String username,
+    CalDavConnection? observed,
+  }) async => CalDavAttempt(
+    Map<String, dynamic>.from(
+      await call({
+            'op': 'prepare_calendar_connection',
+            'id': attemptId,
+            'request': {
+              'connection': {
+                'id': connectionId,
+                'url': url,
+                'username': username,
+              },
+              'credential_slot': 'calendar-$attemptId',
+              'observed_revision': observed?.revision,
+              'observed_credential_slot': observed?.credentialSlot,
+            },
+          })
+          as Map,
+    ),
+  );
+
+  @override
+  Future<void> saveCalDavPassword(CalDavAttempt attempt, String password) =>
+      _accountWrite(() async {
+        final current = await calDavAttempt(attempt.id);
+        if (current == null ||
+            !const {'prepared', 'waiting'}.contains(current.status) ||
+            current.credentialSlot != attempt.credentialSlot) {
+          throw const MailOperationFailure(
+            'This calendar setup changed before its password was saved.',
+          );
+        }
+        try {
+          await credentials.save(attempt.credentialSlot, password, password);
+        } catch (_) {
+          await call({
+            'op': 'wait_calendar_connection',
+            'id': attempt.id,
+            'error': 'Unlock device credential storage, then retry.',
+          });
+          throw const MailOperationFailure(
+            'Unlock device credential storage, then retry.',
+          );
+        }
+      });
+
+  @override
+  Future<void> activateCalDavConnection(CalDavAttempt attempt) async {
+    String? password;
+    try {
+      password = await credentials.read(attempt.credentialSlot, false);
+    } catch (_) {
+      await call({
+        'op': 'wait_calendar_connection',
+        'id': attempt.id,
+        'error': 'Unlock device credential storage, then retry.',
+      });
+      throw const MailOperationFailure(
+        'Unlock device credential storage, then retry.',
+      );
+    }
+    if (password == null) {
+      await call({
+        'op': 'wait_calendar_connection',
+        'id': attempt.id,
+        'error': 'Unlock device credential storage, then retry.',
+      });
+      throw const MailOperationFailure(
+        'Unlock device credential storage, then retry.',
+      );
+    }
+    final now = DateTime.now().toUtc();
+    await call({
+      'op': 'activate_calendar_connection',
+      'id': attempt.id,
+      'password': password,
+      'start': now.subtract(const Duration(days: 365)).toIso8601String(),
+      'end': now.add(const Duration(days: 365)).toIso8601String(),
+    });
+    await _accountWrite(_cleanupCalDavCredentials);
+  }
+
+  @override
+  Future<List<CalDavAttempt>> calDavAttempts({bool pending = false}) async =>
+      ((await call({
+                'op': pending
+                    ? 'pending_calendar_connection_attempts'
+                    : 'calendar_connection_attempts',
+              }))
+              as List)
+          .map(
+            (value) => CalDavAttempt(Map<String, dynamic>.from(value as Map)),
+          )
+          .toList();
+
+  @override
+  Future<CalDavAttempt?> calDavAttempt(String id) async {
+    final value = await call({'op': 'calendar_connection_attempt', 'id': id});
+    return value == null
+        ? null
+        : CalDavAttempt(Map<String, dynamic>.from(value as Map));
+  }
+
+  @override
+  Future<List<CalDavConnection>> calDavConnections() async =>
+      ((await call({'op': 'active_calendar_connections'})) as List)
+          .map(
+            (value) =>
+                CalDavConnection(Map<String, dynamic>.from(value as Map)),
+          )
+          .toList();
+
+  @override
+  Future<void> cancelCalDavConnection(CalDavAttempt attempt) =>
+      _accountWrite(() async {
+        await call({'op': 'cancel_calendar_connection', 'id': attempt.id});
+        try {
+          await _cleanupCalDavCredentials();
+        } catch (_) {
+          throw const CalendarCredentialCleanupFailure(
+            'Unlock device credential storage, then retry cleanup.',
+          );
+        }
+      });
+
+  @override
+  Future<void> removeCalDavConnection(CalDavConnection connection) =>
+      _accountWrite(() async {
+        await call({
+          'op': 'remove_calendar_connection',
+          'id': connection.id,
+          'revision': connection.revision,
+        });
+        try {
+          await _cleanupCalDavCredentials();
+        } catch (_) {
+          throw const CalendarCredentialCleanupFailure(
+            'Unlock device credential storage, then retry cleanup.',
+          );
+        }
+      });
+
+  @override
+  Future<void> cleanupCalDavCredentials() =>
+      _accountWrite(_cleanupCalDavCredentials);
+
+  Future<void> _cleanupCalDavCredentials() async {
+    final slots = (await call({'op': 'calendar_credential_cleanup'}) as List)
+        .cast<String>();
+    for (final slot in slots) {
+      try {
+        await credentials.remove(slot);
+      } catch (_) {
+        throw const MailOperationFailure(
+          'Unlock device credential storage, then retry cleanup.',
+        );
+      }
+      await call({'op': 'calendar_credential_cleanup_done', 'slot': slot});
+    }
+  }
+
+  @override
+  Future<CalDavAdmission> admitCalDavAction(
+    String actionId,
+    CalendarEntry entry,
+    CalendarEntry? before,
+    CalDavConnection connection,
+  ) async => _admitCalDavMutation(actionId, connection, {
+    'save': {
+      'before': before?.toCalendarJson(),
+      'after': entry.toCalendarJson(),
+    },
+  });
+
+  @override
+  Future<CalDavAdmission> admitCalDavDelete(
+    String actionId,
+    CalendarEntry entry,
+    CalDavConnection connection,
+  ) async => _admitCalDavMutation(actionId, connection, {
+    'delete': {'before': entry.toCalendarJson()},
+  });
+
+  Future<CalDavAdmission> _admitCalDavMutation(
+    String actionId,
+    CalDavConnection connection,
+    Map<String, Object?> mutation,
+  ) async => CalDavAdmission(
+    Map<String, dynamic>.from(
+      await call({
+            'op': 'admit_cal_dav_action',
+            'id': actionId,
+            'connection_id': connection.id,
+            'connection_revision': connection.revision,
+            'mutation': mutation,
+          })
+          as Map,
+    ),
+  );
+
+  @override
+  Future<CalDavAdmission?> calDavActionAdmission(String actionId) async {
+    final value = await call({
+      'op': 'cal_dav_action_admission',
+      'id': actionId,
+    });
+    return value == null
+        ? null
+        : CalDavAdmission(Map<String, dynamic>.from(value as Map));
+  }
+
+  @override
+  Future<void> executeCalDavAction(
+    String actionId,
+    String credentialSlot,
+  ) async {
+    String? password;
+    try {
+      password = await credentials.read(credentialSlot, false);
+    } catch (_) {
+      await waitCalendarAction(
+        actionId,
+        'Unlock device credential storage, then retry.',
+      );
+      return;
+    }
+    if (password == null) {
+      await waitCalendarAction(
+        actionId,
+        'Unlock device credential storage, then retry.',
+      );
+      return;
+    }
+    await call({
+      'op': 'execute_cal_dav_action',
+      'id': actionId,
+      'password': password,
+    });
+  }
+
+  @override
+  Future<void> inspectCalDavAction(
+    String actionId,
+    String credentialSlot,
+  ) async {
+    String? password;
+    try {
+      password = await credentials.read(credentialSlot, false);
+    } catch (_) {
+      throw const MailOperationFailure(
+        'Unlock device credential storage, then retry.',
+      );
+    }
+    if (password == null) {
+      throw const MailOperationFailure(
+        'Unlock device credential storage, then retry.',
+      );
+    }
+    await call({
+      'op': 'inspect_cal_dav_action',
+      'id': actionId,
+      'password': password,
+    });
+  }
+
+  @override
   Future<CalendarAdmission> admitCalendarAction(
     String actionId,
     CalendarEntry entry,
@@ -1246,6 +1518,10 @@ class NativeRepository
   @override
   Future<void> cancelCalendarAction(String actionId) async =>
       call({'op': 'cancel_calendar_action', 'id': actionId});
+
+  @override
+  Future<void> acceptCalendarCurrentState(String actionId) async =>
+      call({'op': 'accept_calendar_current_state', 'id': actionId});
 
   @override
   Future<void> inspectCalendarAction(

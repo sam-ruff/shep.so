@@ -79,6 +79,62 @@ test("real edit and delete controls admit immediately while provider is held and
   await expect(page.getByRole("button", { name: "Latest title", exact: true })).toHaveCount(0);
 });
 
+for (const kind of ["create", "edit", "delete"] as const) test(`acknowledged ${kind} offers only receipt-backed Undo and syncs in the background`, async ({ page }) => {
+  let saved: ReturnType<typeof event> | null = kind === "create" ? null : event();
+  const mutations: any[] = [];
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/calendar", async route => {
+    const { operation } = route.request().postDataJSON();
+    if (operation.kind === "sources") return route.fulfill({ json: { state: "observed", value: { sources: [source] } } });
+    if (operation.kind === "events") return route.fulfill({ json: { state: "observed", value: { events: saved ? [saved] : [] } } });
+    mutations.push(operation);
+    if (mutations.length === 2) await held;
+    const before = operation.mutation.save ? operation.mutation.save.before : operation.mutation.delete.before;
+    saved = operation.mutation.delete ? null : { ...operation.mutation.save.after,
+      id: before?.id ?? `shep${operation.request_id.replaceAll("-", "")}`, etag: `v${mutations.length + 1}`, remote_url: "confirmed-resource" };
+    return route.fulfill({ json: { state: "acknowledged", value: { receipt: { request_id: operation.request_id, before, after: saved } } } });
+  });
+  await seed(page); await openCalendar(page);
+  await page.getByRole("button", { name: kind === "create" ? "New event" : "Planning", exact: true }).click();
+  const editor = page.getByRole("dialog", { name: kind === "create" ? "New event" : "Edit event", exact: true });
+  if (kind === "delete") {
+    await editor.getByRole("button", { name: "Delete event", exact: true }).click();
+    await page.getByRole("dialog", { name: "Delete event?", exact: true }).getByRole("button", { name: "Delete this event", exact: true }).click();
+  } else {
+    await editor.getByLabel("Event title", { exact: true }).fill("Changed appointment");
+    await editor.getByRole("button", { name: "Save event", exact: true }).click();
+  }
+  await expect(editor).toHaveCount(0);
+  await expect.poll(async () => (await jobs(page))[0]?.status).toBe("Succeeded");
+  const [original] = await jobs(page);
+  await page.getByRole("button", { name: "Calendar changes", exact: true }).click();
+  const history = page.getByRole("dialog", { name: "Calendar changes", exact: true });
+  await history.getByRole("button", { name: "Recent Calendar changes", exact: true }).click();
+  if (kind === "delete") {
+    await expect(history.getByRole("button", { name: "Undo Planning", exact: true })).toHaveCount(0);
+    expect(mutations).toHaveLength(1);
+    return;
+  }
+  await history.getByRole("button", { name: "Undo Changed appointment", exact: true }).click();
+  await expect(history).toContainText("Undo saved. Syncing in the background.");
+  await expect.poll(() => mutations.length).toBe(2);
+  const inverse = (await jobs(page)).find(job => job.undoOf === original.id)!;
+  expect(inverse.status).toBe("Running");
+  const dispatched = mutations[1].mutation;
+  expect(dispatched.save ? dispatched.save.before : dispatched.delete.before).toEqual(original.receipt.after);
+  await history.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Changed appointment", exact: true })).toHaveCount(0);
+  if (kind !== "create") await expect(page.getByRole("button", { name: "Planning", exact: true })).toBeVisible();
+  if (kind === "edit") await page.screenshot({ path: "../artifacts/web/calendar-undo-pending-light.png", fullPage: true });
+  release();
+  await expect.poll(async () => (await jobs(page)).find(job => job.id === inverse.id)?.status).toBe("Succeeded");
+  await page.reload(); await page.getByRole("button", { name: "Calendar", exact: true }).click();
+  if (kind !== "create") await expect(page.getByRole("button", { name: "Planning", exact: true })).toBeVisible();
+  else await expect(page.getByRole("button", { name: "Changed appointment", exact: true })).toHaveCount(0);
+  expect(mutations).toHaveLength(2);
+});
+
 test("lost create response survives reload without replay and exact checked adoption stays distinct from success", async ({ page }) => {
   let saved: any = null, mutations = 0, inspections = 0;
   await page.route("**/api/calendar", async route => {

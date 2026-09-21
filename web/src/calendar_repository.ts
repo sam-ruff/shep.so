@@ -106,6 +106,10 @@ export class CalendarRepository {
   private runnable(action: CalendarAction) {
     return !this.active.has(action.id) && ["Queued", "Waiting", "Running", "Repair"].includes(action.status) && !action.observation;
   }
+  async undo(expected: CalendarAction, id: string) {
+    const result = await this.journal.undo(expected, id, this.owner);
+    await this.reload(); this.changed(); return result;
+  }
   sourceWork(): ActionSource {
     return { page: async after => {
       const page = await this.journal.page(after);

@@ -1,5 +1,6 @@
 import 'account_removal.dart';
 import 'package:flutter/material.dart';
+import 'cal_dav_connections.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
 import 'controls.dart';
@@ -340,6 +341,8 @@ class PreferencesView extends StatelessWidget {
                 'Google Calendar, Drive and encrypted restore remain in the parity checklist.',
               ),
             ),
+          if (workspace.supportsCalDav)
+            CalDavConnectionsCard(workspace: workspace),
         ]),
         if (workspace.profileDiscovery case final discovery?)
           section('Profiles and sync', [

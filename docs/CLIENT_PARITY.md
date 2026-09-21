@@ -29,12 +29,15 @@ entered. Root verification passes 250 units, 20 combined control scenarios and
 are reviewed. Calendar Undo after acknowledgement, timed creation, recurrence
 editing and final performance remain active gaps.
 
-CalDAV schema 22 integration is in progress. Its shared provider now passes 19
-parser/HTTP tests, including collection-specific privileges, recurring write
-refusal, lost replies, UID decoding and daylight-saving durations. The initial
-integrated native setup slice passes 159 Rust tests. Connection replacement,
-credential cleanup, provider routing and Dart controls are still under review;
-these results do not close the CalDAV parity gap.
+Flutter CalDAV controls now share the schema23 journal with folder creation.
+The integrated client passes 185 Rust and 260 Flutter tests, with clean analysis
+and reviewed compact setup, checked recovery and recurring-event views. Exact
+observations, connection replacement and provider routing retain their restart
+checks. The shared calendar provider has 19 parser/HTTP tests, including
+collection-specific privileges, recurring write refusal, UID decoding and
+daylight-saving durations. Credential read/cleanup errors retain visible Retry,
+including after restart. Browser CalDAV, live providers and Apple execution
+remain open.
 
 Native group flag writes now retain provider receipts before cache updates;
 cache-only repair preserves Undo and never repeats a provider write. Native

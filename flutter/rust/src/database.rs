@@ -232,6 +232,7 @@ impl Database {
                 "UPDATE calendar_actions SET status='uncertain',error='The app closed before the provider result was saved. Inspect the event before retrying.' WHERE status='running'",
                 [],
             )?;
+            crate::calendar::connections::restart(&writer)?;
             crate::groups::restart(&writer)?;
             let reader = || -> Result<Arc<Mutex<Connection>>> {
                 let connection =

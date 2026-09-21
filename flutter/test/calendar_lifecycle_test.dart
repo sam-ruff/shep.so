@@ -10,6 +10,7 @@ import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/model/preferences.dart';
 import 'package:shep_mobile/data/settings_store.dart';
 import 'package:shep_mobile/ui/calendar.dart';
+import 'package:shep_mobile/ui/cal_dav_connections.dart';
 import 'package:shep_mobile/ui/theme.dart';
 
 import 'support/preview_repository.dart';
@@ -34,6 +35,7 @@ class CalendarRepository extends PreviewRepository
   final executed = <String>[];
   final waited = <String>[];
   final cancelled = <String>[];
+  final acceptedCurrent = <String>[];
   List<CalendarActivity> activity = const [];
   List<CalendarEntry> calendarCache = const [];
   String calendarSubject = FixtureGoogleAuthorization.subject;
@@ -119,6 +121,12 @@ class CalendarRepository extends PreviewRepository
   }
 
   @override
+  Future<void> acceptCalendarCurrentState(String actionId) async {
+    acceptedCurrent.add(actionId);
+    activity = activity.where((action) => action.id != actionId).toList();
+  }
+
+  @override
   Future<void> executeCalendarAction(
     String actionId,
     String accessToken, {
@@ -149,6 +157,136 @@ class CalendarRepository extends PreviewRepository
   @override
   Future<void> waitCalendarAction(String actionId, String error) async {
     waited.add(actionId);
+  }
+}
+
+class CalDavCalendarRepository extends CalendarRepository
+    implements DurableCalDavRepository {
+  final connection = CalDavConnection({
+    'connection': {
+      'id': 'caldav-home',
+      'url': 'https://calendar.example.test/home/',
+      'username': 'sam',
+    },
+    'credential_slot': 'calendar-slot',
+    'revision': 3,
+  });
+  final calDavAdmissions = <String, CalDavAdmission>{};
+  final calDavExecuted = <String>[];
+  final calDavInspected = <String>[];
+  final setupAttempts = <CalDavAttempt>[];
+  final savedPasswords = <String>[];
+  final activatedAttempts = <String>[];
+  bool failCleanup = false;
+  bool failRemovalCleanup = false;
+  bool refuseRemoval = false;
+  int cleanupCalls = 0;
+  Future<List<CalDavConnection>> Function()? connectionsOverride;
+  Future<List<CalDavAttempt>> Function(bool pending)? attemptsOverride;
+
+  CalDavAdmission _admit(String id) => calDavAdmissions[id] = CalDavAdmission({
+    'id': id,
+    'status': 'queued',
+    'connection_id': connection.id,
+    'connection_revision': connection.revision,
+    'credential_slot': connection.credentialSlot,
+  });
+
+  @override
+  Future<CalDavAdmission> admitCalDavAction(
+    String actionId,
+    CalendarEntry entry,
+    CalendarEntry? before,
+    CalDavConnection connection,
+  ) async => _admit(actionId);
+
+  @override
+  Future<CalDavAdmission> admitCalDavDelete(
+    String actionId,
+    CalendarEntry entry,
+    CalDavConnection connection,
+  ) async => _admit(actionId);
+
+  @override
+  Future<CalDavAdmission?> calDavActionAdmission(String actionId) async =>
+      calDavAdmissions[actionId];
+
+  @override
+  Future<void> executeCalDavAction(
+    String actionId,
+    String credentialSlot,
+  ) async {
+    calDavExecuted.add(actionId);
+  }
+
+  @override
+  Future<void> inspectCalDavAction(
+    String actionId,
+    String credentialSlot,
+  ) async {
+    calDavInspected.add(actionId);
+  }
+
+  @override
+  Future<List<CalDavConnection>> calDavConnections() async =>
+      await connectionsOverride?.call() ?? [connection];
+
+  @override
+  Future<List<CalDavAttempt>> calDavAttempts({bool pending = false}) async =>
+      await attemptsOverride?.call(pending) ?? setupAttempts;
+
+  @override
+  Future<CalDavAttempt?> calDavAttempt(String id) async =>
+      setupAttempts.where((attempt) => attempt.id == id).firstOrNull;
+
+  @override
+  Future<CalDavAttempt> admitCalDavConnection({
+    required String attemptId,
+    required String connectionId,
+    required String url,
+    required String username,
+    CalDavConnection? observed,
+  }) async {
+    final attempt = CalDavAttempt({
+      'id': attemptId,
+      'status': 'prepared',
+      'error': null,
+      'request': {
+        'connection': {'id': connectionId, 'url': url, 'username': username},
+        'credential_slot': 'calendar-$attemptId',
+      },
+    });
+    setupAttempts.add(attempt);
+    return attempt;
+  }
+
+  @override
+  Future<void> activateCalDavConnection(CalDavAttempt attempt) async {
+    activatedAttempts.add(attempt.id);
+  }
+
+  @override
+  Future<void> cancelCalDavConnection(CalDavAttempt attempt) async {}
+  @override
+  Future<void> cleanupCalDavCredentials() async {
+    cleanupCalls++;
+    if (failCleanup) throw StateError('private cleanup detail');
+  }
+
+  @override
+  Future<void> removeCalDavConnection(CalDavConnection connection) async {
+    if (refuseRemoval) throw StateError('stale revision');
+    if (failRemovalCleanup) {
+      throw const CalendarCredentialCleanupFailure('private removal detail');
+    }
+  }
+
+  @override
+  Future<void> saveCalDavPassword(
+    CalDavAttempt attempt,
+    String password,
+  ) async {
+    savedPasswords.add(password);
   }
 }
 
@@ -935,6 +1073,207 @@ void main() {
     },
   );
 
+  testWidgets(
+    'recurring CalDAV event is view-only while a new event remains editable',
+    (tester) async {
+      final workspace = Workspace(CalendarRepository(), MemorySettings());
+      addTearDown(workspace.dispose);
+      final recurring = CalendarEntry(
+        'series-instance',
+        'Weekly review',
+        DateTime(2026, 9, 21, 10),
+        DateTime(2026, 9, 21, 11),
+        sourceId: 'caldav-source',
+        etag: '"strong-etag"',
+        description: 'Recurring event',
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EventEditor(
+            workspace: workspace,
+            date: recurring.start,
+            entry: recurring,
+          ),
+        ),
+      );
+
+      expect(find.text('View event'), findsOneWidget);
+      expect(
+        find.textContaining('Recurring CalDAV events are view-only'),
+        findsOneWidget,
+      );
+      expect(find.widgetWithText(FilledButton, 'Save event'), findsNothing);
+      expect(find.widgetWithText(TextButton, 'Delete'), findsNothing);
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).readOnly,
+        isTrue,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: EventEditor(workspace: workspace, date: DateTime(2026, 9, 22)),
+        ),
+      );
+
+      expect(find.text('New event'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Save event'), findsOneWidget);
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).readOnly,
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'CalDAV event uses its frozen connection and activity credential',
+    () async {
+      final repository = CalDavCalendarRepository();
+      final remote = CalendarEntry(
+        'remote',
+        'Remote event',
+        DateTime(2026, 9, 22, 10),
+        DateTime(2026, 9, 22, 11),
+        sourceId: repository.connection.id,
+        etag: '"one"',
+        remoteUrl: 'https://calendar.example.test/home/remote.ics',
+      );
+      repository.calendarCache = [remote];
+      final workspace = Workspace(repository, MemorySettings());
+      addTearDown(workspace.dispose);
+      await workspace.refreshCalDavConnections();
+      workspace.events = [remote];
+
+      expect(await workspace.saveEvent(remote), isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(repository.calDavExecuted, hasLength(1));
+
+      final action = CalendarActivity({
+        'id': 'uncertain-caldav',
+        'status': 'uncertain',
+        'error': 'The provider result needs checking.',
+        'created': 1,
+        'subject': null,
+        'connection_id': repository.connection.id,
+        'connection_revision': repository.connection.revision,
+        'credential_slot': repository.connection.credentialSlot,
+        'mutation': {
+          'save': {
+            'before': remote.toCalendarJson(),
+            'after': remote.toCalendarJson(),
+          },
+        },
+        'receipt': null,
+      });
+      await workspace.inspectCalendarActivity(action);
+      expect(repository.calDavInspected, ['uncertain-caldav']);
+    },
+  );
+
+  testWidgets('CalDAV controls durably admit before checking credentials', (
+    tester,
+  ) async {
+    final repository = CalDavCalendarRepository();
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CalDavConnectionsCard(workspace: workspace)),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Add calendar'));
+    await tester.pump();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Calendar URL'),
+      'https://calendar.example.test/home/',
+    );
+    await tester.enterText(find.widgetWithText(TextField, 'Username'), 'sam');
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Password'),
+      'private-password',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
+    await tester.pump();
+
+    expect(repository.setupAttempts, hasLength(1));
+    expect(repository.setupAttempts.single.connectionId, startsWith('caldav-'));
+    expect(
+      repository.setupAttempts.single.connectionId,
+      isNot(contains('calendar.example.test')),
+    );
+    expect(repository.savedPasswords, ['private-password']);
+  });
+
+  test('late CalDAV refresh cannot restore stale connections', () async {
+    final repository = CalDavCalendarRepository();
+    final first = Completer<List<CalDavConnection>>();
+    var reads = 0;
+    repository.connectionsOverride = () {
+      reads++;
+      return reads == 1 ? first.future : Future.value(const []);
+    };
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    final stale = workspace.refreshCalDavConnections();
+    await Future<void>.delayed(Duration.zero);
+    await workspace.refreshCalDavConnections();
+    first.complete([repository.connection]);
+    await stale;
+
+    expect(workspace.calDavConnections, isEmpty);
+  });
+
+  test('disposed workspace does not resume a late CalDAV setup page', () async {
+    final repository = CalDavCalendarRepository();
+    final pending = Completer<List<CalDavAttempt>>();
+    final attempt = await repository.admitCalDavConnection(
+      attemptId: 'late-attempt',
+      connectionId: 'late-calendar',
+      url: 'https://calendar.example.test/late/',
+      username: 'sam',
+    );
+    repository.attemptsOverride = (runnable) =>
+        runnable ? pending.future : Future.value([attempt]);
+    final workspace = Workspace(repository, MemorySettings());
+    final refresh = workspace.refreshCalDavConnections(resume: true);
+    await Future<void>.delayed(Duration.zero);
+    workspace.dispose();
+    pending.complete([attempt]);
+    await refresh;
+
+    expect(repository.activatedAttempts, isEmpty);
+  });
+
+  testWidgets('checked uncertain event offers explicit current-state adoption', (
+    tester,
+  ) async {
+    final repository = CalendarRepository()
+      ..activity = [
+        CalendarActivity({
+          ...activityData('uncertain'),
+          'checked': true,
+          'error':
+              'The provider no longer matches the requested event. Keep this change for review until you explicitly accept the current state.',
+        }),
+      ];
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.refreshCalendarActivity();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CalendarView(workspace: workspace)),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.widgetWithText(TextButton, 'Keep current'), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Keep current'));
+    await tester.pump();
+    expect(repository.acceptedCurrent, ['action']);
+    expect(find.widgetWithText(TextButton, 'Keep current'), findsNothing);
+  });
+
   testWidgets('compact dark calendar recovery visual evidence', (tester) async {
     await (FontLoader(
       'Roboto',
@@ -967,4 +1306,222 @@ void main() {
       matchesGoldenFile('goldens/calendar_waiting_compact_dark.png'),
     );
   });
+
+  testWidgets('compact light CalDAV credential re-entry visual evidence', (
+    tester,
+  ) async {
+    await (FontLoader(
+      'Roboto',
+    )..addFont(rootBundle.load('assets/Roboto-Regular.ttf'))).load();
+    await (FontLoader(
+      'NotoSans',
+    )..addFont(rootBundle.load('assets/NotoSans-Regular.ttf'))).load();
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = CalDavCalendarRepository();
+    repository.setupAttempts.add(
+      CalDavAttempt({
+        'id': 'waiting-setup',
+        'status': 'waiting',
+        'error': 'Unlock device credential storage, then retry.',
+        'request': {
+          'connection': {
+            'id': 'caldav-waiting',
+            'url': 'https://calendar.example.test/home/',
+            'username': 'sam',
+          },
+          'credential_slot': 'calendar-waiting-setup',
+        },
+      }),
+    );
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.refreshCalDavConnections();
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: shepTheme(Brightness.light),
+        home: Scaffold(body: CalDavConnectionsCard(workspace: workspace)),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Enter password'));
+    await tester.pump();
+    expect(
+      find.text('Unlock device credential storage, then retry.'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(FilledButton, 'Connect'), findsOneWidget);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/caldav_setup_compact_light.png'),
+    );
+  });
+
+  testWidgets('compact dark checked event recovery visual evidence', (
+    tester,
+  ) async {
+    await (FontLoader(
+      'Roboto',
+    )..addFont(rootBundle.load('assets/Roboto-Regular.ttf'))).load();
+    await (FontLoader(
+      'NotoSans',
+    )..addFont(rootBundle.load('assets/NotoSans-Regular.ttf'))).load();
+    tester.view.physicalSize = const Size(390, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final recurring = CalendarEntry(
+      'series-instance',
+      'Weekly review',
+      DateTime(2026, 9, 21, 10),
+      DateTime(2026, 9, 21, 11),
+      calendar: 'Team calendar',
+      sourceId: 'caldav-team',
+      etag: '"series-etag"',
+      description: 'Recurring event',
+    );
+    final repository = CalendarRepository()
+      ..calendarCache = [recurring]
+      ..activity = [
+        CalendarActivity({
+          'id': 'checked-action',
+          'status': 'uncertain',
+          'error':
+              'The provider no longer matches the requested event. Keep this change for review until you explicitly accept the current state.',
+          'created': 1,
+          'subject': null,
+          'connection_id': 'caldav-team',
+          'connection_revision': 2,
+          'credential_slot': 'calendar-team',
+          'checked': true,
+          'mutation': {
+            'save': {
+              'before': recurring.toCalendarJson(),
+              'after': recurring.toCalendarJson(),
+            },
+          },
+          'receipt': null,
+        }),
+      ];
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.refreshCalendarActivity();
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: shepTheme(Brightness.light),
+        darkTheme: shepTheme(Brightness.dark),
+        themeMode: ThemeMode.dark,
+        home: Scaffold(body: CalendarView(workspace: workspace)),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Keep current'), findsOneWidget);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/caldav_recovery_compact_dark.png'),
+    );
+    await tester.tap(find.text('Weekly review').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining('Recurring CalDAV events are view-only'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(FilledButton, 'Save event'), findsNothing);
+    expect(find.widgetWithText(TextButton, 'Delete'), findsNothing);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/caldav_recurring_view_compact_dark.png'),
+    );
+  });
+
+  testWidgets('CalDAV removal cleanup failure stays visible and retryable', (
+    tester,
+  ) async {
+    final repository = CalDavCalendarRepository()
+      ..failRemovalCleanup = true
+      ..failCleanup = true;
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.refreshCalDavConnections();
+    await workspace.removeCalDav(repository.connection);
+    expect(
+      workspace.calDavCleanupError,
+      'Calendar was removed, but credential cleanup is waiting.',
+    );
+    expect(workspace.error, isNot(contains('private removal detail')));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: CalDavConnectionsCard(workspace: workspace)),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Retry cleanup'), findsOneWidget);
+    final initialCleanupCalls = repository.cleanupCalls;
+    repository.failCleanup = true;
+    await tester.tap(find.text('Retry cleanup'));
+    await tester.pumpAndSettle();
+    expect(
+      workspace.error,
+      'Unlock device credential storage, then retry cleanup.',
+    );
+    repository.failCleanup = false;
+    await tester.tap(find.text('Retry cleanup'));
+    await tester.pumpAndSettle();
+    expect(repository.cleanupCalls, initialCleanupCalls + 2);
+    expect(workspace.calDavCleanupError, isNull);
+    expect(workspace.error, isNull);
+  });
+
+  test('CalDAV precommit refusal retains rows and unrelated errors', () async {
+    final repository = CalDavCalendarRepository()..refuseRemoval = true;
+    final workspace = Workspace(repository, MemorySettings());
+    addTearDown(workspace.dispose);
+    await workspace.refreshCalDavConnections();
+    await workspace.removeCalDav(repository.connection);
+    expect(workspace.calDavConnections, isNotEmpty);
+    expect(workspace.calDavCleanupError, isNull);
+    workspace.error = 'A newer unrelated failure';
+    repository.refuseRemoval = false;
+    await workspace.retryCalDavCleanup();
+    expect(workspace.error, 'A newer unrelated failure');
+  });
+
+  testWidgets(
+    'CalDAV cleanup resumes after workspace restart with visible recovery',
+    (tester) async {
+      final repository = CalDavCalendarRepository()..failCleanup = true;
+      final workspace = Workspace(repository, MemorySettings());
+      addTearDown(workspace.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ListenableBuilder(
+              listenable: workspace,
+              builder: (context, child) =>
+                  CalDavConnectionsCard(workspace: workspace),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(repository.cleanupCalls, 1);
+      expect(
+        workspace.calDavCleanupError,
+        'Unlock device credential storage, then retry cleanup.',
+      );
+      expect(find.text('Retry cleanup'), findsOneWidget);
+      repository.failCleanup = false;
+      await tester.tap(find.text('Retry cleanup'));
+      await tester.pumpAndSettle();
+      expect(repository.cleanupCalls, 2);
+      expect(workspace.calDavCleanupError, isNull);
+      expect(workspace.error, isNull);
+      expect(find.text('Retry cleanup'), findsNothing);
+    },
+  );
 }

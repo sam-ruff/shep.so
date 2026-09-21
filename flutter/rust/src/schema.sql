@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS calendar_binding(id INTEGER PRIMARY KEY CHECK(id=1),s
 CREATE TABLE IF NOT EXISTS calendar_clock(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
 INSERT OR IGNORE INTO calendar_clock VALUES(1,0);
 CREATE TABLE IF NOT EXISTS calendar_action_receipts(action TEXT PRIMARY KEY REFERENCES calendar_actions(id) ON DELETE CASCADE,receipt TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS calendar_action_observations(action TEXT PRIMARY KEY REFERENCES calendar_actions(id) ON DELETE CASCADE,observed TEXT,cache_revision INTEGER NOT NULL,subject TEXT,connection_id TEXT,connection_revision INTEGER,credential_slot TEXT);
 CREATE TABLE IF NOT EXISTS calendar_intents(source_id TEXT NOT NULL,event_id TEXT NOT NULL,action TEXT NOT NULL REFERENCES calendar_actions(id),PRIMARY KEY(source_id,event_id));
 CREATE INDEX IF NOT EXISTS calendar_action_status ON calendar_actions(status,created,id);
 CREATE INDEX IF NOT EXISTS calendar_action_history ON calendar_actions(created DESC,id);

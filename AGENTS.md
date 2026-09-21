@@ -6,8 +6,17 @@ another response cannot grant write access. Existing writes require an explicit
 resource URL and a strong single ETag. Expanded recurring events cannot derive a
 write URL from their UID. Preserve escaped UID round trips, nominal-day duration
 across DST, all-day end defaults, bounded bodies and uncertain lost-write replies.
-Flutter CalDAV setup, event dispatch and secure credential lifecycle remain an
-active migration until real controls and restart tests establish the full path.
+Flutter CalDAV setup and event dispatch use the existing calendar journal and
+connection owner. Keep exact checked observations bound to the cache revision and
+connection slot; accepting checked state must apply that state atomically without
+claiming an unknown provider success. Credential failures must use fixed public
+errors, including reads and cleanup. Committed removal stays removed when device
+credential cleanup fails, with visible recovery through the existing cleanup owner.
+Resume that cleanup on startup and clear only its owned feedback after Retry.
+An inspection is an observation, even when it matches the desired event or proves
+absence. Never fabricate a mutation receipt or infer a successful write from it.
+Retain real controls, restart/FFI tests and compact recovery captures; live provider
+and Apple execution remain separate verification requirements.
 
 Native calendar active-action reads use the status index and a 33-row capacity
 probe. Predecessor lookup seeks the latest logical and physical matches separately
@@ -35,6 +44,10 @@ observation, then again at adoption; newer intent, sync or permissions invalidat
 the review. Checked adoption does not claim an unknown provider success.
 Preserve real held-input, lost-reply,
 terminal-rejection, schema-upgrade and compact recovery tests.
+Calendar Undo admits one linked inverse through the same journal, using the exact
+acknowledged event identity and current ownership. Lost replies reuse that inverse
+identity. Never recreate a deleted event from portable display fields: restoration
+needs a provider contract preserving fields such as attendees and recurrence.
 
 `shared/calendar-core` owns portable event/mutation/receipt and typed failure
 contracts. Include it in coordinated version stamping. Flutter schema 21 saves

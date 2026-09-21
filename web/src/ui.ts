@@ -2735,6 +2735,7 @@ export function mount(
     d.classList.add("calendar-activity");
     status.role = "status";
     let after: string | undefined, next: string | undefined, completed = false, generation = 0, busy = false;
+    const undoIds = new Map<string, string>();
     const older = button("Next Calendar changes", () => { after = next; void draw(); });
     const recent = button("Recent Calendar changes", () => { completed = !completed; after = undefined; recent.textContent = completed ? "Pending Calendar changes" : "Recent Calendar changes"; void draw(); });
     const controls = el("div", "outbox-actions");
@@ -2752,17 +2753,26 @@ export function mount(
           const card = el("section", "settings-card");
           card.append(el("h3", "", entry.title || "Untitled event"), el("p", "", calendarStatus(job)));
           if (job.error) card.append(el("p", "", job.error));
-          const decide = async (decision: "retry" | "repair" | "check" | "adopt" | "cancel") => {
+          const decide = async (decision: "retry" | "repair" | "check" | "adopt" | "cancel" | "undo") => {
             if (busy) return; busy = true;
             for (const control of card.querySelectorAll("button")) control.disabled = true;
-            try { await calendar.decide(job, decision); status.textContent = "Decision saved."; void gateway!.resumeActions(); await draw(); }
+            try {
+              if (decision === "undo") {
+                if (!undoIds.has(job.id)) undoIds.set(job.id, crypto.randomUUID());
+                await calendar.undo(job, undoIds.get(job.id)!);
+              } else await calendar.decide(job, decision);
+              status.textContent = decision === "undo" ? "Undo saved. Syncing in the background." : "Decision saved.";
+              await draw();
+            }
             catch (error) { calendar.error = status.textContent = error instanceof Error ? error.message : "This Calendar decision could not be saved. Keep the change and retry."; }
-            finally { busy = false; for (const control of card.querySelectorAll("button")) control.disabled = false; w.changed(); }
+            finally { busy = false; for (const control of card.querySelectorAll("button")) control.disabled = false; void gateway!.resumeActions(); w.events = structuredClone(calendar.events); w.changed(); }
           };
           if (["Waiting", "Rejected"].includes(job.status)) card.append(button(`Retry ${entry.title}`, () => void decide("retry")));
           if (["Queued", "Waiting"].includes(job.status)) card.append(button(`Cancel ${entry.title}`, () => void decide("cancel")));
           if (["Uncertain", "Repair", "Rejected"].includes(job.status)) card.append(button(`Check ${entry.title}`, () => void decide("check")));
           if (job.status === "Repair") card.append(button(`Finish saving ${entry.title}`, () => void decide("repair")));
+          if (job.undoAction) card.append(el("p", "muted", "Undo is saved as a separate Calendar change."));
+          else if (job.status === "Succeeded" && job.receipt?.after) card.append(button(`Undo ${entry.title}`, () => void decide("undo")));
           if (job.observation) card.append(button(`Review checked state for ${entry.title}`, () => {
             const review = modal("Use checked Calendar state?");
             review.append(el("p", "", job.observation!.current ? `The checked event is “${job.observation!.current.title}”.` : "The exact event is absent from this calendar."),
