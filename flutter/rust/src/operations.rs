@@ -284,6 +284,9 @@ pub enum Request {
     CancelCalendarAction {
         id: String,
     },
+    AcceptCalendarCurrentState {
+        id: String,
+    },
     PrepareCalendarConnection {
         id: String,
         request: crate::calendar::connections::ConnectionRequest,
@@ -302,9 +305,14 @@ pub enum Request {
     CancelCalendarConnection {
         id: String,
     },
+    WaitCalendarConnection {
+        id: String,
+        error: String,
+    },
     ActiveCalendarConnection {
         id: String,
     },
+    ActiveCalendarConnections,
     RemoveCalendarConnection {
         id: String,
         revision: i64,
@@ -1091,6 +1099,10 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             crate::calendar::cancel(db,&id)?;
             Ok(json!({"id":id,"status":"cancelled"}))
         }).await,
+        Request::AcceptCalendarCurrentState{id} => db.write(move|db| {
+            crate::calendar::accept_current_state(db,&id)?;
+            Ok(json!({"id":id,"status":"cancelled"}))
+        }).await,
         Request::ExecuteCalendarAction{id,access_token,subject} => {
             let (_guard,_slot)=profile.operations.calendar_capacity().await?;
             let lookup=id.clone();
@@ -1153,8 +1165,15 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let slot=crate::calendar::connections::cancel(db,&id)?;
             Ok(json!({"id":id,"status":"cancelled","cleanup":slot}))
         }).await,
+        Request::WaitCalendarConnection{id,error} => db.write(move|db| {
+            crate::calendar::connections::wait(db,&id,&error)?;
+            Ok(json!({"id":id,"status":"waiting"}))
+        }).await,
         Request::ActiveCalendarConnection{id} => db.read(move|db| {
             Ok(serde_json::to_value(crate::calendar::connections::active(db,&id)?)?)
+        }).await,
+        Request::ActiveCalendarConnections => db.read(move|db| {
+            Ok(serde_json::to_value(crate::calendar::connections::active_connections(db)?)?)
         }).await,
         Request::RemoveCalendarConnection{id,revision} => db.write(move|db| {
             let cleanup=crate::calendar::connections::remove(db,&id,revision)?;

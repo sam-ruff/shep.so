@@ -52,6 +52,37 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   Checkpoint `8044f22` is pushed to main. Normal hooks pass 1,597 Rust executions,
   15 ignored; separately run owned calendar HTTP tests retain their evidence.
   The remaining architecture migrations and full completion audit stay active.
+  Activity recovery links must open the exact retained folder/backup target,
+  independently of the current recent-items page or Preferences selection.
+  CalDAV credential failures must not copy raw secure-store exceptions into
+  saved journal errors or visible feedback. Both corrections are in active lanes.
+  Root continues browser Calendar Undo using acknowledged physical receipts,
+  atomic inverse admission and newer-event ownership checks. Unknown outcomes
+  still require checked recovery; keep this separate from a successful provider
+  receipt and preserve any requested inverse decision across restart.
+  Acknowledged browser Undo now passes nine units and three held-provider
+  controls for create/edit/delete, plus build. Before shipping, verify deleted
+  event restoration preserves provider fields omitted by the current portable
+  event model (including recurring/attendee metadata); a partial new event must
+  not be presented as a complete Undo. Unknown-result Undo decisions remain open.
+  Flutter CalDAV controls are now integrated from the folder23-consolidated
+  handoff. Its isolated gates pass 256 Flutter and 184 Rust tests; root combined
+  tests and golden regeneration are running. Review also requires sanitising
+  credential read and cleanup failures, alongside the already covered save
+  failure, before shipping this continuation.
+  Integrated CalDAV verification now passes 184 Rust and 256 Flutter tests;
+  analysis is clean and all three regenerated compact captures match the handoff.
+  Browser Undo refuses deleted-event recreation without a provider restoration
+  receipt. Its nine units pass; the shared exact restoration contract remains
+  active work, alongside deferred uncertain-result decisions.
+  Root integrated credential recovery v3 and corrected cleanup Retry ownership
+  and restart resumption. Matching Calendar inspection now retains uncertainty
+  and requires explicit checked-state adoption, with no fabricated receipt.
+  The same revision fence covers matching and nonmatching reads; exact identity
+  and current version are mandatory. Final affected gates are running.
+  Final root gates pass 185 Rust and all 260 Flutter tests; analysis, Clippy and
+  strict docs pass. Browser passes all 266 units and three Undo control scenarios.
+  Normal shipping hooks remain to run for this local continuation.
 
   First migration implemented: common projection outcomes, native bulk review and
   confirmation during pending individual writes, pre-admission Undo, and calendar

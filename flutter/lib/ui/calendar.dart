@@ -114,6 +114,12 @@ class _CalendarViewState extends State<CalendarView> {
                                 .inspectCalendarActivity(action),
                             child: const Text('Check'),
                           ),
+                        if (action.canAcceptCurrent)
+                          TextButton(
+                            onPressed: () => widget.workspace
+                                .acceptCalendarCurrentState(action),
+                            child: const Text('Keep current'),
+                          ),
                         if (action.canCancel)
                           TextButton(
                             onPressed: () =>
@@ -246,7 +252,7 @@ class _CalendarViewState extends State<CalendarView> {
               subtitle: Text(
                 '${e.calendar} · ${e.start.hour.toString().padLeft(2, '0')}:${e.start.minute.toString().padLeft(2, '0')}${e.location.isEmpty ? '' : ' · ${e.location}'}',
               ),
-              trailing: e.readOnly
+              trailing: e.readOnly || e.providerViewOnly
                   ? const ShepIcon('lock', size: 18)
                   : const ShepIcon('chevron', size: 18),
             ),
@@ -296,10 +302,11 @@ class _EventEditorState extends State<EventEditor> {
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
+    final viewOnly = entry?.readOnly == true || entry?.providerViewOnly == true;
     final day = entry?.start ?? widget.date;
     return AlertDialog(
       title: Text(
-        entry?.readOnly == true
+        viewOnly
             ? 'View event'
             : entry == null
             ? 'New event'
@@ -339,15 +346,21 @@ class _EventEditorState extends State<EventEditor> {
             const SizedBox(height: 16),
             TextField(
               controller: title,
-              readOnly: entry?.readOnly == true,
+              readOnly: viewOnly,
               decoration: const InputDecoration(labelText: 'Event title'),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: location,
-              readOnly: entry?.readOnly == true,
+              readOnly: viewOnly,
               decoration: const InputDecoration(labelText: 'Location'),
             ),
+            if (entry?.providerViewOnly == true) ...[
+              const SizedBox(height: 16),
+              const Text(
+                'Recurring CalDAV events are view-only because this device cannot safely change a single occurrence.',
+              ),
+            ],
             if (error != null) Text(error!),
           ],
         ),
@@ -357,7 +370,7 @@ class _EventEditorState extends State<EventEditor> {
           onPressed: saving ? null : () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
-        if (entry != null && !entry.readOnly)
+        if (entry != null && !viewOnly)
           TextButton(
             onPressed: saving
                 ? null
@@ -378,7 +391,7 @@ class _EventEditorState extends State<EventEditor> {
                   },
             child: const Text('Delete'),
           ),
-        if (entry?.readOnly != true)
+        if (!viewOnly)
           FilledButton(
             onPressed: saving
                 ? null

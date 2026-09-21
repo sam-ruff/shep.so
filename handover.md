@@ -2,6 +2,34 @@
 
 ## Current immediate-action continuation
 
+Flutter CalDAV consolidated text is integrated from
+`artifacts/caldav22-folder23-consolidated.patch` (SHA-256
+`eca7ce4434a799d5ebc591a9210d4b6acd6b6e93e162f914f5e4f06fd266b60c`).
+Root regeneration and Rust checks use `actions-caldav23-root-*` logs.
+Credential read/cleanup exceptions need the lane's sanitisation follow-up before
+shipping. Preserve schema23 and the existing folder and exact-observation tests.
+The v3 credential follow-up is now integrated. Root adds cleanup restart retry,
+owned failure clearing, and structured observation for every uncertain Calendar
+inspection, including a matching provider state. Reads never fabricate receipts.
+Final logs use `actions-caldav23-root-final-*` and
+`actions-caldav23-root-cleanup-restart-controls.log`. The first full rerun found a
+test harness missing the production workspace listener; its isolated card is now
+wrapped in ListenableBuilder and the recovery control must disappear after Retry.
+Final full Flutter passes260, Rust185, analysis/Clippy/strict docs pass. Browser
+passes266 units, build and three guarded Undo controls. Shipping hooks are next.
+
+Root has uncommitted browser acknowledged Calendar Undo in calendar_actions.ts,
+calendar_repository.ts and ui.ts. Optional undoOf/undoAction fields link an atomic
+normal queued inverse to its original receipt. Exact cache/latest ownership and
+permissions are rechecked; local failure rolls back both records. Nine new units,
+three real held-provider create/edit/delete Undo controls and build pass
+(`actions-browser-calendar-undo-*`); root reviewed calendar-undo-pending-light.png.
+Before shipping this Undo work, complete deleted-event restore fidelity: the
+portable event currently omits Google attendee/recurrence and other writable
+metadata, so recreating only represented fields is not a complete inverse.
+Unknown-result deferred Undo also remains open. bulk_trace knows the new optional
+fields and must carry CalDAV provider/connection binding into inverse admissions.
+
 Checkpoint `8044f22bb2f158818f2e70c352f98ba1296646b2` is pushed to main.
 Normal hooks pass 1,597 Rust executions, 15 ignored. Browser final units pass257;
 backend passes68 with one configured integration prerequisite ignored.

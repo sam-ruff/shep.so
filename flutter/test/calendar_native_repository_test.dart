@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shep_mobile/data/credentials.dart';
 import 'package:shep_mobile/data/native_repository.dart';
+import 'package:shep_mobile/data/accounts.dart';
+import 'package:shep_mobile/data/repository.dart';
 import 'package:shep_mobile/model/mail.dart';
 import 'package:shep_mobile/src/rust/frb_generated.dart';
 
@@ -14,6 +17,61 @@ class UnusedCredentials implements CredentialStore {
   Future<void> remove(String account) async {}
   @override
   Future<void> save(String account, String incoming, String smtp) async {}
+}
+
+class MemoryCredentials implements CredentialStore {
+  final values = <String, String>{};
+  @override
+  Future<String?> read(String account, bool smtp) async => values[account];
+  @override
+  Future<void> remove(String account) async => values.remove(account);
+  @override
+  Future<void> save(String account, String incoming, String smtp) async {
+    values[account] = incoming;
+  }
+}
+
+class HeldCredentials extends MemoryCredentials {
+  final saveEntered = Completer<void>();
+  final releaseSave = Completer<void>();
+  bool failRemoval = false;
+
+  @override
+  Future<void> save(String account, String incoming, String smtp) async {
+    if (!saveEntered.isCompleted) saveEntered.complete();
+    await releaseSave.future;
+    await super.save(account, incoming, smtp);
+  }
+
+  @override
+  Future<void> remove(String account) async {
+    if (failRemoval) throw StateError('credential store locked');
+    await super.remove(account);
+  }
+}
+
+class RefusingCredentials extends MemoryCredentials {
+  bool refuseSave = true;
+  bool refuseRead = false;
+  bool refuseRemoval = false;
+
+  @override
+  Future<String?> read(String account, bool smtp) async {
+    if (refuseRead) throw StateError('private-password-in-read-error');
+    return super.read(account, smtp);
+  }
+
+  @override
+  Future<void> remove(String account) async {
+    if (refuseRemoval) throw StateError('private-password-in-remove-error');
+    await super.remove(account);
+  }
+
+  @override
+  Future<void> save(String account, String incoming, String smtp) async {
+    if (refuseSave) throw StateError('private-password-in-provider-error');
+    await super.save(account, incoming, smtp);
+  }
 }
 
 void main() {
@@ -166,4 +224,240 @@ void main() {
       expect((await repository.calendarSnapshot()).events.single.id, 'shared');
     },
   );
+
+  test('CalDAV admission retains connection identity through actual FFI', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'shep-caldav-action-host-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final path = '${directory.path}/mail.sqlite';
+    final repository = await NativeRepository.open(
+      path,
+      credentials: UnusedCredentials(),
+    );
+    final config =
+        '{"id":"caldav-home","url":"https://calendar.example.test/home/","username":"sam"}';
+    final source = '{"id":"caldav-home","name":"Home","read_only":false}';
+    final seeded = await Process.run('sqlite3', [
+      path,
+      "INSERT INTO calendar_connections(id,config,credential_slot,revision) VALUES('caldav-home','$config','calendar-slot',4); INSERT INTO calendar_sources(id,source,connection_id) VALUES('caldav-home','$source','caldav-home');",
+    ]);
+    expect(seeded.exitCode, 0, reason: '${seeded.stderr}');
+    final connection = (await repository.calDavConnections()).single;
+    final event = CalendarEntry(
+      'reserved-event',
+      'Review',
+      DateTime.utc(2027, 1, 4, 10),
+      DateTime.utc(2027, 1, 4, 11),
+      sourceId: 'caldav-home',
+    );
+
+    final admitted = await repository.admitCalDavAction(
+      'caldav-action',
+      event,
+      null,
+      connection,
+    );
+    expect(admitted.status, 'queued');
+    expect(admitted.connectionId, 'caldav-home');
+    expect(admitted.connectionRevision, 4);
+    expect(admitted.credentialSlot, 'calendar-slot');
+    final activity = (await repository.calendarActions()).single;
+    expect(activity.isCalDav, isTrue);
+    expect(activity.connectionId, 'caldav-home');
+    expect(activity.connectionRevision, 4);
+    expect(activity.credentialSlot, 'calendar-slot');
+    expect((await repository.calendarSnapshot()).events.single.id, event.id);
+  });
+
+  test(
+    'CalDAV setup and credential cleanup use the durable FFI journal',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-caldav-setup-host-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final credentials = MemoryCredentials();
+      final repository = await NativeRepository.open(
+        '${directory.path}/mail.sqlite',
+        credentials: credentials,
+      );
+
+      final attempt = await repository.admitCalDavConnection(
+        attemptId: 'setup-action',
+        connectionId: 'caldav-reserved',
+        url: 'https://calendar.example.test/home/',
+        username: 'sam',
+      );
+      expect(attempt.status, 'prepared');
+      expect(
+        (await repository.calDavAttempts(pending: true)).single.id,
+        attempt.id,
+      );
+      await repository.saveCalDavPassword(attempt, 'secret');
+      expect(credentials.values[attempt.credentialSlot], 'secret');
+
+      await repository.cancelCalDavConnection(attempt);
+      expect(credentials.values, isEmpty);
+      expect(await repository.calDavAttempts(pending: true), isEmpty);
+    },
+  );
+
+  test(
+    'CalDAV credential failures retain only a public durable error',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-caldav-credential-failure-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final repository = await NativeRepository.open(
+        '${directory.path}/mail.sqlite',
+        credentials: RefusingCredentials(),
+      );
+      final attempt = await repository.admitCalDavConnection(
+        attemptId: 'refused-save',
+        connectionId: 'caldav-refused',
+        url: 'https://calendar.example.test/refused/',
+        username: 'sam',
+      );
+
+      await expectLater(
+        repository.saveCalDavPassword(attempt, 'private-password'),
+        throwsA(anything),
+      );
+
+      final saved = await repository.calDavAttempt(attempt.id);
+      expect(saved?.status, 'waiting');
+      expect(saved?.error, 'Unlock device credential storage, then retry.');
+      expect(saved?.error, isNot(contains('private-password')));
+      expect(saved?.error, isNot(contains('provider-error')));
+    },
+  );
+
+  test('CalDAV credential read and cleanup failures remain public', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'shep-caldav-private-credential-errors-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final credentials = RefusingCredentials();
+    credentials.refuseSave = false;
+    final repository = await NativeRepository.open(
+      '${directory.path}/mail.sqlite',
+      credentials: credentials,
+    );
+    final attempt = await repository.admitCalDavConnection(
+      attemptId: 'private-errors',
+      connectionId: 'caldav-private-errors',
+      url: 'https://calendar.example.test/private-errors/',
+      username: 'sam',
+    );
+    await repository.saveCalDavPassword(attempt, 'private-password');
+    credentials.refuseRead = true;
+
+    await expectLater(
+      repository.activateCalDavConnection(attempt),
+      throwsA(
+        isA<MailOperationFailure>().having(
+          (failure) => failure.message,
+          'message',
+          'Unlock device credential storage, then retry.',
+        ),
+      ),
+    );
+    expect(
+      (await repository.calDavAttempt(attempt.id))?.error,
+      'Unlock device credential storage, then retry.',
+    );
+
+    credentials.refuseRead = false;
+    credentials.refuseRemoval = true;
+    await expectLater(
+      repository.cancelCalDavConnection(attempt),
+      throwsA(
+        isA<CalendarCredentialCleanupFailure>()
+            .having(
+              (failure) => failure.message,
+              'message',
+              contains('cleanup'),
+            )
+            .having(
+              (failure) => failure.message,
+              'private detail',
+              isNot(contains('private-password')),
+            ),
+      ),
+    );
+  });
+
+  test(
+    'CalDAV credential staging and cancellation share the lifecycle FIFO',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-caldav-held-credential-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/mail.sqlite';
+      final credentials = HeldCredentials();
+      final first = await NativeRepository.open(path, credentials: credentials);
+      final second = await NativeRepository.open(
+        path,
+        credentials: credentials,
+      );
+      final attempt = await first.admitCalDavConnection(
+        attemptId: 'held-save',
+        connectionId: 'caldav-held',
+        url: 'https://calendar.example.test/held/',
+        username: 'sam',
+      );
+      final saving = first.saveCalDavPassword(attempt, 'secret');
+      await credentials.saveEntered.future;
+      var cancelled = false;
+      final cancelling = second
+          .cancelCalDavConnection(attempt)
+          .then((_) => cancelled = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(cancelled, isFalse);
+
+      credentials.releaseSave.complete();
+      await saving;
+      await cancelling;
+      expect(credentials.values, isEmpty);
+      expect(await first.calDavAttempts(pending: true), isEmpty);
+    },
+  );
+
+  test('failed CalDAV credential cleanup remains durably retryable', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'shep-caldav-cleanup-failure-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final path = '${directory.path}/mail.sqlite';
+    final credentials = MemoryCredentials();
+    final repository = await NativeRepository.open(
+      path,
+      credentials: credentials,
+    );
+    final attempt = await repository.admitCalDavConnection(
+      attemptId: 'cleanup-failure',
+      connectionId: 'caldav-cleanup',
+      url: 'https://calendar.example.test/cleanup/',
+      username: 'sam',
+    );
+    await repository.saveCalDavPassword(attempt, 'secret');
+    final failing = HeldCredentials()..failRemoval = true;
+    failing.releaseSave.complete();
+    failing.values.addAll(credentials.values);
+    final second = await NativeRepository.open(path, credentials: failing);
+
+    await expectLater(
+      second.cancelCalDavConnection(attempt),
+      throwsA(anything),
+    );
+    final result = await Process.run('sqlite3', [
+      path,
+      'SELECT count(*) FROM calendar_credential_cleanup;',
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stderr}');
+    expect('${result.stdout}'.trim(), '1');
+  });
 }

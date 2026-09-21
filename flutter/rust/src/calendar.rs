@@ -27,6 +27,10 @@ pub struct Activity {
     error: Option<String>,
     created: i64,
     subject: Option<String>,
+    connection_id: Option<String>,
+    connection_revision: Option<i64>,
+    credential_slot: Option<String>,
+    checked: bool,
     mutation: Mutation,
     receipt: Option<Receipt>,
 }
@@ -427,7 +431,7 @@ fn admit(db: &mut Connection, id: &str, mutation: &Mutation) -> Result<()> {
 
 pub fn activities(db: &Connection, offset: u32) -> Result<Vec<Activity>> {
     anyhow::ensure!(offset <= 10_000, "Calendar history offset is too large.");
-    let mut statement = db.prepare("SELECT a.id,a.status,a.error,a.created,a.subject,a.mutation,r.receipt FROM calendar_actions a INDEXED BY calendar_action_attention LEFT JOIN calendar_action_receipts r ON r.action=a.id WHERE a.status NOT IN ('succeeded','cancelled') ORDER BY a.created DESC,a.id LIMIT ?1 OFFSET ?2")?;
+    let mut statement = db.prepare("SELECT a.id,a.status,a.error,a.created,a.subject,a.connection_id,a.connection_revision,a.credential_slot,EXISTS(SELECT 1 FROM calendar_action_observations o WHERE o.action=a.id),a.mutation,r.receipt FROM calendar_actions a INDEXED BY calendar_action_attention LEFT JOIN calendar_action_receipts r ON r.action=a.id WHERE a.status NOT IN ('succeeded','cancelled') ORDER BY a.created DESC,a.id LIMIT ?1 OFFSET ?2")?;
     statement
         .query_map(params![HISTORY_LIMIT, offset], |row| {
             Ok((
@@ -436,18 +440,38 @@ pub fn activities(db: &Connection, offset: u32) -> Result<Vec<Activity>> {
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, bool>(8)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, Option<String>>(10)?,
             ))
         })?
         .map(|row| {
-            let (id, status, error, created, subject, mutation, receipt) = row?;
+            let (
+                id,
+                status,
+                error,
+                created,
+                subject,
+                connection_id,
+                connection_revision,
+                credential_slot,
+                checked,
+                mutation,
+                receipt,
+            ) = row?;
             Ok(Activity {
                 id,
                 status,
                 error,
                 created,
                 subject,
+                connection_id,
+                connection_revision,
+                credential_slot,
+                checked,
                 mutation: serde_json::from_str(&mutation)?,
                 receipt: receipt
                     .map(|value| serde_json::from_str(&value))
@@ -648,6 +672,126 @@ pub fn cancel(db: &Connection, id: &str) -> Result<()> {
     let changed=tx.execute("UPDATE calendar_actions SET status='cancelled',error=NULL WHERE id=?1 AND status IN ('queued','waiting','rejected')", [id])?;
     anyhow::ensure!(changed == 1, "This calendar change has already started.");
     tx.execute("DELETE FROM calendar_intents WHERE action=?1", [id])?;
+    tx.execute(
+        "UPDATE calendar_clock SET revision=revision+1 WHERE id=1",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn accept_current_state(db: &mut Connection, id: &str) -> Result<()> {
+    let tx = db.transaction()?;
+    type CheckedState = (
+        String,
+        String,
+        Option<String>,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+    );
+    let checked: Option<CheckedState> = tx
+        .query_row(
+            "SELECT a.status,a.mutation,o.observed,o.cache_revision,o.subject,o.connection_id,o.connection_revision,o.credential_slot FROM calendar_actions a JOIN calendar_action_observations o ON o.action=a.id WHERE a.id=?1",
+            [id],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?)),
+        )
+        .optional()?;
+    let Some((
+        status,
+        raw,
+        observed,
+        cache_revision,
+        subject,
+        connection_id,
+        connection_revision,
+        credential_slot,
+    )) = checked
+    else {
+        anyhow::bail!("Check the provider event before accepting its current state.");
+    };
+    anyhow::ensure!(
+        status == "uncertain",
+        "Check the provider event before accepting its current state."
+    );
+    let current_revision: i64 = tx.query_row(
+        "SELECT revision FROM calendar_clock WHERE id=1",
+        [],
+        |row| row.get(0),
+    )?;
+    anyhow::ensure!(
+        current_revision == cache_revision,
+        "Calendar data changed after this check. Check the provider event again."
+    );
+    if let Some(connection_id) = connection_id.as_deref() {
+        let active = connections::active(&tx, connection_id)
+            .context("Reconnect the checked CalDAV calendar before accepting its state.")?;
+        anyhow::ensure!(
+            Some(active.revision) == connection_revision
+                && Some(active.credential_slot.as_str()) == credential_slot.as_deref(),
+            "The CalDAV connection changed after this check. Check it again."
+        );
+    } else {
+        let current_subject: String = tx
+            .query_row(
+                "SELECT subject FROM calendar_binding WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .context("Reconnect the checked Google account before accepting its state.")?;
+        anyhow::ensure!(
+            subject.as_deref() == Some(current_subject.as_str()),
+            "The Google account changed after this check. Check it again."
+        );
+    }
+    let mutation: Mutation = serde_json::from_str(&raw)?;
+    let event = match &mutation {
+        Mutation::Save { after, .. } => after,
+        Mutation::Delete { before } => before,
+    };
+    let owner: Option<String> = tx
+        .query_row(
+            "SELECT action FROM calendar_intents WHERE source_id=?1 AND event_id=?2",
+            params![event.source_id, event.id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    anyhow::ensure!(
+        owner.as_deref() == Some(id),
+        "A newer calendar change owns this event."
+    );
+    tx.execute(
+        "DELETE FROM calendar_events WHERE source_id=?1 AND id=?2",
+        params![event.source_id, event.id],
+    )?;
+    if let Some(observed) = observed {
+        let observed: Event = serde_json::from_str(&observed)?;
+        let expected_id = match &mutation {
+            Mutation::Save { before: None, .. } if connection_id.is_none() => {
+                format!("shep{}", id.replace('-', ""))
+            }
+            _ => event.id.clone(),
+        };
+        anyhow::ensure!(
+            observed.source_id == event.source_id && observed.id == expected_id,
+            "The checked event identity is invalid. Check it again."
+        );
+        tx.execute(
+            "INSERT INTO calendar_events(source_id,id,event) VALUES(?1,?2,?3) ON CONFLICT(source_id,id) DO UPDATE SET event=excluded.event",
+            params![observed.source_id, observed.id, serde_json::to_string(&observed)?],
+        )?;
+    }
+    tx.execute("DELETE FROM calendar_intents WHERE action=?1", [id])?;
+    tx.execute(
+        "DELETE FROM calendar_action_observations WHERE action=?1",
+        [id],
+    )?;
+    tx.execute(
+        "UPDATE calendar_actions SET status='cancelled',error='The checked provider state was kept.' WHERE id=?1 AND status='uncertain'",
+        [id],
+    )?;
     tx.execute(
         "UPDATE calendar_clock SET revision=revision+1 WHERE id=1",
         [],
@@ -875,13 +1019,24 @@ pub async fn inspect_bound(
                     "Reconnect the original Google account to inspect this change."
                 );
             }
+            let cache_revision = db.query_row(
+                "SELECT revision FROM calendar_clock WHERE id=1",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?;
             Ok((
                 serde_json::from_str::<Mutation>(&raw)?,
-                connection_id.is_some(),
+                bound,
+                connection_id,
+                connection_revision,
+                credential_slot,
+                cache_revision,
             ))
         })
         .await?;
-    let (mutation, caldav) = mutation;
+    let (mutation, bound, connection_id, connection_revision, credential_slot, cache_revision) =
+        mutation;
+    let caldav = connection_id.is_some();
     let mut expected = match &mutation {
         Mutation::Save { after, .. } => after.clone(),
         Mutation::Delete { before } => before.clone(),
@@ -890,30 +1045,69 @@ pub async fn inspect_bound(
         expected.id = format!("shep{}", id.replace('-', ""));
     }
     let observed = provider.read(&token, &expected).await?;
-    let proven = match &mutation {
-        Mutation::Save { .. } => observed
-            .as_ref()
-            .is_some_and(|event| event.same_content(&expected)),
-        Mutation::Delete { .. } => observed.is_none(),
-    };
-    if !proven {
-        let saved = id;
-        db.write(move|db|{db.execute("UPDATE calendar_actions SET error='The provider no longer matches the requested event. Keep this change for review until you explicitly accept the current state.' WHERE id=?1 AND status='uncertain'",[&saved])?;Ok(())}).await?;
-        return Ok(());
+    if let Some(event) = &observed {
+        anyhow::ensure!(
+            event.is_bounded()
+                && event.end > event.start
+                && event.id == expected.id
+                && event.source_id == expected.source_id
+                && event.etag.as_ref().is_some_and(|value| !value.is_empty())
+                && expected
+                    .remote_url
+                    .as_ref()
+                    .is_none_or(|url| event.remote_url.as_ref() == Some(url)),
+            "The provider did not return the exact event and its current version."
+        );
     }
-    let receipt = Receipt {
-        request_id: id.clone(),
-        before: match mutation {
-            Mutation::Save { before, .. } => before,
-            Mutation::Delete { before } => Some(before),
-        },
-        after: observed,
+    let saved = id;
+    let event = match &mutation {
+        Mutation::Save { after, .. } => after,
+        Mutation::Delete { before } => before,
     };
-    let saved = id.clone();
-    db.write(move|db|{let tx=db.transaction()?;
-        tx.execute("INSERT OR IGNORE INTO calendar_action_receipts(action,receipt) VALUES(?1,?2)",params![&saved,serde_json::to_string(&receipt)?])?;
-        tx.execute("UPDATE calendar_actions SET status='repair',error='The exact provider event was found. Finish saving it on this device.' WHERE id=?1 AND status='uncertain'",[&saved])?;tx.commit()?;Ok(())}).await?;
-    db.write(move |db| repair(db, &id)).await
+    let source_id = event.source_id.clone();
+    let event_id = event.id.clone();
+    db.write(move |db| {
+        let tx = db.transaction()?;
+        let current: (String, Option<String>, Option<String>, Option<i64>, Option<String>, i64) = tx.query_row(
+            "SELECT a.status,a.subject,a.connection_id,a.connection_revision,a.credential_slot,c.revision FROM calendar_actions a CROSS JOIN calendar_clock c WHERE a.id=?1 AND c.id=1",
+            [&saved],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
+        )?;
+        anyhow::ensure!(
+            current == (
+                "uncertain".into(),
+                bound.clone(),
+                connection_id.clone(),
+                connection_revision,
+                credential_slot.clone(),
+                cache_revision,
+            ),
+            "Calendar data changed while the provider event was checked. Check it again."
+        );
+        let owner: Option<String> = tx
+            .query_row(
+                "SELECT action FROM calendar_intents WHERE source_id=?1 AND event_id=?2",
+                params![source_id, event_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        anyhow::ensure!(
+            owner.as_deref() == Some(saved.as_str()),
+            "A newer calendar change owns this event."
+        );
+        let observed = observed
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+        tx.execute(
+            "INSERT INTO calendar_action_observations(action,observed,cache_revision,subject,connection_id,connection_revision,credential_slot) VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(action) DO UPDATE SET observed=excluded.observed,cache_revision=excluded.cache_revision,subject=excluded.subject,connection_id=excluded.connection_id,connection_revision=excluded.connection_revision,credential_slot=excluded.credential_slot",
+            params![saved,observed,cache_revision,bound,connection_id,connection_revision,credential_slot],
+        )?;
+        tx.execute("UPDATE calendar_actions SET error='The provider state was checked. Review it before accepting; the original outcome remains unconfirmed.' WHERE id=?1 AND status='uncertain'",[&saved])?;
+        tx.commit()?;
+        Ok(())
+    }).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1749,7 +1943,26 @@ mod tests {
             })
             .await
             .expect("status");
-        assert_eq!(status, "succeeded");
+        assert_eq!(status, "uncertain");
+        db.write(|db| accept_current_state(db, "action"))
+            .await
+            .expect("explicit adoption");
+        let state = db
+            .read(|db| {
+                Ok((
+                    db.query_row(
+                        "SELECT status FROM calendar_actions WHERE id='action'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    db.query_row("SELECT count(*) FROM calendar_action_receipts", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                ))
+            })
+            .await
+            .expect("adopted state");
+        assert_eq!(state, ("cancelled".into(), 0));
     }
 
     #[tokio::test]
@@ -1802,6 +2015,73 @@ mod tests {
                     .await
                     .is_err()
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn inspection_rejects_another_identity_or_missing_version() {
+        for invalid in ["id", "source", "etag"] {
+            let (_directory, db) = database().await;
+            let requested = event("local", None);
+            db.write({
+                let requested = requested.clone();
+                move |db| {
+                    admit(
+                        db,
+                        "action",
+                        &Mutation::Save {
+                            before: None,
+                            after: requested,
+                        },
+                    )?;
+                    db.execute(
+                        "UPDATE calendar_actions SET status='uncertain' WHERE id='action'",
+                        [],
+                    )?;
+                    Ok(())
+                }
+            })
+            .await
+            .expect("uncertain admission");
+            let mut observed = requested;
+            observed.id = "shepaction".into();
+            observed.etag = Some("v2".into());
+            match invalid {
+                "id" => observed.id = "another-event".into(),
+                "source" => observed.source_id = "another-calendar".into(),
+                _ => observed.etag = None,
+            }
+            let mut provider = MockCalendarProvider::new();
+            provider
+                .expect_read()
+                .times(1)
+                .return_once(move |_, _| Box::pin(async move { Ok(Some(observed)) }));
+            assert!(
+                inspect(&db, &provider, "action".into(), "token".into())
+                    .await
+                    .is_err()
+            );
+            let state = db
+                .read(|db| {
+                    Ok((
+                        db.query_row(
+                            "SELECT status FROM calendar_actions WHERE id='action'",
+                            [],
+                            |row| row.get::<_, String>(0),
+                        )?,
+                        db.query_row(
+                            "SELECT count(*) FROM calendar_action_observations",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )?,
+                        db.query_row("SELECT count(*) FROM calendar_action_receipts", [], |row| {
+                            row.get::<_, i64>(0)
+                        })?,
+                    ))
+                })
+                .await
+                .expect("retained state");
+            assert_eq!(state, ("uncertain".into(), 0, 0));
         }
     }
 
@@ -2016,7 +2296,24 @@ mod tests {
             })
             .await
             .expect("state");
-        assert_eq!(state, ("succeeded".into(), 0));
+        assert_eq!(state, ("uncertain".into(), 1));
+        db.write(|db| accept_current_state(db, "delete"))
+            .await
+            .expect("explicit absence adoption");
+        let remaining = db
+            .read(|db| {
+                Ok((
+                    db.query_row("SELECT count(*) FROM calendar_events", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                    db.query_row("SELECT count(*) FROM calendar_action_receipts", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                ))
+            })
+            .await
+            .expect("adopted absence");
+        assert_eq!(remaining, (0, 0));
     }
 
     #[tokio::test]
@@ -2220,5 +2517,323 @@ mod tests {
             })
             .await;
         assert!(refused.is_err());
+    }
+
+    #[tokio::test]
+    async fn inspected_different_or_absent_state_is_applied_only_after_adoption() {
+        for missing in [false, true] {
+            let (_directory, db) = database().await;
+            let before = event("remote", Some("v1"));
+            let mut requested = before.clone();
+            requested.title = "Requested".into();
+            db.write({
+                let before = before.clone();
+                let requested = requested.clone();
+                move |db| {
+                    db.execute(
+                        "INSERT INTO calendar_events(source_id,id,event) VALUES('primary','remote',?1)",
+                        [serde_json::to_string(&before)?],
+                    )?;
+                    admit(
+                        db,
+                        "action",
+                        &Mutation::Save {
+                            before: Some(before),
+                            after: requested,
+                        },
+                    )?;
+                    db.execute(
+                        "UPDATE calendar_actions SET status='uncertain' WHERE id='action'",
+                        [],
+                    )?;
+                    Ok(())
+                }
+            })
+            .await
+            .expect("uncertain action");
+            let mut observed = before;
+            observed.title = "Provider state".into();
+            observed.etag = Some("v2".into());
+            let expected = (!missing).then_some(observed.clone());
+            let mut provider = MockCalendarProvider::new();
+            provider.expect_read().times(1).return_once(move |_, _| {
+                Box::pin(async move { Ok((!missing).then_some(observed)) })
+            });
+
+            inspect(&db, &provider, "action".into(), "token".into())
+                .await
+                .expect("inspect");
+            let activity = db.read(|db| activities(db, 0)).await.expect("activity");
+            assert!(activity[0].checked);
+            db.write(|db| accept_current_state(db, "action"))
+                .await
+                .expect("adopt");
+            let cached = db
+                .read(|db| {
+                    let raw: Option<String> = db
+                        .query_row(
+                            "SELECT event FROM calendar_events WHERE source_id='primary' AND id='remote'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    raw.as_deref()
+                        .map(serde_json::from_str::<Event>)
+                        .transpose()
+                        .map_err(Into::into)
+                })
+                .await
+                .expect("cache");
+            assert_eq!(cached, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn checked_observation_survives_restart_without_provider_replay() {
+        let (directory, db) = database().await;
+        let path = directory
+            .path()
+            .join("calendar.sqlite")
+            .to_string_lossy()
+            .into_owned();
+        let before = event("remote", Some("v1"));
+        let mut requested = before.clone();
+        requested.title = "Requested".into();
+        db.write({
+            let before = before.clone();
+            move |db| {
+                db.execute(
+                    "INSERT INTO calendar_events(source_id,id,event) VALUES('primary','remote',?1)",
+                    [serde_json::to_string(&before)?],
+                )?;
+                admit(
+                    db,
+                    "action",
+                    &Mutation::Save {
+                        before: Some(before),
+                        after: requested,
+                    },
+                )?;
+                db.execute(
+                    "UPDATE calendar_actions SET status='uncertain' WHERE id='action'",
+                    [],
+                )?;
+                Ok(())
+            }
+        })
+        .await
+        .expect("uncertain action");
+        let mut observed = before;
+        observed.title = "Provider state".into();
+        observed.etag = Some("v2".into());
+        let mut provider = MockCalendarProvider::new();
+        provider
+            .expect_read()
+            .times(1)
+            .return_once(move |_, _| Box::pin(async move { Ok(Some(observed)) }));
+        inspect(&db, &provider, "action".into(), "token".into())
+            .await
+            .expect("inspect");
+        drop(db);
+
+        let reopened = crate::database::Database::open(path).await.expect("reopen");
+        assert!(
+            reopened
+                .read(|db| activities(db, 0))
+                .await
+                .expect("activity")[0]
+                .checked
+        );
+        reopened
+            .write(|db| accept_current_state(db, "action"))
+            .await
+            .expect("adopt after restart");
+    }
+
+    #[tokio::test]
+    async fn provider_read_cannot_publish_an_observation_across_a_newer_revision() {
+        for matching in [false, true] {
+            let (_directory, db) = database().await;
+            let requested = event("local", None);
+            let mut matching_event = requested.clone();
+            matching_event.id = "shepaction".into();
+            matching_event.etag = Some("v2".into());
+            matching_event.remote_url = Some("shepaction".into());
+            db.write(move |db| {
+                admit(
+                    db,
+                    "action",
+                    &Mutation::Save {
+                        before: None,
+                        after: requested,
+                    },
+                )?;
+                db.execute(
+                    "UPDATE calendar_actions SET status='uncertain' WHERE id='action'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .expect("uncertain action");
+            let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+            let mut provider = MockCalendarProvider::new();
+            provider.expect_read().times(1).return_once(move |_, _| {
+                Box::pin(async move {
+                    let _ = entered_tx.send(());
+                    let _ = release_rx.await;
+                    Ok(matching.then_some(matching_event))
+                })
+            });
+            let inspected_db = db.clone();
+            let inspection = tokio::spawn(async move {
+                inspect(&inspected_db, &provider, "action".into(), "token".into()).await
+            });
+            entered_rx.await.expect("provider read entered");
+            db.write(|db| {
+                db.execute(
+                    "UPDATE calendar_clock SET revision=revision+1 WHERE id=1",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .expect("newer revision");
+            release_tx.send(()).expect("release read");
+            assert!(inspection.await.expect("inspection task").is_err());
+            let observations = db
+                .read(|db| {
+                    db.query_row(
+                        "SELECT count(*) FROM calendar_action_observations",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(Into::into)
+                })
+                .await
+                .expect("observations");
+            assert_eq!(observations, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn checked_current_state_retires_only_the_owned_uncertain_intent() {
+        let mut provider_event = event("shepaction", Some("v2"));
+        provider_event.source_id = "primary".into();
+        for observed in [Some(provider_event), None] {
+            let (_directory, db) = database().await;
+            let requested = event("local", None);
+            let expected = observed.clone();
+            db.write(move |db| {
+                admit(
+                    db,
+                    "action",
+                    &Mutation::Save {
+                        before: None,
+                        after: requested,
+                    },
+                )?;
+                let revision: i64 = db.query_row(
+                    "SELECT revision FROM calendar_clock WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                db.execute(
+                    "UPDATE calendar_actions SET status='uncertain',error='The provider no longer matches the requested event.' WHERE id='action'",
+                    [],
+                )?;
+                db.execute(
+                    "INSERT INTO calendar_action_observations(action,observed,cache_revision,subject) VALUES('action',?1,?2,'test-subject')",
+                    params![observed.as_ref().map(serde_json::to_string).transpose()?,revision],
+                )?;
+                accept_current_state(db, "action")
+            })
+            .await
+            .expect("accept checked state");
+            let state = db
+                .read(|db| {
+                    let cached: Option<String> = db
+                        .query_row(
+                            "SELECT event FROM calendar_events WHERE source_id='primary' AND id IN ('local','shepaction') LIMIT 1",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                    Ok((
+                        db.query_row(
+                            "SELECT status FROM calendar_actions WHERE id='action'",
+                            [],
+                            |row| row.get::<_, String>(0),
+                        )?,
+                        db.query_row(
+                            "SELECT count(*) FROM calendar_intents WHERE action='action'",
+                            [],
+                            |row| row.get::<_, i64>(0),
+                        )?,
+                        cached
+                            .as_deref()
+                            .map(serde_json::from_str::<Event>)
+                            .transpose()?,
+                    ))
+                })
+                .await
+                .expect("state");
+            assert_eq!(state, ("cancelled".into(), 0, expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_checked_state_cannot_replace_newer_calendar_data() {
+        let (_directory, db) = database().await;
+        let requested = event("local", None);
+        db.write(move |db| {
+            admit(
+                db,
+                "action",
+                &Mutation::Save {
+                    before: None,
+                    after: requested,
+                },
+            )?;
+            let revision: i64 = db.query_row(
+                "SELECT revision FROM calendar_clock WHERE id=1",
+                [],
+                |row| row.get(0),
+            )?;
+            db.execute(
+                "UPDATE calendar_actions SET status='uncertain' WHERE id='action'",
+                [],
+            )?;
+            db.execute(
+                "INSERT INTO calendar_action_observations(action,observed,cache_revision,subject) VALUES('action',NULL,?1,'test-subject')",
+                [revision],
+            )?;
+            db.execute(
+                "UPDATE calendar_clock SET revision=revision+1 WHERE id=1",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .expect("checked state");
+
+        assert!(
+            db.write(|db| accept_current_state(db, "action"))
+                .await
+                .is_err()
+        );
+        let ownership = db
+            .read(|db| {
+                db.query_row(
+                    "SELECT action FROM calendar_intents WHERE source_id='primary' AND event_id='local'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+            })
+            .await
+            .expect("ownership");
+        assert_eq!(ownership, "action");
     }
 }

@@ -14,6 +14,8 @@ export interface CalendarAction {
   requested: CalendarMutation; dispatch?: CalendarMutation; dependency?: string;
   receipt?: CalendarReceipt; error?: string;
   observation?: { current: ProviderEvent | null; revision: number };
+  undoOf?: string;
+  undoAction?: string;
 }
 export interface CalendarAdmission { id: string; key: string; owner: string; mutation: CalendarMutation }
 export function calendarStatus(job: CalendarAction): string {
@@ -187,6 +189,40 @@ export class BrowserCalendar {
   recoverAbandoned(expected: CalendarAction) {
     if (expected.status !== "Running") return Promise.resolve(expected);
     return this.outcome(expected, "Uncertain", "The provider request was interrupted. Check the saved event before making another change.");
+  }
+  undo(expected: CalendarAction, id: string, owner: string) {
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id)) throw Error("The saved Undo identity is invalid.");
+    return this.transaction("readwrite", async tx => {
+      const actions = tx.objectStore("calendarActions");
+      const saved = await request<CalendarAction | undefined>(actions.get(expected.id));
+      if (saved?.undoAction) {
+        const inverse = await request<CalendarAction | undefined>(actions.get(saved.undoAction));
+        if (saved.undoAction === id && inverse?.undoOf === saved.id) return inverse;
+        throw Error("Undo is already saved for this Calendar change. Review its current status.");
+      }
+      const job = await this.current(tx, expected);
+      if (job.status !== "Succeeded" || !job.receipt) throw Error("Finish saving and checking this Calendar change before Undo.");
+      if ((await this.latest(tx, job.key))?.id !== job.id) throw Error("A newer Calendar change owns this event. Review it before Undo.");
+      const source = await request<CalendarSource | undefined>(tx.objectStore("calendarSources").get(job.source));
+      if (!source || source.read_only) throw Error("Refresh a writable calendar before Undo.");
+      const cached = await request<CalendarRecord | undefined>(tx.objectStore("calendarEvents").get(job.key));
+      if (!equal(cached?.event ?? null, job.receipt.after)) throw Error("The event changed after this Calendar action. Refresh it before Undo.");
+      if (await request(actions.get(id))) throw Error("This Undo identity is already in use.");
+      if (await request(actions.index("activeId").count(IDBKeyRange.bound([1, ""], [1, "\uffff"]))) >= 100) throw Error("Review pending Calendar changes before adding Undo.");
+      const { before, after } = job.receipt;
+      if (!before && !after) throw Error("This receipt has no reversible event.");
+      if (!after) throw Error("This deleted event has no verified provider restoration receipt.");
+      const mutation: CalendarMutation = before
+        ? { save: { before: after, after: { ...before, id: after.id, etag: after.etag, remote_url: after.remote_url } } }
+        : { delete: { before: after } };
+      validate(mutation);
+      const revision = await this.clock(tx, true);
+      const inverse: CalendarAction = { id, key: job.key, source: job.source, owner, sequence: revision, revision,
+        status: "Queued", active: 1, requested: mutation, undoOf: job.id };
+      actions.put({ ...job, revision, undoAction: id }, job.id);
+      actions.put(inverse, inverse.id);
+      return inverse;
+    });
   }
   cancel(expected: CalendarAction) {
     return this.transaction("readwrite", async tx => {

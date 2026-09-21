@@ -1,5 +1,38 @@
 # Completion audit
 
+## CalDAV controls and Calendar Undo continuation, 21 September 2026
+
+Implementation is integrated locally; shipping verification remains open. Flutter
+CalDAV setup, secure credentials and event actions use the existing journal and
+background owners. Checked server observations remain separate from mutation
+receipts, including matching events and absent deleted events. Explicit adoption
+rechecks ownership, connection and cache revision. Credential cleanup resumes after
+restart, exposes Retry and preserves committed removal after cleanup failure.
+
+Browser Calendar create/edit Undo now admits one linked inverse before provider
+work, retains its exact identity through lost replies and refuses newer event
+ownership. Deleted-event Undo requires a lossless provider restoration contract;
+the current control cannot recreate an event from incomplete display fields.
+
+- Integrated Flutter Rust: 185 passed, including matching/absent inspection,
+  delayed-read revision fencing and wrong identity/missing version refusal.
+- Integrated Flutter: the final full suite passes 260. The credential follow-up
+  passed 47 controls/actual FFI cases. All 38 final Calendar control cases pass,
+  including cleanup restart and failed Retry followed by successful Retry.
+  A full rerun exposed a standalone test card missing its production workspace
+  listener; the fixture now uses ListenableBuilder and checks that Retry vanishes.
+  The full rerun passes.
+- Browser: 266 units, production build and three actual create/edit/delete Undo
+  control scenarios pass. The delete scenario verifies no incomplete inverse is
+  offered. Compact Flutter light/dark captures were regenerated, hash-matched and
+  reviewed. Analysis, Clippy and strict docs have passing integration runs.
+
+Logs use `actions-caldav23-root-*` and `actions-browser-calendar-undo-*` under
+ignored artifacts. Remaining limits are lossless deleted-event restoration,
+deferred unknown-result Undo, browser CalDAV, live providers and Apple execution.
+Native Activity and checked mobile folder mutations remain independent active
+lanes. This checkpoint does not complete the app-wide architecture request.
+
 ## Calendar and mobile folder continuation, 21 September 2026
 
 This checkpoint adds browser Calendar admission, background execution, durable

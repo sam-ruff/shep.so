@@ -152,6 +152,7 @@ class CalendarEntry {
   final DateTime start, end;
   final bool readOnly, allDay;
   final String? etag, remoteUrl;
+  bool get providerViewOnly => etag != null && remoteUrl == null;
   Map<String, Object?> toCalendarJson() => {
     'id': id,
     'source_id': sourceId,

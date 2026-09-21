@@ -59,10 +59,20 @@ class Workspace extends ChangeNotifier {
   List<MailActivity> mailActivities = const [];
   List<CalendarActivity> calendarActivities = const [];
   List<CalendarSource> calendarSources = const [];
+  List<CalDavConnection> calDavConnections = const [];
+  List<CalDavAttempt> calDavAttempts = const [];
   final Set<String> _runningCalendarActions = {};
   final Map<String, _CalendarAdmissionAttempt> _calendarAdmissions = {};
   int _calendarViewRevision = 0;
   String? _calendarSubject;
+  final Set<String> _runningCalDavAttempts = {};
+  int _calDavViewRevision = 0;
+  String? calDavCleanupError;
+  String? _calDavCleanupOwnedError;
+  bool _calDavCleanupRunning = false;
+  final Map<String, ({String attemptId, String connectionId})>
+  _calDavSetupReservations = {};
+  bool get supportsCalDav => repository is DurableCalDavRepository;
   final Set<String> _resumingMailActivity = {};
   final Set<String> _resumingMailAccounts = {};
   final Set<String> _seenMailResumeAccounts = {};
@@ -1656,6 +1666,12 @@ class Workspace extends ChangeNotifier {
   }
 
   Future<bool> saveEvent(CalendarEntry entry) async {
+    final calDav = calDavConnections
+        .where((connection) => connection.id == entry.sourceId)
+        .firstOrNull;
+    if (calDav != null && repository is DurableCalDavRepository) {
+      return _saveCalDavEvent(entry, calDav);
+    }
     final revision = ++_calendarViewRevision;
     final durable = switch (repository) {
       DurableCalendarRepository value => value,
@@ -1832,6 +1848,315 @@ class Workspace extends ChangeNotifier {
     }
   }
 
+  Future<bool> _saveCalDavEvent(
+    CalendarEntry entry,
+    CalDavConnection connection,
+  ) async {
+    final durable = repository as DurableCalDavRepository;
+    final revision = ++_calendarViewRevision;
+    final before = events
+        .where(
+          (event) => event.id == entry.id && event.sourceId == entry.sourceId,
+        )
+        .firstOrNull;
+    final key = '${entry.sourceId}\u0000${entry.id}';
+    final mutation = <String, Object?>{
+      'save': {
+        'before': before?.toCalendarJson(),
+        'after': entry.toCalendarJson(),
+      },
+    };
+    var pending = _calendarAdmissions[key];
+    pending?.closed = false;
+    if (pending != null &&
+        jsonEncode(pending.mutation) != jsonEncode(mutation)) {
+      final known = await durable.calDavActionAdmission(pending.id);
+      if (known != null &&
+          !const {'rejected', 'cancelled'}.contains(known.status)) {
+        if (!_disposed &&
+            const {'queued', 'waiting', 'repair'}.contains(known.status)) {
+          unawaited(
+            _runCalendarAction(
+              known.id,
+              subject: null,
+              repair: known.status == 'repair',
+              credentialSlot: known.credentialSlot,
+            ),
+          );
+        }
+        error =
+            'The previous CalDAV save must finish or be reviewed before saving these edits.';
+        _changed();
+        return false;
+      }
+      _calendarAdmissions.remove(key);
+      pending = null;
+    }
+    if (!_canReserveCalendarAdmission(pending)) return false;
+    pending ??= _CalendarAdmissionAttempt(
+      id: _calendarActionId(),
+      subject: '',
+      mutation: mutation,
+    );
+    _calendarAdmissions[key] = pending;
+    CalDavAdmission admission;
+    try {
+      admission =
+          await durable.calDavActionAdmission(pending.id) ??
+          await durable.admitCalDavAction(
+            pending.id,
+            entry,
+            before,
+            connection,
+          );
+    } catch (exception) {
+      final known = await durable.calDavActionAdmission(pending.id);
+      if (known == null) {
+        error = 'The CalDAV event was not admitted. Your edits are still open.';
+        _changed();
+        return false;
+      }
+      admission = known;
+    }
+    if (const {'rejected', 'cancelled'}.contains(admission.status)) {
+      _calendarAdmissions.remove(key);
+      await refreshCalendarActivity();
+      error = 'The CalDAV event was not saved. Your edits are still open.';
+      _changed();
+      return false;
+    }
+    if (!_disposed &&
+        const {'queued', 'waiting', 'repair'}.contains(admission.status)) {
+      unawaited(
+        _runCalendarAction(
+          admission.id,
+          subject: null,
+          repair: admission.status == 'repair',
+          credentialSlot: admission.credentialSlot,
+        ),
+      );
+    }
+    if (_disposed || revision != _calendarViewRevision) return true;
+    _calendarViewRevision++;
+    final projected = admission.saved ?? entry;
+    events = [
+      ...events.where(
+        (event) =>
+            (event.id != entry.id || event.sourceId != entry.sourceId) &&
+            (event.id != projected.id || event.sourceId != projected.sourceId),
+      ),
+      projected,
+    ];
+    notice = admission.status == 'succeeded'
+        ? 'Event saved'
+        : admission.status == 'uncertain'
+        ? 'Event needs checking'
+        : 'Event queued';
+    _changed();
+    return true;
+  }
+
+  Future<void> refreshCalDavConnections({bool resume = false}) async {
+    if (repository is! DurableCalDavRepository) return;
+    final calDavRepository = repository as DurableCalDavRepository;
+    final revision = ++_calDavViewRevision;
+    try {
+      final connections = await calDavRepository.calDavConnections();
+      final attempts = await calDavRepository.calDavAttempts();
+      final pending = resume
+          ? await calDavRepository.calDavAttempts(pending: true)
+          : const <CalDavAttempt>[];
+      if (_disposed || revision != _calDavViewRevision) return;
+      calDavConnections = connections;
+      calDavAttempts = attempts;
+      if (resume) {
+        unawaited(retryCalDavCleanup(quiet: true));
+        for (final attempt in pending) {
+          if (const {'prepared', 'waiting'}.contains(attempt.status)) {
+            unawaited(_activateCalDav(attempt));
+          }
+        }
+      }
+      _changed();
+    } catch (exception) {
+      if (_disposed || revision != _calDavViewRevision) return;
+      error = 'Could not load CalDAV connections. $exception';
+      _changed();
+    }
+  }
+
+  Future<bool> connectCalDav({
+    String? connectionId,
+    required String url,
+    required String username,
+    required String password,
+    CalDavConnection? observed,
+  }) async {
+    if (_disposed) return false;
+    final repository = this.repository as DurableCalDavRepository;
+    final key =
+        '$url\u0000$username\u0000${observed?.id ?? ''}\u0000${observed?.revision ?? ''}';
+    if (!_calDavSetupReservations.containsKey(key) &&
+        _calDavSetupReservations.length >= 32) {
+      error = 'Check unresolved calendar connections before adding another.';
+      _changed();
+      return false;
+    }
+    final reservation = _calDavSetupReservations.putIfAbsent(
+      key,
+      () => (
+        attemptId: _calendarActionId(),
+        connectionId: connectionId ?? 'caldav-${_calendarActionId()}',
+      ),
+    );
+    CalDavAttempt attempt;
+    try {
+      attempt =
+          await repository.calDavAttempt(reservation.attemptId) ??
+          await repository.admitCalDavConnection(
+            attemptId: reservation.attemptId,
+            connectionId: reservation.connectionId,
+            url: url,
+            username: username,
+            observed: observed,
+          );
+    } catch (exception) {
+      try {
+        final known = await repository.calDavAttempt(reservation.attemptId);
+        if (known == null) {
+          error = 'The calendar setup was not admitted. Retry this form.';
+          _changed();
+          return false;
+        }
+        attempt = known;
+      } catch (_) {
+        error =
+            'Could not confirm whether the calendar setup was saved. Retry this unchanged form. $exception';
+        _changed();
+        return false;
+      }
+    }
+    if (_disposed) return false;
+    notice = 'Calendar connection saved on this device. Checking it now.';
+    _changed();
+    try {
+      await repository.saveCalDavPassword(attempt, password);
+    } catch (exception) {
+      if (_disposed) return false;
+      error = 'The calendar is waiting for credential storage. $exception';
+      await refreshCalDavConnections();
+      return false;
+    }
+    unawaited(_activateCalDav(attempt));
+    return true;
+  }
+
+  Future<void> retryCalDav(CalDavAttempt attempt) async =>
+      _activateCalDav(attempt);
+
+  Future<void> retryCalDavWithPassword(
+    CalDavAttempt attempt,
+    String password,
+  ) async {
+    final repository = this.repository as DurableCalDavRepository;
+    await repository.saveCalDavPassword(attempt, password);
+    unawaited(_activateCalDav(attempt));
+  }
+
+  Future<void> _activateCalDav(CalDavAttempt attempt) async {
+    if (_disposed) return;
+    final repository = this.repository as DurableCalDavRepository;
+    if (!_runningCalDavAttempts.add(attempt.id)) return;
+    try {
+      await repository.activateCalDavConnection(attempt);
+      if (_disposed) return;
+      _calDavSetupReservations.removeWhere(
+        (_, reservation) => reservation.attemptId == attempt.id,
+      );
+      notice = 'Calendar connected';
+      await refreshCalendarActivity();
+    } catch (exception) {
+      if (_disposed) return;
+      error = 'Calendar connection is waiting. $exception';
+    } finally {
+      _runningCalDavAttempts.remove(attempt.id);
+      if (!_disposed) await refreshCalDavConnections();
+    }
+  }
+
+  Future<void> cancelCalDav(CalDavAttempt attempt) async {
+    if (_disposed) return;
+    _calDavViewRevision++;
+    final repository = this.repository as DurableCalDavRepository;
+    try {
+      await repository.cancelCalDavConnection(attempt);
+      _calDavSetupReservations.removeWhere(
+        (_, reservation) => reservation.attemptId == attempt.id,
+      );
+      _clearCalDavCleanupError();
+      notice = 'Calendar connection cancelled';
+    } on CalendarCredentialCleanupFailure {
+      calDavCleanupError =
+          'Calendar was cancelled, but credential cleanup is waiting.';
+      error = _calDavCleanupOwnedError = calDavCleanupError;
+    } catch (exception) {
+      error = 'Calendar cancellation failed. $exception';
+    } finally {
+      if (!_disposed) await refreshCalDavConnections();
+    }
+  }
+
+  Future<void> removeCalDav(CalDavConnection connection) async {
+    if (_disposed) return;
+    _calDavViewRevision++;
+    final repository = this.repository as DurableCalDavRepository;
+    try {
+      await repository.removeCalDavConnection(connection);
+      _clearCalDavCleanupError();
+      notice = 'Calendar removed from this device';
+    } on CalendarCredentialCleanupFailure {
+      calDavCleanupError =
+          'Calendar was removed, but credential cleanup is waiting.';
+      error = _calDavCleanupOwnedError = calDavCleanupError;
+    } catch (exception) {
+      error = 'Calendar removal failed. $exception';
+    } finally {
+      if (!_disposed) {
+        await refreshCalendarActivity();
+        await refreshCalDavConnections();
+      }
+    }
+  }
+
+  void _clearCalDavCleanupError() {
+    calDavCleanupError = null;
+    if (error == _calDavCleanupOwnedError) error = null;
+    _calDavCleanupOwnedError = null;
+  }
+
+  Future<void> retryCalDavCleanup({bool quiet = false}) async {
+    if (_disposed ||
+        repository is! DurableCalDavRepository ||
+        _calDavCleanupRunning) {
+      return;
+    }
+    _calDavCleanupRunning = true;
+    try {
+      await (repository as DurableCalDavRepository).cleanupCalDavCredentials();
+      if (_disposed) return;
+      _clearCalDavCleanupError();
+      if (!quiet) notice = 'Calendar credential cleanup complete';
+    } catch (_) {
+      if (_disposed) return;
+      calDavCleanupError =
+          'Unlock device credential storage, then retry cleanup.';
+      error = _calDavCleanupOwnedError = calDavCleanupError;
+    } finally {
+      _calDavCleanupRunning = false;
+      if (!_disposed) await refreshCalDavConnections();
+    }
+  }
+
   String _calendarActionId() {
     final random = Random.secure();
     return '${DateTime.now().microsecondsSinceEpoch.toRadixString(16)}-${List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
@@ -1862,6 +2187,10 @@ class Workspace extends ChangeNotifier {
     String key,
     _CalendarAdmissionAttempt pending,
   ) async {
+    if (pending.subject.isEmpty && repository is DurableCalDavRepository) {
+      await _reconcileClosedCalDavEditor(key, pending);
+      return;
+    }
     final durable = switch (repository) {
       DurableCalendarRepository value => value,
       _ => null,
@@ -1910,7 +2239,60 @@ class Workspace extends ChangeNotifier {
     }
   }
 
+  Future<void> _reconcileClosedCalDavEditor(
+    String key,
+    _CalendarAdmissionAttempt pending,
+  ) async {
+    final durable = repository as DurableCalDavRepository;
+    try {
+      final known = await durable.calDavActionAdmission(pending.id);
+      if (!pending.closed || !identical(_calendarAdmissions[key], pending)) {
+        return;
+      }
+      if (known == null ||
+          const {'succeeded', 'rejected', 'cancelled'}.contains(known.status)) {
+        final revision = _calendarViewRevision;
+        final snapshot = await (repository as DurableCalendarRepository)
+            .calendarSnapshot();
+        if (_disposed ||
+            revision != _calendarViewRevision ||
+            !pending.closed ||
+            !identical(_calendarAdmissions[key], pending)) {
+          return;
+        }
+        _calendarViewRevision++;
+        calendarSources = snapshot.sources;
+        _calendarSubject = snapshot.subject;
+        events = snapshot.events;
+        _calendarAdmissions.remove(key);
+        _changed();
+        return;
+      }
+      if (!_disposed &&
+          const {'queued', 'waiting', 'repair'}.contains(known.status)) {
+        unawaited(
+          _runCalendarAction(
+            known.id,
+            subject: null,
+            repair: known.status == 'repair',
+            credentialSlot: known.credentialSlot,
+          ),
+        );
+      } else if (!_disposed) {
+        unawaited(refreshCalendarActivity());
+      }
+    } catch (_) {
+      // Keep the exact request identity until its durable outcome is known.
+    }
+  }
+
   Future<bool> deleteEvent(CalendarEntry entry) async {
+    final calDav = calDavConnections
+        .where((connection) => connection.id == entry.sourceId)
+        .firstOrNull;
+    if (calDav != null && repository is DurableCalDavRepository) {
+      return _deleteCalDavEvent(entry, calDav);
+    }
     final revision = ++_calendarViewRevision;
     final durable = repository as DurableCalendarRepository;
     final subject = _calendarSubject ?? google?.active?.subject ?? '';
@@ -2010,7 +2392,77 @@ class Workspace extends ChangeNotifier {
     return true;
   }
 
+  Future<bool> _deleteCalDavEvent(
+    CalendarEntry entry,
+    CalDavConnection connection,
+  ) async {
+    final durable = repository as DurableCalDavRepository;
+    final revision = ++_calendarViewRevision;
+    final key = '${entry.sourceId}\u0000${entry.id}\u0000delete';
+    final mutation = <String, Object?>{
+      'delete': {'before': entry.toCalendarJson()},
+    };
+    var pending = _calendarAdmissions[key];
+    pending?.closed = false;
+    if (pending != null &&
+        jsonEncode(pending.mutation) != jsonEncode(mutation)) {
+      error =
+          'The previous CalDAV deletion must be reviewed before deleting this changed event.';
+      _changed();
+      return false;
+    }
+    if (!_canReserveCalendarAdmission(pending)) return false;
+    pending ??= _CalendarAdmissionAttempt(
+      id: _calendarActionId(),
+      subject: '',
+      mutation: mutation,
+    );
+    _calendarAdmissions[key] = pending;
+    CalDavAdmission admission;
+    try {
+      admission =
+          await durable.calDavActionAdmission(pending.id) ??
+          await durable.admitCalDavDelete(pending.id, entry, connection);
+    } catch (exception) {
+      final known = await durable.calDavActionAdmission(pending.id);
+      if (known == null) {
+        error = 'The CalDAV deletion was not admitted. Retry from this event.';
+        _changed();
+        return false;
+      }
+      admission = known;
+    }
+    if (const {'rejected', 'cancelled'}.contains(admission.status)) {
+      _calendarAdmissions.remove(key);
+      error = 'The CalDAV event was not deleted.';
+      _changed();
+      return false;
+    }
+    if (!_disposed &&
+        const {'queued', 'waiting', 'repair'}.contains(admission.status)) {
+      unawaited(
+        _runCalendarAction(
+          admission.id,
+          subject: null,
+          repair: admission.status == 'repair',
+          credentialSlot: admission.credentialSlot,
+        ),
+      );
+    }
+    if (_disposed || revision != _calendarViewRevision) return true;
+    _calendarViewRevision++;
+    events = events
+        .where(
+          (event) => event.id != entry.id || event.sourceId != entry.sourceId,
+        )
+        .toList();
+    notice = 'Event deletion queued';
+    _changed();
+    return true;
+  }
+
   Future<void> openCalendar() async {
+    await refreshCalDavConnections(resume: true);
     await refreshCalendarActivity();
     await syncCalendar();
     await refreshCalendarActivity(resume: true);
@@ -2057,13 +2509,15 @@ class Workspace extends ChangeNotifier {
       for (final item in _calendarAdmissions.entries.toList()) {
         if (!item.value.closed) continue;
         try {
-          final known = await durable.calendarActionAdmission(item.value.id);
-          if (known == null ||
-              const {
-                'succeeded',
-                'rejected',
-                'cancelled',
-              }.contains(known.status)) {
+          final status =
+              item.value.subject.isEmpty &&
+                  repository is DurableCalDavRepository
+              ? (await (repository as DurableCalDavRepository)
+                        .calDavActionAdmission(item.value.id))
+                    ?.status
+              : (await durable.calendarActionAdmission(item.value.id))?.status;
+          if (status == null ||
+              const {'succeeded', 'rejected', 'cancelled'}.contains(status)) {
             retired[item.key] = item.value;
           }
         } catch (_) {
@@ -2093,6 +2547,7 @@ class Workspace extends ChangeNotifier {
               action.id,
               subject: action.subject,
               repair: action.status == 'repair',
+              credentialSlot: action.credentialSlot,
             ),
           );
         }
@@ -2130,12 +2585,20 @@ class Workspace extends ChangeNotifier {
     String id, {
     required String? subject,
     bool repair = false,
+    String? credentialSlot,
   }) async {
     final durable = repository as DurableCalendarRepository;
     if (!_runningCalendarActions.add(id)) return;
     try {
       if (repair) {
         await durable.repairCalendarAction(id);
+        return;
+      }
+      if (credentialSlot != null && repository is DurableCalDavRepository) {
+        await (repository as DurableCalDavRepository).executeCalDavAction(
+          id,
+          credentialSlot,
+        );
         return;
       }
       final token = await _calendarToken(subject, const [
@@ -2158,6 +2621,7 @@ class Workspace extends ChangeNotifier {
       action.id,
       subject: action.subject,
       repair: action.status == 'repair',
+      credentialSlot: action.credentialSlot,
     );
   }
 
@@ -2177,6 +2641,14 @@ class Workspace extends ChangeNotifier {
     final durable = repository as DurableCalendarRepository;
     if (!action.canInspect) return;
     try {
+      if (action.credentialSlot case final credentialSlot?) {
+        await (repository as DurableCalDavRepository).inspectCalDavAction(
+          action.id,
+          credentialSlot,
+        );
+        await refreshCalendarActivity();
+        return;
+      }
       final token = await _calendarToken(action.subject, const [
         'https://www.googleapis.com/auth/calendar.events.readonly',
       ]);
@@ -2185,6 +2657,18 @@ class Workspace extends ChangeNotifier {
         token,
         subject: action.subject!,
       );
+    } catch (exception) {
+      error = '$exception';
+    }
+    await refreshCalendarActivity();
+  }
+
+  Future<void> acceptCalendarCurrentState(CalendarActivity action) async {
+    if (!action.canAcceptCurrent) return;
+    final durable = repository as DurableCalendarRepository;
+    try {
+      await durable.acceptCalendarCurrentState(action.id);
+      notice = 'The checked provider event was kept.';
     } catch (exception) {
       error = '$exception';
     }

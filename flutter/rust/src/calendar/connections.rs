@@ -223,13 +223,21 @@ pub fn claim_probe(db: &mut Connection, id: &str) -> Result<Option<ConnectionReq
 pub fn wait(db: &Connection, id: &str, error: &str) -> Result<()> {
     anyhow::ensure!(error.len() <= 4096, "The connection error is too long.");
     let changed = db.execute(
-        "UPDATE calendar_connection_attempts SET status='waiting',error=?2 WHERE id=?1 AND status='probing'",
+        "UPDATE calendar_connection_attempts SET status='waiting',error=?2 WHERE id=?1 AND status IN ('prepared','probing','waiting')",
         params![id, error],
     )?;
     anyhow::ensure!(
         changed == 1,
         "This calendar setup changed while it was checked."
     );
+    Ok(())
+}
+
+pub fn restart(db: &Connection) -> Result<()> {
+    db.execute(
+        "UPDATE calendar_connection_attempts SET status='waiting',error='The app closed while checking this calendar. Retry with its saved credentials.' WHERE status='probing'",
+        [],
+    )?;
     Ok(())
 }
 
@@ -391,6 +399,29 @@ pub fn active(db: &Connection, id: &str) -> Result<ActiveConnection> {
             revision,
         })
     })
+}
+
+pub fn active_connections(db: &Connection) -> Result<Vec<ActiveConnection>> {
+    let mut statement = db.prepare(
+        "SELECT config,credential_slot,revision FROM calendar_connections ORDER BY id LIMIT 50",
+    )?;
+    statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .map(|row| {
+            let (config, credential_slot, revision) = row?;
+            Ok(ActiveConnection {
+                connection: serde_json::from_str(&config)?,
+                credential_slot,
+                revision,
+            })
+        })
+        .collect()
 }
 
 pub fn remove(db: &mut Connection, id: &str, revision: i64) -> Result<Option<String>> {
@@ -727,6 +758,21 @@ mod tests {
         let runnable = pending_attempts(&db).expect("pending page");
         assert_eq!(runnable.len(), 1);
         assert_eq!(runnable[0].id, "pending");
+    }
+
+    #[test]
+    fn restart_makes_an_interrupted_read_only_probe_retryable() {
+        let mut db = db();
+        let request = connection_request("first", "caldav-home");
+        prepare(&mut db, "first", &request).expect("prepare");
+        claim_probe(&mut db, "first").expect("claim");
+
+        restart(&db).expect("restart");
+
+        let saved = attempt(&db, "first").expect("read").expect("attempt");
+        assert_eq!(saved.status, "waiting");
+        assert!(saved.error.expect("reason").contains("closed"));
+        claim_probe(&mut db, "first").expect("retry claim");
     }
 
     #[tokio::test]
