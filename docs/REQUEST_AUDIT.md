@@ -3,8 +3,8 @@
 The 21 September continuation integrates Flutter CalDAV controls, credential
 cleanup recovery and exact checked-state adoption, plus browser acknowledged
 create/edit Undo. Regression coverage and remaining restoration/provider gaps are
-recorded in [Completion](COMPLETION.md). This source is under final shipping
-verification; the complete architecture request remains active.
+recorded in [Completion](COMPLETION.md). Implementation `f6d9462` is pushed to
+main with normal hooks passing; the complete architecture request remains active.
 
 Checkpoint `8044f22`, pushed on 21 September, implements browser Calendar's durable immediate
 actions, Flutter folder creation and native calendar query bounds. It also adds

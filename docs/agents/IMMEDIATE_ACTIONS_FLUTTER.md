@@ -3,15 +3,19 @@
 This records the Flutter mutation owners and the current adoption of the common
 action lifecycle. The target contract is in [Immediate actions](IMMEDIATE_ACTIONS.md).
 
-## CalDAV migration in progress
+## CalDAV actions
 
 Schema 22 introduces saved setup attempts and connection identities. Shared HTTP
 code confines requests to the selected collection, checks exact resource versions
 and preserves uncertain results without replay. The integration review adds
 recurring-write refusal, collection-scoped discovery and duration/UID regressions.
-Connection replacement and credential cleanup need their lost-reply fences before
-the Dart controls and event dispatcher are considered complete. This prerequisite
-does not establish CalDAV client parity or live-provider verification.
+The Dart controls and dispatcher now retain connection replacement fences,
+credential cleanup recovery and actual FFI coverage. Checked observations require
+explicit adoption even when the server matches the requested state; they never
+create provider receipts. Cleanup resumes after restart and exposes an owned
+Retry without reviving removed calendars. Root verification passes 185 Rust and
+260 Flutter tests, with reviewed compact controls. Live-provider and Apple
+verification remain separate; Calendar Undo and lifecycle boundaries remain open.
 
 ## Mail
 
@@ -79,7 +83,7 @@ rejected before admission because they require separate provider receipts.
 | Send and Sent filing | `outgoing`, `outgoing_meta` and `outgoing_sent` | Queued admission returns before delivery, freezes account/credential binding and retains the draft on queued cancellation. Resume reuses its attempt; silent bounded Outbox refresh preserves review choices and errors. Common attention and scheduling fairness remain open. |
 | Accounts and reconnect | Schema 18 credential-slot journal, account FIFO and removal tombstone | At most 32 nonsecret attempts admit before probes; matching forms close, visible activity offers Cancel/re-entry, and activation remains checked. Restart requires passwords. Execution generations and removal fences reject delayed results. |
 | Preferences | Dart `SettingsStore`, then profile history | Owned save error/status and visible Retry retain local values through navigation and unrelated mail failures. Field intent and profile publication keep their existing owners. |
-| Calendar | Native schema 21 calendar journal and shared calendar contracts | Google save/delete admit before token access, bind requests to the cached Google subject and preserve ETags and receipts. Exact admission lookup and bounded editor requests recover lost local replies without duplicate writes. CalDAV, live Google and Apple verification remain open. |
+| Calendar | Native calendar journal and shared calendar contracts | Google and CalDAV save/delete admit before token access, bind requests to the observed connection and preserve ETags and receipts. Exact admission lookup and bounded editor requests recover lost local replies without duplicate writes. Unknown outcomes require checked-state adoption. Acknowledged Undo, live providers and Apple verification remain open. |
 | Folder changes | No complete Flutter physical-folder owner | Implement provider-backed folder journals before projecting these actions. |
 | Profile publication and sync | Dedicated Rust publication, history and sync journals | Adapt their existing phases; never create a second runnable queue. |
 

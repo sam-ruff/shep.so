@@ -2,7 +2,8 @@
 
 ## CalDAV controls and Calendar Undo continuation, 21 September 2026
 
-Implementation is integrated locally; shipping verification remains open. Flutter
+Implementation [`f6d9462`](https://github.com/sam-ruff/shep.so/commit/f6d9462d558bffe45353a82fe18c7f99f70b267e)
+is pushed to main. Normal hooks pass 1,597 Rust executions with 15 ignored. Flutter
 CalDAV setup, secure credentials and event actions use the existing journal and
 background owners. Checked server observations remain separate from mutation
 receipts, including matching events and absent deleted events. Explicit adoption

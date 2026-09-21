@@ -83,6 +83,11 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   Final root gates pass 185 Rust and all 260 Flutter tests; analysis, Clippy and
   strict docs pass. Browser passes all 266 units and three Undo control scenarios.
   Normal shipping hooks remain to run for this local continuation.
+  Continuation `f6d9462` is pushed to main; normal hooks pass 1,597 Rust executions,
+  15 ignored. Folder24 is frozen for integration. The next mobile lane addresses
+  foreground/disposal fences and removes read-only connection probes from the
+  global credential lifecycle FIFO. Send preparation and Calendar Undo remain
+  explicit later migrations; these checkpoints do not complete the full goal.
 
   First migration implemented: common projection outcomes, native bulk review and
   confirmation during pending individual writes, pre-admission Undo, and calendar
