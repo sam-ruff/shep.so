@@ -1,6 +1,7 @@
 use super::*;
+use crate::ui::dropdown::pick_list;
 use iced::Length;
-use iced::widget::{button, column, pick_list, row, space, text};
+use iced::widget::{button, column, row, space, text};
 
 #[derive(Debug, Clone)]
 pub enum Message {

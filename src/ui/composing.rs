@@ -1,13 +1,14 @@
 use super::views::{Choice, truncate};
 use super::*;
 use crate::store::DraftState;
+use crate::ui::dropdown::pick_list;
 mod sessions;
 #[cfg(test)]
 #[path = "composing_tests.rs"]
 mod tests;
 use iced::{
     Alignment, Length,
-    widget::{button, column, container, pick_list, row, scrollable, space, text},
+    widget::{button, column, container, row, scrollable, space, text},
 };
 
 fn compose_binding(

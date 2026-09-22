@@ -1550,6 +1550,13 @@ Move/Escape reproduction fails on the previous installed executable. These flows
 intentionally omit waits between earlier keys and already-visible later controls;
 independent scenarios may still await focus/layout to isolate their own behavior.
 
+Native pick lists come from `ui::dropdown::pick_list`; `clippy.toml` disallows
+the plain iced constructor. The open menu owns every key press: Escape or Tab
+closes only the menu through the widget's own outside-press path, and a menu
+closed by the keyboard is inert for the rest of that input batch. Never route
+those keys to a dialog, composer, Find or mail shortcut. Keep the `ui::dropdown`
+runtime-routing tests and the saved `test_dropdown_*` native flows.
+
 
 ## Inline composer ownership
 

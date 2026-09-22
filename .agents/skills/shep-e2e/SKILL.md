@@ -501,6 +501,15 @@ observation only; a changing angle does not prove correct drawing. Preserve the
 direct SVG center/scale/clip and partial-redraw tests as well as the native checks.
 
 
+Dropdown dismissal uses the three saved `test_dropdown_*` flows. Open a pick
+list with a real click, press Escape (or Tab), then click the control its menu
+covered: the event dialog's All day checkbox (light and compact dark), the
+second message row under the mail filter with Find open, and the composer To
+field under From. `assert_dropdown_dismissed` compares the menu region before
+opening, while open and after Escape, because no state observation reports an
+open iced menu. Clearing All day adds a time row and recentres the dialog, so
+later coordinates in that flow differ.
+
 For rapid native input ordering, `key_sequence` takes `keys`, an array of 1–32
 individual chords (maximum 80 characters each; no whitespace), and sends one
 xdotool key sequence with the usual 1 ms delay. It is a functional input action,
@@ -868,8 +877,7 @@ native account through restart, and verify the durable shared mapping. Backend
 IDs on old/new servers, interrupted admission, stale native/history/Google/consent
 and remote removal. Keep account passwords out of this fixture. A menu that opens
 above its control can cover the Keep button: select its visible row before the
-next click; the separately tracked Escape-dismissal issue must not be hidden by
-a direct state mutation or by removing keyboard coverage elsewhere. After adding
+next click, or close it with Escape (see the dropdown flows below). After adding
 the shared connection, the same fixture leaves two accounts with one address;
 `test_sidebar_duplicate_addresses_distinguish_saved_names_and_controls` checks
 the sidebar shows their saved names above the address, chooses each account by
