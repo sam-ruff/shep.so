@@ -16,6 +16,7 @@ mod database_transfers;
 mod drag_mail;
 #[cfg(feature = "test-support")]
 mod draw_log;
+mod dropdown;
 mod ellipsis;
 mod find_message;
 mod folder_controls;

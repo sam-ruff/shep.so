@@ -1,5 +1,29 @@
 # Completion audit
 
+## Native dropdown keyboard dismissal (R15/R63), 22 September 2026
+
+Branch `fix/dropdown-escape-dismissal`, awaiting integration. Every native pick
+list now comes from `ui::dropdown::pick_list`, and `clippy.toml` disallows the
+plain iced constructor. While a menu is open it takes every key press: Escape
+or Tab closes only that menu, so dialogs, the composer, Find and mail shortcuts
+never see the key. The next click reaches the control the menu covered, including
+when Escape and the click arrive in one input batch. Mouse choices are unchanged.
+
+Evidence: five `ui::dropdown` tests drive the real iced runtime routing (overlay
+first, then the root `ContextArea`); three of the first four failed on the plain
+pick list before the fix, and a fifth covers a second Escape in the same batch. The saved `test_dropdown_*` native flows pass: the event dialog in
+light and compact dark (Escape keeps the dialog, the covered All day checkbox
+takes the next click, Tab closes, a second Escape closes the dialog), the mail
+filter with Find open (`s`, Ctrl+D and Delete do nothing, Escape keeps Find, the
+covered message row is selected) and the composer From list (Escape keeps the
+composer, the covered To field takes the click and typing). Each flow compares
+the menu region before opening, while open and after Escape.
+
+Limitations: arrow/Enter navigation inside an open menu is not implemented
+because iced 0.14 keeps the highlighted row private. The browser uses native
+`<select>` elements and needs no change; Flutter was not reviewed in this wave.
+Native evidence is Linux/Xvfb only.
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.
