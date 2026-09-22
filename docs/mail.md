@@ -42,6 +42,6 @@ New-mail popups and sound are enabled by default. Search Preferences for **Notif
 
 See [current limits](limits.md) for provider restrictions and size limits.
 
-Select email text with the mouse and copy it normally. Search Preferences to jump to a settings section. Icon tooltips can show the primary shortcut; both tooltips and their key hints can be turned off.
+Select email text with the mouse and copy it normally. Search Preferences to jump to a settings section. Icon tooltips can show the primary shortcut; both tooltips and their key hints can be turned off. A small **?** beside a few easily misunderstood settings (background checks, moves between accounts, close to tray, backup compression and encryption, synced passwords) explains them when you point at it or reach it with Tab; clicking it keeps the help open. Turning icon tooltips off also hides these help icons.
 
 Archive, delete and move show a toast immediately while saving continues. Repeating an action increases the count and restarts its six-second display time; archive/delete counts continue across accounts in a unified inbox. A failed action restores the message and removes its count, with the error remaining visible. Use **Undo** on the toast to restore the messages, including while the original move is still pending. If reversal fails, the toast offers Retry Undo.

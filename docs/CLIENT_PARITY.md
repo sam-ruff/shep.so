@@ -7,6 +7,12 @@ Root verification passes four native Activity scenarios and six shortcut
 regressions, with reviewed captures and clean Clippy. Browser and Flutter common-domain
 Activity parity and final platform/latency verification remain active.
 
+Desktop Preferences shows **?** help beside seven easily misunderstood
+settings (R98), on hover, click and Tab focus, hidden when icon tooltips are
+off. The browser Preferences has none of these settings nor a Tooltips choice,
+and Flutter was out of scope for this wave; both remain explicit gaps in TODO
+R98 and should reuse the same help text when those settings arrive.
+
 Desktop schema 10 removal hides the committed account/calendar before provider
 drain and exposes failed local cleanup with Retry; ten integrated native scenarios
 and 47 bulk/calendar/connection tests pass. Browser schema 17 adds checked subtree
