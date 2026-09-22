@@ -82,6 +82,13 @@ pub fn drops_arrival(entries: &[Entry], epoch: SyncEpoch) -> bool {
 pub fn keeps_row(entries: &[Entry], epoch: SyncEpoch) -> bool {
     outranked(entries, WriteKind::MovedIn, epoch)
 }
+/// A folder's CONDSTORE state from a check waits while any write to one of
+/// its messages (ids starting with `prefix`) outranks that check.
+pub fn holds_folder_state(entries: &[Entry], prefix: &str, epoch: SyncEpoch) -> bool {
+    entries
+        .iter()
+        .any(|entry| entry.id.starts_with(prefix) && entry.outranks(epoch))
+}
 
 pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     c.execute_batch(
@@ -239,6 +246,25 @@ mod tests {
         assert!(!entry(WriteKind::Flags, Some(10)).observed_by(SyncEpoch(10)));
         assert!(!entry(WriteKind::Flags, Some(11)).observed_by(SyncEpoch(10)));
         assert!(!entry(WriteKind::Flags, None).observed_by(SyncEpoch(10)));
+    }
+
+    #[test]
+    fn only_an_outranking_write_in_the_folder_holds_its_state() {
+        let epoch = SyncEpoch(10);
+        let inbox = "work:INBOX:";
+        let later = [entry(WriteKind::Flags, Some(11))];
+        assert!(holds_folder_state(&later, inbox, epoch));
+        assert!(holds_folder_state(
+            &[entry(WriteKind::MovedAway, None)],
+            inbox,
+            epoch
+        ));
+        assert!(!holds_folder_state(
+            &[entry(WriteKind::Flags, Some(9))],
+            inbox,
+            epoch
+        ));
+        assert!(!holds_folder_state(&later, "work:Archive:", epoch));
     }
 
     #[test]

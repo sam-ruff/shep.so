@@ -475,6 +475,36 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Accounts ready to sync, each with its incoming connection identity:
+    /// the server settings plus the active credential binding. A long-lived
+    /// connection opened with other values is stale.
+    pub(crate) async fn accounts_ready_to_watch(&self) -> anyhow::Result<Vec<(Account, String)>> {
+        self.run(|c| {
+            super::profile_sync::join::ready_to_sync(c)?
+                .into_iter()
+                .map(|account| {
+                    let slot: Option<String> = c
+                        .query_row(
+                            "SELECT json_extract(data,'$.incoming') FROM account_credential_slots WHERE account=?",
+                            [&account.id],
+                            |r| r.get(0),
+                        )
+                        .optional()?
+                        .flatten();
+                    let identity = format!(
+                        "{}\n{}",
+                        crate::mail_actions::connection_key(&account),
+                        slot.unwrap_or_default()
+                    );
+                    Ok((account, identity))
+                })
+                .collect()
+        })
+        .await
+    }
+}
+
 pub(crate) fn activate(c: &Connection, id: &str) -> anyhow::Result<Attempt> {
     let mut attempt = load(c, id)?;
     if attempt.stage == Stage::Activated {
@@ -641,6 +671,64 @@ mod tests {
                 .credential_in_use(attempt.slots.incoming)
                 .await
                 .expect("foreign slot not bound")
+        );
+    }
+
+    async fn activate_setup(store: &Store, account: Account, previous: Option<Account>) {
+        let attempt = store
+            .admit_account_setup(uuid::Uuid::new_v4().to_string(), account, previous)
+            .await
+            .expect("admit");
+        for (from, to) in [
+            (Stage::Admitted, Stage::Staged),
+            (Stage::Staged, Stage::Checked),
+        ] {
+            store
+                .advance_account_setup(attempt.id.clone(), from, to)
+                .await
+                .expect("advance");
+        }
+        store
+            .activate_account_setup(attempt.id)
+            .await
+            .expect("activate");
+    }
+
+    #[tokio::test]
+    async fn watch_identity_follows_incoming_settings_and_credential_binding() {
+        let store = Store::memory().expect("store");
+        let identity = || async {
+            let targets = store.accounts_ready_to_watch().await.expect("targets");
+            assert_eq!(targets.len(), 1);
+            targets[0].1.clone()
+        };
+        let account: Account = serde_json::from_value(serde_json::json!({"id":"fixture","name":"Fixture","email":"fixture@example.test","protocol":"Imap","host":"imap.example.test","port":993,"username":"fixture","smtp_host":"smtp.example.test","smtp_port":465})).expect("account");
+        activate_setup(&store, account.clone(), None).await;
+        let first = identity().await;
+        assert_eq!(identity().await, first, "stable while nothing changes");
+
+        let mut renamed = account.clone();
+        renamed.name = "Renamed".into();
+        renamed.smtp_port = 587;
+        store.save_account(renamed.clone()).await.expect("rename");
+        assert_eq!(
+            identity().await,
+            first,
+            "names and outgoing settings do not affect the watcher"
+        );
+
+        activate_setup(&store, renamed.clone(), Some(renamed.clone())).await;
+        let rebound = identity().await;
+        assert_ne!(rebound, first, "a new credential slot restarts the watcher");
+
+        let mut moved = renamed.clone();
+        moved.port = 143;
+        moved.incoming_security = ConnectionSecurity::StartTls;
+        activate_setup(&store, moved, Some(renamed)).await;
+        assert_ne!(
+            identity().await,
+            rebound,
+            "new incoming settings restart it"
         );
     }
 }

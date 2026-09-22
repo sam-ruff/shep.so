@@ -6,6 +6,17 @@ use crate::{
 };
 use serde_json::json;
 
+/// Accounts a check would list, without their watcher identities.
+async fn ready(store: &Store) -> Vec<Account> {
+    store
+        .accounts_ready_to_watch()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(account, _)| account)
+        .collect()
+}
+
 async fn local(path: &std::path::Path) -> Store {
     let store = Store::open(path.join("cache.sqlite")).unwrap();
     store
@@ -393,7 +404,7 @@ async fn profile_join_applies_reviewed_values_once_preserves_local_accounts_and_
             .await
             .is_err()
     );
-    assert_eq!(store.accounts_ready_to_sync().await.unwrap().len(), 1);
+    assert_eq!(ready(&store).await.len(), 1);
     store
         .update_preferences(|p| p.appearance = Appearance::System)
         .await
@@ -439,7 +450,7 @@ async fn profile_join_applies_reviewed_values_once_preserves_local_accounts_and_
         .require_account_reconnected(added.id.clone())
         .await
         .unwrap();
-    assert_eq!(store.accounts_ready_to_sync().await.unwrap().len(), 2);
+    assert_eq!(ready(&store).await.len(), 2);
 }
 
 #[tokio::test]
@@ -863,10 +874,7 @@ async fn profile_join_links_an_explicit_matching_local_account_without_replacing
     let workspace = store.workspace().await.unwrap();
     assert_eq!(workspace.accounts, vec![account.clone()]);
     assert!(workspace.account_reconnect.is_empty());
-    assert_eq!(
-        store.accounts_ready_to_sync().await.unwrap(),
-        vec![account.clone()]
-    );
+    assert_eq!(ready(&store).await, vec![account.clone()]);
     let state = store
         .profile_replication(review.selection.binding.clone())
         .await
@@ -996,6 +1004,6 @@ async fn profile_join_link_preserves_an_existing_reconnect_requirement() {
             .account_reconnect
             .contains(&account.id)
     );
-    assert!(store.accounts_ready_to_sync().await.unwrap().is_empty());
+    assert!(ready(&store).await.is_empty());
     assert!(store.require_account_reconnected(account.id).await.is_err());
 }

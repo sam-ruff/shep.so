@@ -276,6 +276,9 @@ fn validate_schema_in(
         "This database version is not supported. Use matching, current Shep versions on both devices."
     );
     let mut expected = expected.clone();
+    if version < 12 {
+        expected.retain(|_, (_, owner, _)| owner != "folder_modseqs");
+    }
     if version < 11 {
         expected.retain(|name, _| !name.starts_with("activity_"));
     }

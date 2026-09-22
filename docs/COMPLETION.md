@@ -1,5 +1,38 @@
 # Completion audit
 
+## IDLE watcher restart and CONDSTORE flag refresh, 22 September 2026
+
+Branch `feat/imap-push-condstore` (desktop only, awaiting integration).
+An IMAP IDLE watcher now restarts when the account's incoming identity changes:
+the listing carries `connection_key` plus the active credential slot, and a
+changed value tells the old supervisor to send DONE and LOGOUT before a new
+one starts on the next check. Names and outgoing settings do not restart it.
+
+CONDSTORE flag refresh saves each folder's SELECT HIGHESTMODSEQ and UIDVALIDITY
+in the new `folder_modseqs` table (schema 12) after that folder's flags and
+listing were delivered. Later checks keep `UID SEARCH ALL` for expunges but fetch
+only `UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n)` and metadata for uncached
+messages, and skip the flag fetch when HIGHESTMODSEQ is unchanged. A missing
+value, new UIDVALIDITY, NOMODSEQ, lower value, no CONDSTORE capability or a
+rejected request (including partial data before a tagged NO) uses the full flag
+listing. A ledger write in the folder that outranks the check keeps the previous
+value; restore and account removal forget an account's values; database import
+accepts version 11 exports without the table.
+
+Tests: 10 new mail-core CONDSTORE unit/transcript tests (advertised and not,
+NOMODSEQ, UIDVALIDITY change, tagged NO after partial data, failed check,
+unchanged folder), store tests for reopen persistence, ledger hold, pruning and
+schema 11 upgrade, a ledger decision test, a watch-identity store test and a
+virtual-time scheduler test for restart on edit. Targeted runs: 152 desktop and
+23 mail-core library tests pass. Mail-core also compiles without the feature, as
+Flutter and the backend use it. Native background sync, held-sync and rapid
+action scenarios pass; two graceful-restart scenarios fail identically on
+unrelated paths (see the PR).
+
+Limitations: fixture-verified only; live IDLE restart and CONDSTORE on Sam's
+Stalwart server are unconfirmed. QRESYNC/VANISHED is not implemented. Flutter
+and browser clients have neither IDLE nor CONDSTORE (parity gap in TODO).
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.
