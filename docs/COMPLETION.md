@@ -1,5 +1,32 @@
 # Completion audit
 
+## Flathub packaging preparation (R72 client), 23 September 2026
+
+Linux store packaging is prepared, not published. `packaging/flatpak/` holds a
+freedesktop 26.08 manifest with the rust-stable extension, AppStream metainfo,
+the installer's launcher/icon identity and four fixture screenshots. Finish-args
+are network, IPC, Wayland with X11 fallback and the notification, tray, launcher
+badge and secret service bus names; there is no filesystem or device access.
+`cargo_sources.py` generates offline crate sources from `Cargo.lock`, matching
+flatpak-cargo-generator's crate entries. Inside Flatpak the tray registers its
+unique bus name instead of `StatusNotifierItem-PID-ID`.
+
+Evidence: the manifest's build commands ran in the `freedesktopsdk/sdk:26.08`
+image with `--network none` against the generated sources (Rust 1.96 mounted in
+place of the extension): the release build finished with no warnings and links
+only libdbus, libstdc++, libz, libgcc, libm, libc and libsystemd from the runtime.
+`appstreamcli validate --no-net` and `desktop-file-validate` pass (one pedantic
+uppercase-ID note and a multiple-category hint shared with the installer).
+`tests/test_flatpak_packaging.py` (15 tests) checks manifest structure, installer
+identity/icon parity, licence notices and permissions. The saved native
+`test_store_screenshots_tour_fixture_mail_calendar_and_reply` scenario passed in
+an offline container with the harness tools; its captures were reviewed.
+
+Limitations: no `flatpak-builder` build, `flatpak run` or Flathub lint (flatpak is
+not installed on this host); screenshot URLs resolve only after merge; the Google
+OAuth client is not embedded; portal-backed export/backup paths and sound-only
+notifications are unverified in the sandbox. Flathub submission stays in TODO.
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.
