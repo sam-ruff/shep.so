@@ -80,6 +80,26 @@ def mail_row_y(index, state=None):
     return round((194 + (index + .5) * 60 - state.get("inbox_scroll", 0)) * scale)
 
 
+STORE_SCREENSHOTS = ("mail-light", "calendar-light", "mail-dark", "compose-dark")
+
+
+def store_screenshot_tour():
+    """Real-input tour behind the Flathub screenshots, using fictional fixture mail and events only."""
+    away = {"type": "hover", "x": 1430, "y": 910}
+    return [
+        check("selected", "A little more room to think"), check("loaded_message_id", None, "ne"),
+        away, wait(400), shot("mail-light"),
+        key("ctrl+2"), check("tab", "Calendar"), away, wait(400), shot("calendar-light"),
+        key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690, 366), check("dark", True),
+        key("ctrl+1"), check("tab", "Mail"), check("selected", "A little more room to think"),
+        away, wait(400), shot("mail-dark"),
+        key("r"), check("composer.visible", True), check("focused_input", "compose-body"), wait(80),
+        type_text("Thanks Maya, these look lovely. Thursday works for me."),
+        check("editor", "Thursday works for me.", "contains"), check("composer.pending", None),
+        check("composer.saved_revision", None, "ne"), away, wait(300), shot("compose-dark"),
+    ]
+
+
 class NativeFlows(unittest.TestCase):
     def test_common_activity_reviews_backup_failure_from_another_selected_destination(self):
         self.mcp.call("desktop.start", backup_run="recover")
@@ -7489,6 +7509,11 @@ class NativeFlows(unittest.TestCase):
         state = self.assert_live_matches(total=122, folder="INBOX")
         self.assertEqual([mail["subject"] for mail in state["mail_rows"][:2]], [second, subject])
         self.assertEqual(self.live.subjects("Archive") if self.live.has_folder("Archive") else [], [])
+
+    def test_store_screenshots_tour_fixture_mail_calendar_and_reply(self):
+        self.mcp.batch(*store_screenshot_tour())
+        for name in STORE_SCREENSHOTS:
+            self.assertTrue((self.artifacts / f"{name}.webp").is_file(), name)
 
 
 def matches_patterns(name, arguments):
