@@ -1,5 +1,35 @@
 # Completion audit
 
+## R97 reply quote preference, 22 September 2026
+
+Branch `feat/reply-include-original-preference` adds Preferences → General →
+Composing: **Include the original message in new replies**, on by default. It
+sets only the starting state of the per-reply **Include original message**
+checkbox when Reply or Reply all creates a new draft. Parked, saved and
+restarted drafts keep their own choice, and forwards always carry the original
+because they have no separate quote to leave out. The value saves through the
+ordinary revisioned preference write, so reversions and stale acknowledgements
+follow the existing per-generation rules. Preferences search finds it by
+original, quote, thread, history and previous.
+
+Tests: `ui::composing` default/Reply all, per-reply override and
+parked/restarted-draft cases; `ui::preference_sync` reversion with an older
+acknowledgement; `tests/preferences.rs` legacy default, reopen and untouched
+saved draft; settings-search coverage. The native
+`test_reply_include_original_preference_override_and_restart` flow toggles the
+real checkbox, overrides one reply, restarts and checks the saved draft and a
+new reply, with light and compact dark captures reviewed. Of 42 related native
+scenarios, 33 pass and one live scenario skips; the seven that fail
+(`composer_preferences_shortcut`, `desktop_badge_archive_delete_move_and_undo`,
+`desktop_badge_preference_clears`, `drag_compact_dark_and_large_interface_scale`,
+`filtered_preferences_do_not_leave_pixels`, `move_foreign_folder_badge` and
+`move_recovery_preferences_entry`) fail identically on an unmodified
+`origin/main` build on this host.
+
+Limitations: not yet a portable profile key (recorded in the preference sync
+audit); browser and Flutter composers have no per-reply control, recorded as
+parity gaps. Live-provider and other-platform execution are not claimed.
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.
