@@ -1571,6 +1571,8 @@ previous autosave is pending. Navigation must never wait for its acknowledgment.
 `Draft.reply_context` keeps original quoted text separate from the editable reply
 and persists its association. MIME submission uses `delivery_body()` and the
 Include original choice. Legacy drafts still deserialize without this context.
+`Preferences.reply_include_original` only sets `include_quote` when Reply/Reply all
+creates a new draft; restored, parked and saved drafts keep their own choice.
 Do not replace forward HTML handling with the reply quoting path.
 
 Window close must observe every dirty/pending session, then save newer revisions.

@@ -5317,6 +5317,49 @@ class NativeFlows(unittest.TestCase):
                        check("composer.reply.mail_id", None, "ne"), check("dialog", None),
                        check("editor", ""), wait(100), shot("inline-reply-original-below"))
 
+    def test_reply_include_original_preference_override_and_restart(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        print(f"Reply quote preference: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(1150, 88), type_text("include original"),
+                       check("settings_matches.0", "Composing"), click(500, 289),
+                       check("settings_group", "Composing"), check("reply_include_original", True),
+                       wait(100), shot("reply-quote-preference-default"),
+                       click(288, 342), check("reply_include_original", False),
+                       check("saved_reply_include_original", False), check("preferences_saved", True),
+                       wait(100), shot("reply-quote-preference-off"),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80),
+                       key("r"), check("composer.visible", True), check("focused_input", "compose-body"),
+                       check("composer.reply.include_quote", False), wait(100),
+                       shot("reply-quote-starts-unchecked"),
+                       click(652, 525), check("composer.reply.include_quote", True),
+                       check("reply_include_original", False), wait(100),
+                       shot("reply-quote-overridden-for-this-reply"))
+        overridden = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(key("Escape"), check("composer.visible", False), check("draft_count", 1),
+                       {"type": "restart"}, check("reply_include_original", False),
+                       check("saved_reply_include_original", False),
+                       key("r"), check("composer.visible", True), check("composer.id", overridden),
+                       check("composer.reply.include_quote", True), wait(100),
+                       shot("reply-quote-saved-draft-kept-after-restart"),
+                       key("Escape"), check("composer.visible", False),
+                       click(400, mail_row_y(1)), check("selected_id", "preview-work:INBOX:1.0", "ne"),
+                       key("r"), check("composer.visible", True), check("composer.id", overridden, "ne"),
+                       check("composer.reply.include_quote", False), wait(100),
+                       shot("reply-quote-new-reply-after-restart"), key("Escape"),
+                       check("composer.visible", False),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       click(650, 88), key("ctrl+a"), type_text("quote"),
+                       check("settings_matches.0", "Composing"), click(450, 289),
+                       check("settings_group", "Composing"), wait(150),
+                       shot("reply-quote-preference-compact-dark"),
+                       key("ctrl+1"), check("tab", "Mail"), wait(150),
+                       click(400, mail_row_y(2)), key("r"), check("composer.visible", True),
+                       check("composer.reply.include_quote", False), wait(150),
+                       shot("reply-quote-composer-compact-dark"))
+
     def test_inline_composer_switches_two_replies_with_attachments_and_restarts(self):
         started = self.mcp.call("desktop.start", persistent=True)
         print(f"Inline reply sessions: {started['artifacts']}", flush=True)

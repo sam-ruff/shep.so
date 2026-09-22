@@ -10,6 +10,9 @@ fn actual_labels_synonyms_and_typos_find_their_sections() {
         ("reply history", "Reading and layout"),
         ("group related messages", "Reading and layout"),
         ("other accounts", "Reading and layout"),
+        ("include original", "Composing"),
+        ("quote replies", "Composing"),
+        ("previous thread", "Composing"),
         ("mail check interval", "Mail & performance"),
         ("tooltip", "Tooltips"),
         ("system tray", "System tray"),
@@ -117,6 +120,7 @@ fn persisted_preferences_require_search_coverage_or_an_explicit_exclusion() {
         notifications: _,
         image_policy: _,
         reply_display: _,
+        reply_include_original: _,
         group_conversations: _,
         contacts: _,
         image_senders: _,
@@ -163,6 +167,10 @@ fn persisted_preferences_require_search_coverage_or_an_explicit_exclusion() {
         ("notifications", "Notifications"),
         ("image_policy", "Remote images"),
         ("reply_display", "Reply history"),
+        (
+            "reply_include_original",
+            "Include the original message in new replies",
+        ),
         (
             "group_conversations",
             "Group related messages in the reader",
