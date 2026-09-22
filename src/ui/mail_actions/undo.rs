@@ -414,6 +414,7 @@ mod tests {
                 item.job.clone(),
                 item.id.clone(),
                 Some(current.id.clone()),
+                None,
             ));
         }
         let job = store
