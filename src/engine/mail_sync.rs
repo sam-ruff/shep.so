@@ -31,24 +31,35 @@ impl Settings {
 pub(super) trait SyncTarget: Clone + Send + Sync + 'static {
     fn key(&self) -> &str;
     fn name(&self) -> &str;
+    /// The settings a server watcher connects with; a change restarts it.
+    fn connection(&self) -> &str;
 }
 
 #[derive(Clone)]
 pub(super) enum Target {
     Preview,
-    Account(Box<Account>),
+    Account {
+        account: Box<Account>,
+        connection: String,
+    },
 }
 impl SyncTarget for Target {
     fn key(&self) -> &str {
         match self {
             Self::Preview => "preview",
-            Self::Account(account) => &account.id,
+            Self::Account { account, .. } => &account.id,
         }
     }
     fn name(&self) -> &str {
         match self {
             Self::Preview => "Preview",
-            Self::Account(account) => &account.name,
+            Self::Account { account, .. } => &account.name,
+        }
+    }
+    fn connection(&self) -> &str {
+        match self {
+            Self::Preview => "",
+            Self::Account { connection, .. } => connection,
         }
     }
 }
@@ -95,7 +106,7 @@ impl Engine {
         sink: mail_push::Sink,
         stop: mail_push::Stop,
     ) -> anyhow::Result<WatchEnd> {
-        let Target::Account(account) = target else {
+        let Target::Account { account, .. } = target else {
             return Ok(WatchEnd::Unsupported);
         };
         if account.protocol != Protocol::Imap {
@@ -115,17 +126,20 @@ impl Engine {
         if self.demo {
             return Ok(vec![Target::Preview]);
         }
-        let accounts = self.store.accounts_ready_to_sync().await?;
+        let accounts = self.store.accounts_ready_to_watch().await?;
         Ok(accounts
             .into_iter()
-            .map(|account| Target::Account(Box::new(account)))
+            .map(|(account, connection)| Target::Account {
+                account: Box::new(account),
+                connection,
+            })
             .collect())
     }
 
     async fn check_target(&self, target: Target, output: Output) -> anyhow::Result<()> {
         match target {
             Target::Preview => self.check_preview(output).await,
-            Target::Account(account) => self.check_account(*account, output).await,
+            Target::Account { account, .. } => self.check_account(*account, output).await,
         }
     }
 
@@ -500,6 +514,7 @@ mod tests {
     #[derive(Clone)]
     struct Fixture {
         key: &'static str,
+        connection: &'static str,
         seconds: u64,
         fail_first: bool,
         hang_first: bool,
@@ -509,6 +524,7 @@ mod tests {
         fn new(key: &'static str, seconds: u64) -> Self {
             Self {
                 key,
+                connection: "original",
                 seconds,
                 fail_first: false,
                 hang_first: false,
@@ -534,6 +550,9 @@ mod tests {
         }
         fn name(&self) -> &str {
             self.key
+        }
+        fn connection(&self) -> &str {
+            self.connection
         }
     }
 
@@ -706,6 +725,13 @@ mod tests {
             })
             .await
             .expect("Expected sync transition did not happen");
+        }
+        /// Like `event`, but also accepts a transition already recorded while
+        /// waiting for another one that can arrive in either order.
+        async fn seen(&mut self, wanted: &str) {
+            if !self.trace.iter().any(|event| event == wanted) {
+                self.event(wanted).await;
+            }
         }
         fn count(&self, label: &str) -> usize {
             self.trace.iter().filter(|e| e.as_str() == label).count()
@@ -1043,6 +1069,44 @@ mod tests {
             remaining.contains(&"b watcher stopped".to_owned()),
             "{remaining:?}"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn editing_the_connection_restarts_only_that_watcher() {
+        let mut harness = Harness::new(
+            Settings::default(),
+            true,
+            vec![
+                Fixture::new("a", 1).watching(vec![WatchStep::Connect, WatchStep::Connect]),
+                Fixture::new("b", 1).watching(vec![WatchStep::Connect]),
+            ],
+        );
+        harness.seen("a watcher connected 1").await;
+        harness.seen("b watcher connected 1").await;
+        harness.event("a started 3").await;
+        assert_eq!(
+            harness.count("a watcher stopped"),
+            0,
+            "unchanged settings keep the watcher"
+        );
+        let edited = Deadline::now();
+        harness.accounts.lock().unwrap()[0].connection = "edited";
+        harness.seen("a watcher stopped").await;
+        harness.seen("a watcher connected 2").await;
+        assert!(Deadline::now() <= edited + Duration::from_secs(5));
+        harness.push("a");
+        harness.event("a pushed").await;
+        harness.event("b started 6").await;
+        assert_eq!(harness.count("a watcher connected 2"), 1);
+        assert_eq!(harness.count("b watcher stopped"), 0);
+        assert_eq!(harness.count("b watcher connected 2"), 0);
+        let remaining = harness.close().await;
+        for key in ["a", "b"] {
+            assert!(
+                remaining.contains(&format!("{key} watcher stopped")),
+                "{remaining:?}"
+            );
+        }
     }
 
     #[tokio::test]

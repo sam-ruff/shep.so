@@ -1,3 +1,6 @@
+pub mod condstore;
+#[cfg(all(test, feature = "condstore"))]
+mod condstore_tests;
 pub mod folders;
 pub mod gateway;
 #[cfg(test)]
@@ -217,10 +220,14 @@ pub async fn sync_imap_session<
         output,
         only_folder,
         ReceiveMode::Legacy,
+        None,
     )
     .await
 }
 
+/// `resume` enables CONDSTORE flag refresh from the caller's saved folder
+/// states; `None` keeps the full flag listing for callers that cannot
+/// persist those states.
 async fn sync_imap_session_mode<
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
 >(
@@ -230,6 +237,7 @@ async fn sync_imap_session_mode<
     output: Sender<MailSyncItem>,
     only_folder: Option<&str>,
     mode: ReceiveMode,
+    resume: Option<&condstore::Resume>,
 ) -> anyhow::Result<Vec<String>> {
     let mut slow: Vec<lanes::Deferred> = Vec::new();
     let mut staged: Vec<lanes::Deferred> = Vec::new();
@@ -276,10 +284,18 @@ async fn sync_imap_session_mode<
             continue;
         }
         tracing::info!(folder_index = index, "Selecting IMAP folder");
-        let mailbox = session.select(folder).await?;
+        let saved = resume.and_then(|resume| resume.get(folder));
+        let modseqs = resume.is_some() && capabilities.has_str("CONDSTORE");
+        let mailbox = if modseqs {
+            session.select_condstore(folder).await?
+        } else {
+            session.select(folder).await?
+        };
         let validity = mailbox
             .uid_validity
             .context("The server did not provide UIDVALIDITY")?;
+        let highest = condstore::usable(mailbox.highest_modseq).filter(|_| modseqs);
+        let plan = condstore::plan(saved, validity, highest);
         if folder.eq_ignore_ascii_case("INBOX") {
             output
                 .send(MailSyncItem::InboxSyncStarted {
@@ -299,11 +315,53 @@ async fn sync_imap_session_mode<
             messages = uids.len(),
             "IMAP UID search complete"
         );
-        let live_ids = uids
+        let live_ids: HashSet<String> = uids
             .iter()
             .map(|uid| format!("{}:{folder}:{validity}.{uid}", account.id))
             .collect();
-        for chunk in uids.chunks(50) {
+        let changed = match plan {
+            condstore::Plan::Full => None,
+            condstore::Plan::Unchanged => Some(Vec::new()),
+            condstore::Plan::Changes { since } => {
+                match condstore::changed_flags(&mut session, since).await {
+                    Ok(changed) => Some(changed),
+                    Err(error) => {
+                        tracing::warn!(
+                            "CONDSTORE flag refresh failed, listing every flag: {error:#}"
+                        );
+                        None
+                    }
+                }
+            }
+        };
+        let listed: Vec<u32> = match &changed {
+            // Cached messages are covered by the changed flags; only new
+            // messages need their metadata.
+            Some(changed) => {
+                let flags: Vec<_> = changed
+                    .iter()
+                    .filter_map(|fetch| {
+                        let id = format!("{}:{folder}:{validity}.{}", account.id, fetch.uid?);
+                        (known.contains(&id) && live_ids.contains(&id)).then_some((
+                            id,
+                            fetch.unread,
+                            fetch.starred,
+                        ))
+                    })
+                    .collect();
+                for chunk in flags.chunks(50) {
+                    output.send(MailSyncItem::Flags(chunk.to_vec())).await?;
+                }
+                uids.iter()
+                    .copied()
+                    .filter(|uid| {
+                        !known.contains(&format!("{}:{folder}:{validity}.{uid}", account.id))
+                    })
+                    .collect()
+            }
+            None => uids,
+        };
+        for chunk in listed.chunks(50) {
             let set = chunk
                 .iter()
                 .map(u32::to_string)
@@ -373,6 +431,20 @@ async fn sync_imap_session_mode<
                 live_ids,
             })
             .await?;
+        // Saved only after the folder's flags were sent, so an interrupted
+        // check never advances past changes it did not deliver.
+        match highest {
+            Some(modseq) => {
+                let state = condstore::FolderState { validity, modseq };
+                if saved != Some(&state) {
+                    condstore::publish(&output, &account.id, folder, Some(state)).await?;
+                }
+            }
+            None if saved.is_some() => {
+                condstore::publish(&output, &account.id, folder, None).await?;
+            }
+            _ => {}
+        }
         if folder.eq_ignore_ascii_case("INBOX")
             && lanes::inbox_finish(&slow, &staged) == lanes::InboxFinish::Inline
         {
@@ -515,6 +587,16 @@ async fn deliver_bodies(
     Ok(())
 }
 
+/// Large messages are staged in plaintext only when the profile allows it.
+#[cfg(feature = "staged-receive")]
+fn staged_mode(plaintext_staging: bool) -> ReceiveMode {
+    if plaintext_staging {
+        ReceiveMode::Staged
+    } else {
+        ReceiveMode::Protected
+    }
+}
+
 #[async_trait]
 impl MailProvider for Imap {
     #[cfg(feature = "staged-receive")]
@@ -526,18 +608,35 @@ impl MailProvider for Imap {
         output: Sender<MailSyncItem>,
         plaintext_staging: bool,
     ) -> anyhow::Result<Vec<String>> {
-        let mode = if plaintext_staging {
-            ReceiveMode::Staged
-        } else {
-            ReceiveMode::Protected
-        };
         sync_imap_session_mode(
             imap(account, password).await?,
             account,
             known,
             output,
             None,
-            mode,
+            staged_mode(plaintext_staging),
+            None,
+        )
+        .await
+    }
+    #[cfg(feature = "condstore")]
+    async fn sync_resuming(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        known: &HashSet<String>,
+        resume: &condstore::Resume,
+        output: Sender<MailSyncItem>,
+        plaintext_staging: bool,
+    ) -> anyhow::Result<Vec<String>> {
+        sync_imap_session_mode(
+            imap(account, password).await?,
+            account,
+            known,
+            output,
+            None,
+            staged_mode(plaintext_staging),
+            Some(resume),
         )
         .await
     }
@@ -849,11 +948,7 @@ impl MailProvider for Pop3 {
         output: Sender<MailSyncItem>,
         plaintext_staging: bool,
     ) -> anyhow::Result<Vec<String>> {
-        let mode = if plaintext_staging {
-            ReceiveMode::Staged
-        } else {
-            ReceiveMode::Protected
-        };
+        let mode = staged_mode(plaintext_staging);
         sync_pop_session_mode(pop(account, password).await?, account, known, output, mode).await
     }
     async fn sync(

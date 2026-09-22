@@ -10,6 +10,8 @@ license = "MIT"
 default = []
 test-support = []
 staged-receive = ["dep:tempfile", "dep:memmap2"]
+# Saved CONDSTORE folder states; needs a client that persists them.
+condstore = ["staged-receive"]
 
 [dependencies]
 shep-mail-content = { path = "../mail-content" }

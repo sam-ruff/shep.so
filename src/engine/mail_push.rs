@@ -79,16 +79,24 @@ pub(super) async fn supervise<T, W, WF>(
     }
 }
 
+/// A running supervisor and the connection settings it was started with.
+struct Running {
+    connection: String,
+    stop: watch::Sender<bool>,
+}
+
 /// The running supervisors, one per listed target.
 #[derive(Default)]
 pub(super) struct Watchers {
-    stops: HashMap<String, watch::Sender<bool>>,
+    running: HashMap<String, Running>,
     tasks: tokio::task::JoinSet<()>,
 }
 
 impl Watchers {
     /// Starts a supervisor for each newly listed target and stops the
-    /// supervisors of targets no longer listed.
+    /// supervisors of targets no longer listed. A target whose connection
+    /// settings changed gets a fresh supervisor after the old one is told to
+    /// log out.
     pub(super) fn reconcile<T, W, WF>(
         &mut self,
         targets: &[T],
@@ -99,19 +107,27 @@ impl Watchers {
         W: Fn(T, Sink, Stop) -> WF + Clone + Send + 'static,
         WF: Future<Output = anyhow::Result<WatchEnd>> + Send + 'static,
     {
-        self.stops.retain(|key, stop| {
-            let listed = targets.iter().any(|target| target.key() == key);
-            if !listed {
-                let _ = stop.send(true);
+        self.running.retain(|key, running| {
+            let current = targets
+                .iter()
+                .any(|target| target.key() == key && target.connection() == running.connection);
+            if !current {
+                let _ = running.stop.send(true);
             }
-            listed
+            current
         });
         for target in targets {
-            if self.stops.contains_key(target.key()) {
+            if self.running.contains_key(target.key()) {
                 continue;
             }
             let (stop, receiver) = watch::channel(false);
-            self.stops.insert(target.key().to_owned(), stop);
+            self.running.insert(
+                target.key().to_owned(),
+                Running {
+                    connection: target.connection().to_owned(),
+                    stop,
+                },
+            );
             let watch = watch.clone();
             let changed = changed.clone();
             let target = target.clone();
@@ -131,8 +147,8 @@ impl Watchers {
 
     /// Signals every watcher and gives their sessions a moment to log out.
     pub(super) async fn shutdown(mut self) {
-        for stop in self.stops.values() {
-            let _ = stop.send(true);
+        for running in self.running.values() {
+            let _ = running.stop.send(true);
         }
         let _ = tokio::time::timeout(Duration::from_secs(5), async {
             while self.tasks.join_next().await.is_some() {}
