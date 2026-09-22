@@ -376,6 +376,13 @@ failure rollback and continued navigation; POP3 restrictions; compact dark and
 scaled controls; sidebar scrolling/Unicode/shadow cleanup; and full cross-page
 selection. These are functional fixtures, not live-provider or latency evidence.
 
+`desktop.start(special_use_folders=true)` replaces both fixture accounts' flat
+folders with a catalogue whose spam folder is `Junk Mail` marked `\Junk`, so a
+drop on the unified Spam row resolves the logical `Junk` to that physical folder.
+`test_move_toast_names_the_special_use_folder_the_server_acknowledged` checks the
+toast names `Junk` while pending and `Junk Mail` once acknowledged, in light and
+compact dark layouts.
+
 For nested folder trees use `desktop.start(nested_folders=true)`, optionally with
 `persistent=true` or delayed `mail_actions`. Work uses slash-delimited Projects
 and Teams; Personal uses dot-delimited Home plus literal `Notes/flat.name` with

@@ -79,10 +79,20 @@ Archive, Trash and Junk are logical names. A move first looks for a folder of
 that exact name and otherwise uses the folder the server marks with the matching
 special-use attribute, such as `Deleted Items` for Trash, so such a server never
 gains a second literal folder; the sidebar's Trash and Spam entries list those
-same folders. A destination that truly does not exist is created after Shep asks
-for the root and hierarchy separator with `LIST "" ""`, falling back to a listing
-of the destination's own reference, and servers advertising CREATE-SPECIAL-USE
-receive the matching attribute at creation.
+same folders. Before an account's first folder sync there is no cached catalogue,
+so a move to one of these logical names lists the server's folders first and
+saves that listing; if the listing fails, the move fails before anything is sent.
+A destination that truly does not exist is created after Shep asks for the root
+and hierarchy separator with `LIST "" ""`, falling back to a listing of the
+destination's own reference and then, on servers advertising it, to the first
+personal namespace from `NAMESPACE` (RFC 2342). imap-proto cannot decode that
+response, so it is exchanged on the raw stream up to its own tagged completion;
+a refusal, partial reply or unexpected line is an error and the session is not
+reused. Servers advertising CREATE-SPECIAL-USE receive the matching attribute at
+creation. Dropping mail on the unified Archive, Trash or Spam row accepts an
+account whose matching folder exists only under its special-use name. The move's
+toast names the folder the receipt reports, using that account's decoded label,
+once the move is acknowledged.
 
 Archive and Move create a missing destination before moving mail. If an earlier
 move was interrupted, Shep checks the original and destination to finish it
