@@ -10,7 +10,8 @@ import time
 from pathlib import Path
 
 from e2e import check, click, key, type_text, wait
-from gnome_activation import OBSERVER, cleanup_all, eventually, install_shell_observer, prepare_window, require_stable, stop_process
+from gnome_activation import (OBSERVER, cleanup_all, eventually, install_shell_observer, prepare_window,
+                              require_stable, start_system_bus, stop_process)
 from install_linux import APP_ID, desktop_entry
 from mcp_harness import Desktop, ROOT
 
@@ -39,6 +40,7 @@ def run(binary, mode="details", desktop_type=Desktop):
     desktop.env["XDG_RUNTIME_DIR"] = runtime.name
     desktop.env["PULSE_SERVER"] = f"unix:{runtime.name}/no-audio-server"
     processes = []
+    system_bus = None
     receipt = {"binary": str(binary), "sha256": digest, "mode": mode, "passed": False}
     try:
         desktop.start(width=1920, height=1080, tray="missing", persistent=True,
@@ -63,6 +65,7 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "enable-animations", "false")
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "scaling-factor", "1")
         desktop.command("gsettings", "set", "org.gnome.desktop.notifications", "show-banners", "true")
+        system_bus = start_system_bus(desktop)
         for name, command in [
             ("gnome-shell", ["gnome-shell", "--x11", "--sm-disable", "--mode=ubuntu"]),
             ("gnome-notification-service", ["/usr/bin/gjs", "-m", "/usr/share/gnome-shell/org.gnome.Shell.Notifications"]),
@@ -163,7 +166,7 @@ def run(binary, mode="details", desktop_type=Desktop):
             if desktop.directory:
                 (desktop.directory / "notification-evidence.json").write_text(json.dumps(receipt, indent=2))
         tray = desktop.tray_fixture
-        processes.extend([desktop.app, desktop.clipboard, desktop.xvfb])
+        processes.extend([desktop.app, system_bus, desktop.clipboard, desktop.xvfb])
         if tray:
             processes.extend([tray.host, tray.bus])
         cleanup_all([save_receipt, desktop.stop,

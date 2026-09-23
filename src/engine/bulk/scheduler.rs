@@ -13,6 +13,7 @@ impl Engine {
         let mut leases = std::collections::HashMap::<String, Arc<crate::store::BulkLease>>::new();
         let mut active = Vec::<(usize, ReadyWork)>::new();
         let mut after: [String; 6] = Default::default();
+        let mut sweep = Sweep::default();
         let mut blocked = [false; 6];
         let mut storage_backoff = [None::<tokio::time::Instant>; 6];
         let mut next_domain = 0;
@@ -30,6 +31,7 @@ impl Engine {
                             storage_backoff[domain] = None;
                             blocked[domain] = false;
                             after[domain].clear();
+                            sweep.restart(domain);
                         } else {
                             blocked[domain] = true;
                         }
@@ -48,6 +50,7 @@ impl Engine {
                 }
                 if progressed && !scanning {
                     after = Default::default();
+                    sweep = Sweep::default();
                     progressed = false;
                 }
                 while running.len() < dispatch::NETWORK_CONCURRENCY + 1 {
@@ -59,7 +62,7 @@ impl Engine {
                     {
                         for offset in 0..6 {
                             let domain = (next_domain + offset) % 6;
-                            if blocked[domain] {
+                            if blocked[domain] || sweep.exhausted(domain, repair_only) {
                                 continue;
                             }
                             let occupied = active
@@ -71,6 +74,10 @@ impl Engine {
                                 .filter(|(d, _)| *d == domain)
                                 .map(|(_, work)| work.work.key())
                                 .collect();
+                            #[cfg(test)]
+                            self.bulk_control
+                                .scans
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             match self
                                 .store
                                 .scan_action_work(
@@ -90,7 +97,7 @@ impl Engine {
                                     after[domain] = cursor;
                                     scan_pending = true;
                                 }
-                                Ok(WorkPage::Done) => {}
+                                Ok(WorkPage::Done) => sweep.finish(domain, repair_only),
                                 Err(error) => {
                                     blocked[domain] = true;
                                     let _ = output.send(Event::Error(format!("Could not read pending actions. Refresh their history to retry. {error:#}"))).await;
@@ -245,10 +252,23 @@ impl Engine {
                     }
                 }
                 command = input.recv(), if input_open => {
-                    match command {
-                        Some(Command::BulkRun(_)) => { progressed = true; blocked = [false; 6]; }
-                        Some(_) => { let _ = output.send(Event::Error("Unexpected action-owner command".into())).await; }
-                        None => input_open = false,
+                    // Take every queued wake at once; they ask for the same rescan.
+                    let mut next = command;
+                    loop {
+                        match next {
+                            Some(Command::BulkRun(id)) => {
+                                blocked = [false; 6];
+                                // A job with a running item is rescanned when that item finishes.
+                                progressed |= id.is_empty() || !leases.contains_key(&id);
+                            }
+                            Some(_) => { let _ = output.send(Event::Error("Unexpected action-owner command".into())).await; }
+                            None => { input_open = false; break; }
+                        }
+                        next = match input.try_recv() {
+                            Ok(command) => Some(command),
+                            Err(mpsc::error::TryRecvError::Empty) => break,
+                            Err(mpsc::error::TryRecvError::Disconnected) => None,
+                        };
                     }
                 }
                 _ = async {
@@ -313,5 +333,45 @@ impl Engine {
                     .is_ok_and(|j| Some(j.delivery) != before)
             }
         }
+    }
+}
+
+/// Domains whose scan reached its end during the current sweep. Occupancy only
+/// grows until a completion or wake restarts the sweep, so a finished domain
+/// cannot gain eligible work before then and need not be read again.
+#[derive(Default)]
+struct Sweep {
+    finished: [[bool; 2]; 6],
+}
+
+impl Sweep {
+    fn exhausted(&self, domain: usize, repair_only: bool) -> bool {
+        self.finished[domain][usize::from(repair_only)]
+    }
+    fn finish(&mut self, domain: usize, repair_only: bool) {
+        self.finished[domain][usize::from(repair_only)] = true;
+    }
+    fn restart(&mut self, domain: usize) {
+        self.finished[domain] = [false; 2];
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Sweep;
+
+    #[test]
+    fn a_finished_domain_is_skipped_per_pass_until_restarted() {
+        let mut sweep = Sweep::default();
+        sweep.finish(3, false);
+        assert!(sweep.exhausted(3, false));
+        assert!(
+            !sweep.exhausted(3, true),
+            "repair and ordinary passes end separately"
+        );
+        assert!(!sweep.exhausted(2, false));
+        sweep.finish(3, true);
+        sweep.restart(3);
+        assert!(!sweep.exhausted(3, false) && !sweep.exhausted(3, true));
     }
 }
