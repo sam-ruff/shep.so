@@ -17,7 +17,13 @@ takes the next click, Tab closes, a second Escape closes the dialog), the mail
 filter with Find open (`s`, Ctrl+D and Delete do nothing, Escape keeps Find, the
 covered message row is selected) and the composer From list (Escape keeps the
 composer, the covered To field takes the click and typing). Each flow compares
-the menu region before opening, while open and after Escape.
+the menu region before opening, while open and after Escape. All three flows
+fail on a binary built from main (Escape closed Find, the composer and the
+dialog). With the fix, 16 of 17 selected native flows pass, including filter,
+calendar, account-review, join-link and inline-composer flows. The remaining
+`test_native_keys_move_escape_and_repeated_navigation_stay_ordered` failure
+(`mail_pending` stays 2 after three `s` presses) reproduces identically on
+main and is unrelated to dropdowns.
 
 Limitations: arrow/Enter navigation inside an open menu is not implemented
 because iced 0.14 keeps the highlighted row private. The browser uses native
