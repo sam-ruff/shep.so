@@ -102,7 +102,7 @@ export function checkedQuery(value: MailboxQuery): MailboxQuery {
       throw Error("Invalid pending mail change. Refresh the folder.");
     for (const [key, field] of Object.entries(fields)) {
       if (
-        key === "folder"
+        key === "folder" || key === "accountId"
           ? typeof field !== "string"
           : !["unread", "starred"].includes(key) || typeof field !== "boolean"
       )

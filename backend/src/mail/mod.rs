@@ -3,6 +3,7 @@ pub mod folders;
 mod outgoing;
 pub mod policy;
 mod sent;
+pub mod transfer;
 pub fn receipt_routes() -> Router<AppState> {
     outgoing::receipt_routes().merge(sent::receipt_routes())
 }
@@ -203,6 +204,7 @@ impl HostedMail for Servers {
 }
 pub struct MailHub {
     pub transport: Arc<dyn HostedMail>,
+    pub transfers: Arc<dyn transfer::HostedTransfer>,
     slots: Arc<Semaphore>,
     users: Mutex<HashMap<String, Arc<Semaphore>>>,
     outgoing: Mutex<HashMap<String, outgoing::Submission>>,
@@ -210,8 +212,10 @@ pub struct MailHub {
 }
 impl MailHub {
     pub fn new(endpoints: Vec<policy::Endpoint>) -> Self {
+        let servers = Arc::new(Servers { endpoints });
         Self {
-            transport: Arc::new(Servers { endpoints }),
+            transport: servers.clone(),
+            transfers: servers,
             slots: Arc::new(Semaphore::new(8)),
             users: Default::default(),
             outgoing: Default::default(),
@@ -247,6 +251,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/mail/resolve-move", post(resolve_move))
         .merge(outgoing::routes())
         .merge(sent::routes())
+        .merge(transfer::routes())
         .merge(folders::routes())
         // Admission runs before JSON is buffered, bounding body memory as well
         // as connections. Eight global/two identity operations; no waiting queue.

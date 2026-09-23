@@ -184,6 +184,59 @@ impl PinnedMail {
         let _ = session.logout().await;
         result
     }
+    /// Read-only check that a cross-account move may start from this message.
+    pub async fn transfer_source(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        mail: &Mail,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            account.protocol == Protocol::Imap && mail.account_id == account.id,
+            "Choose a message in this IMAP account."
+        );
+        let mut session = imap_routed(account, password, &self.incoming).await?;
+        let result = transfer::check_source(&mut session, mail).await;
+        let _ = session.logout().await;
+        result
+    }
+    /// Upload the cached original into this account. Connecting failures
+    /// happen before any upload and are therefore not applied.
+    pub async fn transfer_upload(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        mail: &Mail,
+        folder: &str,
+        raw: &[u8],
+    ) -> Result<Option<String>, transfer::TransferFailure> {
+        if account.protocol != Protocol::Imap {
+            return Err(transfer::TransferFailure::NotApplied(anyhow::anyhow!(
+                "Choose an IMAP destination account."
+            )));
+        }
+        let mut session = imap_routed(account, password, &self.incoming)
+            .await
+            .map_err(transfer::TransferFailure::NotApplied)?;
+        // Drop an acknowledged connection instead of awaiting LOGOUT.
+        transfer::upload(&mut session, mail, folder, raw).await
+    }
+    /// Remove exactly the original UID after its copy was acknowledged.
+    pub async fn finish_transfer(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        mail: &Mail,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            account.protocol == Protocol::Imap && mail.account_id == account.id,
+            "Choose a message in this IMAP account."
+        );
+        let mut session = imap_routed(account, password, &self.incoming).await?;
+        finish_transfer_commands(&mut session, mail).await?;
+        let _ = session.logout().await;
+        Ok(())
+    }
     pub async fn sent(
         &self,
         account: &Account,

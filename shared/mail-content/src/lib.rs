@@ -4,6 +4,8 @@ pub mod attachments;
 pub mod document;
 pub mod find;
 pub mod forwarding;
+#[cfg(feature = "fuzzy")]
+pub mod fuzzy;
 pub mod mime;
 mod plain;
 pub mod printing;
@@ -93,5 +95,14 @@ mod browser {
     #[wasm_bindgen]
     pub fn attachment_filename(value: &str) -> String {
         super::attachments::filename(value)
+    }
+    /// Positions of the matching Move destinations, best first.
+    #[cfg(feature = "fuzzy")]
+    #[wasm_bindgen]
+    pub fn rank_move_candidates(query: &str, candidates: &str) -> Result<String, JsError> {
+        let candidates: Vec<super::fuzzy::MoveCandidate> =
+            serde_json::from_str(candidates).map_err(|_| JsError::new("Invalid folder choices"))?;
+        serde_json::to_string(&super::fuzzy::rank_move_positions(query, &candidates))
+            .map_err(|_| JsError::new("Could not rank folders"))
     }
 }

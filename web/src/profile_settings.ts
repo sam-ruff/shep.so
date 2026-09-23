@@ -11,6 +11,8 @@ export const BROWSER_SETTINGS = [
   "preview_lines",
   "sender_pictures",
   "reply_display",
+  "cross_account_moves",
+  "foreign_move_folders",
 ] as const satisfies readonly SettingKey[];
 export type BrowserSettingKey = (typeof BROWSER_SETTINGS)[number];
 export interface PortableValues {
@@ -44,6 +46,8 @@ export function portableValues(
     preview_lines: p.previewLines,
     sender_pictures: p.avatars,
     reply_display: quoteToWire[p.quoteMode],
+    cross_account_moves: p.crossAccountMoves,
+    foreign_move_folders: p.foreignMoveFolders,
   };
 }
 /// Convert one portable value; unsupported or invalid values return null so
@@ -70,6 +74,14 @@ export function applyPortable(
     case "reply_display":
       return typeof value === "string" && value in wireToQuote
         ? { ...p, quoteMode: wireToQuote[value] }
+        : null;
+    case "cross_account_moves":
+      return typeof value === "boolean"
+        ? { ...p, crossAccountMoves: value }
+        : null;
+    case "foreign_move_folders":
+      return typeof value === "boolean"
+        ? { ...p, foreignMoveFolders: value }
         : null;
   }
 }
@@ -126,6 +138,8 @@ export class ProfileSettingsStore implements SettingsStore {
     const localKeys: Record<BrowserSettingKey, keyof Preferences> = {
       appearance: "appearance", preview_lines: "previewLines",
       sender_pictures: "avatars", reply_display: "quoteMode",
+      cross_account_moves: "crossAccountMoves",
+      foreign_move_folders: "foreignMoveFolders",
     };
     for (const key of BROWSER_SETTINGS)
       if (before[key] !== after[key] || intent?.includes(localKeys[key])) state.revisions[key]++;

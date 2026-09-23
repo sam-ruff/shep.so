@@ -215,6 +215,14 @@ python3 scripts/clients/android_e2e.py --device emulator-5554 --print-only
 It is also included in the full Android wrapper. The fixture is handed over before the cache opens; Flutter drives Shep controls and the saved ADB helper selects Android's printer destination, cancels, retries and saves PDFs through DocumentsUI. The helper validates complete PDF text and pagination, then acknowledges completion before fixture cleanup. Review `artifacts/flutter/native/print/` PDFs and WebP captures. Android/Chromium results do not establish Apple or other browser-engine printing. Preparation/dialog launch is not a print receipt.
 
 
+Browser Move destinations from other accounts: `web/src/move_candidates.test.ts`
+runs `shared/move-ranking-cases.json` through the built WASM matcher (the same
+cases run in `cargo test -p shep-mail-content --features fuzzy`), and
+`transfer.test.ts` drives the gateway transfer, refusal, lost reply, repair,
+missing APPENDUID and Undo paths over fake IndexedDB. `web/e2e/foreign-move.spec.ts`
+uses real keyboard and mouse input with route fixtures for two IMAP accounts,
+saving light, dark, 900×640 and phone-width captures under `artifacts/web/`.
+
 Counted move feedback uses `move_feedback_scenario.dart` from both host and Android native tests. Real swipes/buttons exercise two moves, partial rejection, pending Undo, failed reversal, Retry Undo, Dismiss and Undo from another open reader while read-on-leave is held. Query-only page projections restore the row and count without waiting for the provider. The pure model tests control the six-second clock and cover destination/account grouping, stale callbacks and acknowledged Undo warnings. `move-feedback.spec.ts` exercises browser controls/expiry; the real Rust HTTPS flows retain physical provider destinations. Keep general refresh/save status independent of the expiring move notification.
 
 

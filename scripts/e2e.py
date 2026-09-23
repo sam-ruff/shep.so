@@ -925,7 +925,8 @@ class NativeFlows(unittest.TestCase):
                        check("sidebar_index",12),key("Return"),check("folder","Home.Plans"),check("total",2),
                        check("mail_rows.1.subject","A little more room to think"),
                        check("mail_rows.1.account_id","preview-personal"),shot("move-foreign-destination"))
-        self.mcp.batch(click(85,115),check("folder","INBOX"),check("total",119),
+        # The keyboard reveal scrolled the sidebar; I returns to Inbox from it.
+        self.mcp.batch(key("i"),check("folder","INBOX"),check("total",119),
                        click(402,mail_row_y(0)),check("selected","Your weekly workspace digest"),
                        key("m"),check("dialog","Move"),check("focused_input","folder-search"),type_text("plans"),
                        check("move_enter_destination","Home.Plans"),click(600,542),check("dialog","MoveConfirm"),
@@ -934,7 +935,7 @@ class NativeFlows(unittest.TestCase):
                        click(600,542),check("dialog","MoveConfirm"),click(943,559),check("dialog",None),
                        check("total",118),{**check("mail_pending",0),"timeout_ms":5000},
                        check("action_toast.label","Moved 2 messages to Home.Plans"),
-                       click(85,806),check("folder","Home.Plans"),check("total",3),
+                       click(85,749),check("folder","Home.Plans"),check("total",3),
                        check("mail_rows.0.account_id","preview-personal"),shot("move-foreign-mouse-destination"))
 
     def test_nested_folder_compact_dark_keyboard_reveal_and_saved_size(self):

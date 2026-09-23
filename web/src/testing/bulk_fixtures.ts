@@ -63,6 +63,8 @@ type Owner = { revision: number; origin?: number; value: unknown };
 export class MemoryIntents implements IntentStore {
   clock = 0;
   owners = new Map<string, Partial<Record<keyof Fields, Owner>>>();
+  /** The account each message is cached in, when a test moved it. */
+  accounts = new Map<string, string>();
   async reserve() {
     return ++this.clock;
   }
@@ -77,7 +79,7 @@ export class MemoryIntents implements IntentStore {
   ): Promise<IntentLease> {
     const record = this.owners.get(id) ?? {};
     const accepted: Fields = {};
-    for (const key of ["folder", "unread", "starred"] as const) {
+    for (const key of ["folder", "unread", "starred", "accountId"] as const) {
       const value = fields[key];
       if (value === undefined) continue;
       const old = record[key];
@@ -90,7 +92,12 @@ export class MemoryIntents implements IntentStore {
       Object.assign(accepted, { [key]: value });
     }
     this.owners.set(id, record);
-    return { id, account: "work", revision, fields: accepted };
+    return {
+      id,
+      account: this.accounts.get(id) ?? "work",
+      revision,
+      fields: accepted,
+    };
   }
   async effective() {
     return {};
@@ -105,6 +112,7 @@ export class MemoryIntents implements IntentStore {
 }
 export interface ProviderLog {
   calls: { id: string; fields: Fields }[];
+  released?: string[];
 }
 /** Fictional provider: every receipt reflects the requested fields unless the
  * test overrides `respond`. */
@@ -126,6 +134,7 @@ export function operations(
     | "repairMutation"
     | "bulkCacheEpoch"
     | "bulkUnavailable"
+    | "releaseTransfer"
   > = {
     profileId: user,
     bulkIntents: intents,
@@ -141,6 +150,9 @@ export function operations(
     repairMutation: async (receipt) => receipt.after,
     bulkCacheEpoch: async () => "epoch-1",
     bulkUnavailable: async () => undefined,
+    releaseTransfer: async (lease) => {
+      log.released = [...(log.released ?? []), lease.id];
+    },
   };
   return { ops, intents, log };
 }
