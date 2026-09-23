@@ -101,7 +101,8 @@ publication remain separate gaps. Track exact-source quality, both archives,
 checksums, publication and installation of a real released asset before marking
 this request complete. The email/folder synchronisation discussion follows this
 additional delivery request. 23 September: the Windows installer and harness contracts
-are fixed for the runner (PR #9); the pool's runner losses under load remain open.
+are fixed for the runner (PR #9); Windows clones restarting during OOBE
+(infrastructure) block confirming them.
 
 **13 September large messages and Spam:** Sam requests receiving messages larger
 than 25 MB, removing the skipped-message bar notice, and exposing Spam alongside

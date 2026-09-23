@@ -14,9 +14,13 @@ terminal modules only inside its Linux-only test. Test-only change.
 
 Evidence: 178 Python tests pass on Linux, the nine Windows installer tests pass
 with PowerShell 7.6.6 for Linux, and the pre-commit hook passes 1,610 Rust
-tests. Windows evidence is the PR #9 runner job. The separate loss of Windows
-runners on the 22 to 23 September PR runs points at pool memory pressure and
-remains unconfirmed without the pool's logs.
+tests. Windows confirmation is still outstanding: since 22 September every
+Windows clone is lost before the step runs. Commit-status probes on PR #9
+showed the cause: Windows OOBE (`CloudExperienceHostBroker.exe`, event 1074,
+"Reconfiguration (Unplanned)") restarts the clone about four minutes after its
+post-specialise boot, after the runner has registered and taken the job. The
+fix belongs in the infrastructure template's `runner.ps1` and the pool's
+registration timeout; it is recorded in TODO for Sam's approval.
 
 ## Folder changes and desktop Activity integration, 21 September 2026
 

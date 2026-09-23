@@ -65,9 +65,6 @@ jobs:
             target: x86_64-pc-windows-msvc
             python: python
     runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-      statuses: write
     # Linux runs unit tests, the benchmark build and the full native suite in sequence; the
     # suite alone passed 36 minutes on 18 September 2026 when the 120 minute cap cancelled it.
     timeout-minutes: 240
@@ -88,31 +85,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.plan.outputs.version }}
           SHEP_GOOGLE_CLIENT_ID: ${{ vars.SHEP_GOOGLE_CLIENT_ID }}
           SHEP_GOOGLE_CLIENT_SECRET: ${{ secrets.SHEP_GOOGLE_CLIENT_SECRET }}
-      - name: Windows clone heartbeat
-        if: matrix.platform == 'windows'
-        continue-on-error: true
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEARTBEAT_URL: ${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}
-        run: |
-          # A lost clone keeps no step log, so a detached loop reports its clock, boot time, Windows
-          # setup state and free memory as a commit status every 15 seconds; the last one dates the loss.
-          $script = Join-Path $env:RUNNER_TEMP 'heartbeat.ps1'
-          Set-Content -LiteralPath $script -Value @'
-          while ($true) {
-              try {
-                  $os = Get-CimInstance Win32_OperatingSystem
-                  $setup = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State' -ErrorAction SilentlyContinue).ImageState -replace '^IMAGE_STATE_', ''
-                  $text = '{0:HH:mm:ss} boot {1:HH:mm:ss} {2} free {3:N1}G' -f (Get-Date).ToUniversalTime(), $os.LastBootUpTime.ToUniversalTime(), $setup, ($os.FreePhysicalMemory / 1MB)
-                  $body = @{ state = 'pending'; context = 'windows-clone-heartbeat'; description = $text } | ConvertTo-Json
-                  Invoke-RestMethod -Method Post -Uri $env:HEARTBEAT_URL -Body $body -ContentType 'application/json' `
-                      -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' } | Out-Null
-              } catch { }
-              Start-Sleep -Seconds 15
-          }
-          '@
-          Start-Process pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-File', $script -WindowStyle Hidden
       - name: Install the verified Rust toolchain
         if: matrix.platform == 'windows'
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
