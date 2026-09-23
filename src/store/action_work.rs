@@ -117,6 +117,11 @@ impl Store {
         active: Vec<String>,
         cache_only: bool,
     ) -> anyhow::Result<WorkPage> {
+        // Only mail items and calendar actions have cache-only repair work.
+        if cache_only && !matches!(domain, 0 | 2) {
+            anyhow::ensure!(domain < 6, "Unknown action domain");
+            return Ok(WorkPage::Done);
+        }
         self.run(move |c| {
             let occupied = serde_json::to_string(&occupied)?;
             let active = serde_json::to_string(&active)?;

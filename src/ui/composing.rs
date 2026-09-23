@@ -132,7 +132,7 @@ impl App {
                         .cloned()
                 {
                     self.load_draft(draft);
-                    return focus_after_layout("to");
+                    return self.focus_after_layout("to");
                 }
                 self.notice("Forward saved in Drafts.", false);
             }
