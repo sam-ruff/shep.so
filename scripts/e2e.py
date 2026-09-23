@@ -4021,7 +4021,7 @@ class NativeFlows(unittest.TestCase):
         checkpoint=self.profile_checkpoint(started)
         self.assertEqual(len(checkpoint["accounts"]),2)
         self.assertEqual(checkpoint["local_only"],[])
-        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),8)
+        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),9)
         self.assertIsNone(checkpoint["pending"])
 
     def test_profile_sync_native_failure_retry_and_opt_out(self):
@@ -4321,6 +4321,57 @@ class NativeFlows(unittest.TestCase):
                        check("total", 120), shot("database-export-close-restarted"))
         self.assertFalse(destination.exists())
         self.assertEqual(list(directory.glob(".shep-export-*")), [])
+
+    def search_setting(self, query, section, control, search_x=1150):
+        self.mcp.batch(click(search_x, 88), key("ctrl+a"), type_text(query),
+                       check("settings_search", query), check("settings_matches.0", section),
+                       check("settings_match_controls.0", control))
+
+    def test_settings_search_reveals_and_focuses_individual_controls(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80))
+        self.search_setting("check for new mail", "Mail & performance", "Check for new mail")
+        self.mcp.batch(shot("settings-control-result"), click(480, 289),
+                       check("settings_group", "Mail & performance"), check("settings_search", ""),
+                       check("settings_reveal.state", "revealed"), check("settings_reveal.focused", True),
+                       key("ctrl+a"), type_text("30"), click(1352, 88),
+                       check("mail_check_seconds", 30), check("preferences_saved", True),
+                       shot("settings-control-field-saved"))
+        self.search_setting("print message", "Keyboard shortcuts", "Print message")
+        self.mcp.batch(check("settings_reveal", None), click(480, 289),
+                       check("settings_group", "Keyboard shortcuts"), check("settings_tab", "Shortcuts"),
+                       check("settings_reveal.state", "revealed"), check("settings_reveal.focused", False),
+                       check("settings_reveal.top", 200, "gte"), check("settings_reveal.top", 880, "lte"),
+                       shot("settings-control-shortcut-row"))
+        self.search_setting("clear image exceptions", "Privacy", "Clear image exceptions")
+        self.mcp.batch(click(480, 289), check("settings_tab", "Privacy"),
+                       check("settings_reveal.state", "revealed"), shot("settings-control-privacy"))
+        self.search_setting("backups", "Backups", None)
+        self.mcp.batch(click(480, 289), check("settings_group", "Backups"), check("settings_reveal", None),
+                       click(1150, 88), type_text("qzxvjkwp"), check("settings_matches", []),
+                       check("settings_match_controls", []), shot("settings-control-no-results"))
+
+    def test_settings_search_reveal_compact_dark_scrolls_clicks_and_reports_missing(self):
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       check("backup_accounts", False))
+        control = "Include account passwords in the encrypted backup"
+        self.search_setting("include account passwords", "Backups", control, search_x=650)
+        self.mcp.batch(shot("settings-control-compact-results"), click(450, 289),
+                       check("settings_group", "Backups"), check("settings_reveal.control", control),
+                       check("settings_reveal.state", "revealed"),
+                       check("settings_reveal.top", 200, "gte"), check("settings_reveal.top", 600, "lte"))
+        top = round(self.mcp.call("desktop.state")["settings_reveal"]["top"])
+        self.mcp.batch(shot("settings-control-compact-scrolled"), click(270, top + 8),
+                       check("backup_accounts", True), shot("settings-control-compact-clicked"))
+        self.search_setting("backup passphrase", "Backups", "Backup passphrase", search_x=650)
+        self.mcp.batch(click(450, 289), check("settings_reveal.state", "revealed"),
+                       check("settings_reveal.focused", True), check("dark", True),
+                       shot("settings-control-compact-focused"))
+        self.search_setting("retry google cleanup", "Google connection", "Retry Google cleanup", search_x=650)
+        self.mcp.batch(click(450, 289), check("settings_group", "Google connection"),
+                       check("settings_reveal.state", "missing"), shot("settings-control-compact-missing"),
+                       click(650, 88), type_text("qzxvjkwp"), check("settings_matches", []),
+                       shot("settings-control-compact-no-results"))
 
     def test_preferences_catalogue_ranking_and_cross_tab_navigation(self):
         for dark, compact in [(False, False), (True, False), (True, True)]:
