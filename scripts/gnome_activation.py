@@ -292,18 +292,21 @@ def run(binary):
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
         receipt["setup_window"] = prepare_window(desktop)
         desktop.batch([wait(150), key("ctrl+comma"), check("tab", "Preferences"),
-                       click(1150, 88), type_text("system tray"),
+                       click(1150, 88), check("native_focus", "settings-search"), type_text("system tray"),
                        check("settings_matches", ["System tray"]), click(450, 289),
                        check("settings_group", "System tray")])
         if not desktop.state()["tray"]["enabled"]:
             desktop.batch([click(288, 342), check("tray.saved_enabled", True)])
+        # Under GNOME Shell a press can reach Shep after later typed keys, so wait
+        # for each clicked field's native focus before typing into it.
         desktop.batch([key("ctrl+1"), check("tab", "Mail"), key("c"),
                        check("composer.visible", True), wait(80),
-                       click(850, 230), type_text("friend@example.test"),
+                       click(850, 230), check("native_focus", "to"), type_text("friend@example.test"),
                        check("compose_fields.to", "friend@example.test"),
-                       click(850, 279), type_text("Launcher activation draft"),
+                       click(850, 279), check("native_focus", "subject"), type_text("Launcher activation draft"),
                        check("compose_fields.subject", "Launcher activation draft"),
-                       click(850, 400), type_text(DRAFT), check("editor", DRAFT, "contains")])
+                       click(850, 400), check("native_focus", "compose-body"), type_text(DRAFT),
+                       check("editor", DRAFT, "contains")])
         capture("before-launch", draft=True)
         for index in range(2):
             launch(f"launcher-{index}")
