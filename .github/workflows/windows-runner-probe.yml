@@ -1,0 +1,81 @@
+name: Windows runner probe
+
+# Temporary: bisects why Windows clones are lost a few minutes into a job. Each phase is reported
+# through a commit status, since a lost job keeps neither its log nor its annotations.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/windows-runner-probe.yml
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  probe:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HEARTBEAT_URL: ${{ github.api_url }}/repos/${{ github.repository }}/statuses/${{ github.sha }}
+    steps:
+      - name: Start heartbeat
+        run: |
+          Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'phase.txt') -Value 'start'
+          $script = Join-Path $env:RUNNER_TEMP 'heartbeat.ps1'
+          Set-Content -LiteralPath $script -Value @'
+          $beat = 0
+          while ($true) {
+              $beat++
+              try {
+                  $os = Get-CimInstance Win32_OperatingSystem
+                  $phase = Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'phase.txt') -ErrorAction SilentlyContinue
+                  $text = '#{0} {1:HH:mm:ss} boot {2:HH:mm:ss} {3} free {4:N1}G' -f $beat, (Get-Date).ToUniversalTime(), $os.LastBootUpTime.ToUniversalTime(), $phase, ($os.FreePhysicalMemory / 1MB)
+                  $body = @{ state = 'pending'; context = 'windows-runner-probe'; description = $text } | ConvertTo-Json
+                  Invoke-RestMethod -Method Post -Uri $env:HEARTBEAT_URL -Body $body -ContentType 'application/json' -TimeoutSec 8 `
+                      -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' } | Out-Null
+              } catch { }
+              Start-Sleep -Seconds 10
+          }
+          '@
+          Start-Process pwsh -ArgumentList '-NoProfile', '-NonInteractive', '-File', $script -WindowStyle Hidden
+      - name: Idle for six minutes
+        run: |
+          Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'phase.txt') -Value 'idle'
+          Start-Sleep -Seconds 360
+      - name: Download through the proxy without writing to disk
+        run: |
+          Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'phase.txt') -Value 'network'
+          $client = [Net.Http.HttpClient]::new()
+          foreach ($round in 1..4) {
+              $stream = $client.GetStreamAsync('https://static.rust-lang.org/dist/rustc-1.96.0-x86_64-pc-windows-msvc.tar.xz').GetAwaiter().GetResult()
+              try { $stream.CopyTo([IO.Stream]::Null) } finally { $stream.Dispose() }
+              Write-Output "round $round done"
+          }
+      - name: Write many files without network
+        run: |
+          Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'phase.txt') -Value 'disk'
+          $root = Join-Path $env:RUNNER_TEMP 'disk-probe'
+          $block = [byte[]]::new(65536)
+          [Random]::new(1).NextBytes($block)
+          foreach ($dir in 1..40) {
+              $folder = Join-Path $root $dir
+              [void][IO.Directory]::CreateDirectory($folder)
+              foreach ($file in 1..500) { [IO.File]::WriteAllBytes((Join-Path $folder "$file.bin"), $block) }
+          }
+          $large = [IO.File]::Create((Join-Path $root 'large.bin'))
+          try { foreach ($chunk in 1..48000) { $large.Write($block, 0, $block.Length) } } finally { $large.Dispose() }
+          Remove-Item -LiteralPath $root -Recurse -Force
+      - name: Install a Rust toolchain as the CI job does
+        shell: bash
+        run: |
+          echo toolchain > "$RUNNER_TEMP/phase.txt"
+          rustup toolchain install 1.96.0 --profile minimal --component rustfmt --component clippy
+      - name: Report completion
+        if: always()
+        run: |
+          Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'phase.txt') -Value 'finished'
+          Start-Sleep -Seconds 15
