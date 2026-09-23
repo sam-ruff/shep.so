@@ -24,6 +24,13 @@ fails on the pre-existing scenarios the native-baseline lane addresses; the ten
 removal, draft-save, sidebar and profile-sync scenarios that failed or touch
 removal pass locally on this branch.
 
+`performance-budgets.json` now carries Sam's 15 September search decision (R103,
+`0a786e3`), which the benchmark already asserted: `search_p95` 100 ms, plus
+`typo_search_p95` 100 ms and `multiple_term_search_p95` 150 ms, which the gate
+reads by the names the benchmark reports. No other budget changed.
+`test_backend_budgets_match_the_benchmark_assertions` reads the benchmark's
+limits and report keys and fails on the old 50 ms entry and the missing ones.
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.
