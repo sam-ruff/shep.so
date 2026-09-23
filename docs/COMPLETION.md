@@ -1,5 +1,25 @@
 # Completion audit
 
+## Inbox page benchmark regression, 23 September 2026
+
+`8db87f1` hid removed accounts from every page, count and launcher badge query
+with a correlated `NOT EXISTS` per message, which also looked up the physical
+row by ID. Counts lost their covering index and the 100,000-message Inbox page
+reached p95 703 ms on the runner against the unchanged 50 ms budget.
+`mail_query::removed_accounts_filter` now filters only removed accounts that
+still own cached mail, as a bound list, so a finished cleanup adds no per-row
+work; projected views keep the physical-owner check through uncorrelated
+subqueries evaluated once per statement.
+
+Evidence: `page_counts_check_removed_accounts_once_per_statement` fails on the
+correlated plan and checks covering counts, the cleaned-up case and the hidden
+rows; the existing removal/projection tests still pass. The benchmark adds an
+Inbox page with a removed account whose 25,000 messages await cleanup. Local
+runs on a shared host (load 3 to 15): before p50 626 ms / p95 725 ms; after
+Inbox p95 11.4 ms, Account 8.8 ms, FTS 32.6 ms, transposed 31.1 ms, four terms
+43.4 ms, body 0.11 ms and removed account 17.4 ms. Runner confirmation remains
+in TODO.
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.
