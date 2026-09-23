@@ -72,6 +72,21 @@ jobs:
                   } catch { Start-Sleep -Seconds 5 }
               }
           }
+          # Then how setup looks after the restart, until the job's token lapses.
+          foreach ($beat in 1..40) {
+              try {
+                  $setup = Get-ItemProperty 'HKLM:\SYSTEM\Setup'
+                  $image = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State').ImageState -replace '^IMAGE_STATE_', ''
+                  $names = (Get-Process).ProcessName
+                  $text = '#{0} {1:HH:mm:ss} boot {2:HH:mm:ss} oobe{3} sys{4} img {5} cxh{6} wwa{7} expl{8} logon{9}' -f $beat, (Get-Date).ToUniversalTime(), $boot,
+                      $setup.OOBEInProgress, $setup.SystemSetupInProgress, $image, [int]($names -contains 'CloudExperienceHostBroker'),
+                      [int]($names -contains 'WWAHost'), [int]($names -contains 'explorer'), [int]($names -contains 'LogonUI')
+                  $body = @{ state = 'pending'; context = 'windows-clone-after-restart'; description = $text } | ConvertTo-Json
+                  Invoke-RestMethod -Method Post -Uri $url -Body $body -ContentType 'application/json' -TimeoutSec 8 `
+                      -Headers @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json' } | Out-Null
+              } catch { }
+              Start-Sleep -Seconds 15
+          }
           '@
           $action = New-ScheduledTaskAction -Execute 'C:\Program Files\PowerShell\7\pwsh.exe' -Argument "-NoProfile -NonInteractive -File $probe\after-boot.ps1"
           Register-ScheduledTask -TaskName 'shep-probe-after-boot' -Action $action -Trigger (New-ScheduledTaskTrigger -AtStartup) `
@@ -85,7 +100,13 @@ jobs:
               try {
                   $os = Get-CimInstance Win32_OperatingSystem
                   $phase = Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'phase.txt') -ErrorAction SilentlyContinue
-                  $text = '#{0} {1:HH:mm:ss} boot {2:HH:mm:ss} {3} free {4:N1}G' -f $beat, (Get-Date).ToUniversalTime(), $os.LastBootUpTime.ToUniversalTime(), $phase, ($os.FreePhysicalMemory / 1MB)
+                  # Candidate signals that Windows setup has really finished, to gate runner registration.
+                  $setup = Get-ItemProperty 'HKLM:\SYSTEM\Setup'
+                  $image = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Setup\State').ImageState -replace '^IMAGE_STATE_', ''
+                  $names = (Get-Process).ProcessName
+                  $flags = 'oobe{0} sys{1} mini{2} img {3} cxh{4} wwa{5} expl{6} logon{7}' -f $setup.OOBEInProgress, $setup.SystemSetupInProgress, $setup.MiniSetupInProgress, $image,
+                      [int]($names -contains 'CloudExperienceHostBroker'), [int]($names -contains 'WWAHost'), [int]($names -contains 'explorer'), [int]($names -contains 'LogonUI')
+                  $text = '#{0} {1:HH:mm:ss} boot {2:HH:mm:ss} {3} {4}' -f $beat, (Get-Date).ToUniversalTime(), $os.LastBootUpTime.ToUniversalTime(), $phase, $flags
                   $body = @{ state = 'pending'; context = 'windows-runner-probe'; description = $text } | ConvertTo-Json
                   Invoke-RestMethod -Method Post -Uri $env:HEARTBEAT_URL -Body $body -ContentType 'application/json' -TimeoutSec 8 `
                       -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' } | Out-Null
