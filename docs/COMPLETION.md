@@ -17,8 +17,12 @@ rows; the existing removal/projection tests still pass. The benchmark adds an
 Inbox page with a removed account whose 25,000 messages await cleanup. Local
 runs on a shared host (load 3 to 15): before p50 626 ms / p95 725 ms; after
 Inbox p95 11.4 ms, Account 8.8 ms, FTS 32.6 ms, transposed 31.1 ms, four terms
-43.4 ms, body 0.11 ms and removed account 17.4 ms. Runner confirmation remains
-in TODO.
+43.4 ms, body 0.11 ms and removed account 17.4 ms. On the runner (PR #10, run
+35828455404) the Inbox page is p50 16.81 / p95 22.89 ms and the removed-account
+page p95 15.63 ms, with every case passing. That job's later native suite still
+fails on the pre-existing scenarios the native-baseline lane addresses; the ten
+removal, draft-save, sidebar and profile-sync scenarios that failed or touch
+removal pass locally on this branch.
 
 ## Folder changes and desktop Activity integration, 21 September 2026
 
