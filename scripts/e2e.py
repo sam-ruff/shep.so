@@ -5514,7 +5514,9 @@ class NativeFlows(unittest.TestCase):
                        check("compose_fields.subject", "A retained draft"), shot("draft-retry-light"),
                        click(98, 879), check("tab", "Preferences"),
                        click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
-                       click(98, 555), check("composer.id", original),
+                       # The parked composer is already current; wait for the click's own body
+                       # focus so a queued click cannot land on the compact layout.
+                       click(98, 555), check("composer.id", original), check("focused_input", "compose-body"),
                        {"type": "resize", "width": 900, "height": 640}, check("window_size", [900, 640]),
                        check("composer.save_error", "Preview storage failure", "contains"), shot("draft-retry-dark-compact"),
                        {"type": "resize", "width": 1440, "height": 920}, check("window_size", [1440, 920]),
@@ -5524,7 +5526,8 @@ class NativeFlows(unittest.TestCase):
                        shot("draft-retry-saved-dark"),
                        click(98, 879), check("tab", "Preferences"),
                        click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
-                       click(98, 555), check("composer.id", original), shot("draft-saved-dark"))
+                       click(98, 555), check("composer.id", original), check("focused_input", "compose-body"),
+                       shot("draft-saved-dark"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         self.mcp.call("desktop.restart")
         self.mcp.batch(check("draft_count", 2), click(98, 555), check("composer.visible", True),
