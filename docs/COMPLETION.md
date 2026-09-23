@@ -1,5 +1,36 @@
 # Completion audit
 
+## Inbox page benchmark regression, 23 September 2026
+
+`8db87f1` hid removed accounts from every page, count and launcher badge query
+with a correlated `NOT EXISTS` per message, which also looked up the physical
+row by ID. Counts lost their covering index and the 100,000-message Inbox page
+reached p95 703 ms on the runner against the unchanged 50 ms budget.
+`mail_query::removed_accounts_filter` now filters only removed accounts that
+still own cached mail, as a bound list, so a finished cleanup adds no per-row
+work; projected views keep the physical-owner check through uncorrelated
+subqueries evaluated once per statement.
+
+Evidence: `page_counts_check_removed_accounts_once_per_statement` fails on the
+correlated plan and checks covering counts, the cleaned-up case and the hidden
+rows; the existing removal/projection tests still pass. The benchmark adds an
+Inbox page with a removed account whose 25,000 messages await cleanup. Local
+runs on a shared host (load 3 to 15): before p50 626 ms / p95 725 ms; after
+Inbox p95 11.4 ms, Account 8.8 ms, FTS 32.6 ms, transposed 31.1 ms, four terms
+43.4 ms, body 0.11 ms and removed account 17.4 ms. On the runner (PR #10, run
+35828455404) the Inbox page is p50 16.81 / p95 22.89 ms and the removed-account
+page p95 15.63 ms, with every case passing. That job's later native suite still
+fails on the pre-existing scenarios the native-baseline lane addresses; the ten
+removal, draft-save, sidebar and profile-sync scenarios that failed or touch
+removal pass locally on this branch.
+
+`performance-budgets.json` now carries Sam's 15 September search decision (R103,
+`0a786e3`), which the benchmark already asserted: `search_p95` 100 ms, plus
+`typo_search_p95` 100 ms and `multiple_term_search_p95` 150 ms, which the gate
+reads by the names the benchmark reports. No other budget changed.
+`test_backend_budgets_match_the_benchmark_assertions` reads the benchmark's
+limits and report keys and fails on the old 50 ms entry and the missing ones.
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.
