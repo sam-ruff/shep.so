@@ -85,6 +85,27 @@ jobs:
           RELEASE_VERSION: ${{ needs.plan.outputs.version }}
           SHEP_GOOGLE_CLIENT_ID: ${{ vars.SHEP_GOOGLE_CLIENT_ID }}
           SHEP_GOOGLE_CLIENT_SECRET: ${{ secrets.SHEP_GOOGLE_CLIENT_SECRET }}
+      - name: Windows runner lifetime diagnostics
+        if: matrix.platform == 'windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          # Annotations survive a runner lost later in the job, unlike its step logs. Report when the
+          # clone booted, registered and received this job, and its memory, to locate the loss.
+          $os = Get-CimInstance Win32_OperatingSystem
+          $diag = Join-Path (Split-Path (Split-Path $env:RUNNER_TEMP)) '_diag'
+          $runner = Get-ChildItem $diag -Filter 'Runner_*.log' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1
+          $stamp = { param($pattern) if ($runner) { (Select-String -LiteralPath $runner.FullName -Pattern $pattern -SimpleMatch | Select-Object -First 1).Line -replace '^\[([^ ]+ [^ ]+).*', '$1' } }
+          $transcript = Select-String -LiteralPath 'C:\ProgramData\ci-hatchery\runner.log' -Pattern 'Start time:' -SimpleMatch -ErrorAction SilentlyContinue | Select-Object -Last 1
+          $facts = @(
+            "now $((Get-Date).ToUniversalTime().ToString('u'))"
+            "booted $($os.LastBootUpTime.ToUniversalTime().ToString('u'))"
+            "hand-off $($transcript.Line)"
+            "listening $(& $stamp 'Listening for Jobs')"
+            "job received $(& $stamp 'Running job')"
+            "memory free $([math]::Round($os.FreePhysicalMemory / 1MB, 1)) of $([math]::Round($os.TotalVisibleMemorySize / 1MB, 1)) GiB"
+          )
+          Write-Output "::notice title=Windows runner lifetime::$($facts -join '; ')"
       - name: Install the verified Rust toolchain
         if: matrix.platform == 'windows'
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
