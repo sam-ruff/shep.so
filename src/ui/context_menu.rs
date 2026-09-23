@@ -480,6 +480,20 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
             );
         }
         if self.preserve_pointer
+            && matches!(event, iced::Event::Mouse(mouse::Event::ButtonPressed(_)))
+        {
+            // Report where this press left native text focus. A window manager
+            // can hold a press behind later keys, so tests wait for this.
+            let mut focused = native_input::Focused::default();
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                &mut focused,
+            );
+            shell.publish(Message::NativeFocus(focused.0));
+        }
+        if self.preserve_pointer
             && let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event
         {
             let captured = shell.event_status() == iced::event::Status::Captured;
