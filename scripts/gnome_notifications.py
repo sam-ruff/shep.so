@@ -114,7 +114,8 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.batch([click(100, 878), check("tab", "Preferences"), wait(150)])
         if mode != "details":
             desktop.batch([click(690, 366), check("dark", True)])
-        desktop.batch([click(1150, 88), type_text("notifications"),
+        # GNOME Shell can deliver this press after later typed keys; wait for focus.
+        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), type_text("notifications"),
                        check("settings_matches", ["Notifications"]), click(450, 289),
                        check("settings_group", "Notifications"),
                        click(288, 413), check("notifications.settings.sound", False)])

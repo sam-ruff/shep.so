@@ -793,6 +793,9 @@ services, so logind and the display manager are absent both locally and in the
 CI container, and mark the one-time lock-screen notice shown. They need GNOME
 Shell's X11 session (46 in the CI image); GNOME Shell 50 removed it, so they skip
 on newer desktops.
+Under GNOME Shell a mouse press can reach Shep after keys typed later, so after
+clicking a text field wait for `native_focus` (the field id holding native focus
+after the latest press) before typing. `focused_input` covers only programmatic focus.
 
 Compact list navigation observes `inbox_reveal_height`, the actual native viewport.
 After rapid navigation, wait for the target row to be fully revealed before

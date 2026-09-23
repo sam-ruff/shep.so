@@ -41,6 +41,42 @@ impl Operation for Focus {
     }
 }
 
+/// The text field that holds native focus, among the fields the app names.
+#[derive(Debug, Default)]
+pub struct Focused(pub Option<&'static str>);
+
+const FIELDS: [&str; 12] = [
+    "to",
+    "cc",
+    "bcc",
+    "subject",
+    "compose-body",
+    "search",
+    "find-message",
+    "settings-search",
+    "folder-search",
+    "folder-parent-search",
+    "new-folder-name",
+    "event-title",
+];
+
+impl Operation for Focused {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        operate(self);
+    }
+
+    fn focusable(&mut self, id: Option<&Id>, _: Rectangle, state: &mut dyn Focusable) {
+        if !state.is_focused() {
+            return;
+        }
+        static IDS: std::sync::OnceLock<[Id; 12]> = std::sync::OnceLock::new();
+        let ids = IDS.get_or_init(|| FIELDS.map(Id::new));
+        if let Some(index) = ids.iter().position(|field| id == Some(field)) {
+            self.0 = Some(FIELDS[index]);
+        }
+    }
+}
+
 impl App {
     pub(super) fn native_key(
         &mut self,
@@ -173,11 +209,15 @@ mod tests {
         }
 
         fn event(&mut self, event: iced::Event) {
+            self.event_at(event, Point::new(10., 60.));
+        }
+
+        fn event_at(&mut self, event: iced::Event, position: Point) {
             self.area.update(
                 &mut self.tree,
                 &event,
                 Layout::new(&self.node),
-                mouse::Cursor::Available(Point::new(10., 60.)),
+                mouse::Cursor::Available(position),
                 &self.renderer,
                 &mut iced::advanced::clipboard::Null,
                 &mut Shell::new(&mut self.messages),
@@ -225,6 +265,7 @@ mod tests {
             [
                 Message::Key(Key::Named(keyboard::key::Named::Escape), _, _, _),
                 Message::PointerPressed,
+                Message::NativeFocus(None),
                 Message::Open(Dialog::Sender),
             ]
         ));
@@ -235,6 +276,22 @@ mod tests {
         }
         assert_eq!(app.dialog, Some(Dialog::Sender));
         assert!(app.focused_input.is_none());
+    }
+
+    #[test]
+    fn a_press_reports_the_text_field_it_left_focused() {
+        let mut native = Native::new("subject");
+        let press = || iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        native.event_at(press(), Point::new(10., 20.));
+        assert!(matches!(
+            native.messages.last(),
+            Some(Message::NativeFocus(Some("subject")))
+        ));
+        native.event_at(press(), Point::new(10., 60.));
+        assert!(matches!(
+            native.messages.last(),
+            Some(Message::NativeFocus(None))
+        ));
     }
 
     #[test]
