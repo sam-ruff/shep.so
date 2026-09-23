@@ -187,6 +187,8 @@ pub enum Message {
     FocusChecked(&'static str, bool),
     /// A native mouse press, published before the pressed widget's own messages.
     PointerPressed,
+    /// The text field holding native focus after a mouse press.
+    NativeFocus(Option<&'static str>),
     RevealSidebar(String, u8),
     ToggleStar,
     ToggleRead,
@@ -420,6 +422,8 @@ pub struct App {
     pending_focus: Option<&'static str>,
     /// Native mouse presses; a later press overrides an earlier focus request.
     pointer_presses: u64,
+    /// Native text focus observed after the latest mouse press.
+    native_focus: Option<&'static str>,
     focused_input: Option<&'static str>,
     #[cfg(feature = "test-support")]
     text_context_observation: text_context::Observation,
@@ -613,6 +617,7 @@ impl App {
                 last_click: None,
                 pending_focus: None,
                 pointer_presses: 0,
+                native_focus: None,
                 focused_input: None,
                 #[cfg(feature = "test-support")]
                 text_context_observation: Default::default(),
@@ -2516,6 +2521,7 @@ impl App {
                 }
                 return self.handle(Message::Focus(id, 0));
             }
+            Message::NativeFocus(id) => self.native_focus = id,
             Message::PointerPressed => {
                 self.pointer_presses += 1;
                 self.pending_focus = None;
@@ -4606,6 +4612,7 @@ impl App {
         );
         data["draft_in_reply_to"] = serde_json::json!(self.composer.current.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
+        data["native_focus"] = serde_json::json!(self.native_focus);
         #[cfg(feature = "test-support")]
         {
             data["text_menu"] = self.text_context_observation.snapshot();
