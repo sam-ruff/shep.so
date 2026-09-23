@@ -30,7 +30,7 @@ fn actual_labels_synonyms_and_typos_find_their_sections() {
         ("select all", "Keyboard shortcuts"),
     ] {
         assert_eq!(
-            matches(query).first().map(|entry| entry.title),
+            matches(query).first().map(|entry| entry.setting.title),
             Some(expected),
             "{query}"
         );
@@ -39,21 +39,24 @@ fn actual_labels_synonyms_and_typos_find_their_sections() {
 
 #[test]
 fn visible_titles_and_controls_outrank_supporting_text_across_tabs() {
-    assert_eq!(matches("appearance")[0].title, "Appearance");
+    assert_eq!(matches("appearance")[0].setting.title, "Appearance");
     assert!(
         matches("appearance")
             .iter()
-            .any(|entry| entry.title == "Profiles and sync")
+            .any(|entry| entry.setting.title == "Profiles and sync")
     );
-    assert_eq!(matches("backup interval")[0].title, "Backups");
-    assert_eq!(matches("check for new mail")[0].title, "Mail & performance");
+    assert_eq!(matches("backup interval")[0].setting.title, "Backups");
+    assert_eq!(
+        matches("check for new mail")[0].setting.title,
+        "Mail & performance"
+    );
     for setting in SETTINGS {
-        assert_eq!(matches(setting.title)[0].title, setting.title);
-        for label in setting.labels.split('|') {
+        assert_eq!(matches(setting.title)[0].setting.title, setting.title);
+        for label in captions(setting) {
             assert!(
                 matches(label)
                     .iter()
-                    .any(|entry| entry.title == setting.title),
+                    .any(|entry| entry.setting.title == setting.title),
                 "{}: {label}",
                 setting.title
             );
@@ -66,18 +69,18 @@ fn matching_requires_every_term_and_preserves_unicode_and_numbers() {
     for query in ["", "---", "qzxvjkwp", "appearance qzxvjkwp", "S4 region"] {
         assert!(matches(query).is_empty(), "{query}");
     }
-    assert_eq!(matches("  APPEARÁNCE  ")[0].title, "Appearance");
+    assert_eq!(matches("  APPEARÁNCE  ")[0].setting.title, "Appearance");
     let mut matcher = crate::fuzzy::WordMatcher::new("ガ 123 100");
     assert_eq!(matcher.score_normalized("ガ", "カ"), None);
     assert_eq!(matcher.score_normalized("123", "1234"), None);
     assert_eq!(matcher.score_normalized("100", "100"), Some(0));
     let first: Vec<_> = matches("password")
         .iter()
-        .map(|entry| entry.title)
+        .map(|entry| entry.setting.title)
         .collect();
     let second: Vec<_> = matches("password")
         .iter()
-        .map(|entry| entry.title)
+        .map(|entry| entry.setting.title)
         .collect();
     assert_eq!(first, second);
 }
@@ -89,7 +92,7 @@ fn abbreviations_find_their_visible_sections_before_supporting_keywords() {
         ("ntfctns", "Notifications"),
         ("sfp fng", "Backups"),
     ] {
-        assert_eq!(matches(query)[0].title, section, "{query}");
+        assert_eq!(matches(query)[0].setting.title, section, "{query}");
     }
 }
 
@@ -168,8 +171,8 @@ fn persisted_preferences_require_search_coverage_or_an_explicit_exclusion() {
             "Group related messages in the reader",
         ),
         ("contacts", "Contacts"),
-        ("image_senders", "Add sender"),
-        ("image_domains", "Add domain"),
+        ("image_senders", "Clear image exceptions"),
+        ("image_domains", "Image exceptions"),
         ("backup_destinations", "Add destination"),
         ("backup_selected", "Backups"),
         ("backup_destination", "Save to"),
@@ -229,7 +232,7 @@ fn persisted_preferences_require_search_coverage_or_an_explicit_exclusion() {
         .collect();
     reviewed.insert("unread_badge");
     if crate::desktop_badge::SUPPORTED {
-        assert_eq!(matches("badge")[0].title, "Mail & performance");
+        assert_eq!(found("badge"), [("Mail & performance", None)]);
     }
     let value = serde_json::to_value(Preferences::default()).expect("preferences fixture");
     let actual: BTreeSet<_> = value
@@ -349,4 +352,216 @@ fn nested_network_and_dynamic_configuration_fields_require_a_catalogue_review() 
         &calendar,
         &["id", "name", "kind", "url", "username", "access"],
     );
+}
+
+fn found(query: &str) -> Vec<(&'static str, Option<&'static str>)> {
+    matches(query)
+        .iter()
+        .map(|entry| (entry.setting.title, entry.control))
+        .collect()
+}
+
+#[test]
+fn real_catalogue_words_are_not_read_as_typos_of_other_words() {
+    assert_eq!(found("shared profile"), [("Profiles and sync", None)]);
+    assert_eq!(found("profile workspace"), [("Profiles", None)]);
+    assert_eq!(found("database transfer"), [("Database transfer", None)]);
+    assert!(
+        found("shared")
+            .iter()
+            .all(|(title, _)| *title != "Profiles")
+    );
+    assert_eq!(found("apperance")[0].0, "Appearance");
+    assert_eq!(found("notifcations")[0].0, "Notifications");
+}
+
+#[test]
+fn results_name_the_control_that_explains_the_match() {
+    for (query, section, control) in [
+        ("copies to keep", "Backups", Some("Copies to keep (1–100)")),
+        (
+            "backup interval",
+            "Backups",
+            Some("Backup interval (hours)"),
+        ),
+        ("print", "Keyboard shortcuts", Some("Print message")),
+        (
+            "clear image exceptions",
+            "Privacy",
+            Some("Clear image exceptions"),
+        ),
+        ("smtp username", "Your accounts", None),
+        (
+            "include account passwords",
+            "Backups",
+            Some("Include account passwords in the encrypted backup"),
+        ),
+        (
+            "back up auto",
+            "Backups",
+            Some("Back up automatically while Shep is running"),
+        ),
+        ("shared profile", "Profiles and sync", None),
+        ("copies keep", "Backups", None),
+        (
+            "refresh connections",
+            "Your accounts",
+            Some("Refresh connections"),
+        ),
+        ("backups", "Backups", None),
+        ("backup", "Backups", None),
+        ("dark mode", "Appearance", None),
+        ("retention", "Backups", None),
+        ("system tray", "System tray", None),
+    ] {
+        assert_eq!(found(query)[0], (section, control), "{query}");
+    }
+    let appearance = found("appearance");
+    assert_eq!(appearance[0], ("Appearance", None));
+    assert!(appearance.contains(&("Profiles and sync", Some("Appearance and mail preferences"))));
+}
+
+#[test]
+fn every_control_caption_names_itself_unless_its_section_title_does() {
+    for setting in SETTINGS {
+        for label in captions(setting) {
+            let results = found(label);
+            let Some((_, control)) = results.iter().find(|(found, _)| *found == setting.title)
+            else {
+                panic!("{}: {label}", setting.title);
+            };
+            if split_words(setting.title) != split_words(label) {
+                assert_eq!(*control, Some(label), "{}", setting.title);
+            }
+        }
+    }
+}
+
+#[test]
+fn ranking_is_stable_for_every_caption_and_synonym() {
+    let queries: BTreeSet<_> = SETTINGS
+        .iter()
+        .flat_map(|setting| {
+            captions(setting)
+                .into_iter()
+                .chain(setting.synonyms.split_whitespace())
+                .chain([setting.title])
+        })
+        .collect();
+    for query in queries {
+        let first = found(query);
+        assert!(!first.is_empty(), "{query}");
+        assert_eq!(first, found(query), "{query}");
+        let titles: BTreeSet<_> = first.iter().map(|(title, _)| title).collect();
+        assert_eq!(titles.len(), first.len(), "one result per section: {query}");
+    }
+}
+
+#[test]
+fn common_synonyms_find_their_sections() {
+    for (query, expected) in [
+        ("keymap", "Keyboard shortcuts"),
+        ("hotkey", "Keyboard shortcuts"),
+        ("zoom", "Reading and layout"),
+        ("threads", "Reading and layout"),
+        ("address book", "Contacts"),
+        ("tracking pixels", "Privacy"),
+        ("minimise to tray", "System tray"),
+        ("light mode", "Appearance"),
+        ("colour scheme", "Colors"),
+        ("mute", "Notifications"),
+        ("imap login", "Your accounts"),
+        ("mailbox credentials", "Your accounts"),
+        ("snapshot", "Backups"),
+        ("oauth", "Google connection"),
+        ("webdav calendar", "Connected calendars"),
+        ("migrate computer", "Database transfer"),
+        ("version", "About Shep"),
+    ] {
+        assert_eq!(
+            found(query).first().map(|(title, _)| *title),
+            Some(expected),
+            "{query}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn reveal_results_follow_the_current_request_and_give_up_on_missing_captions() {
+    use reveal::Found;
+    let (mut app, _) = App::new();
+    let _ = app.handle(Message::Tab(Tab::Preferences));
+    let control = "Copies to keep (1–100)";
+    let _ = app.handle(Message::RevealSetting(
+        SettingsTab::Backups,
+        "Backups",
+        control,
+    ));
+    let first = app.settings_reveal.expect("pending reveal");
+    assert_eq!(first.state, RevealState::Pending);
+    assert_eq!(app.settings_group, Some("Backups"));
+    assert_eq!(app.settings_tab, SettingsTab::Backups);
+    let revealed = Found::Revealed {
+        top: 300.,
+        focused: true,
+    };
+    let _ = app.handle(Message::SettingRevealed(first.generation + 1, 0, revealed));
+    assert_eq!(
+        app.settings_reveal.map(|r| r.state),
+        Some(RevealState::Pending)
+    );
+    let _ = app.handle(Message::SettingRevealed(
+        first.generation,
+        0,
+        Found::Missing,
+    ));
+    assert_eq!(
+        app.settings_reveal.map(|r| r.state),
+        Some(RevealState::Pending)
+    );
+    let last = REVEAL_ATTEMPTS - 1;
+    let _ = app.handle(Message::SettingRevealed(
+        first.generation,
+        last,
+        Found::Missing,
+    ));
+    assert_eq!(
+        app.settings_reveal.map(|r| r.state),
+        Some(RevealState::Missing)
+    );
+
+    let _ = app.handle(Message::RevealSetting(
+        SettingsTab::Backups,
+        "Backups",
+        control,
+    ));
+    let second = app.settings_reveal.expect("second reveal");
+    assert!(second.generation > first.generation);
+    let _ = app.handle(Message::SettingRevealed(first.generation, 0, revealed));
+    assert_eq!(
+        app.settings_reveal.map(|r| r.state),
+        Some(RevealState::Pending)
+    );
+    let _ = app.handle(Message::SettingRevealed(second.generation, 0, revealed));
+    assert_eq!(
+        app.settings_reveal.map(|r| r.state),
+        Some(RevealState::Revealed {
+            top: 300.,
+            focused: true
+        })
+    );
+
+    let _ = app.handle(Message::SettingsSearch("copies".into()));
+    assert!(app.settings_reveal.is_none());
+    let _ = app.handle(Message::SettingRevealed(second.generation, 0, revealed));
+    assert!(app.settings_reveal.is_none());
+
+    let _ = app.handle(Message::RevealSetting(
+        SettingsTab::Backups,
+        "Backups",
+        control,
+    ));
+    let _ = app.handle(Message::SettingsTab(SettingsTab::General));
+    assert!(app.settings_reveal.is_none());
+    assert!(app.settings_group.is_none());
 }

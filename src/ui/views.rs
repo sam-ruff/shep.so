@@ -1275,6 +1275,7 @@ impl App {
                 tabs.wrap(),
                 line(),
                 scrollable(container(content).max_width(940).width(Length::Fill))
+                    .id(settings_search::reveal::SCROLLER)
                     .height(Length::Fill)
             ]
             .spacing(23),
