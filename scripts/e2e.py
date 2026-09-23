@@ -106,6 +106,30 @@ def require_gnome_x11_session(test):
         test.skipTest("This GNOME Shell has no X11 session for the owned Xvfb display")
 
 
+# Background waits, sized from runner evidence. They cover work that finishes
+# after the visible feedback, never the feedback itself.
+# A 120-message group archive: on the runner (PR #10 run 35828455404) only 10 to
+# 27 steps finished within 5 s, about 0.2 to 0.5 s per durable step, while this
+# host takes about 0.05 s. 30 s allows 0.25 s per step for 120 steps.
+GROUP_ARCHIVE_SECONDS = 30
+# A Shift range rebases a 100,000-message selection in SQLite: 0.9 s at load 3
+# and 2.6 s at load 9 on the lane host, and more than 3 s on the runner.
+LARGE_SELECTION_SECONDS = 20
+
+
+def state_value(state, path):
+    value = state
+    for part in path.split("."):
+        if isinstance(value, list):
+            index = int(part)
+            value = value[index] if index < len(value) else None
+        elif isinstance(value, dict):
+            value = value.get(part)
+        else:
+            return None
+    return value
+
+
 def mail_row_y(index, state=None):
     """Center an intended metadata row using observed logical scroll and scale."""
     state = state or {}
@@ -1115,17 +1139,15 @@ class NativeFlows(unittest.TestCase):
                        check("folder","家族のカレンダーと旅行の計画と写真"),check("total",2),shot("drag-unicode-folder-moved"))
 
     def test_drag_selection_across_pages_moves_the_entire_reviewed_group(self):
-        # The read-on-leave flag job is listed first until the archive job reports
-        # progress, so wait on the 120-item job's own count.
         self.mcp.batch(click(402,mail_row_y(0)),key("ctrl+a"),check("mail_selection.count",120),
                        check("mail_selection.pending",False),click(583,884),check("offset",50),
                        check("mail_selection.pending",False),wait(80))
         self.hold_mail_over(402,mail_row_y(0),85,399)
         self.mcp.batch(check("mail_drag.count",120),check("mail_drag.valid",True),shot("drag-all-pages-hover"),
                        {"type":"mouse_up"},check("dialog","BulkReview"),check("bulk.review_count",120),
-                       shot("drag-all-pages-review"),key("Return"),check("total",0),
-                       {**check("bulk.jobs.0.completed",120),"timeout_ms":5000},check("bulk.jobs.0.remaining",0),
-                       click(85,399),check("folder","Archive"),check("total",120),shot("drag-all-pages-archived"))
+                       shot("drag-all-pages-review"),key("Return"),check("total",0))
+        self.wait_for_group_archive(120)
+        self.mcp.batch(click(85,399),check("folder","Archive"),check("total",120),shot("drag-all-pages-archived"))
 
     def archive_two_for_recovery(self):
         self.mcp.batch(click(584,164),check("mail_selection.mode",True),check("mail_selection.drawn",True),
@@ -1801,13 +1823,11 @@ class NativeFlows(unittest.TestCase):
     def test_empty_inbox_survives_graceful_restart_and_retains_archived_mail(self):
         started=self.mcp.call("desktop.start",persistent=True)
         print(f"Empty Inbox restart evidence: {started['artifacts']}",flush=True)
-        # The read-on-leave flag job is listed first until the archive job reports
-        # progress, so wait on the 120-item job's own count.
         self.mcp.batch(click(390,245),key("ctrl+a"),check("mail_selection.count",120),
                        check("mail_selection.pending",False),key("Delete"),check("dialog","BulkReview"),
-                       check("bulk.review_count",120),key("Return"),check("total",0),
-                       {**check("bulk.jobs.0.completed",120),"timeout_ms":5000},check("bulk.jobs.0.remaining",0),
-                       {"type":"restart"},check("page_loaded",True),check("total",0),check("selected",None),
+                       check("bulk.review_count",120),key("Return"),check("total",0))
+        self.wait_for_group_archive(120)
+        self.mcp.batch({"type":"restart"},check("page_loaded",True),check("total",0),check("selected",None),
                        shot("empty-inbox-after-restart"),click(82,399),check("folder","Archive"),check("total",120),
                        check("mail_rows.0.subject","A little more room to think"),shot("archived-mail-after-restart"))
 
@@ -4505,8 +4525,11 @@ class NativeFlows(unittest.TestCase):
                        {"type": "click", "x": 400, "y": mail_row_y(0), "modifiers": ["ctrl"]},
                        check("mail_selection.mode", True), check("mail_selection.drawn", True),
                        {"type": "click", "x": 400, "y": mail_row_y(9), "modifiers": ["shift"]},
-                       check("mail_selection.count", 10), check("mail_selection.pending", False),
-                       click(696, 100), check("dialog", "BulkReview"), check("bulk.review_count", 10),
+                       check("mail_selection.count", 10))
+        self.wait_for_background("rebasing the 100,000-message selection",
+                                 lambda state: state_value(state, "mail_selection.pending") is False,
+                                 LARGE_SELECTION_SECONDS)
+        self.mcp.batch(click(696, 100), check("dialog", "BulkReview"), check("bulk.review_count", 10),
                        shot("large-mailbox-review-ready"), key("Return"),
                        check("dialog", None), check("total", 99990),
                        check("action_toast.label", "Deleted 10 messages"),
@@ -7053,6 +7076,19 @@ class NativeFlows(unittest.TestCase):
         if total < 50:
             return []
         return [{**check("mail_rows.49.id", None, "ne"), "timeout_ms": 1000}]
+
+    def wait_for_background(self, description, predicate, seconds):
+        """Wait for background provider or cache work with a measured allowance."""
+        state = self.wait_state(predicate, timeout=seconds)
+        self.assertTrue(predicate(state), f"{description} did not finish within {seconds} s")
+        return state
+
+    def wait_for_group_archive(self, count):
+        self.wait_for_background(
+            f"archiving {count} messages",
+            lambda state: any(job.get("total") == count and job.get("completed") == count
+                              and job.get("remaining") == 0 for job in state["bulk"]["jobs"]),
+            GROUP_ARCHIVE_SECONDS)
 
     def wait_state(self, predicate, timeout=5.0):
         deadline = time.monotonic() + timeout
