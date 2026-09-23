@@ -192,3 +192,75 @@ test("an unconfirmed step pauses the group; Undo and Resume never repeat it and 
   expect(await executor.run()).toEqual({ steps: 0, repairs: 0 });
   expect(log.calls).toHaveLength(1);
 });
+
+test("a group moved into another account sends each message with its destination and Undo returns it", async () => {
+  const { ops, log, intents } = operations(user, (id, fields, expected) => {
+    const after = {
+      ...expected,
+      folder: fields.folder ?? expected.folder,
+      account: fields.accountId ?? expected.account,
+      remoteId: `${expected.remoteId}9`,
+    };
+    intents.accounts.set(id, after.account);
+    return {
+      receipt: { before: expected, after },
+      cacheApplied: true,
+      applied: fields,
+    };
+  });
+  const executor = new BulkExecutor(user, ops);
+  const members = [
+    rows(1)[0],
+    {
+      position: 1,
+      id: "m1",
+      account: "personal",
+      original: identity(1, "personal"),
+    },
+  ];
+  intents.accounts.set("m1", "personal");
+  await approve(executor, "into", members, {
+    kind: "move",
+    folder: "Plans",
+    account: "personal",
+  });
+  await executor.run();
+  const moved = await view("into");
+  expect(statuses(moved.items)).toEqual({ m0: "done", m1: "done" });
+  expect(moved.items[0].receipt?.after).toMatchObject({
+    account: "personal",
+    folder: "Plans",
+  });
+  // A message already in the destination account is an ordinary move.
+  expect(log.calls).toEqual([
+    { id: "m0", fields: { folder: "Plans", accountId: "personal" } },
+    { id: "m1", fields: { folder: "Plans" } },
+  ]);
+  await executor.decide("into", moved.job.revision, "undo");
+  await executor.run();
+  const restored = await view("into");
+  expect(statuses(restored.items)).toEqual({ m0: "restored", m1: "restored" });
+  expect(log.calls.slice(2)).toEqual([
+    { id: "m0", fields: { folder: "INBOX", accountId: "work" } },
+    { id: "m1", fields: { folder: "INBOX" } },
+  ]);
+  expect(restored.items[0].inverse?.after.account).toBe("work");
+});
+
+test("accepting an unconfirmed group move releases only its local hold", async () => {
+  const { ops, log } = operations(user, () => {
+    throw new MutationFailure("Synthetic lost upload reply.");
+  });
+  const executor = new BulkExecutor(user, ops);
+  await approve(executor, "lost", rows(1), {
+    kind: "move",
+    folder: "Plans",
+    account: "personal",
+  });
+  await executor.run();
+  const paused = await view("lost");
+  expect(statuses(paused.items)).toEqual({ m0: "uncertain" });
+  await executor.resolve("lost", paused.job.revision, 0);
+  expect(log.released).toEqual(["m0"]);
+  expect(log.calls).toHaveLength(1);
+});

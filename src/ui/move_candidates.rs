@@ -13,11 +13,6 @@ pub(super) struct MoveCandidate {
     pub order: usize,
 }
 
-/// Added to foreign scores: above the exact-leaf step (10) so a home leaf
-/// match still wins, below the prefix band (20) so a foreign exact or prefix
-/// match beats any home substring, abbreviation or typo match.
-pub(super) const FOREIGN_PENALTY: usize = 15;
-
 /// Where the unbadged folders come from.
 pub(super) enum Source<'a> {
     /// The acted message's account, when one is resolved.
@@ -153,31 +148,18 @@ pub(super) fn gather(
     candidates
 }
 
-/// Rank labels as the chooser always has, adding `FOREIGN_PENALTY` to foreign
-/// rows. Ties fall back to the normalised label, the wire name and then the
-/// account order, so home-only results keep their exact previous order.
+/// Rank labels with the shared Move ranking, which the browser also uses. Ties
+/// fall back to the normalised label, the wire name and then the account order,
+/// so home-only results keep their exact previous order.
 pub(super) fn rank(query: &str, candidates: Vec<MoveCandidate>) -> Vec<MoveCandidate> {
-    let mut matcher = crate::fuzzy::Matcher::new(query);
-    let mut scored: Vec<_> = candidates
-        .into_iter()
-        .filter_map(|candidate| {
-            let key = crate::fuzzy::normalized(&candidate.label);
-            let penalty = if candidate.foreign {
-                FOREIGN_PENALTY
-            } else {
-                0
-            };
-            let score = matcher.score_normalized(&key)? + penalty;
-            Some((score, key, candidate))
-        })
-        .collect();
-    scored.sort_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then_with(|| a.1.cmp(&b.1))
-            .then_with(|| a.2.folder.cmp(&b.2.folder))
-            .then_with(|| a.2.order.cmp(&b.2.order))
-    });
-    scored.into_iter().map(|(_, _, c)| c).collect()
+    shep_mail_content::fuzzy::rank_moves(query, candidates, |candidate| {
+        shep_mail_content::fuzzy::MoveKey {
+            label: &candidate.label,
+            folder: &candidate.folder,
+            foreign: candidate.foreign,
+            order: candidate.order,
+        }
+    })
 }
 
 /// The sidebar's account name: the email unless another account shares it,

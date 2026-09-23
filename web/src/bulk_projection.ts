@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS bulk_source_intents(id TEXT PRIMARY KEY,data TEXT NOT
 CREATE TABLE IF NOT EXISTS bulk_source_aliases(alias TEXT PRIMARY KEY,target TEXT NOT NULL,lineage TEXT,target_lineage TEXT);
 CREATE TABLE IF NOT EXISTS bulk_source_lineages(id TEXT PRIMARY KEY,lineage TEXT,cached_folder TEXT,cached_unread INTEGER,cached_starred INTEGER);
 CREATE TEMP TABLE IF NOT EXISTS bulk_source_accounts(id TEXT PRIMARY KEY);
-CREATE TEMP TABLE IF NOT EXISTS bulk_current(id TEXT PRIMARY KEY,folder TEXT,unread INTEGER,starred INTEGER);
+CREATE TEMP TABLE IF NOT EXISTS bulk_current(id TEXT PRIMARY KEY,folder TEXT,unread INTEGER,starred INTEGER,account TEXT);
 `;
 
 /** Both mailbox queries and captured selections use these same full-group
@@ -143,15 +143,15 @@ export class BulkProjection {
   materialize() {
     this.exec("DELETE FROM bulk_current");
     this.exec(
-      `INSERT INTO bulk_current WITH ${bulkEffects} SELECT id,CASE WHEN lower(folder)='inbox' THEN 'INBOX' ELSE folder END,unread,starred FROM bulk_effect`,
+      `INSERT INTO bulk_current WITH ${bulkEffects} SELECT id,CASE WHEN lower(folder)='inbox' THEN 'INBOX' ELSE folder END,unread,starred,account FROM bulk_effect`,
     );
     for (const [id, fields] of this.queued)
-      this.exec("INSERT INTO bulk_current VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET folder=COALESCE(excluded.folder,bulk_current.folder),unread=COALESCE(excluded.unread,bulk_current.unread),starred=COALESCE(excluded.starred,bulk_current.starred)",
-        [id, fields.folder ?? null, fields.unread === undefined ? null : +fields.unread, fields.starred === undefined ? null : +fields.starred]);
+      this.exec("INSERT INTO bulk_current VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET folder=COALESCE(excluded.folder,bulk_current.folder),unread=COALESCE(excluded.unread,bulk_current.unread),starred=COALESCE(excluded.starred,bulk_current.starred),account=COALESCE(excluded.account,bulk_current.account)",
+        [id, fields.folder ?? null, fields.unread === undefined ? null : +fields.unread, fields.starred === undefined ? null : +fields.starred, fields.accountId ?? null]);
   }
   fields(id: string) {
     const row = this.sql.selectObject(
-      "SELECT folder,unread,starred FROM bulk_current WHERE id=?",
+      "SELECT folder,unread,starred,account FROM bulk_current WHERE id=?",
       [id],
     );
     return row
@@ -159,6 +159,7 @@ export class BulkProjection {
           ...(row.folder !== null ? { folder: row.folder as string } : {}),
           ...(row.unread !== null ? { unread: !!row.unread } : {}),
           ...(row.starred !== null ? { starred: !!row.starred } : {}),
+          ...(row.account !== null ? { accountId: row.account as string } : {}),
         }
       : {};
   }
@@ -327,15 +328,15 @@ bulk_candidates AS (
 ),
 bulk_fields AS (
  SELECT c.id,item,job,intent,forward_revision,undo_revision,undo,f.value field,
- CASE WHEN undo THEN COALESCE(json_extract(item,'$.receipt.before.'||f.value), CASE WHEN json_extract(item,'$.status')='running' THEN CASE f.value WHEN 'folder' THEN cached_folder WHEN 'unread' THEN cached_unread WHEN 'starred' THEN cached_starred END ELSE json_extract(item,'$.original.'||f.value) END)
- ELSE json_extract(job,'$.action.'||f.value) END value,
+ CASE WHEN undo THEN COALESCE(json_extract(item,'$.receipt.before.'||f.path), CASE WHEN json_extract(item,'$.status')='running' THEN CASE f.value WHEN 'folder' THEN cached_folder WHEN 'unread' THEN cached_unread WHEN 'starred' THEN cached_starred ELSE json_extract(item,'$.original.'||f.path) END ELSE json_extract(item,'$.original.'||f.path) END)
+ ELSE json_extract(job,'$.action.'||f.path) END value,
  CASE WHEN undo THEN undo_revision ELSE forward_revision END revision,
  json_extract(intent,'$.fields.'||f.value||'.revision') owner_revision,
  json_extract(intent,'$.fields.'||f.value||'.origin') owner_origin,
  json_extract(intent,'$.fields.'||f.value||'.status') owner_status,
  COALESCE(json_extract(intent,'$.applied.'||f.value),0) applied_revision
- FROM bulk_candidates c CROSS JOIN json_each('["folder","unread","starred"]') f
- WHERE (json_extract(item,'$.intent') IS NULL AND json_extract(job,'$.action.'||f.value) IS NOT NULL)
+ FROM bulk_candidates c CROSS JOIN (SELECT value,CASE value WHEN 'accountId' THEN 'account' ELSE value END path FROM json_each('["folder","unread","starred","accountId"]')) f
+ WHERE (json_extract(item,'$.intent') IS NULL AND json_extract(job,'$.action.'||f.path) IS NOT NULL)
  OR json_extract(item,'$.intent.fields.'||f.value) IS NOT NULL
 ),
 bulk_ranked AS (
@@ -350,6 +351,7 @@ bulk_ranked AS (
 )),
 bulk_effect AS (
  SELECT id,MAX(CASE WHEN field='folder' THEN value END) folder,
- MAX(CASE WHEN field='unread' THEN value END) unread,MAX(CASE WHEN field='starred' THEN value END) starred
+ MAX(CASE WHEN field='unread' THEN value END) unread,MAX(CASE WHEN field='starred' THEN value END) starred,
+ MAX(CASE WHEN field='accountId' THEN value END) account
  FROM bulk_ranked WHERE rank=1 GROUP BY id
 )`;
