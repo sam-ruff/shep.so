@@ -41,6 +41,35 @@ jobs:
               $events = ($agent | ForEach-Object { '{0:HH:mm:ss} {1}' -f $_.TimeCreated.ToUniversalTime(), ($_.Message -replace '\s+', ' ') }) -join ' | '
               & $post 'windows-clone-agent' ("$($agent.Count) events: $events")
           } catch { Write-Output "history: $_" }
+          # If the guest restarts rather than being stopped from outside, a startup task reports the
+          # System log's shutdown records; a clone stopped by the host reports nothing.
+          $probe = 'C:\ProgramData\shep-probe'
+          [void][IO.Directory]::CreateDirectory($probe)
+          Set-Content -LiteralPath (Join-Path $probe 'target.txt') -Value $env:HEARTBEAT_URL, $env:GH_TOKEN
+          Set-Content -LiteralPath (Join-Path $probe 'after-boot.ps1') -Value @'
+          $url, $token = Get-Content -LiteralPath 'C:\ProgramData\shep-probe\target.txt'
+          $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+          $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 41, 1074, 1076, 6006, 6008, 109, 13, 12 } -MaxEvents 6 -ErrorAction SilentlyContinue)
+          $text = "boot {0:HH:mm:ss} " -f $boot
+          $text += ($events | ForEach-Object { '{0:HH:mm:ss} {1} {2}' -f $_.TimeCreated.ToUniversalTime(), $_.Id, ($_.Message -replace '\s+', ' ') }) -join ' | '
+          foreach ($attempt in 1..30) {
+              try {
+                  $body = @{ state = 'pending'; context = 'windows-clone-restart'; description = $text.Substring(0, [Math]::Min(140, $text.Length)) } | ConvertTo-Json
+                  Invoke-RestMethod -Method Post -Uri $url -Body $body -ContentType 'application/json' -TimeoutSec 8 `
+                      -Headers @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json' } | Out-Null
+                  $detail = ($events | Select-Object -First 1 | ForEach-Object { $_.Message -replace '\s+', ' ' })
+                  if ($detail) {
+                      $body = @{ state = 'pending'; context = 'windows-clone-restart-detail'; description = $detail.Substring(0, [Math]::Min(140, $detail.Length)) } | ConvertTo-Json
+                      Invoke-RestMethod -Method Post -Uri $url -Body $body -ContentType 'application/json' -TimeoutSec 8 `
+                          -Headers @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json' } | Out-Null
+                  }
+                  break
+              } catch { Start-Sleep -Seconds 5 }
+          }
+          '@
+          $action = New-ScheduledTaskAction -Execute 'C:\Program Files\PowerShell\7\pwsh.exe' -Argument "-NoProfile -NonInteractive -File $probe\after-boot.ps1"
+          Register-ScheduledTask -TaskName 'shep-probe-after-boot' -Action $action -Trigger (New-ScheduledTaskTrigger -AtStartup) `
+              -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
           Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'phase.txt') -Value 'start'
           $script = Join-Path $env:RUNNER_TEMP 'heartbeat.ps1'
           Set-Content -LiteralPath $script -Value @'
