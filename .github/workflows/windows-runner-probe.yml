@@ -24,6 +24,23 @@ jobs:
     steps:
       - name: Start heartbeat
         run: |
+          $post = {
+              param($context, $text)
+              $body = @{ state = 'pending'; context = $context; description = $text.Substring(0, [Math]::Min(140, $text.Length)) } | ConvertTo-Json
+              Invoke-RestMethod -Method Post -Uri $env:HEARTBEAT_URL -Body $body -ContentType 'application/json' -TimeoutSec 8 `
+                  -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' } | Out-Null
+          }
+          # When the hand-off started runner.ps1 and when the guest agent last ran commands, to compare
+          # the loss against the daemon's ten-minute registration timeout.
+          try {
+              $log = Get-Item 'C:\ProgramData\ci-hatchery\runner.log' -ErrorAction SilentlyContinue
+              $start = (Select-String -LiteralPath $log.FullName -Pattern '^Start time: (\d{14})' -ErrorAction SilentlyContinue | Select-Object -First 1).Matches.Groups[1].Value
+              $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+              & $post 'windows-clone-history' ('now {0:HH:mm:ss} boot {1:HH:mm:ss} log {2:HH:mm:ss} start {3}' -f (Get-Date).ToUniversalTime(), $boot, $log.CreationTimeUtc, $start)
+              $agent = @(Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'qemu-ga' } -MaxEvents 3 -ErrorAction SilentlyContinue)
+              $events = ($agent | ForEach-Object { '{0:HH:mm:ss} {1}' -f $_.TimeCreated.ToUniversalTime(), ($_.Message -replace '\s+', ' ') }) -join ' | '
+              & $post 'windows-clone-agent' ("$($agent.Count) events: $events")
+          } catch { Write-Output "history: $_" }
           Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'phase.txt') -Value 'start'
           $script = Join-Path $env:RUNNER_TEMP 'heartbeat.ps1'
           Set-Content -LiteralPath $script -Value @'
