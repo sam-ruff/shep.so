@@ -127,25 +127,29 @@ class Manifest(unittest.TestCase):
         self.assertNotIn("--socket=x11", arguments)
         self.assertFalse({"--socket=session-bus", "--socket=system-bus"} & set(arguments))
 
-    def test_installs_the_same_launcher_and_icons_as_the_linux_installer(self):
+    @unittest.skipUnless(sys.platform == "linux", "The Linux installer runs only on Linux")
+    def test_installs_the_same_share_files_as_the_linux_installer(self):
         with tempfile.TemporaryDirectory(prefix="shep flatpak ") as temporary:
             root = Path(temporary)
             binary = root / "shep"
             binary.write_bytes(b"#!/bin/sh\n")
             with patch.object(shutil, "which", return_value=None), redirect_stdout(io.StringIO()):
                 installer.install(binary, root / "prefix", root / "share", process_root=root / "proc")
-            expected = {f"/app/share/{path.relative_to(root / 'share')}" for path in (root / "share").rglob("*")
-                        if path.is_file()}
-            installed_launcher = (root / "share/applications" / f"{installer.APP_ID}.desktop").read_text()
+            expected = {f"/app/share/{path.relative_to(root / 'share').as_posix()}"
+                        for path in (root / "share").rglob("*") if path.is_file()}
         shared = {target for target in installs() if target.startswith("/app/share/") and "/licenses/" not in target
                   and "/metainfo/" not in target}
         self.assertEqual(shared, expected)
+
+    def test_installed_sources_exist_and_icons_are_scalable(self):
         for target, source in installs().items():
             self.assertTrue((ROOT / source).is_file() or source.startswith("target/"), source)
             if "/icons/" in target and not target.endswith(".png"):
                 self.assertTrue(source.endswith(".svg"), source)
+
+    def test_launcher_matches_the_installer_entry_apart_from_exec(self):
         ours = desktop_entry(DESKTOP.read_text(encoding="utf-8"))
-        theirs = desktop_entry(installed_launcher)
+        theirs = desktop_entry(installer.desktop_entry(["shep"]))
         self.assertEqual(ours.pop("Exec"), manifest()["command"])
         theirs.pop("Exec")
         self.assertEqual(ours, theirs)
