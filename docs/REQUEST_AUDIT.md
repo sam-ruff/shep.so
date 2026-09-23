@@ -93,6 +93,8 @@ independently and skip slow items, use server push, and stop user actions from
 interrupting sync. This supersedes the earlier "discuss before designing sync"
 note for these items only. The live IMAP probe and lane plan are in `TODO.md`.
 
+**23 September passing CI for every pull request:** Sam requires every pull request to pass CI before it merges. `fix/ci-native-baseline` fixes the native functional failures on `main` and records the remaining runner confirmation, print browser and slow-host decisions in TODO.
+
 **13 September release CI and installers:** Sam requests CI releases so the
 installation scripts can reliably use published binaries. This explicitly
 supersedes disabled desktop quality/release CI. Linux and Windows are supported
