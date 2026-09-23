@@ -49,22 +49,28 @@ jobs:
           Set-Content -LiteralPath (Join-Path $probe 'after-boot.ps1') -Value @'
           $url, $token = Get-Content -LiteralPath 'C:\ProgramData\shep-probe\target.txt'
           $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
-          $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 41, 1074, 1076, 6006, 6008, 109, 13, 12 } -MaxEvents 6 -ErrorAction SilentlyContinue)
-          $text = "boot {0:HH:mm:ss} " -f $boot
-          $text += ($events | ForEach-Object { '{0:HH:mm:ss} {1} {2}' -f $_.TimeCreated.ToUniversalTime(), $_.Id, ($_.Message -replace '\s+', ' ') }) -join ' | '
-          foreach ($attempt in 1..30) {
-              try {
-                  $body = @{ state = 'pending'; context = 'windows-clone-restart'; description = $text.Substring(0, [Math]::Min(140, $text.Length)) } | ConvertTo-Json
-                  Invoke-RestMethod -Method Post -Uri $url -Body $body -ContentType 'application/json' -TimeoutSec 8 `
-                      -Headers @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json' } | Out-Null
-                  $detail = ($events | Select-Object -First 1 | ForEach-Object { $_.Message -replace '\s+', ' ' })
-                  if ($detail) {
-                      $body = @{ state = 'pending'; context = 'windows-clone-restart-detail'; description = $detail.Substring(0, [Math]::Min(140, $detail.Length)) } | ConvertTo-Json
+          # Shutdown records only: a clean restart (1074 names the process), an unexpected one (6008,
+          # 41), a kernel-initiated one (109) or a bug check (1001).
+          $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; Id = 41, 109, 1001, 1074, 1076, 6006, 6008 } -MaxEvents 8 -ErrorAction SilentlyContinue)
+          $reports = @(@{ context = 'windows-clone-restart'; text = "boot {0:HH:mm:ss}, {1} shutdown records" -f $boot, $events.Count })
+          $index = 0
+          foreach ($record in $events) {
+              $index++
+              $text = '{0:HH:mm:ss} {1} {2} {3}' -f $record.TimeCreated.ToUniversalTime(), $record.Id, $record.ProviderName, ($record.Message -replace '\s+', ' ')
+              # A status description holds 140 characters; 1074 names the process first and the reason later.
+              for ($part = 0; $part -lt 3 -and $part * 140 -lt $text.Length; $part++) {
+                  $reports += @{ context = "windows-clone-restart-$index-$part"; text = $text.Substring($part * 140) }
+              }
+          }
+          foreach ($report in $reports) {
+              foreach ($attempt in 1..30) {
+                  try {
+                      $body = @{ state = 'pending'; context = $report.context; description = $report.text.Substring(0, [Math]::Min(140, $report.text.Length)) } | ConvertTo-Json
                       Invoke-RestMethod -Method Post -Uri $url -Body $body -ContentType 'application/json' -TimeoutSec 8 `
                           -Headers @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github+json' } | Out-Null
-                  }
-                  break
-              } catch { Start-Sleep -Seconds 5 }
+                      break
+                  } catch { Start-Sleep -Seconds 5 }
+              }
           }
           '@
           $action = New-ScheduledTaskAction -Execute 'C:\Program Files\PowerShell\7\pwsh.exe' -Argument "-NoProfile -NonInteractive -File $probe\after-boot.ps1"
