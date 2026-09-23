@@ -416,6 +416,11 @@ impl Widget<Message, Theme, Renderer> for ContextArea<'_> {
         } else {
             cursor
         };
+        if self.preserve_pointer
+            && matches!(event, iced::Event::Mouse(mouse::Event::ButtonPressed(_)))
+        {
+            shell.publish(Message::PointerPressed);
+        }
         let drag_cycle = self.drag.as_ref().map(|drag| drag.before(event, cursor));
         if matches!(
             event,

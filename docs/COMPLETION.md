@@ -31,6 +31,33 @@ reads by the names the benchmark reports. No other budget changed.
 `test_backend_budgets_match_the_benchmark_assertions` reads the benchmark's
 limits and report keys and fails on the old 50 ms entry and the missing ones.
 
+## Native CI baseline, 23 September 2026
+
+Branch `fix/ci-native-baseline` makes the native functional suite pass on the
+CI image at `9dd7548`, which failed 32 of 378 scenarios there (41 of 380 on the
+lane host, including host-only keyboard and clipboard differences).
+
+Product fixes with Rust regressions: the action owner skips domains that
+already reached the end of the current sweep and defers wakes for a job whose
+item is running, cutting the scans for a one-account group from 68 to under 15
+per item; a newer admission publishes the queued job it cancelled, so the
+window's pending count settles; a refused durable move shows the device-only
+notice again; a click after a layout focus request keeps the clicked focus; and
+selection rebasing moves ranked rows instead of copying and deleting them
+(covered by the existing selection tests).
+Scenario fixes follow the Activity entry, the draft status line and the durable
+action journal, and wait for the pages, window sizes and jobs they assert on.
+The GNOME scenarios run on an owned system bus with the one-time lock notice
+marked shown, and skip only where GNOME Shell has no X11 session.
+
+Evidence: 1,615 pre-commit hook test executions, Clippy, 180 Python tests and
+full functional runs in the rebuilt CI image: 341 passed and 32 failed before,
+371 passed with 7 skipped after (the one remaining profile search check now
+waits for the full query and passes on both binaries); logs under
+`artifacts/logs/`. The two kiosk PDF print scenarios skip on the CI image
+because its Chrome for Testing never saves a kiosk-printed PDF, even for a
+trivial page without Shep. Runner confirmation remains open in TODO.
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.

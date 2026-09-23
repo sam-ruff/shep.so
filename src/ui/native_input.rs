@@ -224,6 +224,7 @@ mod tests {
             native.messages.as_slice(),
             [
                 Message::Key(Key::Named(keyboard::key::Named::Escape), _, _, _),
+                Message::PointerPressed,
                 Message::Open(Dialog::Sender),
             ]
         ));
@@ -260,6 +261,25 @@ mod tests {
             assert_eq!(keys[0].1.find, input == "find-message");
             assert!(!keys[1].1.search && !keys[1].1.find);
         }
+    }
+
+    #[test]
+    fn a_click_after_a_layout_focus_request_keeps_the_clicked_focus() {
+        let (mut app, _) = App::new();
+        let requested = app.pointer_presses;
+        let _ = app.handle(Message::PointerPressed);
+        let _ = app.handle(Message::FocusAfterLayout("search", requested));
+        assert_eq!(
+            app.pending_focus, None,
+            "a late request must not steal focus"
+        );
+        let _ = app.handle(Message::FocusAfterLayout("search", app.pointer_presses));
+        assert_eq!(app.pending_focus, Some("search"));
+        let _ = app.handle(Message::PointerPressed);
+        assert_eq!(
+            app.pending_focus, None,
+            "a click also stops pending retries"
+        );
     }
 
     #[test]

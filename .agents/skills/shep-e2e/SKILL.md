@@ -173,7 +173,7 @@ Forward tests use the reader footer arrow or F. Search the prototype fixture for
 The prototype fixture's Forward arrow is near x=835,y=784 after its four attachments wrap; Reply all is near x=766,y=784. An ordinary message without attachments has its footer lower. A visible bottom notice moves bottom-scrolled settings rows: dismiss Draft saved through its actual × and await `notice == null` before clicking the Forward clear controls near y=780. In search-isolation tests, Alt+F may insert an f into the native field; observe that query before clearing it, then await the restored selected row. A previously matching count or focus label alone can be stale.
 
 
-Print flows use `desktop.start(print_browser="pdf" | "dialog" | "fail")`, with Chrome/Chromium and Poppler installed. The harness owns a fresh profile, explicitly uses X11, and never opens the personal browser. Drive the actual footer icon or Mod+P. `print_output` checks an actual browser-created PDF using count/text/minimum pages and saves a first-page WebP; `browser_screenshot` captures the isolated display, `cancel_print` presses native Escape, and `focus_app` restores native Shep input. Observe `print_pending`, `print_revision` and `print_source` only. Test full formatted/plain/long output, source identity while navigating, retry, shortcut isolation and compact dark attachment wrapping. Review subject/sender headers and CID images in the PDF, plus the real printer dialog before cancellation. The current shortcut rows at the bottom are Print y=780, Forward y=720, Find y=660, Inbox y=600, Delete y=540, without a bottom notice. Keep the saved native equivalents and do not interpret launch completion as a printing receipt.
+Print flows use `desktop.start(print_browser="pdf" | "dialog" | "fail")`, with Chrome/Chromium and Poppler installed. The harness owns a fresh profile, explicitly uses X11, and never opens the personal browser. Drive the actual footer icon or Mod+P. `print_output` checks an actual browser-created PDF using count/text/minimum pages and saves a first-page WebP; `browser_screenshot` captures the isolated display, `cancel_print` presses native Escape, and `focus_app` restores native Shep input. Observe `print_pending`, `print_revision` and `print_source` only. Test full formatted/plain/long output, source identity while navigating, retry, shortcut isolation and compact dark attachment wrapping. Review subject/sender headers and CID images in the PDF, plus the real printer dialog before cancellation. The current shortcut rows at the bottom are Open Activity y=780, Print y=720, Forward y=660, Find y=600, Inbox y=540, without a bottom notice. The two PDF scenarios first run `kiosk_pdf_printing_works`, which kiosk-prints a trivial page with the same profile and flags and no Shep; they skip only when that probe saves no PDF, as with Chrome for Testing 153 in the CI image. Keep the saved native equivalents and do not interpret launch completion as a printing receipt.
 
 
 For HTML frame preparation, use html_mail=true and wait for html_view_current,
@@ -787,6 +787,12 @@ the Ubuntu tray/dock extensions and captures panel, dash, grid and Alt+Tab in
 both application styles. It never replaces the personal shell. `--before`
 uses the explicit baseline revision's symbolic SVG and needs its fixture binary for a true
 baseline. Review the saved captures; neither flow proves Windows/macOS execution.
+The GNOME activation and notification scenarios (`scripts/gnome_activation.py`,
+`scripts/gnome_notifications.py`) give GNOME Shell an owned system bus with no
+services, so logind and the display manager are absent both locally and in the
+CI container, and mark the one-time lock-screen notice shown. They need GNOME
+Shell's X11 session (46 in the CI image); GNOME Shell 50 removed it, so they skip
+on newer desktops.
 
 Compact list navigation observes `inbox_reveal_height`, the actual native viewport.
 After rapid navigation, wait for the target row to be fully revealed before
