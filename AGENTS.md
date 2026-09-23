@@ -1118,6 +1118,11 @@ Flutter reader actions stay outside the scrolling body in a responsive safe-area
 Desktop relevance queries in `store/mail_query.rs` materialize literal FTS rowids/ranks once, then join that SQLite relation. Do not restore a virtual-table LEFT JOIN that repeats FTS filtering/ranking for every candidate. Preserve exact short-body priority, literal-versus-fuzzy scoring, combined folder parameter order and the shared list/selection plan. Keep the query-plan guard, `tests/search.rs`, `tests/selections.rs`, bulk projection tests and native search/sort/selection flows. Run the unchanged 100,000-message responsiveness benchmark after planner or SQLite changes; an interrupted run is not timing evidence.
 
 `mail_inbox_badge_counts(folder,unread,account)` covers the global unread-account count requested with each mail page. Preserve its existing-cache creation and `tests/unread_counts.rs` plan/reopen regression; a narrower index requires a message-row lookup per unread item plus sorting. Pending bulk projections still use the visible-mail source. Keep value/projection and native badge tests alongside the unchanged backend budget.
+Removed-account hiding in page, count and badge queries must never be a
+correlated per-message check: `mail_query::removed_accounts_filter` binds only
+removed accounts that still own mail and gives projected views uncorrelated
+subqueries. Keep `page_counts_check_removed_accounts_once_per_statement` and the
+removed-account benchmark case.
 
 ## Desktop selection ownership, History and process recovery
 
