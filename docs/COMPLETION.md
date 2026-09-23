@@ -45,8 +45,14 @@ window's pending count settles; a refused durable move shows the device-only
 notice again; a click after a layout focus request keeps the clicked focus; and
 selection rebasing moves ranked rows instead of copying and deleting them
 (covered by the existing selection tests).
-Scenario fixes follow the Activity entry, the draft status line and the durable
-action journal, and wait for the pages, window sizes and jobs they assert on.
+Discovery after Google login now starts when its status arrives rather than on
+the next one-second tick. Scenario fixes follow the Activity entry, the draft
+status line and the durable action journal, and wait for the pages, window
+sizes, jobs and focus they assert on; the slow-upload profile fixture delays
+only its first upload, so resumed setup no longer scales with the record count.
+Three failures seen only on the runner (draft retry after a resize, automatic
+profile join, resumed upload) were traced to these ordering assumptions and
+reproduced on one pinned CPU where possible.
 The GNOME scenarios run on an owned system bus with the one-time lock notice
 marked shown, and skip only where GNOME Shell has no X11 session.
 
