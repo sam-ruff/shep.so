@@ -19,9 +19,11 @@ action journal, and wait for the pages, window sizes and jobs they assert on.
 The GNOME scenarios run on an owned system bus with the one-time lock notice
 marked shown, and skip only where GNOME Shell has no X11 session.
 
-Evidence: `cargo test --all-features` (1,532 passed), Clippy, 180 Python tests,
-the baseline and after suites in the rebuilt CI image and host reruns; logs
-under `artifacts/logs/`. The two kiosk PDF print scenarios skip on the CI image
+Evidence: 1,615 pre-commit hook test executions, Clippy, 180 Python tests and
+full functional runs in the rebuilt CI image: 341 passed and 32 failed before,
+371 passed with 7 skipped after (the one remaining profile search check now
+waits for the full query and passes on both binaries); logs under
+`artifacts/logs/`. The two kiosk PDF print scenarios skip on the CI image
 because its Chrome for Testing never saves a kiosk-printed PDF, even for a
 trivial page without Shep. Runner confirmation remains open in TODO.
 
