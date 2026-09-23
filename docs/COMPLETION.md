@@ -1,5 +1,23 @@
 # Completion audit
 
+## Windows CI installer and harness contracts, 23 September 2026
+
+The Windows job's "Installer and harness contracts" step failed on main with
+ten installer failures and four harness/import errors. The installer fixture
+set `SystemRoot` to a fictional folder, which stops Winsock loading its
+providers, so every loopback download failed; it now keeps the host value and
+the elevation stub checks the system Windows PowerShell path. On Windows the
+fixture uses the system bsdtar. Harness tests compare canonical temp paths, run
+the print launcher through its interpreter where shebangs do not apply, and use
+an existing file as the browser stand-in; the macOS test imports its POSIX
+terminal modules only inside its Linux-only test. Test-only change.
+
+Evidence: 178 Python tests pass on Linux, the nine Windows installer tests pass
+with PowerShell 7.6.6 for Linux, and the pre-commit hook passes 1,610 Rust
+tests. Windows evidence is the PR #9 runner job. The separate loss of Windows
+runners on the 22 to 23 September PR runs points at pool memory pressure and
+remains unconfirmed without the pool's logs.
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.
