@@ -1,0 +1,63 @@
+{
+    "id": "so.shep.Shep",
+    "runtime": "org.freedesktop.Platform",
+    "runtime-version": "26.08",
+    "sdk": "org.freedesktop.Sdk",
+    "sdk-extensions": [
+        "org.freedesktop.Sdk.Extension.rust-stable"
+    ],
+    "command": "shep",
+    "finish-args": [
+        "--share=ipc",
+        "--share=network",
+        "--socket=wayland",
+        "--socket=fallback-x11",
+        "--talk-name=org.freedesktop.Notifications",
+        "--talk-name=org.kde.StatusNotifierWatcher",
+        "--talk-name=com.canonical.Unity",
+        "--talk-name=org.freedesktop.secrets"
+    ],
+    "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin",
+        "env": {
+            "CARGO_HOME": "/run/build/shep/cargo",
+            "CARGO_NET_OFFLINE": "true"
+        }
+    },
+    "modules": [
+        {
+            "name": "shep",
+            "buildsystem": "simple",
+            "build-commands": [
+                "cargo --offline build --release --locked",
+                "install -Dm755 target/release/shep /app/bin/shep",
+                "install -Dm644 packaging/flatpak/so.shep.Shep.desktop /app/share/applications/so.shep.Shep.desktop",
+                "install -Dm644 packaging/flatpak/so.shep.Shep.metainfo.xml /app/share/metainfo/so.shep.Shep.metainfo.xml",
+                "install -Dm644 assets/launcher.png /app/share/icons/hicolor/128x128/apps/so.shep.Shep.png",
+                "install -Dm644 assets/shepherd-light.svg /app/share/icons/hicolor/scalable/apps/so.shep.Shep.svg",
+                "install -Dm644 assets/shepherd-symbolic.svg /app/share/icons/hicolor/scalable/apps/so.shep.Shep-symbolic.svg",
+                "install -Dm644 assets/shepherd-tray.svg /app/share/icons/hicolor/scalable/apps/so.shep.Shep-tray.svg",
+                "for notice in LICENSE licenses/libcurl.txt licenses/curl-rust.txt vendor/curl/LICENSE vendor/curl/README.shep.md vendor/libsqlite3-sys/LICENSE vendor/libsqlite3-sys/OpenSSL-LICENSE.txt vendor/libsqlite3-sys/sqlcipher/LICENSE vendor/libsqlite3-sys/README.shep.md vendor/libsqlite3-sys/shep-lifecycle.patch vendor/libsqlite3-sys/shep-temp-policy.patch vendor/libsqlite3-sys/shep-export.patch vendor/shep-html-pixbuf/LICENSE vendor/shep-html-pixbuf/UPSTREAM.md vendor/iced_tiny_skia/LICENSE vendor/iced_tiny_skia/README.shep.md vendor/litehtml-sys/LICENSE vendor/litehtml-sys/README.shep.md vendor/litehtml-sys/vendor/litehtml/LICENSE vendor/litehtml-sys/vendor/litehtml/src/gumbo/LICENSE; do install -Dm644 \"$notice\" \"/app/share/licenses/so.shep.Shep/$notice\"; done"
+            ],
+            "sources": [
+                {
+                    "type": "dir",
+                    "path": "../..",
+                    "skip": [
+                        ".flatpak-builder",
+                        ".git",
+                        "artifacts",
+                        "build-dir",
+                        "flutter",
+                        "node_modules",
+                        "repo",
+                        "target",
+                        "web",
+                        "website"
+                    ]
+                },
+                "cargo-sources.json"
+            ]
+        }
+    ]
+}

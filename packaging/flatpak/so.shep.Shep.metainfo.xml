@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>so.shep.Shep</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Shep</name>
+  <summary>Calm native email and calendar</summary>
+  <developer id="so.shep">
+    <name>Sam R</name>
+  </developer>
+  <description>
+    <p>
+      Shep is a native email and calendar app. It is comfortable with a mouse,
+      with remappable shortcuts when you want them. Common actions stay visible,
+      and changes such as archiving or flagging appear immediately while they
+      reach the server in the background.
+    </p>
+    <ul>
+      <li>Multiple IMAP and POP3 accounts, a unified inbox, search across folders and conversation reading</li>
+      <li>Replies, forwarding, printing, attachments, autosaved drafts and recovery for interrupted sends</li>
+      <li>Bulk actions with review and Undo</li>
+      <li>Google Calendar and CalDAV, with a month view and agenda</li>
+      <li>Light, Dark or System appearance, editable colour palettes, resizable panes and configurable shortcuts</li>
+      <li>Encrypted backups to local folders, Google Drive, S3-compatible storage, SFTP or FTP/FTPS</li>
+    </ul>
+    <p>
+      External images in mail are blocked unless your privacy settings allow them.
+      Passwords are kept in your desktop keyring. Gmail needs an app password.
+    </p>
+  </description>
+  <launchable type="desktop-id">so.shep.Shep.desktop</launchable>
+  <provides>
+    <binary>shep</binary>
+  </provides>
+  <url type="homepage">https://shep.so/</url>
+  <url type="help">https://sam-ruff.github.io/shep.so/mail/</url>
+  <url type="bugtracker">https://github.com/sam-ruff/shep.so/issues</url>
+  <url type="vcs-browser">https://github.com/sam-ruff/shep.so</url>
+  <url type="contribute">https://sam-ruff.github.io/shep.so/development/</url>
+  <branding>
+    <color type="primary" scheme_preference="light">#e5def7</color>
+    <color type="primary" scheme_preference="dark">#3d2f6b</color>
+  </branding>
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+  </content_rating>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">640</display_length>
+  </requires>
+  <keywords>
+    <keyword>mail</keyword>
+    <keyword>email</keyword>
+    <keyword>calendar</keyword>
+    <keyword>imap</keyword>
+    <keyword>pop3</keyword>
+    <keyword>caldav</keyword>
+  </keywords>
+  <screenshots>
+    <screenshot type="default">
+      <caption>A unified inbox with an open message</caption>
+      <image type="source" width="1440" height="920">https://raw.githubusercontent.com/sam-ruff/shep.so/main/packaging/flatpak/screenshots/mail-light.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Reading mail in dark mode</caption>
+      <image type="source" width="1440" height="920">https://raw.githubusercontent.com/sam-ruff/shep.so/main/packaging/flatpak/screenshots/mail-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The calendar month view with upcoming events</caption>
+      <image type="source" width="1440" height="920">https://raw.githubusercontent.com/sam-ruff/shep.so/main/packaging/flatpak/screenshots/calendar-light.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Writing a reply in dark mode</caption>
+      <image type="source" width="1440" height="920">https://raw.githubusercontent.com/sam-ruff/shep.so/main/packaging/flatpak/screenshots/compose-dark.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="0.1.0" date="2026-09-22" type="development">
+      <description>
+        <p>First Flatpak packaging preview. Not yet published.</p>
+      </description>
+    </release>
+  </releases>
+</component>

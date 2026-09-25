@@ -43,6 +43,100 @@ announce the icons or their text. Browser Preferences has none of these
 settings or a Tooltips choice and Flutter was out of scope; both parity gaps
 stay in TODO R98.
 
+## IDLE watcher restart, CONDSTORE flag refresh and QRESYNC, 22-25 September 2026
+
+Branch `feat/imap-push-condstore` (desktop only, awaiting integration).
+An IMAP IDLE watcher now restarts when the account's incoming identity changes:
+the listing carries `connection_key` plus the active credential slot, and a
+changed value tells the old supervisor to send DONE and LOGOUT before a new
+one starts on the next check. Names and outgoing settings do not restart it.
+
+CONDSTORE flag refresh saves each folder's SELECT HIGHESTMODSEQ and UIDVALIDITY
+in the new `folder_modseqs` table (schema 12) after that folder's flags and
+listing were delivered. Later checks keep `UID SEARCH ALL` for expunges but fetch
+only `UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n)` and metadata for uncached
+messages, and skip the flag fetch when HIGHESTMODSEQ is unchanged. A missing
+value, new UIDVALIDITY, NOMODSEQ, lower value, no CONDSTORE capability or a
+rejected request (including partial data before a tagged NO) uses the full flag
+listing. A ledger write in the folder that outranks the check keeps the previous
+value; restore and account removal forget an account's values; database import
+accepts version 11 exports without the table.
+
+Tests: 10 new mail-core CONDSTORE unit/transcript tests (advertised and not,
+NOMODSEQ, UIDVALIDITY change, tagged NO after partial data, failed check,
+unchanged folder), store tests for reopen persistence, ledger hold, pruning and
+schema 11 upgrade, a ledger decision test, a watch-identity store test and a
+virtual-time scheduler test for restart on edit. Targeted runs: 152 desktop and
+23 mail-core library tests pass. Mail-core also compiles without the feature, as
+Flutter and the backend use it. Native background sync, held-sync and rapid
+action scenarios pass; two graceful-restart scenarios fail identically on
+unrelated paths (see the PR).
+
+QRESYNC (Sam asked for it on the PR rather than leaving it in TODO): with a
+saved value and QRESYNC advertised, the check sends `ENABLE QRESYNC` before any
+SELECT and asks `UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n VANISHED)` instead
+of `UID SEARCH ALL`. Vanished cached rows go through the new feature-gated
+`MailSyncItem::Vanished`, which keeps restored pins, pending-move rows and rows
+an acknowledged move created after the check began. Uncached reported UIDs
+download as new mail. Cached minus vanished plus new must equal SELECT's
+EXISTS; a mismatch, a live VANISHED/EXPUNGE/EXISTS during the reply, a rejected
+request (partial VANISHED before NO is discarded), a refused ENABLE, a new
+UIDVALIDITY or no QRESYNC uses the complete listing. VANISHED ranges are merged
+for binary-search membership and bounded at 100,000. The IDLE connection
+enables QRESYNC when advertised, and a live VANISHED starts a check.
+
+QRESYNC tests: eight transcripts (vanished removal with new mail and no UID
+listing, unchanged folder sends nothing after SELECT, tagged NO after partial
+VANISHED, size disagreement finding uncached mail, live VANISHED, new
+UIDVALIDITY, refused ENABLE keeping CONDSTORE, no ENABLE without a saved
+value), four pure tests (range merging, the known-UID index, reconciliation
+and the size check), two IDLE transcripts (live VANISHED, refused ENABLE) and a
+store test for the removal protections. Mail-core still builds without the
+feature, with and without `staged-receive`, with no warnings.
+
+Limitations: fixture-verified only; live IDLE restart and CONDSTORE/QRESYNC on
+Sam's Stalwart server are tracked in #12. A restored backup copy absent from
+the server keeps the size check failing, so that folder uses the complete
+listing on every check until the copy is removed or confirmed. Flutter and
+browser clients have neither IDLE nor CONDSTORE/QRESYNC (parity gap in TODO).
+
+## Flathub packaging preparation (R72 client), 23 September 2026
+
+Linux store packaging is prepared, not published. `packaging/flatpak/` holds a
+freedesktop 26.08 manifest with the rust-stable extension, AppStream metainfo,
+the installer's launcher/icon identity and four fixture screenshots. Finish-args
+are network, IPC, Wayland with X11 fallback and the notification, tray, launcher
+badge and secret service bus names; there is no filesystem or device access.
+`cargo_sources.py` generates offline crate sources from `Cargo.lock`, matching
+flatpak-cargo-generator's crate entries. Inside Flatpak the tray registers its
+unique bus name instead of `StatusNotifierItem-PID-ID`.
+
+Evidence: the manifest's build commands ran in the `freedesktopsdk/sdk:26.08`
+image with `--network none` against the generated sources (Rust 1.96 mounted in
+place of the extension): the release build finished with no warnings and links
+only libdbus, libstdc++, libz, libgcc, libm, libc and libsystemd from the runtime.
+`appstreamcli validate --no-net` and `desktop-file-validate` pass (one pedantic
+uppercase-ID note and a multiple-category hint shared with the installer).
+`tests/test_flatpak_packaging.py` (15 tests) checks manifest structure, installer
+identity/icon parity, licence notices and permissions. The saved native
+`test_store_screenshots_tour_fixture_mail_calendar_and_reply` scenario passed in
+an offline container with the harness tools; its captures were reviewed.
+
+Integration on 25 September after merging main: `flatpak-builder` 1.4.9 (the
+`org.flatpak.Builder` Flatpak) built the manifest with the 26.08 SDK and
+rust-stable 1.98 without warnings, and the installed build reached the first-run
+screen through `flatpak run` on an owned Xvfb display. `flatpak-builder-lint
+manifest` passes; its build-dir and repo checks report only the screenshots,
+whose `main` URLs resolve after merge. Following Sam's replies, the homepage is
+https://shep.so/ with a contribute link, and `desktop.start(store_capture=true)`
+hides the TEST badge in test-support demo builds; the saved scenario asserts
+the `test_badge` observation both ways and all four screenshots were recaptured
+and reviewed.
+
+Limitations: screenshot URLs resolve only after merge; no secret is embedded, so
+Google sign-in stays disabled in the Flatpak until the build-secret TODO lands; portal-backed export/backup paths and sound-only
+notifications are unverified in the sandbox. Flathub submission stays in TODO.
+
 ## Preferences search coverage and control reveal, 23 September 2026
 
 R99 desktop work on `feat/settings-search-coverage`. The catalogue now lists
