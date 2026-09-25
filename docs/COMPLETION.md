@@ -39,6 +39,103 @@ announce the icons or their text. Browser Preferences has none of these
 settings or a Tooltips choice and Flutter was out of scope; both parity gaps
 stay in TODO R98.
 
+## Native dropdown keyboard dismissal (R15/R63), 22 September 2026
+
+Branch `fix/dropdown-escape-dismissal`, awaiting integration. Every native pick
+list now comes from `ui::dropdown::pick_list`, and `clippy.toml` disallows the
+plain iced constructor. While a menu is open it takes every key press: Escape
+or Tab closes only that menu, so dialogs, the composer, Find and mail shortcuts
+never see the key. The next click reaches the control the menu covered, including
+when Escape and the click arrive in one input batch. Mouse choices are unchanged.
+
+Evidence: five `ui::dropdown` tests drive the real iced runtime routing (overlay
+first, then the root `ContextArea`); three of the first four failed on the plain
+pick list before the fix, and a fifth covers a second Escape in the same batch. The saved `test_dropdown_*` native flows pass: the event dialog in
+light and compact dark (Escape keeps the dialog, the covered All day checkbox
+takes the next click, Tab closes, a second Escape closes the dialog), the mail
+filter with Find open (`s`, Ctrl+D and Delete do nothing, Escape keeps Find, the
+covered message row is selected) and the composer From list (Escape keeps the
+composer, the covered To field takes the click and typing). Each flow compares
+the menu region before opening, while open and after Escape. All three flows
+fail on a binary built from main (Escape closed Find, the composer and the
+dialog). With the fix, 16 of 17 selected native flows pass, including filter,
+calendar, account-review, join-link and inline-composer flows. The remaining
+`test_native_keys_move_escape_and_repeated_navigation_stay_ordered` failure
+(`mail_pending` stays 2 after three `s` presses) reproduced identically on
+main and was unrelated to dropdowns. After merging the native CI baseline
+(`babd932`), 31 selected native flows pass, including that one, the three
+dropdown flows, the other `test_native_*` ordering flows, both context-menu
+flows, filter/sort, calendar, inline-composer and join-link flows.
+
+Limitations: arrow/Enter navigation inside an open menu is not implemented
+because iced 0.14 keeps the highlighted row private. The browser uses native
+`<select>` elements and needs no change; Flutter was not reviewed in this wave.
+Native evidence is Linux/Xvfb only.
+
+## Inbox page benchmark regression, 23 September 2026
+
+`8db87f1` hid removed accounts from every page, count and launcher badge query
+with a correlated `NOT EXISTS` per message, which also looked up the physical
+row by ID. Counts lost their covering index and the 100,000-message Inbox page
+reached p95 703 ms on the runner against the unchanged 50 ms budget.
+`mail_query::removed_accounts_filter` now filters only removed accounts that
+still own cached mail, as a bound list, so a finished cleanup adds no per-row
+work; projected views keep the physical-owner check through uncorrelated
+subqueries evaluated once per statement.
+
+Evidence: `page_counts_check_removed_accounts_once_per_statement` fails on the
+correlated plan and checks covering counts, the cleaned-up case and the hidden
+rows; the existing removal/projection tests still pass. The benchmark adds an
+Inbox page with a removed account whose 25,000 messages await cleanup. Local
+runs on a shared host (load 3 to 15): before p50 626 ms / p95 725 ms; after
+Inbox p95 11.4 ms, Account 8.8 ms, FTS 32.6 ms, transposed 31.1 ms, four terms
+43.4 ms, body 0.11 ms and removed account 17.4 ms. On the runner (PR #10, run
+35828455404) the Inbox page is p50 16.81 / p95 22.89 ms and the removed-account
+page p95 15.63 ms, with every case passing. That job's later native suite still
+fails on the pre-existing scenarios the native-baseline lane addresses; the ten
+removal, draft-save, sidebar and profile-sync scenarios that failed or touch
+removal pass locally on this branch.
+
+`performance-budgets.json` now carries Sam's 15 September search decision (R103,
+`0a786e3`), which the benchmark already asserted: `search_p95` 100 ms, plus
+`typo_search_p95` 100 ms and `multiple_term_search_p95` 150 ms, which the gate
+reads by the names the benchmark reports. No other budget changed.
+`test_backend_budgets_match_the_benchmark_assertions` reads the benchmark's
+limits and report keys and fails on the old 50 ms entry and the missing ones.
+
+## Native CI baseline, 23 September 2026
+
+Branch `fix/ci-native-baseline` makes the native functional suite pass on the
+CI image at `9dd7548`, which failed 32 of 378 scenarios there (41 of 380 on the
+lane host, including host-only keyboard and clipboard differences).
+
+Product fixes with Rust regressions: the action owner skips domains that
+already reached the end of the current sweep and defers wakes for a job whose
+item is running, cutting the scans for a one-account group from 68 to under 15
+per item; a newer admission publishes the queued job it cancelled, so the
+window's pending count settles; a refused durable move shows the device-only
+notice again; a click after a layout focus request keeps the clicked focus; and
+selection rebasing moves ranked rows instead of copying and deleting them
+(covered by the existing selection tests).
+Discovery after Google login now starts when its status arrives rather than on
+the next one-second tick. Scenario fixes follow the Activity entry, the draft
+status line and the durable action journal, and wait for the pages, window
+sizes, jobs and focus they assert on; the slow-upload profile fixture delays
+only its first upload, so resumed setup no longer scales with the record count.
+Three failures seen only on the runner (draft retry after a resize, automatic
+profile join, resumed upload) were traced to these ordering assumptions and
+reproduced on one pinned CPU where possible.
+The GNOME scenarios run on an owned system bus with the one-time lock notice
+marked shown, and skip only where GNOME Shell has no X11 session.
+
+Evidence: 1,615 pre-commit hook test executions, Clippy, 180 Python tests and
+full functional runs in the rebuilt CI image: 341 passed and 32 failed before,
+371 passed with 7 skipped after (the one remaining profile search check now
+waits for the full query and passes on both binaries); logs under
+`artifacts/logs/`. The two kiosk PDF print scenarios skip on the CI image
+because its Chrome for Testing never saves a kiosk-printed PDF, even for a
+trivial page without Shep. Runner confirmation remains open in TODO.
+
 ## Folder changes and desktop Activity integration, 21 September 2026
 
 This continuation is verified locally and remains under shipping verification.
