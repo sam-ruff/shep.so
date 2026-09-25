@@ -129,7 +129,10 @@ impl Native {
     fn icon(&self) -> Point {
         fn find(layout: Layout<'_>) -> Option<Rectangle> {
             let bounds = layout.bounds();
-            if layout.children().next().is_none() && bounds.width == ICON && bounds.height == ICON {
+            if layout.children().next().is_none()
+                && bounds.width == TARGET
+                && bounds.height == TARGET
+            {
                 return Some(bounds);
             }
             layout.children().find_map(find)
@@ -171,10 +174,10 @@ fn help_text_is_short_plain_and_uniquely_identified() {
 fn tips_open_below_and_stay_inside_the_window() {
     let window = Size::new(900., 640.);
     let tip = Size::new(300., 60.);
-    let icon = Size::new(ICON, ICON);
+    let icon = Size::new(TARGET, TARGET);
     let anchor = Rectangle::new(Point::new(400., 100.), icon);
     let placed = place(anchor, tip, window);
-    assert_eq!(placed.y, anchor.y + ICON + GAP);
+    assert_eq!(placed.y, anchor.y + TARGET + GAP);
     assert_eq!(placed.center_x(), anchor.center_x());
 
     let right = Rectangle::new(Point::new(880., 100.), icon);
@@ -200,7 +203,7 @@ fn hovering_the_icon_or_its_margin_reveals_help_and_leaving_hides_it() {
     native.hover(icon);
     assert!(native.tip_open(Native::viewport()));
 
-    native.hover(Point::new(icon.x + ICON / 2. + REACH - 1., icon.y));
+    native.hover(Point::new(icon.x + TARGET / 2. + REACH - 1., icon.y));
     assert!(
         native.tip_open(Native::viewport()),
         "within the 24px target"
@@ -267,16 +270,38 @@ fn scrolled_away_icons_keep_their_tip_hidden() {
     assert!(native.tip_open(Native::viewport()));
 }
 
+#[test]
+fn the_mark_is_smaller_than_its_target_and_raised_to_the_top() {
+    let target = Rectangle::new(Point::new(100., 40.), Size::new(TARGET, TARGET));
+    let mark = mark_bounds(target);
+    assert_eq!(mark.size(), Size::new(MARK, MARK));
+    assert!(mark.width < target.width);
+    assert_eq!(mark.center_x(), target.center_x());
+    assert!(
+        mark.center_y() < target.center_y(),
+        "raised like a footnote"
+    );
+    let ring = mark.expand(RING_GAP);
+    assert!(ring.y >= target.y && ring.y + ring.height <= target.y + TARGET);
+}
+
 #[tokio::test]
-async fn disabling_icon_tooltips_removes_the_help_icons_and_their_tab_stops() {
+async fn the_help_icon_setting_alone_removes_the_icons_and_their_tab_stops() {
     let (mut app, _) = App::new();
-    assert!(app.preferences.tooltips);
+    assert!(app.preferences.help_icons);
     let mut shown = Native::new(app.with_help(text("Setting"), &SYNCED_PASSWORDS));
     assert_eq!(shown.focusables(), 1);
     shown.hover(shown.icon());
     assert!(shown.tip_open(Native::viewport()));
 
     app.preferences.tooltips = false;
+    let mut kept = Native::new(app.with_help(text("Setting"), &SYNCED_PASSWORDS));
+    assert_eq!(kept.focusables(), 1, "icon tooltips do not control help");
+    kept.hover(kept.icon());
+    assert!(kept.tip_open(Native::viewport()));
+
+    app.preferences.tooltips = true;
+    app.preferences.help_icons = false;
     let mut hidden = Native::new(app.with_help(text("Setting"), &SYNCED_PASSWORDS));
     assert_eq!(hidden.focusables(), 0);
     assert!(!hidden.tip_open(Native::viewport()));

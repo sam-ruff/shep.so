@@ -6,33 +6,35 @@ Desktop Preferences now shows a small **?** beside seven easily misunderstood
 settings: the background check interval, moving mail between accounts, other
 accounts' folders in Move, close to tray, backup compression, backup
 encryption and synced account passwords. `ui/help_tip.rs` is one reusable
-widget (`App::with_help`): a 16 px icon with a 24 px pointer reach that shows
-short plain help on hover, pins it on click, and is a native Tab stop with a
-visible focus ring whose help shows while focused. Escape or clicking elsewhere
-dismisses it. Tips open below the icon, flip above near the bottom edge and are
-clamped inside the window. Tab in Preferences now scrolls the newly focused
-control into view (`ui/focus_reveal.rs`), which also benefits text fields.
+widget (`App::with_help`): a small 11 px mark raised at the top of the label
+line like a footnote, inside a 16 px focusable target with a 24 px pointer
+reach. It shows short plain help on hover, pins it on click, and is a native
+Tab stop with a visible focus ring whose help shows while focused. Escape or
+clicking elsewhere dismisses it. Tips open below the icon, flip above near the
+bottom edge and are clamped inside the window. Tab in Preferences now scrolls
+the newly focused control into view (`ui/focus_reveal.rs`), which also
+benefits text fields.
 
-When **Show tooltips on icons** is off the icons are omitted entirely rather
-than left as visible but inert controls: a ? that reveals nothing would add an
-empty Tab stop for keyboard users, and the user has explicitly asked for no
-tooltip help. The help text itself is not needed to operate any setting.
+Following Sam's review, the icons have their own **Show help icons beside
+settings** checkbox in the Tooltips card, on by default and independent of
+**Show tooltips on icons**. When off the icons are omitted entirely, leaving no
+empty Tab stop. Like every preference it syncs through the shared profile
+codec as the portable `help_icons` key, with codec fixtures and browser/Flutter
+review labels; settings search finds it by "help icons" and "question mark".
 
-Evidence: eight new unit tests (help text length/spelling/dash checks, tip
-placement, hover reach, Tab focus/Escape, click pinning, scrolled-away hiding,
-tooltips-off removal of icons and Tab stops, focus reveal offsets). Four new
-native scenarios pass: `test_settings_help_mouse_hover_click_and_keyboard_focus_light`,
+Evidence: nine unit tests (help text length/spelling/dash checks, tip
+placement, hover reach, raised mark geometry, Tab focus/Escape, click pinning,
+scrolled-away hiding, the help-icon setting removing icons and Tab stops while
+icon tooltips alone do not, focus reveal offsets), plus settings search
+coverage and the shared profile fixtures. Native scenarios pass:
+`test_settings_help_mouse_hover_click_and_keyboard_focus_light`,
 `test_settings_help_keyboard_reveal_in_compact_dark_general`,
-`test_settings_help_hidden_when_icon_tooltips_are_off` and
+`test_settings_help_icons_have_their_own_setting_separate_from_tooltips`
+(both directions, each across a restart) and
 `test_settings_help_synced_passwords_hover`; light, compact dark and
-tooltips-off captures were reviewed and every tip lies within 1440x920 or
-900x640. Adding the compression icon moves the encryption checkbox 24 px right,
-so `test_backup_formats_native_options_restore_and_restart` now clicks its new
-position and passes. Ten other affected Preferences scenarios pass unchanged.
-`test_move_foreign_folder_badge_confirmation_keyboard_and_mouse` (sidebar
-scrolled by an earlier keyboard reveal before a fixed Mail click) and
-`test_filtered_preferences_do_not_leave_pixels_outside_scroll_view` (search
-catalogue returns an extra match) fail in areas this change does not touch.
+setting-off captures were reviewed and every tip lies within 1440x920 or
+900x640. After merging main (`db3d17a`), 77 selected Preferences, palette,
+tray, backup, notification, badge, dropdown and settings-search scenarios pass.
 
 Limitations: iced 0.14 exposes no accessibility tree, so screen readers cannot
 announce the icons or their text. Browser Preferences has none of these

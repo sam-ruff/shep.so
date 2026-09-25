@@ -351,6 +351,7 @@ pub enum Message {
     DesktopBadge(crate::desktop_badge::Event),
     Notification(notifications::Message),
     PrefShortcutTooltips(bool),
+    PrefHelpIcons(bool),
     SettingsSearch(String),
     FindSetting(SettingsTab, &'static str),
     ShowAllSettings,
@@ -2242,6 +2243,10 @@ impl App {
             }
             Message::PrefShortcutTooltips(value) => {
                 self.preferences.shortcut_tooltips = value;
+                self.save_preferences();
+            }
+            Message::PrefHelpIcons(value) => {
+                self.preferences.help_icons = value;
                 self.save_preferences();
             }
             Message::SettingsTab(tab) => {
@@ -4481,6 +4486,7 @@ impl App {
         data["foreign_move_folders"] = serde_json::json!(self.preferences.foreign_move_folders);
         data["tooltips"] = serde_json::json!(self.preferences.tooltips);
         data["shortcut_tooltips"] = serde_json::json!(self.preferences.shortcut_tooltips);
+        data["help_icons"] = serde_json::json!(self.preferences.help_icons);
         data["settings_search"] = serde_json::json!(self.settings_search);
         data["settings_group"] = serde_json::json!(self.settings_group);
         data["settings_matches"] = serde_json::json!(

@@ -4624,19 +4624,34 @@ class NativeFlows(unittest.TestCase):
                        wait(100), shot("help-close-to-tray-hover-compact-dark"))
         self.assert_help_tip_inside("help-close-to-tray", 900, 640)
 
-    def test_settings_help_hidden_when_icon_tooltips_are_off(self):
+    def test_settings_help_icons_have_their_own_setting_separate_from_tooltips(self):
+        self.mcp.call("desktop.start", persistent=True)
         self.open_settings_group("system tray", "System tray")
         x, y = self.help_icon_centre("help-close-to-tray")
-        self.open_settings_group("tooltip", "Tooltips")
-        self.mcp.batch(click(288, 342), check("tooltips", False), check("preferences_saved", True))
+        self.open_settings_group("help icons", "Tooltips")
+        self.mcp.batch(check("help_icons", True), shot("help-icons-setting-light"),
+                       click(288, 416), check("help_icons", False), check("tooltips", True),
+                       check("preferences_saved", True))
         self.open_settings_group("system tray", "System tray")
         self.mcp.batch(check("help_tips", []), {"type": "hover", "x": x, "y": y}, wait(150),
                        check("help_tips", []), click(1150, 88), wait(80), key("Tab"), wait(120),
-                       check("help_tips", []), shot("help-hidden-with-tooltips-off"))
-        self.open_settings_group("tooltip", "Tooltips")
-        self.mcp.batch(click(288, 342), check("tooltips", True), check("preferences_saved", True))
+                       check("help_tips", []), shot("help-hidden-with-help-icons-off"))
+        self.mcp.call("desktop.restart")
         self.open_settings_group("system tray", "System tray")
-        self.mcp.batch(check("help_tips.0.id", "help-close-to-tray"))
+        self.mcp.batch(check("help_icons", False), check("help_tips", []))
+        # Turning icon tooltips off leaves the help icons working.
+        self.open_settings_group("question mark", "Tooltips")
+        self.mcp.batch(click(288, 416), check("help_icons", True), click(288, 342),
+                       check("tooltips", False), check("preferences_saved", True))
+        self.mcp.call("desktop.restart")
+        self.open_settings_group("system tray", "System tray")
+        self.mcp.batch(check("tooltips", False), check("help_icons", True),
+                       check("help_tips.0.id", "help-close-to-tray"))
+        x, y = self.help_icon_centre("help-close-to-tray")
+        self.mcp.batch({"type": "hover", "x": x, "y": y})
+        self.help_tip("help-close-to-tray", hovered=True)
+        self.assert_help_tip_inside("help-close-to-tray", 1440, 920)
+        self.mcp.batch(shot("help-shown-with-tooltips-off"))
 
     def test_settings_help_synced_passwords_hover(self):
         self.mcp.call("desktop.start", profile_sync="empty", profile_passwords="ready")

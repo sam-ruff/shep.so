@@ -51,6 +51,7 @@ impl Review {
             SettingKey::DesktopBadges => "Unread badges",
             SettingKey::Tooltips => "Tooltips",
             SettingKey::ForeignMoveFolders => "Other accounts' folders when moving",
+            SettingKey::HelpIcons => "Help icons",
             _ => "Shared preference",
         }
     }
