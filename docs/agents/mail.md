@@ -83,8 +83,25 @@ CONDSTORE or any rejected request uses the full flag listing instead. Partial
 data before a tagged NO is never used. The saved value does not advance while a
 local write to that folder outranks the check, because the ledger may have kept
 local flags over a newer server change; restoring a backup or removing the
-account forgets the account's values. Expunges still come from the complete
-UID listing: QRESYNC/VANISHED is not used.
+account forgets the account's values.
+
+When the server also advertises QRESYNC and the account has a saved value, the
+check sends `ENABLE QRESYNC` before any SELECT and asks
+`UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n VANISHED)` instead of listing every
+UID. Cached messages in the VANISHED ranges are removed with the same
+protections as a complete listing: restored backup copies, rows owned by a
+pending move and rows an acknowledged move created after the check began stay.
+Reported UIDs that are not cached download as new mail. The result must add up:
+cached messages minus vanished plus new must equal SELECT's EXISTS. Otherwise
+(for example a message whose body never downloaded), and on a live VANISHED,
+EXPUNGE or EXISTS during the reply, any rejected request (partial VANISHED data
+before a tagged NO is discarded), a refused ENABLE, a new UIDVALIDITY or a
+server without QRESYNC, the folder uses the complete UID listing. An unchanged
+HIGHESTMODSEQ with a matching size sends nothing after SELECT. Because this
+path never sends a complete listing, a restored copy is only confirmed by the
+next full listing; restore forgets the saved values, so that is the next check.
+The IDLE connection also enables QRESYNC, and a live VANISHED starts a check
+like EXISTS or EXPUNGE.
 
 Contacts has a separate Preferences tab. Image policy and per-message/sender/domain exceptions remain under Privacy. Explicit Save buttons show a dismissible **Changes saved** toast after persistence succeeds.
 

@@ -11,6 +11,9 @@ mod notification_tests;
 pub mod push;
 #[cfg(test)]
 mod push_tests;
+mod qresync;
+#[cfg(all(test, feature = "condstore"))]
+mod qresync_tests;
 pub mod receipts;
 pub mod recovery;
 pub mod sent;
@@ -279,6 +282,23 @@ async fn sync_imap_session_mode<
         .send(MailSyncItem::Folders(account.id.clone(), catalog))
         .await?;
     tracing::info!(folders = folders.len(), "IMAP folder listing complete");
+    // VANISHED needs QRESYNC enabled before any SELECT; it only helps a
+    // folder with a saved state.
+    let qresync = resume.is_some_and(|resume| !resume.is_empty())
+        && capabilities.has_str("CONDSTORE")
+        && capabilities.has_str("QRESYNC")
+        && {
+            let enabled = qresync::enable(&mut session).await?;
+            if !enabled {
+                tracing::warn!("The mail server refused QRESYNC; listing every UID");
+            }
+            enabled
+        };
+    let cached = if qresync {
+        qresync::Index::new(&account.id, known)
+    } else {
+        qresync::Index::default()
+    };
     for (index, folder) in folders.iter().enumerate() {
         if only_folder.is_some_and(|wanted| !folder.eq_ignore_ascii_case(wanted)) {
             continue;
@@ -304,62 +324,122 @@ async fn sync_imap_session_mode<
                 })
                 .await?;
         }
-        // Fetch bounded metadata batches before requesting message bodies.
-        let mut uids: Vec<_> = sync_queries::search(&mut session)
-            .await?
-            .into_iter()
-            .collect();
-        uids.sort_unstable_by(|a, b| b.cmp(a));
-        tracing::info!(
-            folder_index = index,
-            messages = uids.len(),
-            "IMAP UID search complete"
-        );
-        let live_ids: HashSet<String> = uids
-            .iter()
-            .map(|uid| format!("{}:{folder}:{validity}.{uid}", account.id))
-            .collect();
+        let id = |uid: u32| format!("{}:{folder}:{validity}.{uid}", account.id);
+        let mut resync = None;
         let changed = match plan {
             condstore::Plan::Full => None,
-            condstore::Plan::Unchanged => Some(Vec::new()),
-            condstore::Plan::Changes { since } => {
-                match condstore::changed_flags(&mut session, since).await {
-                    Ok(changed) => Some(changed),
+            condstore::Plan::Unchanged => {
+                if qresync {
+                    resync = qresync::reconcile(
+                        &cached.cached(folder, validity),
+                        &qresync::Ranges::default(),
+                        [],
+                        mailbox.exists,
+                    );
+                }
+                Some(Vec::new())
+            }
+            condstore::Plan::Changes { since } if qresync => {
+                match qresync::changes(&mut session, since).await {
+                    Ok(changes) => {
+                        if !changes.disturbed {
+                            resync = qresync::reconcile(
+                                &cached.cached(folder, validity),
+                                &changes.vanished,
+                                changes.fetched.iter().filter_map(|fetch| fetch.uid),
+                                mailbox.exists,
+                            );
+                        }
+                        Some(changes.fetched)
+                    }
                     Err(error) => {
-                        tracing::warn!(
-                            "CONDSTORE flag refresh failed, listing every flag: {error:#}"
-                        );
+                        tracing::warn!("QRESYNC refresh failed, listing every UID: {error:#}");
                         None
                     }
                 }
             }
+            // Fetched after the UID listing below.
+            condstore::Plan::Changes { .. } => None,
         };
-        let listed: Vec<u32> = match &changed {
-            // Cached messages are covered by the changed flags; only new
-            // messages need their metadata.
-            Some(changed) => {
+        if qresync && resync.is_none() && plan != condstore::Plan::Full {
+            tracing::info!(
+                folder_index = index,
+                "QRESYNC incomplete, listing every UID"
+            );
+        }
+        // Fetch bounded metadata batches before requesting message bodies.
+        // A QRESYNC outcome already accounts for every message in the folder.
+        let (live_ids, listed): (Option<HashSet<String>>, Vec<u32>) = match (&resync, &changed) {
+            (Some(outcome), changed) => {
                 let flags: Vec<_> = changed
                     .iter()
+                    .flatten()
                     .filter_map(|fetch| {
-                        let id = format!("{}:{folder}:{validity}.{}", account.id, fetch.uid?);
-                        (known.contains(&id) && live_ids.contains(&id)).then_some((
-                            id,
-                            fetch.unread,
-                            fetch.starred,
-                        ))
+                        let uid = fetch.uid?;
+                        let id = id(uid);
+                        (known.contains(&id) && outcome.vanished.binary_search(&uid).is_err())
+                            .then_some((id, fetch.unread, fetch.starred))
                     })
                     .collect();
                 for chunk in flags.chunks(50) {
                     output.send(MailSyncItem::Flags(chunk.to_vec())).await?;
                 }
-                uids.iter()
-                    .copied()
-                    .filter(|uid| {
-                        !known.contains(&format!("{}:{folder}:{validity}.{uid}", account.id))
-                    })
-                    .collect()
+                (None, outcome.new.clone())
             }
-            None => uids,
+            (None, changed) => {
+                let mut uids: Vec<_> = sync_queries::search(&mut session)
+                    .await?
+                    .into_iter()
+                    .collect();
+                uids.sort_unstable_by(|a, b| b.cmp(a));
+                tracing::info!(
+                    folder_index = index,
+                    messages = uids.len(),
+                    "IMAP UID search complete"
+                );
+                let live_ids: HashSet<String> = uids.iter().map(|uid| id(*uid)).collect();
+                let fetched;
+                let changed = match (plan, changed) {
+                    (condstore::Plan::Changes { since }, None) if !qresync => {
+                        fetched = match condstore::changed_flags(&mut session, since).await {
+                            Ok(changed) => Some(changed),
+                            Err(error) => {
+                                tracing::warn!(
+                                    "CONDSTORE flag refresh failed, listing every flag: {error:#}"
+                                );
+                                None
+                            }
+                        };
+                        fetched.as_ref()
+                    }
+                    (_, changed) => changed.as_ref(),
+                };
+                let listed = match changed {
+                    // Cached messages are covered by the changed flags; only
+                    // new messages need their metadata.
+                    Some(changed) => {
+                        let flags: Vec<_> = changed
+                            .iter()
+                            .filter_map(|fetch| {
+                                let id = id(fetch.uid?);
+                                (known.contains(&id) && live_ids.contains(&id)).then_some((
+                                    id,
+                                    fetch.unread,
+                                    fetch.starred,
+                                ))
+                            })
+                            .collect();
+                        for chunk in flags.chunks(50) {
+                            output.send(MailSyncItem::Flags(chunk.to_vec())).await?;
+                        }
+                        uids.into_iter()
+                            .filter(|uid| !known.contains(&id(*uid)))
+                            .collect()
+                    }
+                    None => uids,
+                };
+                (Some(live_ids), listed)
+            }
         };
         for chunk in listed.chunks(50) {
             let set = chunk
@@ -422,15 +502,25 @@ async fn sync_imap_session_mode<
                 deliver_bodies(account, folder, validity, &batch, &bodies, &output).await?;
             }
         }
-        // The complete listing: the store only removes cached rows absent from
-        // it, and a deferred body is not cached yet, so listing it is harmless.
-        output
-            .send(MailSyncItem::Reconcile {
-                account: account.id.clone(),
-                folder: folder.clone(),
-                live_ids,
-            })
-            .await?;
+        match (live_ids, resync) {
+            // The complete listing: the store only removes cached rows absent
+            // from it, and a deferred body is not cached yet, so listing it is
+            // harmless.
+            (Some(live_ids), _) => {
+                output
+                    .send(MailSyncItem::Reconcile {
+                        account: account.id.clone(),
+                        folder: folder.clone(),
+                        live_ids,
+                    })
+                    .await?;
+            }
+            (None, Some(outcome)) if !outcome.vanished.is_empty() => {
+                let ids = outcome.vanished.into_iter().map(id).collect();
+                qresync::publish(&output, &account.id, folder, ids).await?;
+            }
+            (None, _) => {}
+        }
         // Saved only after the folder's flags were sent, so an interrupted
         // check never advances past changes it did not deliver.
         match highest {

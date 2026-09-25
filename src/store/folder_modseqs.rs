@@ -199,6 +199,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn vanished_mail_keeps_the_same_protections_as_a_complete_listing() {
+        let store = Store::memory().expect("store");
+        let mail = |remote: &str| {
+            parse_mail(
+                "work",
+                remote,
+                "INBOX",
+                format!("Message-ID: <{remote}@example.test>\r\nSubject: Vanished\r\n\r\nBody")
+                    .into_bytes(),
+                true,
+                false,
+            )
+            .expect("mail")
+        };
+        let [gone, restored, pending, moved_in, other]: [StoredMail; 5] =
+            ["12.1", "12.2", "12.3", "12.4", "12.5"].map(mail);
+        let id = |mail: &StoredMail| mail.summary.id.clone();
+        let ids = [&gone, &restored, &pending, &moved_in, &other].map(id);
+        store
+            .upsert(vec![
+                gone.clone(),
+                restored.clone(),
+                pending.clone(),
+                moved_in.clone(),
+                other.clone(),
+            ])
+            .await
+            .expect("cache");
+        let epoch = store.sync_epoch().await.expect("epoch");
+        let (restored_id, pending_id, moved_id) = (id(&restored), id(&pending), id(&moved_in));
+        let now = chrono::Utc::now().timestamp();
+        store
+            .run(move |c| {
+                c.execute("INSERT INTO restored_messages(id) VALUES(?)", [&restored_id])?;
+                c.execute(
+                    "INSERT INTO mail_moves(token,source_id,source_account,destination_account,cache_id,stage,data)
+                     VALUES('token',?1,'work','work',?1,'Started','{}')",
+                    [&pending_id],
+                )?;
+                write_ledger::record_acknowledged(c, "work", &moved_id, WriteKind::MovedIn, now)
+            })
+            .await
+            .expect("protections");
+        store
+            .apply_sync_since(
+                MailSyncItem::Vanished {
+                    account: "work".into(),
+                    folder: "INBOX".into(),
+                    ids: ids[..4].to_vec(),
+                },
+                Some(epoch),
+            )
+            .await
+            .expect("vanished");
+        assert!(store.mail_metadata(id(&gone)).await.is_err(), "removed");
+        for kept in [&restored, &pending, &moved_in, &other] {
+            assert!(store.mail_metadata(id(kept)).await.is_ok(), "{}", id(kept));
+        }
+        let wrong_folder = MailSyncItem::Vanished {
+            account: "work".into(),
+            folder: "Archive".into(),
+            ids: vec![id(&other)],
+        };
+        store.apply_sync(wrong_folder).await.expect("other folder");
+        assert!(
+            store.mail_metadata(id(&other)).await.is_ok(),
+            "only the named folder"
+        );
+    }
+
+    #[tokio::test]
     async fn schema_eleven_caches_gain_the_table_and_start_without_states() {
         let directory = tempfile::tempdir().expect("directory");
         let path = directory.path().join("cache.sqlite");

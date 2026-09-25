@@ -961,6 +961,34 @@ impl Store {
             }).await,
             MailSyncItem::SkippedLarge => Ok(()),
             MailSyncItem::DownloadProgress => Ok(()),
+            MailSyncItem::Vanished {
+                account,
+                folder,
+                ids,
+            } => {
+                self.run(move |c| {
+                    let tx = c.transaction()?;
+                    folder_actions::idle(&tx, &account)?;
+                    for id in ids {
+                        // The same protections as a complete listing: restored
+                        // copies, pending moves and later moved-in rows stay.
+                        let removable: bool = tx.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM messages WHERE id=?1 AND account=?2 AND folder=?3
+                               AND id NOT LIKE '%:local-sent-%' AND id NOT LIKE '%:local-recovered-%'
+                               AND NOT EXISTS(SELECT 1 FROM mail_moves WHERE cache_id=messages.id)
+                               AND NOT EXISTS(SELECT 1 FROM restored_messages WHERE restored_messages.id=messages.id))",
+                            params![id, account, folder],
+                            |r| r.get(0),
+                        )?;
+                        if removable && !row_moved_in(&tx, &id, epoch)? {
+                            tx.execute("DELETE FROM messages WHERE id=?", [id])?;
+                        }
+                    }
+                    tx.commit()?;
+                    Ok(())
+                })
+                .await
+            }
             MailSyncItem::FolderState {
                 account,
                 folder,

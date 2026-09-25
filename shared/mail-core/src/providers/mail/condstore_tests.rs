@@ -7,19 +7,19 @@ const PLAIN: &str = "* CAPABILITY IMAP4rev1\r\n";
 const LIST: &str = "* LIST () \"/\" \"INBOX\"\r\n";
 
 /// One expected command, its untagged reply and whether it completes OK.
-struct Step {
+pub(super) struct Step {
     command: String,
     reply: String,
     ok: bool,
 }
-fn ok(command: &str, reply: &str) -> Step {
+pub(super) fn ok(command: &str, reply: &str) -> Step {
     Step {
         command: command.into(),
         reply: reply.into(),
         ok: true,
     }
 }
-fn rejected(command: &str, reply: &str) -> Step {
+pub(super) fn rejected(command: &str, reply: &str) -> Step {
     Step {
         ok: false,
         ..ok(command, reply)
@@ -30,17 +30,17 @@ fn account() -> Account {
     serde_json::from_value(serde_json::json!({"id":"test", "name":"Test", "email":"test@example.test", "protocol":"Imap", "host":"localhost", "port":993, "username":"test", "smtp_host":"localhost", "smtp_port":465})).unwrap()
 }
 
-fn known(validity: u32, uids: &[u32]) -> HashSet<String> {
+pub(super) fn known(validity: u32, uids: &[u32]) -> HashSet<String> {
     uids.iter()
         .map(|uid| format!("test:INBOX:{validity}.{uid}"))
         .collect()
 }
 
-fn saved(validity: u32, modseq: u64) -> Resume {
+pub(super) fn saved(validity: u32, modseq: u64) -> Resume {
     Resume::from([("INBOX".to_string(), FolderState { validity, modseq })])
 }
 
-fn body(uid: u32, subject: &str) -> String {
+pub(super) fn body(uid: u32, subject: &str) -> String {
     let raw = format!("From: Fixture <sender@example.test>\r\nSubject: {subject}\r\n\r\nHello");
     format!(
         "* 1 FETCH (UID {uid} FLAGS () BODY[] {{{}}}\r\n{raw})\r\n",
@@ -50,7 +50,7 @@ fn body(uid: u32, subject: &str) -> String {
 
 /// Runs a sync against the script and returns its result and the items it
 /// published. Every scripted command must arrive in order.
-async fn run(
+pub(super) async fn run(
     capabilities: &str,
     steps: Vec<Step>,
     known: HashSet<String>,
@@ -119,7 +119,7 @@ async fn run(
 }
 
 /// Every flag update in publication order.
-fn flags(items: &[MailSyncItem]) -> Vec<(String, bool, bool)> {
+pub(super) fn flags(items: &[MailSyncItem]) -> Vec<(String, bool, bool)> {
     items
         .iter()
         .filter_map(|item| match item {
@@ -153,7 +153,7 @@ fn states(items: &[MailSyncItem]) -> Vec<Option<FolderState>> {
         .collect()
 }
 
-fn subjects(items: &[MailSyncItem]) -> Vec<String> {
+pub(super) fn subjects(items: &[MailSyncItem]) -> Vec<String> {
     items
         .iter()
         .filter_map(|item| match item {

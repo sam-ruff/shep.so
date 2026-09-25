@@ -294,6 +294,14 @@ pub enum MailSyncItem {
         folder: String,
         state: Option<crate::providers::mail::condstore::FolderState>,
     },
+    /// Cached messages a QRESYNC check found expunged from the folder. It
+    /// replaces `Reconcile` for that folder, so absence proves nothing.
+    #[cfg(feature = "condstore")]
+    Vanished {
+        account: String,
+        folder: String,
+        ids: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

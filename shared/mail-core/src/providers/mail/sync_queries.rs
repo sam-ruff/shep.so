@@ -3,7 +3,7 @@
 use super::*;
 use async_imap::imap_proto::{AttributeValue, MailboxDatum, RequestId, Response, Status};
 
-fn completed(reply: &Response<'_>, tag: &RequestId) -> anyhow::Result<bool> {
+pub(super) fn completed(reply: &Response<'_>, tag: &RequestId) -> anyhow::Result<bool> {
     match reply {
         Response::Done {
             tag: actual,
@@ -73,49 +73,52 @@ where
             .await?
             .context("The mail server disconnected before completing sync. Try Refresh again.")?;
         if let Response::Fetch(_, attributes) = response.parsed() {
-            let mut fetch = Fetch {
-                uid: None,
-                size: None,
-                unread: true,
-                starred: false,
-                body: None,
-            };
-            for attribute in attributes {
-                match attribute {
-                    AttributeValue::Uid(uid) => {
-                        anyhow::ensure!(*uid != 0, "Invalid message identity during sync.");
-                        fetch.uid = Some(*uid);
-                    }
-                    AttributeValue::Rfc822Size(size) => fetch.size = Some(*size),
-                    AttributeValue::Flags(flags) => {
-                        fetch.unread =
-                            !flags.iter().any(|flag| flag.eq_ignore_ascii_case("\\Seen"));
-                        fetch.starred = flags
-                            .iter()
-                            .any(|flag| flag.eq_ignore_ascii_case("\\Flagged"));
-                    }
-                    AttributeValue::BodySection {
-                        section: None,
-                        index: None,
-                        data: Some(data),
-                    } => {
-                        anyhow::ensure!(
-                            data.len() <= MAX_MESSAGE_BYTES,
-                            "The server returned a message exceeding 25 MiB."
-                        );
-                        anyhow::ensure!(
-                            fetch.body.is_none(),
-                            "The mail server returned conflicting message bodies."
-                        );
-                        fetch.body = Some(data.to_vec());
-                    }
-                    _ => {}
-                }
-            }
-            results.push(fetch);
+            results.push(parse_fetch(attributes)?);
         }
         if completed(response.parsed(), &tag)? {
             return Ok(results);
         }
     }
+}
+
+pub(super) fn parse_fetch(attributes: &[AttributeValue<'_>]) -> anyhow::Result<Fetch> {
+    let mut fetch = Fetch {
+        uid: None,
+        size: None,
+        unread: true,
+        starred: false,
+        body: None,
+    };
+    for attribute in attributes {
+        match attribute {
+            AttributeValue::Uid(uid) => {
+                anyhow::ensure!(*uid != 0, "Invalid message identity during sync.");
+                fetch.uid = Some(*uid);
+            }
+            AttributeValue::Rfc822Size(size) => fetch.size = Some(*size),
+            AttributeValue::Flags(flags) => {
+                fetch.unread = !flags.iter().any(|flag| flag.eq_ignore_ascii_case("\\Seen"));
+                fetch.starred = flags
+                    .iter()
+                    .any(|flag| flag.eq_ignore_ascii_case("\\Flagged"));
+            }
+            AttributeValue::BodySection {
+                section: None,
+                index: None,
+                data: Some(data),
+            } => {
+                anyhow::ensure!(
+                    data.len() <= MAX_MESSAGE_BYTES,
+                    "The server returned a message exceeding 25 MiB."
+                );
+                anyhow::ensure!(
+                    fetch.body.is_none(),
+                    "The mail server returned conflicting message bodies."
+                );
+                fetch.body = Some(data.to_vec());
+            }
+            _ => {}
+        }
+    }
+    Ok(fetch)
 }
