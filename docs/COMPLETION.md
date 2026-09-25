@@ -1,5 +1,48 @@
 # Completion audit
 
+## Settings help icons (R98), 23 September 2026
+
+Desktop Preferences now shows a small **?** beside seven easily misunderstood
+settings: the background check interval, moving mail between accounts, other
+accounts' folders in Move, close to tray, backup compression, backup
+encryption and synced account passwords. `ui/help_tip.rs` is one reusable
+widget (`App::with_help`): a small 11 px mark raised at the top of the label
+line like a footnote, inside a 16 px focusable target with a 24 px pointer
+reach. It shows short plain help on hover, pins it on click, and is a native
+Tab stop with a visible focus ring whose help shows while focused. Escape or
+clicking elsewhere dismisses it. Tips open below the icon, flip above near the
+bottom edge and are clamped inside the window. Tab in Preferences now scrolls
+the newly focused control into view (`ui/focus_reveal.rs`), which also
+benefits text fields.
+
+Following Sam's review, the icons have their own **Show help icons beside
+settings** checkbox in the Tooltips card, on by default and independent of
+**Show tooltips on icons**. When off the icons are omitted entirely, leaving no
+empty Tab stop. Like every preference it syncs through the shared profile
+codec as the portable `help_icons` key, with codec fixtures and browser/Flutter
+review labels; settings search finds it by "help icons" and "question mark".
+
+Evidence: nine unit tests (help text length/spelling/dash checks, tip
+placement, hover reach, raised mark geometry, Tab focus/Escape, click pinning,
+scrolled-away hiding, the help-icon setting removing icons and Tab stops while
+icon tooltips alone do not, focus reveal offsets), plus settings search
+coverage and the shared profile fixtures. Native scenarios pass:
+`test_settings_help_mouse_hover_click_and_keyboard_focus_light`,
+`test_settings_help_keyboard_reveal_in_compact_dark_general`,
+`test_settings_help_icons_have_their_own_setting_separate_from_tooltips`
+(both directions, each across a restart) and
+`test_settings_help_synced_passwords_hover`; light, compact dark and
+setting-off captures were reviewed and every tip lies within 1440x920 or
+900x640. After merging main with the settings search coverage guard
+(`c4888ff`), Tab reveal shares that search's Preferences scroller, the new
+checkbox satisfies the coverage guard, and 75 selected Preferences, palette,
+tray, backup, notification, badge, dropdown and settings-search scenarios pass.
+
+Limitations: iced 0.14 exposes no accessibility tree, so screen readers cannot
+announce the icons or their text. Browser Preferences has none of these
+settings or a Tooltips choice and Flutter was out of scope; both parity gaps
+stay in TODO R98.
+
 ## IDLE watcher restart, CONDSTORE flag refresh and QRESYNC, 22-25 September 2026
 
 Branch `feat/imap-push-condstore` (desktop only, awaiting integration).

@@ -17,6 +17,7 @@ pub const SETTINGS: &[codec::SettingKey] = &[
     codec::SettingKey::DesktopBadges,
     codec::SettingKey::Tooltips,
     codec::SettingKey::ForeignMoveFolders,
+    codec::SettingKey::HelpIcons,
 ];
 
 /// Export only fields the native client actually implements. In particular,
@@ -37,6 +38,7 @@ pub fn setting_value(
         DesktopBadges => serde_json::json!(preferences.unread_badge),
         Tooltips => serde_json::json!(preferences.tooltips),
         ForeignMoveFolders => serde_json::json!(preferences.foreign_move_folders),
+        HelpIcons => serde_json::json!(preferences.help_icons),
         PreviewLines | LeftSwipe | RightSwipe | SenderPictures => return None,
     })
 }
@@ -68,6 +70,7 @@ pub fn apply_setting(preferences: &mut Preferences, change: &Change) -> Result<b
         DesktopBadges => preferences.unread_badge = serde_json::from_value(value)?,
         Tooltips => preferences.tooltips = serde_json::from_value(value)?,
         ForeignMoveFolders => preferences.foreign_move_folders = serde_json::from_value(value)?,
+        HelpIcons => preferences.help_icons = serde_json::from_value(value)?,
         LeftSwipe | RightSwipe => {
             ensure!(
                 value.as_str().is_some_and(|s| [
