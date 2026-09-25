@@ -39,7 +39,8 @@ export type SettingKey =
   | "right_swipe"
   | "sender_pictures"
   | "tooltips"
-  | "foreign_move_folders";
+  | "foreign_move_folders"
+  | "help_icons";
 export type Action =
   | { kind: "account_connection"; account: PortableConnection }
   | { kind: "account_name"; id: string; name: string }

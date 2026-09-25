@@ -19,11 +19,13 @@ mod draw_log;
 mod dropdown;
 mod ellipsis;
 mod find_message;
+mod focus_reveal;
 mod folder_controls;
 mod folder_creation;
 #[cfg(test)]
 mod google_lifecycle_tests;
 mod google_sign_in;
+mod help_tip;
 mod html_reader;
 mod layout;
 mod mail_actions;
@@ -349,6 +351,7 @@ pub enum Message {
     DesktopBadge(crate::desktop_badge::Event),
     Notification(notifications::Message),
     PrefShortcutTooltips(bool),
+    PrefHelpIcons(bool),
     SettingsSearch(String),
     FindSetting(SettingsTab, &'static str),
     RevealSetting(SettingsTab, &'static str, &'static str),
@@ -2280,6 +2283,10 @@ impl App {
             }
             Message::PrefShortcutTooltips(value) => {
                 self.preferences.shortcut_tooltips = value;
+                self.save_preferences();
+            }
+            Message::PrefHelpIcons(value) => {
+                self.preferences.help_icons = value;
                 self.save_preferences();
             }
             Message::SettingsTab(tab) => {
@@ -4293,11 +4300,15 @@ impl App {
                 self.list_focus = !self.sidebar_focus;
                 return widget::operation::focus("unfocused");
             }
-            return if modifiers.shift() {
+            let focus = if modifiers.shift() {
                 widget::operation::focus_previous()
             } else {
                 widget::operation::focus_next()
             };
+            if self.tab == Tab::Preferences && self.dialog.is_none() {
+                return focus.chain(focus_reveal::reveal(settings_search::reveal::SCROLLER));
+            }
+            return focus;
         }
         if captured
             && (!modifiers.command()
@@ -4480,6 +4491,7 @@ impl App {
             let ids: Vec<String> = self.page.rows.iter().map(|mail| mail.id.clone()).collect();
             data["drawn_rows"] =
                 serde_json::json!(draw_log::review(frame, rows, &ids, mail_list::ROW_HEIGHT));
+            data["help_tips"] = serde_json::json!(self.draw_log.help());
         }
         data["mail_selection"] = serde_json::json!({
             "mode": self.mail_selection.mode, "count": self.mail_selection.count,
@@ -4516,6 +4528,7 @@ impl App {
         data["foreign_move_folders"] = serde_json::json!(self.preferences.foreign_move_folders);
         data["tooltips"] = serde_json::json!(self.preferences.tooltips);
         data["shortcut_tooltips"] = serde_json::json!(self.preferences.shortcut_tooltips);
+        data["help_icons"] = serde_json::json!(self.preferences.help_icons);
         data["settings_search"] = serde_json::json!(self.settings_search);
         data["settings_group"] = serde_json::json!(self.settings_group);
         data["settings_matches"] = serde_json::json!(

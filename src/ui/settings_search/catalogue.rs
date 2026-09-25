@@ -57,9 +57,9 @@ pub(super) const SETTINGS: &[Setting] = &[
     Setting {
         title: "Tooltips",
         tab: SettingsTab::General,
-        labels: "Show tooltips on icons|Show primary shortcut in tooltips",
-        description: "Show helpful hints beside icon controls.",
-        synonyms: "tooltip hints keyboard disable shortcuts",
+        labels: "Show tooltips on icons|Show primary shortcut in tooltips|Show help icons beside settings",
+        description: "Show helpful hints beside icon controls and help beside settings.",
+        synonyms: "tooltip hints keyboard disable shortcuts question mark explain",
     },
     Setting {
         title: "Your accounts",

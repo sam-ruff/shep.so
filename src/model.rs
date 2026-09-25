@@ -329,6 +329,8 @@ pub struct Preferences {
     pub interface_scale: u16,
     pub tooltips: bool,
     pub shortcut_tooltips: bool,
+    /// Show the "?" help icons beside settings that are easy to misread.
+    pub help_icons: bool,
     pub unread_badge: bool,
     pub close_to_tray: bool,
     pub notifications: crate::notifications::Settings,
@@ -385,6 +387,7 @@ impl Default for Preferences {
             interface_scale: 100,
             tooltips: true,
             shortcut_tooltips: true,
+            help_icons: true,
             unread_badge: true,
             close_to_tray: false,
             notifications: Default::default(),
