@@ -717,7 +717,8 @@ class Desktop:
             flags = ["--kiosk-printing"] if mode == "pdf" else []
             self.browser_log = (self.directory / "browser.log").open("w")
             self.browser = subprocess.Popen([*common, *flags, "about:blank"], env=self.env, stdout=self.browser_log, stderr=self.browser_log, start_new_session=True)
-            deadline = time.monotonic() + 10
+            # A fresh profile took more than 10 s to map its window on the loaded runner.
+            deadline = time.monotonic() + 30
             while True:
                 try:
                     self.command("xdotool", "search", "--onlyvisible", "--pid", str(self.browser.pid))
