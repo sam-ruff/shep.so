@@ -144,6 +144,11 @@ impl State {
             .map(|s| s.enrollment.options)
             .unwrap_or_default()
     }
+    /// Shows a loaded enrollment without a store round trip.
+    #[cfg(test)]
+    pub(super) fn show_snapshot(&mut self, snapshot: Arc<Snapshot>) {
+        self.snapshot = Some(snapshot);
+    }
     fn options(&self) -> Options {
         self.desired
             .apply(self.sent.unwrap_or_default().apply(self.saved_options()))

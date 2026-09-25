@@ -137,6 +137,26 @@ def mail_row_y(index, state=None):
     return round((194 + (index + .5) * 60 - state.get("inbox_scroll", 0)) * scale)
 
 
+STORE_SCREENSHOTS = ("mail-light", "calendar-light", "mail-dark", "compose-dark")
+
+
+def store_screenshot_tour():
+    """Real-input tour behind the Flathub screenshots, using fictional fixture mail and events only."""
+    away = {"type": "hover", "x": 1430, "y": 910}
+    return [
+        check("selected", "A little more room to think"), check("loaded_message_id", None, "ne"),
+        away, wait(400), shot("mail-light"),
+        key("ctrl+2"), check("tab", "Calendar"), away, wait(400), shot("calendar-light"),
+        key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690, 366), check("dark", True),
+        key("ctrl+1"), check("tab", "Mail"), check("selected", "A little more room to think"),
+        away, wait(400), shot("mail-dark"),
+        key("r"), check("composer.visible", True), check("focused_input", "compose-body"), wait(80),
+        type_text("Thanks Maya, these look lovely. Thursday works for me."),
+        check("editor", "Thursday works for me.", "contains"), check("composer.pending", None),
+        check("composer.saved_revision", None, "ne"), away, wait(300), shot("compose-dark"),
+    ]
+
+
 class NativeFlows(unittest.TestCase):
     def test_common_activity_reviews_backup_failure_from_another_selected_destination(self):
         self.mcp.call("desktop.start", backup_run="recover")
@@ -241,6 +261,31 @@ class NativeFlows(unittest.TestCase):
                        click(85, 482), check("folder", "Junk"), check("total", 1),
                        shot("spam-moved-message"), click(1308, 874), check("total", 0),
                        key("ctrl+1"), check("total", 120))
+
+    def test_move_toast_names_the_special_use_folder_the_server_acknowledged(self):
+        started = self.mcp.call("desktop.start", special_use_folders=True, mail_actions="slow")
+        print(f"Special-use destination evidence: {started['artifacts']}", flush=True)
+        self.hold_mail_over(402, mail_row_y(1), 85, 477)
+        self.mcp.batch(check("mail_drag.target", "Junk"), check("mail_drag.valid", True),
+                       {"type": "mouse_up"}, check("total", 119), check("mail_pending", 1),
+                       check("action_toast.label", "Moved 1 message to Junk"),
+                       shot("special-use-move-pending"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       check("action_toast.label", "Moved 1 message to Junk Mail"),
+                       shot("special-use-move-acknowledged"),
+                       click(1390, 874), check("action_toast", None),
+                       click(85, 482), check("folder", "Junk"), check("total", 1),
+                       key("ctrl+1"), check("folder", "INBOX"), check("total", 119))
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True), key("ctrl+1"),
+                       {"type": "resize", "width": 900, "height": 640}, wait(180),
+                       check("tab", "Mail"))
+        self.hold_mail_over(402, mail_row_y(0), 85, 477)
+        self.mcp.batch(check("mail_drag.target", "Junk"), {"type": "mouse_up"},
+                       check("total", 118), check("action_toast.label", "Moved 1 message to Junk"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       check("action_toast.label", "Moved 1 message to Junk Mail"),
+                       shot("special-use-move-acknowledged-compact-dark"))
 
     def test_spam_shortcut_compact_dark_context_menu(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
@@ -4469,6 +4514,85 @@ class NativeFlows(unittest.TestCase):
         self.assertFalse(destination.exists())
         self.assertEqual(list(directory.glob(".shep-export-*")), [])
 
+    def search_setting(self, query, section, control, search_x=1150):
+        self.mcp.batch(click(search_x, 88), key("ctrl+a"), type_text(query),
+                       check("settings_search", query), check("settings_matches.0", section),
+                       check("settings_match_controls.0", control))
+
+    def assert_setting_outline(self, name, directory, dismiss=None):
+        """The revealed control shows an accent outline that clears on input or after its timeout."""
+        self.mcp.batch(check("settings_reveal.outline", None, "ne"), shot(f"{name}-outline"))
+        outline = self.mcp.call("desktop.state")["settings_reveal"]["outline"]
+        self.mcp.batch(*([dismiss] if dismiss else []), check("settings_reveal.outline", None),
+                       wait(120), shot(f"{name}-outline-cleared"))
+        if dismiss and dismiss.get("type") == "scroll":
+            return
+        x, y, width, _ = (round(value) for value in outline)
+        # The outline's top edge, away from its rounded corners.
+        strip = f"{max(width - 24, 8)}x2+{x + 12}+{y}"
+        def pixels(capture):
+            return subprocess.check_output(["convert", str(directory / f"{capture}.webp"),
+                                            "-crop", strip, "-depth", "8", "rgb:-"])
+        shown, cleared = pixels(f"{name}-outline"), pixels(f"{name}-outline-cleared")
+        difference = sum(abs(a - b) for a, b in zip(shown, cleared)) / len(shown)
+        self.assertGreater(difference, 20, f"No outline drawn in {name}")
+        self.assertLessEqual(max(cleared) - min(cleared), 24, f"Outline pixels left behind in {name}")
+
+    def test_settings_search_reveals_and_focuses_individual_controls(self):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80))
+        self.search_setting("check for new mail", "Mail & performance", "Check for new mail")
+        self.mcp.batch(shot("settings-control-result"), click(480, 289),
+                       check("settings_group", "Mail & performance"), check("settings_search", ""),
+                       check("settings_reveal.state", "revealed"), check("settings_reveal.focused", True))
+        self.assert_setting_outline("settings-control-field", self.artifacts)
+        self.mcp.batch(key("ctrl+a"), type_text("30"), click(1352, 88),
+                       check("mail_check_seconds", 30), check("preferences_saved", True),
+                       shot("settings-control-field-saved"))
+        self.search_setting("print message", "Keyboard shortcuts", "Print message")
+        self.mcp.batch(check("settings_reveal", None), click(480, 289),
+                       check("settings_group", "Keyboard shortcuts"), check("settings_tab", "Shortcuts"),
+                       check("settings_reveal.state", "revealed"), check("settings_reveal.focused", False),
+                       check("settings_reveal.top", 200, "gte"), check("settings_reveal.top", 880, "lte"),
+                       shot("settings-control-shortcut-row"))
+        self.assert_setting_outline("settings-control-shortcut-row", self.artifacts, key("shift"))
+        self.search_setting("clear image exceptions", "Privacy", "Clear image exceptions")
+        self.mcp.batch(click(480, 289), check("settings_tab", "Privacy"),
+                       check("settings_reveal.state", "revealed"), shot("settings-control-privacy"))
+        self.assert_setting_outline("settings-control-button", self.artifacts,
+                                    {"type": "scroll", "amount": 1})
+        # A broader query still names the control that matches most of its words.
+        self.search_setting("shared profile", "Profiles and sync", "Check for shared profiles after Google sign-in")
+        self.mcp.batch(click(480, 289), check("settings_tab", "Accounts"),
+                       check("settings_reveal.state", "revealed"), shot("settings-control-broad"))
+        self.search_setting("backups", "Backups", None)
+        self.mcp.batch(click(480, 289), check("settings_group", "Backups"), check("settings_reveal", None),
+                       click(1150, 88), type_text("qzxvjkwp"), check("settings_matches", []),
+                       check("settings_match_controls", []), shot("settings-control-no-results"))
+
+    def test_settings_search_reveal_compact_dark_scrolls_clicks_and_reports_missing(self):
+        directory = Path(self.mcp.call("desktop.start", width=900, height=640)["artifacts"])
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       check("backup_accounts", False))
+        control = "Include account passwords in the encrypted backup"
+        self.search_setting("include account passwords", "Backups", control, search_x=650)
+        self.mcp.batch(shot("settings-control-compact-results"), click(450, 289),
+                       check("settings_group", "Backups"), check("settings_reveal.control", control),
+                       check("settings_reveal.state", "revealed"),
+                       check("settings_reveal.top", 200, "gte"), check("settings_reveal.top", 600, "lte"))
+        top = round(self.mcp.call("desktop.state")["settings_reveal"]["top"])
+        self.assert_setting_outline("settings-control-compact-checkbox", directory)
+        self.mcp.batch(shot("settings-control-compact-scrolled"), click(270, top + 8),
+                       check("backup_accounts", True), shot("settings-control-compact-clicked"))
+        self.search_setting("backup passphrase", "Backups", "Backup passphrase", search_x=650)
+        self.mcp.batch(click(450, 289), check("settings_reveal.state", "revealed"),
+                       check("settings_reveal.focused", True), check("dark", True),
+                       shot("settings-control-compact-focused"))
+        self.search_setting("retry google cleanup", "Google connection", "Retry Google cleanup", search_x=650)
+        self.mcp.batch(click(450, 289), check("settings_group", "Google connection"),
+                       check("settings_reveal.state", "missing"), shot("settings-control-compact-missing"),
+                       click(650, 88), type_text("qzxvjkwp"), check("settings_matches", []),
+                       shot("settings-control-compact-no-results"))
+
     def test_preferences_catalogue_ranking_and_cross_tab_navigation(self):
         for dark, compact in [(False, False), (True, False), (True, True)]:
             started = self.mcp.call("desktop.start")
@@ -7658,6 +7782,13 @@ class NativeFlows(unittest.TestCase):
         state = self.assert_live_matches(total=122, folder="INBOX")
         self.assertEqual([mail["subject"] for mail in state["mail_rows"][:2]], [second, subject])
         self.assertEqual(self.live.subjects("Archive") if self.live.has_folder("Archive") else [], [])
+
+    def test_store_screenshots_tour_fixture_mail_calendar_and_reply(self):
+        self.mcp.batch(check("test_badge", True))
+        self.artifacts = Path(self.mcp.call("desktop.start", store_capture=True)["artifacts"])
+        self.mcp.batch(check("test_badge", False), *store_screenshot_tour())
+        for name in STORE_SCREENSHOTS:
+            self.assertTrue((self.artifacts / f"{name}.webp").is_file(), name)
 
 
 def matches_patterns(name, arguments):
