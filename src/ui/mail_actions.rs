@@ -532,6 +532,8 @@ impl App {
                     record.original = entry.mail.clone();
                     record.receipt = Some(receipt.clone());
                 }
+                self.action_toasts
+                    .acknowledged(entry.toast, &receipt.account, &receipt.folder);
                 self.confirm_move_display(
                     entry.recovered.as_ref().unwrap_or(&entry.mail),
                     &receipt,

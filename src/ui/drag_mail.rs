@@ -82,22 +82,37 @@ impl Rules {
                     return Err("Moving between accounts requires two IMAP accounts.");
                 }
             }
-            if !self
-                .workspace
-                .account_folders
-                .get(destination)
-                .is_some_and(|folders| folders.iter().any(|f| same_folder(f, &target.folder)))
-            {
-                return Err(
-                    "This folder is unavailable for one or more accounts. Refresh mail and try again.",
-                );
-            }
-            changes |= source != destination || !same_folder(folder, &target.folder);
+            let resolved = self.destination(destination, &target.folder).ok_or(
+                "This folder is unavailable for one or more accounts. Refresh mail and try again.",
+            )?;
+            changes |= source != destination || !same_folder(folder, resolved);
         }
         if !changes {
             return Err("These messages are already in this folder.");
         }
         Ok(())
+    }
+    /// The cached folder `requested` reaches in `account`: the folder itself, or
+    /// for a logical Archive/Trash/Junk name the account's special-use folder,
+    /// matching the engine's destination resolution.
+    fn destination<'a>(&'a self, account: &str, requested: &'a str) -> Option<&'a str> {
+        if self
+            .workspace
+            .account_folders
+            .get(account)?
+            .iter()
+            .any(|f| same_folder(f, requested))
+        {
+            return Some(requested);
+        }
+        let role = crate::folders::FolderRole::for_logical_name(requested)?;
+        self.workspace
+            .folder_trees
+            .get(account)?
+            .nodes
+            .iter()
+            .find(|node| node.listed && node.mailbox.usable() && node.mailbox.role == Some(role))
+            .map(|node| node.mailbox.name.as_str())
     }
 }
 impl App {

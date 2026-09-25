@@ -230,7 +230,9 @@ pub enum Event {
     BulkStarted(String, Result<Arc<crate::bulk::Job>, String>),
     MailAdmitted(String, Result<Arc<crate::bulk::Job>, String>),
     BulkUpdate(Arc<crate::bulk::Job>),
-    BulkIdentity(String, String, Option<String>),
+    /// Job, source id, acknowledged current id and, for a forward move, the
+    /// receipt's destination account and wire folder.
+    BulkIdentity(String, String, Option<String>, Option<(String, String)>),
     /// The server refused a durable move, which completed on this device from the source folder.
     BulkMovedLocally(String),
     BulkStopped(u64),

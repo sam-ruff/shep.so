@@ -274,7 +274,7 @@ impl App {
             ))
             .size(12),
             space().width(Length::Fill),
-            if self.demo {
+            if self.test_badge_visible() {
                 badge("TEST")
             } else {
                 space().into()
@@ -1275,8 +1275,14 @@ impl App {
                 header,
                 tabs.wrap(),
                 line(),
-                scrollable(container(content).max_width(940).width(Length::Fill))
-                    .height(Length::Fill)
+                // The second layer keeps the tree stable while an outline comes and goes.
+                scrollable(iced::widget::stack![
+                    container(content).max_width(940).width(Length::Fill),
+                    self.settings_outline()
+                        .unwrap_or_else(|| space().width(0).height(0).into())
+                ])
+                .id(settings_search::reveal::SCROLLER)
+                .height(Length::Fill)
             ]
             .spacing(23),
         )

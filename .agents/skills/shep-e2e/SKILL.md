@@ -18,6 +18,10 @@ without the app's periodic Tick). The explicit 150 ms settle plus screenshot's
 this independent of the broader appearance tour's slower screenshots. This is a
 pixel-backed correctness check, not a latency percentile.
 
+`store_capture=true` hides the header's TEST badge for AppStream screenshots
+(`packaging/flatpak/capture_screenshots.py`); the read-only `test_badge`
+observation reports whether it is drawn. Other fixture behavior is unchanged.
+
 For HTML opening speed, the automated equivalent is `scripts/html_latency.py`.
 Run `python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json`
 without concurrent builds, then `python3 scripts/performance_gate.py --html-only`.
@@ -123,7 +127,7 @@ Right-click an inbox row, including a row different from the selected message. O
 
 For current shortcut/reading work, observe `shortcuts` (primary map), `shortcut_secondary`, `reader_text_ready`, `reader_selected_text`, `inbox_unread`, `settings_search`, `settings_matches`, `settings_group`, `tooltips` and `shortcut_tooltips`. Test Ctrl+D, both archive keys, conflict/secondary clear, and I with sidebar/list focus plus disable/remap. For text copying, use real selection drags, Ctrl+C and a paste into search; full-reader Ctrl+A selects text when that editor has focus. Keep this distinct from the pending multi-message selection request.
 
-Preferences search is the header field. Search for a setting (e.g. tooltip/font/TLS), click the result and operate the actual control. Save captures with all tooltips off, label-only icon hints and primary-only hints, plus compact dark search. Labeled navigation/reply controls should have no tooltip. The mail refresh icon is at x=1400,y=36 in the standard fixture.
+Preferences search is the header field. Search for a setting (e.g. tooltip/font/TLS), click the result and operate the actual control. A result that names a control (`settings_match_controls`) reveals it: observe `settings_reveal` (`state` pending/revealed/missing, window-space `top`, `focused`) and then type into the focused field or click the control at its revealed position. A caption that is not shown in the current state reports `missing` and leaves the section open. Save captures with all tooltips off, label-only icon hints and primary-only hints, plus compact dark search. Labeled navigation/reply controls should have no tooltip. The mail refresh icon is at x=1400,y=36 in the standard fixture.
 
 `test_context_menu_survives_mouse_release_and_sync_refresh` starts a fixture sync, opens a real right-click menu and waits for sync completion before selecting an action. Fixture sync must emit Changed, matching the production refresh path. Keep the regression plus outside/Escape dismissal. Xvfb readiness/`-noreset` prevents display resets between its initial probe and the app connection; logs stay inside each run.
 
@@ -375,6 +379,13 @@ outside/no-op cancellation; preference rejection/enabled transfer; hover reveal;
 failure rollback and continued navigation; POP3 restrictions; compact dark and
 scaled controls; sidebar scrolling/Unicode/shadow cleanup; and full cross-page
 selection. These are functional fixtures, not live-provider or latency evidence.
+
+`desktop.start(special_use_folders=true)` replaces both fixture accounts' flat
+folders with a catalogue whose spam folder is `Junk Mail` marked `\Junk`, so a
+drop on the unified Spam row resolves the logical `Junk` to that physical folder.
+`test_move_toast_names_the_special_use_folder_the_server_acknowledged` checks the
+toast names `Junk` while pending and `Junk Mail` once acknowledged, in light and
+compact dark layouts.
 
 For nested folder trees use `desktop.start(nested_folders=true)`, optionally with
 `persistent=true` or delayed `mail_actions`. Work uses slash-delimited Projects
