@@ -237,7 +237,8 @@ fn persisted_preferences_require_search_coverage_or_an_explicit_exclusion() {
         .collect();
     reviewed.insert("unread_badge");
     if crate::desktop_badge::SUPPORTED {
-        assert_eq!(matches("badge")[0].title, "Mail & performance");
+        let titles: Vec<_> = matches("badge").iter().map(|s| s.title).collect();
+        assert_eq!(titles, ["Mail & performance"]);
     }
     let value = serde_json::to_value(Preferences::default()).expect("preferences fixture");
     let actual: BTreeSet<_> = value

@@ -182,7 +182,13 @@ pub enum Message {
     Move(String),
     MoveFirst,
     Focus(&'static str, u8),
+    /// A focus requested after layout, tagged with the pointer presses seen then.
+    FocusAfterLayout(&'static str, u64),
     FocusChecked(&'static str, bool),
+    /// A native mouse press, published before the pressed widget's own messages.
+    PointerPressed,
+    /// The text field holding native focus after a mouse press.
+    NativeFocus(Option<&'static str>),
     RevealSidebar(String, u8),
     ToggleStar,
     ToggleRead,
@@ -415,6 +421,10 @@ pub struct App {
     mail_drag: drag_mail::Handle,
     last_click: Option<(String, Instant)>,
     pending_focus: Option<&'static str>,
+    /// Native mouse presses; a later press overrides an earlier focus request.
+    pointer_presses: u64,
+    /// Native text focus observed after the latest mouse press.
+    native_focus: Option<&'static str>,
     focused_input: Option<&'static str>,
     #[cfg(feature = "test-support")]
     text_context_observation: text_context::Observation,
@@ -607,6 +617,8 @@ impl App {
                 mail_drag: Default::default(),
                 last_click: None,
                 pending_focus: None,
+                pointer_presses: 0,
+                native_focus: None,
                 focused_input: None,
                 #[cfg(feature = "test-support")]
                 text_context_observation: Default::default(),
@@ -999,6 +1011,16 @@ impl App {
         self.load_remote_images();
         self.restore_reply();
     }
+    fn focus_after_layout(&self, id: &'static str) -> Task<Message> {
+        let presses = self.pointer_presses;
+        Task::perform(
+            async move {
+                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+                id
+            },
+            move |id| Message::FocusAfterLayout(id, presses),
+        )
+    }
     fn open(&mut self, dialog: Dialog) {
         let target = (dialog == Dialog::Move)
             .then(|| self.move_action_mail().cloned())
@@ -1171,7 +1193,7 @@ impl App {
                 );
                 self.handle_folders(message);
                 if focus && self.folder_parent_visible() {
-                    return focus_after_layout("folder-parent-search");
+                    return self.focus_after_layout("folder-parent-search");
                 }
             }
             Message::Notification(message) => self.handle_notification(message),
@@ -1299,7 +1321,7 @@ impl App {
                     self.folder_created(serial, result);
                     if completed {
                         return if failed {
-                            focus_after_layout("new-folder-name")
+                            self.focus_after_layout("new-folder-name")
                         } else {
                             Task::batch([
                                 widget::operation::focus("unfocused"),
@@ -1500,6 +1522,7 @@ impl App {
                 | Event::BulkJobs(..)
                 | Event::BulkItems(..)) => self.bulk_event(event),
                 Event::MailAdmitted(id, result) => self.mail_admitted(id, result),
+                Event::BulkMovedLocally(source) => self.moved_on_this_device(&source),
                 Event::Selection(serial, result) => self.selection_finished(serial, result),
                 Event::Page(g, page, prefetch) if g == self.generation => {
                     if prefetch {
@@ -2263,12 +2286,12 @@ impl App {
             }
             Message::NewMessage => {
                 self.new_composer();
-                return focus_after_layout("to");
+                return self.focus_after_layout("to");
             }
             Message::Open(dialog) => {
                 self.open(dialog);
                 if dialog == Dialog::Move {
-                    return focus_after_layout("folder-search");
+                    return self.focus_after_layout("folder-search");
                 }
             }
             Message::Close => {
@@ -2496,6 +2519,18 @@ impl App {
                     focus
                 };
             }
+            Message::FocusAfterLayout(id, presses) => {
+                // The user clicked after this request; keep the focus they chose.
+                if presses != self.pointer_presses {
+                    return Task::none();
+                }
+                return self.handle(Message::Focus(id, 0));
+            }
+            Message::NativeFocus(id) => self.native_focus = id,
+            Message::PointerPressed => {
+                self.pointer_presses += 1;
+                self.pending_focus = None;
+            }
             Message::FocusChecked(id, focused) => {
                 if focused && self.pending_focus == Some(id) {
                     self.focused_input = Some(id);
@@ -2599,7 +2634,7 @@ impl App {
                 }
                 self.move_confirm = None;
                 self.dialog = Some(Dialog::Move);
-                return focus_after_layout("folder-search");
+                return self.focus_after_layout("folder-search");
             }
             Message::Move(folder) => {
                 if self.mail_selection.mode {
@@ -2672,7 +2707,7 @@ impl App {
                         });
                         self.load_draft(draft);
                     }
-                    return focus_after_layout("compose-body");
+                    return self.focus_after_layout("compose-body");
                 }
             }
             Message::Forward => {
@@ -2696,7 +2731,7 @@ impl App {
                 return if self.composer.current.minimized {
                     widget::operation::focus("unfocused")
                 } else {
-                    focus_after_layout("compose-body")
+                    self.focus_after_layout("compose-body")
                 };
             }
             Message::IncludeOriginal(value) => {
@@ -2733,7 +2768,7 @@ impl App {
                 }
                 if let Some(draft) = self.owned_draft(&id) {
                     self.load_draft(draft);
-                    return focus_after_layout("compose-body");
+                    return self.focus_after_layout("compose-body");
                 }
             }
             Message::Field(key, value) => {
@@ -3252,7 +3287,7 @@ impl App {
             Message::NewEventOnDay(day) => {
                 self.day = day;
                 self.open(Dialog::Event);
-                return focus_after_layout("event-title");
+                return self.focus_after_layout("event-title");
             }
             Message::EditEvent(key) => {
                 if let Some(event) = self
@@ -4003,7 +4038,7 @@ impl App {
                     Key::Named(keyboard::key::Named::Enter) => {
                         self.choose_focused_folder_account();
                         if self.folder_parent_visible() {
-                            return focus_after_layout("folder-parent-search");
+                            return self.focus_after_layout("folder-parent-search");
                         }
                     }
                     Key::Character(ref value) if value.eq_ignore_ascii_case("y") => {}
@@ -4313,14 +4348,14 @@ impl App {
                     self.focused_input = None;
                     self.tab = Tab::Mail;
                     self.full_reader = false;
-                    focus_after_layout("search")
+                    self.focus_after_layout("search")
                 }
                 Action::Move => {
                     if (self.mail_selection.mode && self.mail_selection.count > 0)
                         || self.move_action_mail().is_some()
                     {
                         self.open(Dialog::Move);
-                        return focus_after_layout("folder-search");
+                        return self.focus_after_layout("folder-search");
                     }
                     Task::none()
                 }
@@ -4585,6 +4620,7 @@ impl App {
         );
         data["draft_in_reply_to"] = serde_json::json!(self.composer.current.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
+        data["native_focus"] = serde_json::json!(self.native_focus);
         #[cfg(feature = "test-support")]
         {
             data["text_menu"] = self.text_context_observation.snapshot();
@@ -4836,16 +4872,6 @@ fn default_export(name: &str) -> String {
         .unwrap_or_else(|| std::path::PathBuf::from(name))
         .to_string_lossy()
         .to_string()
-}
-
-fn focus_after_layout(id: &'static str) -> Task<Message> {
-    Task::perform(
-        async move {
-            tokio::time::sleep(std::time::Duration::from_millis(16)).await;
-            id
-        },
-        |id| Message::Focus(id, 0),
-    )
 }
 
 #[cfg(test)]
