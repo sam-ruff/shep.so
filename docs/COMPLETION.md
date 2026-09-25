@@ -1,5 +1,62 @@
 # Completion audit
 
+## IDLE watcher restart, CONDSTORE flag refresh and QRESYNC, 22-25 September 2026
+
+Branch `feat/imap-push-condstore` (desktop only, awaiting integration).
+An IMAP IDLE watcher now restarts when the account's incoming identity changes:
+the listing carries `connection_key` plus the active credential slot, and a
+changed value tells the old supervisor to send DONE and LOGOUT before a new
+one starts on the next check. Names and outgoing settings do not restart it.
+
+CONDSTORE flag refresh saves each folder's SELECT HIGHESTMODSEQ and UIDVALIDITY
+in the new `folder_modseqs` table (schema 12) after that folder's flags and
+listing were delivered. Later checks keep `UID SEARCH ALL` for expunges but fetch
+only `UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n)` and metadata for uncached
+messages, and skip the flag fetch when HIGHESTMODSEQ is unchanged. A missing
+value, new UIDVALIDITY, NOMODSEQ, lower value, no CONDSTORE capability or a
+rejected request (including partial data before a tagged NO) uses the full flag
+listing. A ledger write in the folder that outranks the check keeps the previous
+value; restore and account removal forget an account's values; database import
+accepts version 11 exports without the table.
+
+Tests: 10 new mail-core CONDSTORE unit/transcript tests (advertised and not,
+NOMODSEQ, UIDVALIDITY change, tagged NO after partial data, failed check,
+unchanged folder), store tests for reopen persistence, ledger hold, pruning and
+schema 11 upgrade, a ledger decision test, a watch-identity store test and a
+virtual-time scheduler test for restart on edit. Targeted runs: 152 desktop and
+23 mail-core library tests pass. Mail-core also compiles without the feature, as
+Flutter and the backend use it. Native background sync, held-sync and rapid
+action scenarios pass; two graceful-restart scenarios fail identically on
+unrelated paths (see the PR).
+
+QRESYNC (Sam asked for it on the PR rather than leaving it in TODO): with a
+saved value and QRESYNC advertised, the check sends `ENABLE QRESYNC` before any
+SELECT and asks `UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n VANISHED)` instead
+of `UID SEARCH ALL`. Vanished cached rows go through the new feature-gated
+`MailSyncItem::Vanished`, which keeps restored pins, pending-move rows and rows
+an acknowledged move created after the check began. Uncached reported UIDs
+download as new mail. Cached minus vanished plus new must equal SELECT's
+EXISTS; a mismatch, a live VANISHED/EXPUNGE/EXISTS during the reply, a rejected
+request (partial VANISHED before NO is discarded), a refused ENABLE, a new
+UIDVALIDITY or no QRESYNC uses the complete listing. VANISHED ranges are merged
+for binary-search membership and bounded at 100,000. The IDLE connection
+enables QRESYNC when advertised, and a live VANISHED starts a check.
+
+QRESYNC tests: eight transcripts (vanished removal with new mail and no UID
+listing, unchanged folder sends nothing after SELECT, tagged NO after partial
+VANISHED, size disagreement finding uncached mail, live VANISHED, new
+UIDVALIDITY, refused ENABLE keeping CONDSTORE, no ENABLE without a saved
+value), four pure tests (range merging, the known-UID index, reconciliation
+and the size check), two IDLE transcripts (live VANISHED, refused ENABLE) and a
+store test for the removal protections. Mail-core still builds without the
+feature, with and without `staged-receive`, with no warnings.
+
+Limitations: fixture-verified only; live IDLE restart and CONDSTORE/QRESYNC on
+Sam's Stalwart server are tracked in #12. A restored backup copy absent from
+the server keeps the size check failing, so that folder uses the complete
+listing on every check until the copy is removed or confirmed. Flutter and
+browser clients have neither IDLE nor CONDSTORE/QRESYNC (parity gap in TODO).
+
 ## Flathub packaging preparation (R72 client), 23 September 2026
 
 Linux store packaging is prepared, not published. `packaging/flatpak/` holds a
