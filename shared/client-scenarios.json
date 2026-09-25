@@ -333,6 +333,13 @@
       "desktop": "ui/move_candidates.rs gathers rows and ranks them through the shared matcher; Dialog::MoveConfirm and bulk::Intent::Move { foreign: true } handle confirmation and groups; the durable move journal owns the transfer. Rust move_candidates/mail_actions tests and the saved native foreign-folder scenario cover ranking, badge, keys and mouse.",
       "mobile": "OPEN (owner deferred Flutter changes in this wave): Flutter decodes and labels foreign_move_folders but its Move flow has no foreign rows, confirmation, group review or cross-account transfer.",
       "browser": "web/src/move_candidates.ts and move_ui.ts rank through the shared WASM matcher (move_candidates.test.ts runs the shared cases); Preferences carries both toggles and they sync as portable settings. The gateway's /api/mail/transfer and /api/mail/transfer/finish (backend mail::transfer, mockall tests) back an individual transfer in GatewayRepository and cross-account group items in the bulk executor, with receipt-first cleanup, Activity repair/review and Undo (transfer.test.ts, bulk_undo.test.ts). web/e2e/foreign-move.spec.ts drives the chooser, confirmation keys and mouse, Undo, preference and POP3 gating, a phone-width window and a group review with real input. OPEN: live IMAP verification of the hosted transfer."
+    },
+    {
+      "id": "dropdown-keyboard-dismissal",
+      "contract": "While a dropdown menu is open it owns the keyboard: Escape (and Tab on desktop) closes only that menu, never the dialog, composer, reader or Find behind it, and no mail shortcut runs. The next click reaches the control the menu covered.",
+      "desktop": "ui::dropdown wraps every iced pick list (Clippy disallows the plain constructor); ui::dropdown runtime-routing tests and the saved test_dropdown_* native flows cover the event dialog in light and compact dark, the mail filter with Find open and the composer From list.",
+      "mobile": "OPEN: Flutter dropdown menus were not reviewed in this wave; confirm hardware Escape/back dismisses only the menu and does not reach shortcuts.",
+      "browser": "Native <select> elements; the browser owns the open popup and keyConsumed ignores keys targeted at a select, so no change was needed. No saved Playwright evidence of the native popup, which headless Chromium does not render."
     }
   ]
 }

@@ -1,7 +1,8 @@
 use super::*;
+use crate::ui::dropdown::pick_list;
 use iced::{
     Alignment, Length,
-    widget::{checkbox, column, container, pick_list, row, space, text},
+    widget::{checkbox, column, container, row, space, text},
 };
 
 impl App {

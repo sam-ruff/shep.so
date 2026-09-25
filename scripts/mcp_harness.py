@@ -102,6 +102,73 @@ def request_window_close(display_name, window):
         x11.XSetErrorHandler(previous)
 
 
+def print_browser_executable():
+    return next((path for path in (shutil.which("google-chrome"), shutil.which("chromium"), "/opt/google/chrome/chrome")
+                 if path and Path(path).is_file()), None)
+
+
+def print_profile(directory):
+    """A fresh browser profile whose print preview saves PDFs into directory/printed."""
+    profile = directory / "print-profile"
+    (profile / "Default").mkdir(parents=True)
+    output = directory / "printed"
+    output.mkdir()
+    settings = {"version": 2, "recentDestinations": [{"id": "Save as PDF", "origin": "local", "account": ""}],
+                "selectedDestinationId": "Save as PDF", "isHeaderFooterEnabled": False, "isCssBackgroundEnabled": True}
+    (profile / "Default" / "Preferences").write_text(json.dumps({
+        "printing": {"print_preview_sticky_settings": {"appState": json.dumps(settings)}},
+        "savefile": {"default_directory": str(output)}, "download": {"default_directory": str(output)}}))
+    return profile, output
+
+
+def print_browser_command(chrome, profile):
+    return [chrome, f"--user-data-dir={profile}", "--ozone-platform=x11", "--no-first-run", "--no-default-browser-check",
+            "--disable-background-networking", "--disable-component-update", "--disable-sync"]
+
+
+def kiosk_pdf_printing_works(timeout=15):
+    """Whether the available browser saves a kiosk-printed PDF of a trivial page.
+
+    This uses the print fixture's own profile and flags on an owned Xvfb display,
+    without Shep, so a failure describes the browser environment, not the app.
+    """
+    chrome = print_browser_executable()
+    if not chrome or not shutil.which("Xvfb"):
+        return False
+    with tempfile.TemporaryDirectory(prefix="shep-kiosk-probe-") as name:
+        directory = Path(name)
+        profile, output = print_profile(directory)
+        page = directory / "probe.html"
+        page.write_text("<h1>Kiosk print probe</h1><script>setTimeout(() => print(), 300)</script>")
+        read_fd, write_fd = os.pipe()
+        xvfb = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1024x768x24", "-nolisten", "tcp"],
+                                pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.close(write_fd)
+        browser = None
+        try:
+            with os.fdopen(read_fd) as display:
+                number = display.readline().strip()
+            if not number:
+                return False
+            env = {**os.environ, "DISPLAY": f":{number}",
+                   "DBUS_SESSION_BUS_ADDRESS": f"unix:path={directory / 'no-session-bus'}"}
+            browser = subprocess.Popen([*print_browser_command(chrome, profile), "--kiosk-printing", page.as_uri()],
+                                       env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       start_new_session=True)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline and browser.poll() is None:
+                if any(output.glob("*.pdf")):
+                    return True
+                time.sleep(.1)
+            return any(output.glob("*.pdf"))
+        finally:
+            if browser is not None and browser.poll() is None:
+                os.killpg(browser.pid, signal.SIGKILL)
+                browser.wait(timeout=10)
+            xvfb.terminate()
+            xvfb.wait(timeout=10)
+
+
 class Desktop:
     def __init__(self, binary=None):
         self.binary = Path(binary).resolve() if binary is not None else None
@@ -231,7 +298,7 @@ class Desktop:
             time.sleep(.02)
         self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+v")
 
-    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False, live_imap=False, activation=None, draft_save_failure_once=False, preference_save_failure_once=False, selection_mailbox=False, store_truth=True, activity_history=False):
+    def start(self, width=1440, height=920, move_recovery=False, notification_delivery=None, empty_calendars=False, conversation_mail=False, reading_mail=False, readonly_calendars=False, pending_transfer=False, outgoing_mail=False, google_permissions=None, long_folders=False, mail_actions=None, background_sync=False, sync_failure_once=False, search_mail=False, long_mail=False, html_mail=False, discard_failure_once=False, undo_failure_once=False, print_browser=None, html_delay_ms=0, image_delay_ms=0, html_failure_once=False, desktop_badges=False, persistent=False, bulk_history=False, pop3_account=False, nested_folders=False, special_use_folders=False, idle_navigation=False, folder_actions=None, held_account_sync=False, held_provider_slots=False, held_database_export=False, held_database_import=False, profile_sync=None, profile_login=False, empty_profile=False, tray=None, backup_run=None, google_client="fixture", google_legacy_client=False, profile_passwords=None, large_incoming=False, live_imap=False, activation=None, draft_save_failure_once=False, preference_save_failure_once=False, selection_mailbox=False, store_truth=True, activity_history=False):
         self.stop()
         if type(draft_save_failure_once) is not bool:
             raise ValueError("Draft save failure fixture must be a boolean.")
@@ -306,6 +373,8 @@ class Desktop:
             raise ValueError("Nested folder fixture must be a boolean.")
         if type(pop3_account) is not bool:
             raise ValueError("POP3 fixture must be a boolean.")
+        if type(special_use_folders) is not bool:
+            raise ValueError("Special-use folder fixture must be a boolean.")
         if type(bulk_history) is not bool and bulk_history != "flag-repair":
             raise ValueError("Bulk history fixture must be a boolean or flag-repair.")
         self.persistent = persistent
@@ -375,7 +444,7 @@ class Desktop:
             self.tray_fixture = _tray_fixture.TrayFixture(self, tray == "available")
         if print_browser:
             self.start_print_browser(print_browser)
-        self.launch_args = [str(binary), "--demo", *(["--backup-run=" + backup_run] if backup_run else []), *(["--tray-fixture"] if tray else []), *(["--held-provider-slots"] if held_provider_slots else []), *(["--hold-database-import"] if held_database_import else []), *(["--hold-database-export"] if held_database_export else []), *(["--held-account-sync", "--background-sync"] if held_account_sync else []), *(["--folder-actions=" + folder_actions] if folder_actions else []), *(["--move-recovery=" + ("committed" if move_recovery is True else move_recovery)] if move_recovery else []), *(["--notification-delivery=" + notification_delivery] if notification_delivery else []), *(["--idle-navigation"] if idle_navigation else []), *(["--nested-folders"] if nested_folders else []), *(["--pop3-personal"] if pop3_account else []), *(["--persist-demo"] if persistent else []), *(["--bulk-flag-repair"] if bulk_history == "flag-repair" else ["--bulk-history"] if bulk_history else []), "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--reading-mail"] if reading_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--discard-failure-once"] if discard_failure_once else []), *(["--undo-failure-once"] if undo_failure_once else []), *(["--search-mail"] if search_mail else []), *(["--long-mail"] if long_mail else []), *(["--html-mail"] if html_mail else []), *(["--background-sync"] if background_sync else []), *(["--sync-failure-once"] if sync_failure_once else []), *(["--mail-actions=" + mail_actions] if mail_actions in ("slow", "fail", "refuse") else []), *(["--google-permissions=" + google_permissions] if google_permissions else []), *(["--google-legacy-client"] if google_legacy_client else [])]
+        self.launch_args = [str(binary), "--demo", *(["--backup-run=" + backup_run] if backup_run else []), *(["--tray-fixture"] if tray else []), *(["--held-provider-slots"] if held_provider_slots else []), *(["--hold-database-import"] if held_database_import else []), *(["--hold-database-export"] if held_database_export else []), *(["--held-account-sync", "--background-sync"] if held_account_sync else []), *(["--folder-actions=" + folder_actions] if folder_actions else []), *(["--move-recovery=" + ("committed" if move_recovery is True else move_recovery)] if move_recovery else []), *(["--notification-delivery=" + notification_delivery] if notification_delivery else []), *(["--idle-navigation"] if idle_navigation else []), *(["--nested-folders"] if nested_folders else []), *(["--special-use-folders"] if special_use_folders else []), *(["--pop3-personal"] if pop3_account else []), *(["--persist-demo"] if persistent else []), *(["--bulk-flag-repair"] if bulk_history == "flag-repair" else ["--bulk-history"] if bulk_history else []), "--test-state", str(self.directory / "state.json"), *(["--empty-calendars"] if empty_calendars else []), *(["--conversation-mail"] if conversation_mail else []), *(["--reading-mail"] if reading_mail else []), *(["--readonly-calendars"] if readonly_calendars else []), *(["--pending-transfer"] if pending_transfer else []), *(["--outgoing-mail"] if outgoing_mail else []), *(["--long-folders"] if long_folders else []), *(["--discard-failure-once"] if discard_failure_once else []), *(["--undo-failure-once"] if undo_failure_once else []), *(["--search-mail"] if search_mail else []), *(["--long-mail"] if long_mail else []), *(["--html-mail"] if html_mail else []), *(["--background-sync"] if background_sync else []), *(["--sync-failure-once"] if sync_failure_once else []), *(["--mail-actions=" + mail_actions] if mail_actions in ("slow", "fail", "refuse") else []), *(["--google-permissions=" + google_permissions] if google_permissions else []), *(["--google-legacy-client"] if google_legacy_client else [])]
         if draft_save_failure_once:
             self.launch_args.append("--draft-save-failure-once")
         if activity_history:
@@ -638,19 +707,11 @@ class Desktop:
         if mode == "fail":
             launcher.write_text(f"#!{sys.executable}\nraise SystemExit(1)\n")
         else:
-            chrome = next((path for path in (shutil.which("google-chrome"), shutil.which("chromium"), "/opt/google/chrome/chrome") if path and Path(path).is_file()), None)
+            chrome = print_browser_executable()
             if not chrome or not all(shutil.which(tool) for tool in ("pdftotext", "pdfinfo", "pdftoppm", "convert")):
                 raise RuntimeError("Print E2E needs Chrome/Chromium, Poppler tools and ImageMagick.")
-            profile = self.directory / "print-profile"
-            (profile / "Default").mkdir(parents=True)
-            output = self.directory / "printed"
-            output.mkdir()
-            settings = {"version": 2, "recentDestinations": [{"id": "Save as PDF", "origin": "local", "account": ""}],
-                        "selectedDestinationId": "Save as PDF", "isHeaderFooterEnabled": False, "isCssBackgroundEnabled": True}
-            (profile / "Default" / "Preferences").write_text(json.dumps({
-                "printing": {"print_preview_sticky_settings": {"appState": json.dumps(settings)}},
-                "savefile": {"default_directory": str(output)}, "download": {"default_directory": str(output)}}))
-            common = [chrome, f"--user-data-dir={profile}", "--ozone-platform=x11", "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--disable-component-update", "--disable-sync"]
+            profile, _ = print_profile(self.directory)
+            common = print_browser_command(chrome, profile)
             flags = ["--kiosk-printing"] if mode == "pdf" else []
             self.browser_log = (self.directory / "browser.log").open("w")
             self.browser = subprocess.Popen([*common, *flags, "about:blank"], env=self.env, stdout=self.browser_log, stderr=self.browser_log, start_new_session=True)
@@ -1073,7 +1134,7 @@ class Desktop:
 
 TOOLS = [
     {"name": "desktop.start", "description": "Launch an isolated Shep fixture workspace on Xvfb. Requires cargo build --profile test-ui --features test-support. No real credentials or cloud writes. live_imap=true instead runs the production sync path against the disposable account named by the SHEP_LIVE_* environment variables, with a fresh data root and a memory-only keychain.",
-     "inputSchema": {"type": "object", "properties": {"live_imap":{"type":"boolean","default":False}, "activation":{"type":"string","enum":["hold-restart","legacy"]}, "profile_passwords":{"type":"string","enum":["ready","reject"]}, "backup_run":{"type":"string","enum":["ready","recover","warning","held"]}, "tray":{"type":"string","enum":["available","missing"]}, "profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once","missing-destination","kept-rediscovered"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once","native"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "bulk_history": {"oneOf": [{"type": "boolean"}, {"type": "string", "enum": ["flag-repair"]}], "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "large_incoming": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail", "refuse"]}, "search_mail": {"type": "boolean", "default": False}, "long_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "draft_save_failure_once": {"type": "boolean", "default": False}, "preference_save_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "google_client": {"type": "string", "enum": ["fixture", "none"], "default": "fixture"}, "google_legacy_client": {"type": "boolean", "default": False}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
+     "inputSchema": {"type": "object", "properties": {"live_imap":{"type":"boolean","default":False}, "activation":{"type":"string","enum":["hold-restart","legacy"]}, "profile_passwords":{"type":"string","enum":["ready","reject"]}, "backup_run":{"type":"string","enum":["ready","recover","warning","held"]}, "tray":{"type":"string","enum":["available","missing"]}, "profile_login":{"type":"boolean","default":False}, "empty_profile":{"type":"boolean","default":False}, "profile_sync":{"type":"string","enum":list(_profile_fixture.MODES)}, "held_database_import":{"type":"boolean","default":False}, "held_database_export":{"type":"boolean","default":False}, "held_provider_slots":{"type":"boolean","default":False}, "held_account_sync":{"type":"boolean","default":False}, "folder_actions":{"type":"string","enum":["slow","fail","uncertain"]}, "move_recovery": {"oneOf":[{"type":"boolean"},{"type":"string","enum":["committed","copied","unconfirmed","fail-once","missing-destination","kept-rediscovered"]}],"default":False}, "notification_delivery": {"type":"string", "enum":["slow","fail-once","native"]}, "idle_navigation": {"type":"boolean","default":False}, "pop3_account": {"type":"boolean","default":False}, "nested_folders": {"type":"boolean","default":False}, "special_use_folders": {"type":"boolean","default":False}, "bulk_history": {"oneOf": [{"type": "boolean"}, {"type": "string", "enum": ["flag-repair"]}], "default": False}, "persistent": {"type": "boolean", "default": False}, "desktop_badges": {"type": "boolean", "default": False}, "html_failure_once": {"type": "boolean", "default": False}, "image_delay_ms": {"type": "integer", "minimum": 0, "maximum": 5000, "default": 0}, "html_delay_ms": {"type": "integer", "minimum": 0, "maximum": 2000, "default": 0}, "print_browser": {"type": "string", "enum": ["pdf", "dialog", "fail"]}, "empty_calendars": {"type": "boolean", "default": False}, "conversation_mail": {"type": "boolean", "default": False}, "reading_mail": {"type":"boolean", "default":False}, "large_incoming": {"type":"boolean", "default":False}, "readonly_calendars": {"type": "boolean", "default": False}, "pending_transfer": {"type": "boolean", "default": False}, "outgoing_mail": {"type": "boolean", "default": False}, "long_folders": {"type": "boolean", "default": False}, "mail_actions": {"type": "string", "enum": ["slow", "fail", "refuse"]}, "search_mail": {"type": "boolean", "default": False}, "long_mail": {"type": "boolean", "default": False}, "html_mail": {"type": "boolean", "default": False}, "background_sync": {"type": "boolean", "default": False}, "sync_failure_once": {"type": "boolean", "default": False}, "undo_failure_once": {"type": "boolean", "default": False}, "draft_save_failure_once": {"type": "boolean", "default": False}, "preference_save_failure_once": {"type": "boolean", "default": False}, "discard_failure_once": {"type": "boolean", "default": False}, "google_permissions": {"type": "string", "enum": ["drive", "calendar", "read-only"]}, "google_client": {"type": "string", "enum": ["fixture", "none"], "default": "fixture"}, "google_legacy_client": {"type": "boolean", "default": False}, "width": {"type": "integer", "default": 1440}, "height": {"type": "integer", "default": 920}}}},
     {"name": "desktop.close", "description": "Close only the owned fixture app, keeping its Xvfb display and persistent fixture cache available for restart. Normally sends WM_DELETE_WINDOW; crash=true kills only the owned process for recovery tests.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.restart", "description": "Restart only the owned persistent fixture app on its existing Xvfb display. Normally sends a native window-close request; crash=true kills that owned process to exercise journal recovery. Retains the fixture SQLite cache and never changes app state directly.", "inputSchema": {"type": "object", "properties": {"save": {"type": "boolean", "default": False}, "crash": {"type": "boolean", "default": False}}}},
     {"name": "desktop.batch", "description": "Run 1–100 real mouse/keyboard actions in order, including held left-button mouse_down/mouse_up, short waits, state assertions and WebP screenshots. Stops at first failure and captures evidence. Prefer batches to one call per action.",
