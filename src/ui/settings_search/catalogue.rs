@@ -27,7 +27,7 @@ pub(super) const SETTINGS: &[Setting] = &[
         tab: SettingsTab::General,
         labels: "Message text size|Interface size (%)|Reply history|Show a unified inbox|Allow moving mail between accounts|Group related messages in the reader|Search other accounts' folders when moving",
         description: "Adjust text and interface sizes, previous replies, conversation grouping and folder matches from other accounts when moving.",
-        synonyms: "font scale zoom cross account move conversations replies quotes collapse expanded newest oldest thread foreign folders badge confirm",
+        synonyms: "font scale zoom cross account move conversations replies quotes collapse expanded newest oldest thread foreign folders confirm",
     },
     Setting {
         title: "Composing",

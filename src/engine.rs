@@ -231,6 +231,8 @@ pub enum Event {
     MailAdmitted(String, Result<Arc<crate::bulk::Job>, String>),
     BulkUpdate(Arc<crate::bulk::Job>),
     BulkIdentity(String, String, Option<String>),
+    /// The server refused a durable move, which completed on this device from the source folder.
+    BulkMovedLocally(String),
     BulkStopped(u64),
     BulkResumed(String),
     BulkFinished(String, Result<Arc<crate::bulk::Job>, String>),
@@ -884,6 +886,9 @@ impl Engine {
                     .await
                     .map(Arc::new)
                     .map_err(|e| format!("{e:#}"));
+                if let Ok(job) = &result {
+                    self.publish_superseded(job, &mut output).await?;
+                }
                 output.send(Event::BulkStarted(id, result)).await?;
             }
             Command::AdmitMail(id, original, action, lineage) => {
@@ -898,6 +903,9 @@ impl Engine {
                         "This message needs a fresh observation. Refresh it and try again.".into(),
                     ),
                 };
+                if let Ok(job) = &result {
+                    self.publish_superseded(job, &mut output).await?;
+                }
                 output.send(Event::MailAdmitted(id, result)).await?;
             }
             Command::BulkResume(id) => {

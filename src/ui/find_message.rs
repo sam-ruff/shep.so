@@ -155,7 +155,7 @@ impl App {
                 self.pending_focus = None;
                 self.find_message.open = true;
                 self.sidebar_focus = false;
-                return focus_after_layout("find-message");
+                return self.focus_after_layout("find-message");
             }
             Message::Close => {
                 self.focused_input = None;

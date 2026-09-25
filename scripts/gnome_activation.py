@@ -2,6 +2,7 @@
 """Verify launcher activation with fictional mail on an owned GNOME desktop."""
 import argparse
 import hashlib
+import html
 import json
 import os
 import signal
@@ -30,6 +31,34 @@ def install_shell_observer(desktop):
     }))
     (extension / "extension.js").write_bytes((ROOT / "scripts/fixtures/gnome_notifications.js").read_bytes())
     return lambda: json.loads(path.read_text())
+
+
+def start_system_bus(desktop):
+    """Give GNOME Shell an owned system bus with no services.
+
+    Shell reads logind and the display manager from the system bus. An owned bus
+    keeps the host's services out of the fixture and lets the shell start in a
+    container that has no system bus at all.
+    """
+    socket = Path(desktop.env["XDG_RUNTIME_DIR"]) / "system-bus"
+    address = f"unix:path={socket}"
+    config = desktop.directory / "system-bus.conf"
+    config.write_text(f'''<busconfig><type>system</type><listen>{html.escape(address)}</listen>
+<auth>EXTERNAL</auth><policy user="{os.getuid()}"><allow own="*"/>
+<allow send_destination="*"/><allow receive_sender="*"/></policy></busconfig>''')
+    with (desktop.directory / "system-bus.log").open("w") as log:
+        bus = subprocess.Popen(["dbus-daemon", f"--config-file={config}", "--nofork", "--nopidfile"],
+                               env=desktop.env, stdout=subprocess.DEVNULL, stderr=log)
+    eventually(lambda: socket.exists() or bus.poll() is not None, "owned system bus socket", 5)
+    if bus.poll() is not None:
+        raise RuntimeError("The owned system bus did not start; inspect system-bus.log")
+    desktop.env["DBUS_SYSTEM_BUS_ADDRESS"] = address
+    # Without a display manager Shell shows a one-time lock-screen notice. Mark
+    # it shown so only fixture notifications reach the observer.
+    shell_data = Path(desktop.env["XDG_DATA_HOME"]) / "gnome-shell"
+    shell_data.mkdir(parents=True, exist_ok=True)
+    (shell_data / "lock-warning-shown").touch()
+    return bus
 
 
 def prepare_window(desktop, width=1440, height=920):
@@ -127,6 +156,7 @@ def run(binary):
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
     desktop = Desktop(binary=binary)
     shell = None
+    system_bus = None
     launches = []
     state_path = None
     receipt = {"binary": str(binary), "sha256": digest, "steps": []}
@@ -167,6 +197,7 @@ def run(binary):
         setting("org.gnome.desktop.interface", "enable-animations", "false")
         setting("org.gnome.desktop.interface", "scaling-factor", "1")
         setting("org.gnome.desktop.interface", "color-scheme", "prefer-dark")
+        system_bus = start_system_bus(desktop)
         with (directory / "gnome-shell.log").open("w") as output:
             shell = subprocess.Popen(["gnome-shell", "--x11", "--sm-disable", "--mode=ubuntu"],
                                      env=env, stdout=output, stderr=output)
@@ -261,18 +292,21 @@ def run(binary):
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
         receipt["setup_window"] = prepare_window(desktop)
         desktop.batch([wait(150), key("ctrl+comma"), check("tab", "Preferences"),
-                       click(1150, 88), type_text("system tray"),
+                       click(1150, 88), check("native_focus", "settings-search"), type_text("system tray"),
                        check("settings_matches", ["System tray"]), click(450, 289),
                        check("settings_group", "System tray")])
         if not desktop.state()["tray"]["enabled"]:
             desktop.batch([click(288, 342), check("tray.saved_enabled", True)])
+        # Under GNOME Shell a press can reach Shep after later typed keys, so wait
+        # for each clicked field's native focus before typing into it.
         desktop.batch([key("ctrl+1"), check("tab", "Mail"), key("c"),
                        check("composer.visible", True), wait(80),
-                       click(850, 230), type_text("friend@example.test"),
+                       click(850, 230), check("native_focus", "to"), type_text("friend@example.test"),
                        check("compose_fields.to", "friend@example.test"),
-                       click(850, 279), type_text("Launcher activation draft"),
+                       click(850, 279), check("native_focus", "subject"), type_text("Launcher activation draft"),
                        check("compose_fields.subject", "Launcher activation draft"),
-                       click(850, 400), type_text(DRAFT), check("editor", DRAFT, "contains")])
+                       click(850, 400), check("native_focus", "compose-body"), type_text(DRAFT),
+                       check("editor", DRAFT, "contains")])
         capture("before-launch", draft=True)
         for index in range(2):
             launch(f"launcher-{index}")
@@ -331,7 +365,7 @@ def run(binary):
                          for pid in fixture_processes(binary, state_path)])
 
         tray = desktop.tray_fixture
-        processes = [*launches, desktop.app, shell, desktop.clipboard, desktop.badge_monitor,
+        processes = [*launches, desktop.app, shell, system_bus, desktop.clipboard, desktop.badge_monitor,
                      desktop.badge_bus, desktop.xvfb]
         if tray:
             processes.extend([tray.host, tray.bus])
