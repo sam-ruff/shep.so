@@ -1,7 +1,8 @@
 use super::*;
 use crate::appearance::{Palette, Palettes, Rgb, Role};
+use crate::ui::dropdown::pick_list;
 use iced::theme::palette::{Extended, Pair};
-use iced::widget::{button, column, container, pick_list, row, space, text};
+use iced::widget::{button, column, container, row, space, text};
 use iced::{Alignment, Border, Length};
 use std::cell::RefCell;
 
