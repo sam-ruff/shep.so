@@ -1,6 +1,7 @@
 import { button, el, modal } from "./ui";
 import { keyCombo, keyConsumed, reviewDecision } from "./shortcut_keys";
 import { accountBadge, openMoveChooser } from "./move_ui";
+import { knownFolders } from "./move_candidates";
 import type { Workspace } from "./model";
 import type { GatewayRepository } from "./provider";
 import type { BulkAction, BulkItem, BulkJob } from "./bulk_journal";
@@ -162,7 +163,7 @@ export class GroupUI {
       group: true,
       accounts: () => this.w.moveAccounts(),
       home: { source: { kind: "selection", accounts } },
-      fallback: [],
+      fallback: knownFolders(this.w.moveAccounts()),
       crossAccount: () => this.w.crossAccountMovesEnabled(),
       foreignEnabled: () => this.w.foreignMovesEnabled(),
       shortcuts: () => this.w.preferences.shortcuts,

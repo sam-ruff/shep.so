@@ -15,6 +15,7 @@ import {
 } from "./shortcut_keys";
 import { renderReaderTree } from "./reader_actions";
 import { openMoveChooser } from "./move_ui";
+import { knownFolders } from "./move_candidates";
 import { PrintController } from "./printing_controller";
 import { MessageFind, SearchWorker } from "./message_find";
 import { FormattedFrame } from "./formatted_frame";
@@ -793,18 +794,6 @@ export function mount(
         }
       });
   }
-  function folders() {
-    return [
-      ...new Set([
-        "Inbox",
-        "Archive",
-        "Sent",
-        "Trash",
-        "Spam",
-        ...[...(gateway?.folders.values() ?? [])].flat(),
-      ]),
-    ];
-  }
   function go(folder: string) {
     tab = "Mail";
     fullReader = false;
@@ -818,7 +807,7 @@ export function mount(
         group: false,
         accounts: () => w.moveAccounts(),
         home: { source: { kind: "message", account: w.accountOf(id) } },
-        fallback: folders(),
+        fallback: knownFolders(w.moveAccounts()),
         crossAccount: () => w.crossAccountMovesEnabled(),
         foreignEnabled: () => w.foreignMovesEnabled(),
         shortcuts: () => w.preferences.shortcuts,

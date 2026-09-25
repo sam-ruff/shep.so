@@ -435,3 +435,55 @@ test("a group choice in another account opens the review naming that account", a
       .poll(() => cached(page, id))
       .toMatchObject({ account_id: "personal", folder: "Home.Plans" });
 });
+
+test("a POP3 group picks from listed folders only and never needs typed text", async ({
+  page,
+}) => {
+  const { wire } = await setup(page, { work: "Pop3", personal: "Imap" });
+  await enable(page);
+  await page.getByRole("button", { name: "Select", exact: true }).click();
+  for (const i of [0, 2, 4])
+    await page
+      .getByRole("checkbox", { name: `Select ${subject(i)}`, exact: true })
+      .click();
+  await page
+    .getByRole("button", { name: "Move selected messages", exact: true })
+    .click();
+  const move = page.getByRole("dialog", {
+    name: "Move selected messages",
+    exact: true,
+  });
+  const folder = move.getByLabel("Destination folder", { exact: true });
+  await expect(rows(move).first()).toBeVisible();
+  await expect(move.getByRole("button", { name: "Review move" })).toHaveCount(0);
+  await expect(move.locator(".move-note")).toHaveText(
+    "Each message stays in its original account.",
+  );
+  // An unknown name offers no row and Enter opens nothing.
+  await folder.fill("Nowhere at all");
+  await expect(rows(move)).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(move).toBeVisible();
+  const review = page.getByRole("dialog", {
+    name: "Review group action",
+    exact: true,
+  });
+  await expect(review).toHaveCount(0);
+  await folder.fill("archive");
+  await expect(rows(move).first()).toHaveAccessibleName("Archive");
+  await expect(move.locator(".account-badge")).toHaveCount(0);
+  await page.screenshot({ path: "../artifacts/web/foreign-move-group-pop3.png" });
+  await page.keyboard.press("Enter");
+  const apply = review.getByRole("button", {
+    name: "Archive 3 messages",
+    exact: true,
+  });
+  await expect(apply).toBeFocused();
+  await page.keyboard.press("y");
+  await expect(review).toHaveCount(0);
+  for (const id of ["m000", "m002", "m004"])
+    await expect
+      .poll(() => cached(page, id))
+      .toMatchObject({ account_id: "work", folder: "Archive" });
+  expect(wire.filter((w) => w.path === "transfer")).toEqual([]);
+});

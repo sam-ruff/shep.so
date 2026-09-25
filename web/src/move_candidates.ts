@@ -57,12 +57,27 @@ function homeFolders(
     return [source.account ? [source.account] : [], own(source.account)];
   if (!source.accounts?.length) return [[], []];
   const [first, ...rest] = source.accounts;
-  let folders = [...(accounts.find((a) => a.id === first)?.folders ?? [])];
+  let folders = [...own(first)];
   for (const id of rest) {
-    const other = accounts.find((a) => a.id === id)?.folders;
-    folders = folders.filter((folder) => other?.includes(folder));
+    const other = own(id);
+    folders = folders.filter((folder) => other.includes(folder));
   }
   return [source.accounts, folders];
+}
+
+/** The standard folders plus every known folder, offered for an account
+ * without a server folder list (POP3, or not loaded yet). */
+export function knownFolders(accounts: MoveAccount[]) {
+  return [
+    ...new Set([
+      "Inbox",
+      "Archive",
+      "Sent",
+      "Trash",
+      "Spam",
+      ...accounts.flatMap((a) => a.folders ?? []),
+    ]),
+  ];
 }
 
 const position = (accounts: MoveAccount[], id: string) => {
