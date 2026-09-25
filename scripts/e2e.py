@@ -874,6 +874,84 @@ class NativeFlows(unittest.TestCase):
                            check("full_reader",True),check("total",120),check("mail_pending",0))
         self.mcp.batch(shot("native-full-reader-find-delete-isolation"),key("Escape"),check("find_open",False))
 
+    def assert_dropdown_dismissed(self, directory, closed, opened, dismissed, region):
+        """The open menu changes its region; after Escape it matches the closed capture."""
+        from PIL import Image, ImageChops
+        crops = [Image.open(Path(directory) / f"{name}.webp").convert("RGB").crop(region)
+                 for name in (closed, opened, dismissed)]
+        def changed(a, b):
+            return sum(max(pixel) > 40 for pixel in ImageChops.difference(a, b).getdata())
+        area = (region[2] - region[0]) * (region[3] - region[1])
+        self.assertGreater(changed(crops[0], crops[1]), area // 50, f"{opened} did not show the menu")
+        self.assertLess(changed(crops[0], crops[2]), area // 500, f"{dismissed} still shows the menu")
+
+    def test_dropdown_escape_keeps_event_dialog_and_frees_the_covered_control(self):
+        for compact in (False, True):
+            started = self.mcp.call("desktop.start", width=900 if compact else 1440, height=640 if compact else 920)
+            print(f"Dropdown dismissal evidence: {started['artifacts']}", flush=True)
+            label = "compact-dark" if compact else "light"
+            # Calendar picker and the All day checkbox under its first menu row.
+            # Clearing All day adds the time row, which recentres the dialog.
+            picker, checkbox = ((450, 280), (200, 326)) if compact else ((720, 420), (470, 466))
+            timed_picker, timed_checkbox, timed_home = (((450, 257), (200, 302), (450, 336)) if compact
+                                                        else ((720, 389), (470, 435), (720, 469)))
+            region = (192, 302, 708, 378) if compact else (462, 443, 978, 518)
+            if compact:
+                self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True))
+            self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), wait(80),
+                           click(823, 45) if compact else double_click(700, 474), check("dialog", "Event"),
+                           check("fields.source", "preview-calendar"), check("fields.all_day", "true"),
+                           wait(150), shot(f"dropdown-dialog-closed-{label}"),
+                           click(*picker), wait(250), shot(f"dropdown-dialog-open-{label}"),
+                           key("Escape"), wait(250), check("dialog", "Event"), shot(f"dropdown-dialog-dismissed-{label}"),
+                           # The menu row that covered the checkbox is gone: the checkbox takes the click.
+                           click(*checkbox), check("fields.all_day", "false"), check("fields.source", "preview-calendar"),
+                           check("dialog", "Event"))
+            self.assert_dropdown_dismissed(started["artifacts"], f"dropdown-dialog-closed-{label}",
+                                           f"dropdown-dialog-open-{label}", f"dropdown-dialog-dismissed-{label}", region)
+            # Mouse choices still work and Tab also closes the menu without leaving the dialog.
+            self.mcp.batch(click(*timed_picker), wait(250), click(*timed_home), check("fields.source", "preview-home-calendar"),
+                           click(*timed_picker), wait(250), key("Tab"), wait(250), check("dialog", "Event"),
+                           click(*timed_checkbox), check("fields.all_day", "true"),
+                           check("fields.source", "preview-home-calendar"), shot(f"dropdown-dialog-after-choices-{label}"),
+                           # A second Escape reaches the dialog once the first has closed the menu.
+                           click(*picker), wait(250), keys("Escape", "Escape"), check("dialog", None))
+
+    def test_dropdown_escape_in_mail_keeps_find_and_blocks_mail_shortcuts(self):
+        self.mcp.batch(check("reader_text_ready", True), check("mail_rows.0.starred", True))
+        state = self.mcp.call("desktop.state")
+        first, second = state["mail_rows"][0]["id"], state["mail_rows"][1]["id"]
+        self.mcp.batch(check("selected_id", first), key("ctrl+f"), check("find_open", True),
+                       check("focused_input", "find-message"), shot("dropdown-mail-closed"),
+                       click(350, 100), wait(250), shot("dropdown-mail-open"),
+                       # Mail shortcuts and Escape belong to the open menu, not the reader.
+                       keys("s", "ctrl+d", "Delete", "Escape"), wait(250),
+                       check("find_open", True), check("full_reader", False), check("filter", "All"),
+                       check("mail_rows.0.starred", True), check("selected_id", first), check("total", 120),
+                       check("mail_pending", 0), shot("dropdown-mail-dismissed"))
+        self.assert_dropdown_dismissed(self.artifacts, "dropdown-mail-closed", "dropdown-mail-open",
+                                       "dropdown-mail-dismissed", (262, 180, 425, 280))
+        # The Attachments row covered the second message; that row now takes the click.
+        self.mcp.batch(click(300, 265), check("selected_id", second), check("filter", "All"),
+                       check("find_open", True), check("total", 120),
+                       # Once the menu is closed, Escape reaches Find again.
+                       key("Escape"), check("find_open", False), shot("dropdown-mail-after"))
+
+    def test_dropdown_escape_keeps_composer_and_frees_the_covered_field(self):
+        self.mcp.batch(check("ready", True), click(110, 218), check("composer.visible", True),
+                       check("focused_input", "to"), type_text("dropdown@example.com"),
+                       click(1040, 278), type_text("Plans"), check("compose_fields.subject", "Plans"),
+                       wait(150), shot("dropdown-composer-closed"),
+                       click(1040, 182), wait(250), shot("dropdown-composer-open"),
+                       key("Escape"), wait(250), check("composer.visible", True), shot("dropdown-composer-dismissed"),
+                       # The first account row covered the To field, which now takes the click and typing.
+                       click(900, 229), type_text(".uk"), check("compose_fields.to", "dropdown@example.com.uk"),
+                       check("compose_fields.subject", "Plans"), check("composer.visible", True))
+        self.assert_dropdown_dismissed(self.artifacts, "dropdown-composer-closed", "dropdown-composer-open",
+                                       "dropdown-composer-dismissed", (697, 202, 1389, 252))
+        # With the menu closed, Escape in the field closes the composer as usual.
+        self.mcp.batch(key("Escape"), check("composer.visible", False))
+
     def test_nested_folder_roots_mouse_selection_and_restart(self):
         result=self.mcp.call("desktop.start",nested_folders=True,persistent=True)
         print(f"Nested folder persistence evidence: {result['artifacts']}",flush=True)
