@@ -28,7 +28,7 @@ def evaluate(budgets, backend, ui):
     return errors
 
 
-def evaluate_html(budgets, report):
+def evaluate_html(budgets, report, enforce=True):
     errors = []
     readings = report.get("readings", [])
     if not isinstance(readings, list):
@@ -51,8 +51,10 @@ def evaluate_html(budgets, report):
             errors.append(f"HTML {case}: too few valid pixel observations")
             continue
         p95 = sorted(values)[math.ceil(len(values)*.95)-1]
-        if p95 > limit:
+        if p95 > limit and enforce:
             errors.append(f"HTML {case}: {p95:.3f} ms exceeds {limit:.3f} ms")
+        elif p95 > limit:
+            print(f"OVER HTML {case}: {p95:.3f} / {limit:.3f} ms ({len(values)} samples, report only)")
         else:
             print(f"PASS HTML {case}: {p95:.3f} / {limit:.3f} ms ({len(values)} samples)")
     return errors
@@ -118,6 +120,8 @@ def main():
     only = parser.add_mutually_exclusive_group()
     only.add_argument("--html-only", action="store_true", help="Check the separately authorized HTML measurements only")
     only.add_argument("--actions-only", action="store_true", help="Check the immediate-action pixel measurements only")
+    parser.add_argument("--html-report-only", action="store_true",
+                        help="Validate the HTML evidence but report over-budget timings without failing")
     parser.add_argument("--html-report", type=Path, default=ROOT / "artifacts/performance/html.json")
     parser.add_argument("--actions-report", type=Path, default=ROOT / "artifacts/performance/actions.json")
     args = parser.parse_args()
@@ -127,7 +131,7 @@ def main():
         errors = []
         if not args.actions_only:
             html = json.loads(args.html_report.read_text())
-            errors.extend(evaluate_html(budgets, html))
+            errors.extend(evaluate_html(budgets, html, enforce=not args.html_report_only))
         if not args.html_only:
             actions = json.loads(args.actions_report.read_text())
             errors.extend(evaluate_actions(budgets, actions))
