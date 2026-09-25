@@ -351,6 +351,10 @@ pub enum Message {
     PrefShortcutTooltips(bool),
     SettingsSearch(String),
     FindSetting(SettingsTab, &'static str),
+    RevealSetting(SettingsTab, &'static str, &'static str),
+    RevealSettingAttempt(u64, u8),
+    SettingRevealed(u64, u8, settings_search::reveal::Found),
+    DismissSettingOutline(u64),
     ShowAllSettings,
     PrefCrossAccount(bool),
     PrefForeignMoveFolders(bool),
@@ -465,8 +469,10 @@ pub struct App {
     tab: Tab,
     settings_tab: SettingsTab,
     settings_search: String,
-    settings_search_results: Vec<&'static settings_search::Setting>,
+    settings_search_results: Vec<settings_search::Match>,
     settings_group: Option<&'static str>,
+    settings_reveal: Option<settings_search::Reveal>,
+    settings_reveal_generation: u64,
     dialog: Option<Dialog>,
     fields: HashMap<&'static str, String>,
     protocol: Protocol,
@@ -662,6 +668,8 @@ impl App {
                 settings_search: String::new(),
                 settings_search_results: Vec::new(),
                 settings_group: None,
+                settings_reveal: None,
+                settings_reveal_generation: 0,
                 theme_cache: Default::default(),
                 palette_editor: Default::default(),
                 dialog: None,
@@ -2234,6 +2242,19 @@ impl App {
                 self.settings_search_results = settings_search::matches(&query);
                 self.settings_search = query;
                 self.settings_group = None;
+                self.settings_reveal = None;
+            }
+            Message::RevealSetting(tab, section, control) => {
+                return self.reveal_setting(tab, section, control);
+            }
+            Message::RevealSettingAttempt(generation, attempt) => {
+                return self.reveal_setting_attempt(generation, attempt);
+            }
+            Message::SettingRevealed(generation, attempt, found) => {
+                return self.setting_revealed(generation, attempt, found);
+            }
+            Message::DismissSettingOutline(generation) => {
+                self.dismiss_setting_outline(generation);
             }
             Message::FindSetting(tab, group) => {
                 if group == "Profiles" {
@@ -2241,10 +2262,15 @@ impl App {
                 }
                 let task = self.handle(Message::SettingsTab(tab));
                 self.settings_group = Some(group);
-                return task;
+                // A section opens at its top rather than at another tab's offset.
+                return task.chain(iced::widget::operation::scroll_to(
+                    settings_search::reveal::SCROLLER,
+                    iced::widget::scrollable::AbsoluteOffset { x: 0., y: 0. },
+                ));
             }
             Message::ShowAllSettings => {
                 self.settings_group = None;
+                self.settings_reveal = None;
                 self.settings_search.clear();
                 self.settings_search_results.clear();
             }
@@ -2263,6 +2289,7 @@ impl App {
                 self.defer_draft_exit(composing::Exit::Tab(Tab::Preferences));
                 self.settings_search.clear();
                 self.settings_group = None;
+                self.settings_reveal = None;
                 self.settings_search_results.clear();
                 self.tab = Tab::Preferences;
                 self.settings_tab = tab;
@@ -4494,9 +4521,32 @@ impl App {
         data["settings_matches"] = serde_json::json!(
             self.settings_matches()
                 .iter()
-                .map(|s| s.title)
+                .map(|s| s.setting.title)
                 .collect::<Vec<_>>()
         );
+        data["settings_match_controls"] = serde_json::json!(
+            self.settings_matches()
+                .iter()
+                .map(|s| s.control)
+                .collect::<Vec<_>>()
+        );
+        data["settings_reveal"] = serde_json::json!(self.settings_reveal.map(|reveal| {
+            let (state, top, focused) = match reveal.state {
+                settings_search::RevealState::Pending => ("pending", None, false),
+                settings_search::RevealState::Missing => ("missing", None, false),
+                settings_search::RevealState::Revealed { top, focused } => {
+                    ("revealed", Some(top), focused)
+                }
+            };
+            let outline = reveal.outline.map(|outline| {
+                let bounds = outline.window;
+                [bounds.x, bounds.y, bounds.width, bounds.height]
+            });
+            serde_json::json!({
+                "control": reveal.control, "section": reveal.section,
+                "state": state, "top": top, "focused": focused, "outline": outline,
+            })
+        }));
         data["page_unread"] = serde_json::json!(self.page.unread);
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
         data["tray"] = serde_json::json!({"available": self.tray.available,
