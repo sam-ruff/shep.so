@@ -33,6 +33,39 @@ Limitations: fixture-verified only; live IDLE restart and CONDSTORE on Sam's
 Stalwart server are unconfirmed. QRESYNC/VANISHED is not implemented. Flutter
 and browser clients have neither IDLE nor CONDSTORE (parity gap in TODO).
 
+## Native dropdown keyboard dismissal (R15/R63), 22 September 2026
+
+Branch `fix/dropdown-escape-dismissal`, awaiting integration. Every native pick
+list now comes from `ui::dropdown::pick_list`, and `clippy.toml` disallows the
+plain iced constructor. While a menu is open it takes every key press: Escape
+or Tab closes only that menu, so dialogs, the composer, Find and mail shortcuts
+never see the key. The next click reaches the control the menu covered, including
+when Escape and the click arrive in one input batch. Mouse choices are unchanged.
+
+Evidence: five `ui::dropdown` tests drive the real iced runtime routing (overlay
+first, then the root `ContextArea`); three of the first four failed on the plain
+pick list before the fix, and a fifth covers a second Escape in the same batch. The saved `test_dropdown_*` native flows pass: the event dialog in
+light and compact dark (Escape keeps the dialog, the covered All day checkbox
+takes the next click, Tab closes, a second Escape closes the dialog), the mail
+filter with Find open (`s`, Ctrl+D and Delete do nothing, Escape keeps Find, the
+covered message row is selected) and the composer From list (Escape keeps the
+composer, the covered To field takes the click and typing). Each flow compares
+the menu region before opening, while open and after Escape. All three flows
+fail on a binary built from main (Escape closed Find, the composer and the
+dialog). With the fix, 16 of 17 selected native flows pass, including filter,
+calendar, account-review, join-link and inline-composer flows. The remaining
+`test_native_keys_move_escape_and_repeated_navigation_stay_ordered` failure
+(`mail_pending` stays 2 after three `s` presses) reproduced identically on
+main and was unrelated to dropdowns. After merging the native CI baseline
+(`babd932`), 31 selected native flows pass, including that one, the three
+dropdown flows, the other `test_native_*` ordering flows, both context-menu
+flows, filter/sort, calendar, inline-composer and join-link flows.
+
+Limitations: arrow/Enter navigation inside an open menu is not implemented
+because iced 0.14 keeps the highlighted row private. The browser uses native
+`<select>` elements and needs no change; Flutter was not reviewed in this wave.
+Native evidence is Linux/Xvfb only.
+
 ## Inbox page benchmark regression, 23 September 2026
 
 `8db87f1` hid removed accounts from every page, count and launcher badge query
