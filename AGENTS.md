@@ -228,6 +228,9 @@ Linux uses `[self-hosted, sophie]`, Windows `[self-hosted, Windows, X64]`. The
 existing pool registers ephemeral runners when jobs start, so an empty runner
 list does not establish missing capacity. Fork pull requests cannot run on these
 runners. Never dispatch an old workflow revision that chooses hosted runners.
+Sam paused the Windows job on 23 September while its runner clones lose contact
+mid-job; release publishing is paused with it rather than shipping Linux alone.
+Restore both together once the runner pool is fixed (TODO "Windows CI paused").
 
 Linux quality runs inside the owned Ubuntu 24.04 image with pinned Rust, Node
 and sandboxed Chrome, matching the runner UID/GID. Preserve the restricted
@@ -504,7 +507,7 @@ replay. Preserve actual FFI tests with delivery held after local admission.
 Read-on-leave and action feedback requirements: selecting an inbox message and then leaving it marks it read; explicit mark-unread intent must survive. Archive/delete/move toasts appear in the same optimistic UI update, refresh their timeout and increment their count on repeated actions. Each offers Undo, including while the original write is pending. Track original account/folder and acknowledged server identities for reversal; never reuse an obsolete IMAP UID after moving. Rollbacks and failures remain visible. Read-on-leave, immediate counted feedback and session Undo are delivered. Preserve their protocol/cache/native regressions when changing mail actions.
 
 - UI update handlers: p95 < 8 ms, target < 2 ms. No filesystem, credential-store, SQL, network, compression, crypto or MIME parsing in iced `update`/`view`.
-- Cached inbox page on 100,000 messages: p95 < 50 ms. Relevance search on the same cache: p95 < 100 ms for one or two terms and < 150 ms for four, the safe built-in `bm25()` query's range on the self-hosted runner (Sam chose it over an unsafe FTS5 ranking extension on 15 September 2026). Cached body load: p95 < 10 ms. Search debounces for 100 ms; stale results must not overwrite newer queries.
+- Cached inbox page on 100,000 messages: p95 < 50 ms. Relevance search on the same cache: p95 < 125 ms for one or two terms and < 150 ms for four, the safe built-in `bm25()` query's range on the self-hosted runner (Sam chose it over an unsafe FTS5 ranking extension on 15 September 2026, and allowed the one-or-two-term budget to rise from 100 ms on 23 September after two runner p95s of 102 and 107 ms against about 31 ms locally). Cached body load: p95 < 10 ms. Search debounces for 100 ms; stale results must not overwrite newer queries.
 - Aim for 60 Hz interaction (16.7 ms frame budget), cached message navigation under 100 ms, and visible acknowledgement within 100 ms. Measure full native input-to-state latency separately from handler timing; handler timing is not a frame-rate claim.
 - Keep 50 messages per page and render only visible rows plus a small overscan. Prefetch adjacent messages and the next page in background. Retain at most 8 bodies / 32 MiB in the prefetch cache. Avoid decoding assets repeatedly.
 - Bounded foreground-read, persistence and provider-command channels (32 each), prefetch/download channels (8 each), and an event channel (32). `engine/dispatch.rs` reserves two foreground read workers and one prefetch worker; settings/drafts use a separate FIFO worker. Provider work shares eight slots, with account sync limited to three. Manual mail refresh has its own capacity-one coalescing channel, independent of provider backpressure. `try_send` must never wait on the UI thread. Interactive backpressure produces visible feedback; a full speculative prefetch queue quietly drops that optional request.
@@ -512,7 +515,7 @@ Read-on-leave and action feedback requirements: selecting an inbox message and t
 - Prefer 40–44 px click targets; visible focus, descriptive labels/tooltips, persistent errors with a clear recovery, no text clipping at 900×640 and 1440×920. Mouse and keyboard should reach the same core actions.
 - User-visible messages should explain the problem and next action. Do not present sample data as live accounts, pretend a sync succeeded after errors, or silently lose unsent drafts.
 
-Run `python3 scripts/performance_gate.py` after backend, native navigation and HTML pixel timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence.
+Run `python3 scripts/performance_gate.py` after backend, native navigation and HTML pixel timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence. Sam decided on 25 September that CI passes `--html-report-only`: the sophie runner renders HTML 3-4x slower than a quiet workstation, so CI still validates and uploads the HTML pixel evidence but reports its budgets; local `scripts/check.sh` keeps them strict.
 
 The inbox/reader divider must remain mouse-draggable with saved preferences and minimum widths. Filtering and sorting must invalidate stale page prefetches; flags map to IMAP `\Flagged` and remain local for POP3. Cover drag persistence, mouse flagging/filtering/sorting and page navigation in the MCP suite.
 
@@ -1120,6 +1123,11 @@ Flutter reader actions stay outside the scrolling body in a responsive safe-area
 Desktop relevance queries in `store/mail_query.rs` materialize literal FTS rowids/ranks once, then join that SQLite relation. Do not restore a virtual-table LEFT JOIN that repeats FTS filtering/ranking for every candidate. Preserve exact short-body priority, literal-versus-fuzzy scoring, combined folder parameter order and the shared list/selection plan. Keep the query-plan guard, `tests/search.rs`, `tests/selections.rs`, bulk projection tests and native search/sort/selection flows. Run the unchanged 100,000-message responsiveness benchmark after planner or SQLite changes; an interrupted run is not timing evidence.
 
 `mail_inbox_badge_counts(folder,unread,account)` covers the global unread-account count requested with each mail page. Preserve its existing-cache creation and `tests/unread_counts.rs` plan/reopen regression; a narrower index requires a message-row lookup per unread item plus sorting. Pending bulk projections still use the visible-mail source. Keep value/projection and native badge tests alongside the unchanged backend budget.
+Removed-account hiding in page, count and badge queries must never be a
+correlated per-message check: `mail_query::removed_accounts_filter` binds only
+removed accounts that still own mail and gives projected views uncorrelated
+subqueries. Keep `page_counts_check_removed_accounts_once_per_statement` and the
+removed-account benchmark case.
 
 ## Desktop selection ownership, History and process recovery
 
@@ -1551,6 +1559,13 @@ Python test and the three `test_native_*` ordering/isolation scenarios. The rapi
 Move/Escape reproduction fails on the previous installed executable. These flows
 intentionally omit waits between earlier keys and already-visible later controls;
 independent scenarios may still await focus/layout to isolate their own behavior.
+
+Native pick lists come from `ui::dropdown::pick_list`; `clippy.toml` disallows
+the plain iced constructor. The open menu owns every key press: Escape or Tab
+closes only the menu through the widget's own outside-press path, and a menu
+closed by the keyboard is inert for the rest of that input batch. Never route
+those keys to a dialog, composer, Find or mail shortcut. Keep the `ui::dropdown`
+runtime-routing tests and the saved `test_dropdown_*` native flows.
 
 
 ## Inline composer ownership
