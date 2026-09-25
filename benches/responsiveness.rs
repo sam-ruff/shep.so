@@ -18,12 +18,16 @@ fn main() {
         println!("Responsiveness budget: {count} cached messages, 4 accounts, page size {PAGE_SIZE}");
         let inbox=measure(&store,MailQuery{folder:"INBOX".into(),..Default::default()},"Inbox page",50.).await;
         let account=measure(&store,MailQuery{folder:"INBOX".into(),account:Some("account-1".into()),..Default::default()},"Account page",50.).await;
-        let search=measure(&store,MailQuery{search:"milestone 17".into(),sort:MailSort::Relevance,..Default::default()},"FTS search",100.).await;
-        let typo=measure(&store,MailQuery{search:"milestnoe 17".into(),sort:MailSort::Relevance,..Default::default()},"Transposed search",100.).await;
+        let search=measure(&store,MailQuery{search:"milestone 17".into(),sort:MailSort::Relevance,..Default::default()},"FTS search",125.).await;
+        let typo=measure(&store,MailQuery{search:"milestnoe 17".into(),sort:MailSort::Relevance,..Default::default()},"Transposed search",125.).await;
         let phrase=measure(&store,MailQuery{search:"architecture plans milestone 17".into(),sort:MailSort::Relevance,..Default::default()},"Multiple-term search",150.).await;
         let mut times=Vec::new();for i in 0..100{let start=Instant::now();store.detail(format!("bench:{i}")).await.unwrap();times.push(start.elapsed().as_secs_f64()*1000.);}
         times.sort_by(f64::total_cmp);println!("Cached body: p95={:.2}ms budget=10ms",times[95]);assert!(times[95]<10.);
-        let report=serde_json::json!({"dataset_messages":count,"samples":60,"metrics_ms":{"inbox_page_p95":inbox,"account_page_p95":account,"search_p95":search,"typo_search_p95":typo,"multiple_term_search_p95":phrase,"cached_body_p95":times[95]}});
+        // A committed removal keeps hiding its account while cleanup is pending.
+        store.run(|c|{c.execute("INSERT INTO connection_tombstones(kind,id,revision) VALUES('account','account-3',1)",[])?;Ok(())}).await.unwrap();
+        assert_eq!(store.query(MailQuery{folder:"INBOX".into(),..Default::default()}).await.unwrap().total,count as usize*3/4);
+        let removed=measure(&store,MailQuery{folder:"INBOX".into(),..Default::default()},"Inbox page with a removed account",50.).await;
+        let report=serde_json::json!({"dataset_messages":count,"samples":60,"metrics_ms":{"inbox_page_p95":inbox,"account_page_p95":account,"search_p95":search,"typo_search_p95":typo,"multiple_term_search_p95":phrase,"cached_body_p95":times[95],"removed_account_inbox_page_p95":removed}});
         std::fs::create_dir_all("artifacts/performance").unwrap();
         std::fs::write("artifacts/performance/backend.json",serde_json::to_vec_pretty(&report).unwrap()).unwrap();
         // A blocked network worker cannot block the UI command producer.

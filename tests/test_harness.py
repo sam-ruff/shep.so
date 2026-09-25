@@ -559,6 +559,18 @@ class HarnessTests(unittest.TestCase):
             desktop.stop()
             self.assertNotIn("SHEP_TEST_PRINT_BROWSER", desktop.env)
 
+    def test_kiosk_print_probe_uses_the_fixture_profile_and_needs_a_browser(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile, output = harness.print_profile(Path(directory))
+            preferences = json.loads((profile / "Default" / "Preferences").read_text())
+            sticky = json.loads(preferences["printing"]["print_preview_sticky_settings"]["appState"])
+            self.assertEqual(sticky["selectedDestinationId"], "Save as PDF")
+            self.assertEqual(preferences["savefile"]["default_directory"], str(output))
+        with patch.object(harness, "print_browser_executable", return_value=None), \
+                patch.object(harness.subprocess, "Popen") as launch:
+            self.assertFalse(harness.kiosk_pdf_printing_works())
+            launch.assert_not_called()
+
     def test_print_output_rejects_paths_and_invalid_counts(self):
         desktop = harness.Desktop()
         for arguments in ({"count":0}, {"pages":0}, {"name":"../private"}):

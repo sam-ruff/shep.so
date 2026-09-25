@@ -19,7 +19,9 @@ pub(super) fn schema(c: &Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn admit(c: &Connection, job: &str, action: &Action) -> anyhow::Result<()> {
+/// Reserves field ownership for a new job and cancels older queued items it
+/// supersedes, returning the other jobs whose items were cancelled.
+pub(super) fn admit(c: &Connection, job: &str, action: &Action) -> anyhow::Result<Vec<String>> {
     c.execute(
         "INSERT INTO bulk_admissions(job,position,lineage,original,predecessor)
          SELECT i.job,i.position,l.lineage,i.original,
@@ -45,12 +47,19 @@ pub(super) fn admit(c: &Connection, job: &str, action: &Action) -> anyhow::Resul
             params![field, job],
         )?;
     }
-    c.execute("UPDATE bulk_items SET status='cancelled',error='A newer decision owns these fields. This change was not sent.'
+    let mut superseded = c
+        .prepare("UPDATE bulk_items SET status='cancelled',error='A newer decision owns these fields. This change was not sent.'
         WHERE status='queued' AND (job,position) IN (
             SELECT a.job,a.position FROM bulk_admissions a
             WHERE a.lineage IN (SELECT lineage FROM bulk_admissions WHERE job=?1)
-            AND NOT EXISTS(SELECT 1 FROM bulk_field_owners o WHERE o.sequence=a.sequence))", [job])?;
-    Ok(())
+            AND NOT EXISTS(SELECT 1 FROM bulk_field_owners o WHERE o.sequence=a.sequence))
+        RETURNING job")?
+        .query_map([job], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    superseded.sort();
+    superseded.dedup();
+    superseded.retain(|other| other != job);
+    Ok(superseded)
 }
 
 pub(super) fn prepare(c: &Connection, item: &mut Item) -> anyhow::Result<()> {
