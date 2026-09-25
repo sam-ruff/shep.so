@@ -766,6 +766,8 @@ impl App {
         } else if !failed {
             self.save_profile_options();
         }
+        // Discovery after login starts once this status allows it, not on a later tick.
+        self.advance_profile_login();
         if !self.profile_sync.pending()
             && let Some(window) = self.pending_close.take()
         {
@@ -1412,6 +1414,27 @@ mod tests {
         app.pending_close = Some(iced::window::Id::unique());
         app.advance_profile_login();
         assert!(app.profile_sync.login_pending.is_none() && queue.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn profile_login_discovery_starts_when_the_status_arrives() {
+        let (mut app, mut queue, original) = app().await;
+        let mut saved = (*original).clone();
+        saved.available = true;
+        app.google_connected = true;
+        app.profile_google_status(0, true);
+        app.shared_profile_action(Action::Refresh);
+        let Some(Command::ProfileSync(Request::Status(status))) = queue.recv().await else {
+            panic!("expected status refresh");
+        };
+        let _ = app.shared_profile_update(status, Update::Status(Arc::new(saved)));
+        assert!(
+            matches!(
+                queue.try_recv(),
+                Ok(Command::ProfileSync(Request::AfterLogin(_)))
+            ),
+            "discovery must not wait for the next tick"
+        );
     }
 
     #[tokio::test]
