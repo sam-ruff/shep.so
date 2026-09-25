@@ -123,3 +123,14 @@ class PerformanceGate(unittest.TestCase):
             self.assertTrue(check([{**row, field: value} for row in rows]))
         self.assertTrue(check([{**row, "input_to_pixels_ms": 51} for row in rows]))
         self.assertTrue(check([]))
+
+    def test_html_report_only_keeps_evidence_checks_but_not_budgets(self):
+        budget = {"minimum_samples": 20, "html_budgets_ms": {"warm_return": 50}}
+        rows = [{"case": "warm_return", "cycle": i, "input_to_pixels_ms": 140,
+                 "match": 1., "before_match": 0.} for i in range(20)]
+        def check(rows):
+            with contextlib.redirect_stdout(io.StringIO()):
+                return gate.evaluate_html(budget, {"readings": rows}, enforce=False)
+        self.assertEqual(check(rows), [])
+        self.assertTrue(check(rows[:19]))
+        self.assertTrue(check([{**row, "match": .5} for row in rows]))
