@@ -101,8 +101,8 @@ def run(binary, mode="details", desktop_type=Desktop):
             "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
             "Shep", "0", APP_ID, "Fictional short-lived sender", "Disconnected sender baseline", "[]",
             "{'desktop-entry': <'so.shep.Shep'>, 'suppress-sound': <true>}", "--", "-1")
-        time.sleep(.7)
-        assert not observation()["notifications"], "Short-lived sender unexpectedly survived"
+        eventually(lambda: not observation()["notifications"],
+                   "GNOME removing the short-lived sender's notification")
         receipt["short_lived_sender_acknowledgment"] = baseline
         receipt["short_lived_sender_removed"] = True
         desktop.batch([check("notifications.requested", 0), check("notifications.sent", 0)])
