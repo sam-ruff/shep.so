@@ -85,6 +85,7 @@ fn job(c: &Connection, id: &str) -> anyhow::Result<Job> {
         uncertain: 0,
         cancelled: 0,
         revision: get(c, "bulk_revision")?,
+        superseded: Vec::new(),
     };
     let mut query =
         c.prepare("SELECT status,undo,count FROM bulk_totals WHERE job=? AND count>0")?;
@@ -273,7 +274,7 @@ fn existing_admission(
 }
 
 fn publish_admission(c: &Connection, id: &str, action: &Action) -> anyhow::Result<Job> {
-    intents::admit(c, id, action)?;
+    let superseded = intents::admit(c, id, action)?;
     let account = match action {
         Action::Move { account, .. } => account.clone(),
         Action::Flags(_) => None,
@@ -295,8 +296,9 @@ fn publish_admission(c: &Connection, id: &str, action: &Action) -> anyhow::Resul
         "A message has an older pending operation. Review its group in History first.");
     intents::refresh(c, id)?;
     bump(c)?;
-    let result = job(c, id)?;
+    let mut result = job(c, id)?;
     anyhow::ensure!(result.total > 0, "Select at least one message");
+    result.superseded = superseded;
     Ok(result)
 }
 

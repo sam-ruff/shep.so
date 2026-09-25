@@ -8,7 +8,8 @@ from pathlib import Path
 import statistics
 import time
 
-from e2e import McpClient, ROOT, check, click, mail_row_y, shot, wait
+from e2e import (LARGE_SELECTION_SECONDS, McpClient, ROOT, check, click, mail_row_y, shot,
+                 state_value, wait)
 
 
 def select_ten(mcp):
@@ -17,7 +18,15 @@ def select_ten(mcp):
               {"type": "click", "x": 400, "y": mail_row_y(0), "modifiers": ["ctrl"]},
               check("mail_selection.mode", True), check("mail_selection.drawn", True),
               {"type": "click", "x": 400, "y": mail_row_y(9), "modifiers": ["shift"]},
-              check("mail_selection.count", 10), check("mail_selection.pending", False), wait(200))
+              check("mail_selection.count", 10))
+    # The Shift range rebases the whole captured scope in SQLite. This is setup,
+    # outside the measured review and confirmation pixels.
+    deadline = time.monotonic() + LARGE_SELECTION_SECONDS
+    while state_value(mcp.call("desktop.state"), "mail_selection.pending") is not False:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"Rebasing the selection took more than {LARGE_SELECTION_SECONDS} s.")
+        time.sleep(0.02)
+    mcp.batch(wait(200))
 
 
 def baseline(mcp):
