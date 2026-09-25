@@ -12,7 +12,11 @@ label matcher and `rank_moves` moved to `shep_mail_content::fuzzy` (feature
 `shared/move-ranking-cases.json` runs in both. Badged rows ask "Move to
 <folder>?" with Enter/Y or Move confirming and Escape/N or Cancel returning to
 the list with the query and focus; a destination-account list moves at once;
-a group choice opens the review naming the account.
+a group choice opens the review naming the account. As Sam asked, the group
+dialog no longer has a free-text "Review move" button: Enter picks the first
+listed row and an unknown name opens nothing. POP3 accounts and accounts whose
+folder list has not loaded get the standard folders plus every known folder,
+in group moves as well as single ones.
 
 The gateway adds `/api/mail/transfer` (source UIDVALIDITY/UIDPLUS check, then
 APPEND to the other account) and `/api/mail/transfer/finish` (exact UID STORE

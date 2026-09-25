@@ -6,6 +6,7 @@ import {
   accountDisplay,
   foreignAccounts,
   gather,
+  knownFolders,
   rank,
   type MoveAccount,
   type MoveHome,
@@ -143,6 +144,36 @@ describe("gathering", () => {
       true,
     );
     expect(rows.map((r) => r.folder)).toEqual(["Inbox", "Archive"]);
+  });
+  it("uses the known folder list for selected accounts without a folder list", () => {
+    const list: MoveAccount[] = [
+      { id: "pop", name: "", email: "p@example.test", imap: false },
+      {
+        id: "work",
+        name: "",
+        email: "w@example.test",
+        imap: true,
+        folders: ["Inbox", "Receipts"],
+      },
+    ];
+    const known = knownFolders(list);
+    expect(known).toEqual(["Inbox", "Archive", "Sent", "Trash", "Spam", "Receipts"]);
+    const only = gather(
+      list,
+      { source: { kind: "selection", accounts: ["pop"] } },
+      known,
+      true,
+      true,
+    );
+    expect(only.map((r) => r.folder)).toEqual(known);
+    const mixed = gather(
+      list,
+      { source: { kind: "selection", accounts: ["pop", "work"] } },
+      known,
+      true,
+      true,
+    );
+    expect(mixed.map((r) => r.folder)).toEqual(["Inbox", "Receipts"]);
   });
 });
 

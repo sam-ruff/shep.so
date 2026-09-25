@@ -8,6 +8,7 @@ import { rank_move_candidates } from "./wasm/shep_mail_content";
 import type { Preferences } from "./model";
 import {
   accountDisplay,
+  foreignAccounts,
   gather,
   rank,
   type MoveAccount,
@@ -126,17 +127,6 @@ export function openMoveChooser(options: MoveChooserOptions) {
   list.setAttribute("aria-label", "Destination folders");
   const empty = el("p", "muted move-empty");
   listView.append(search, note, list, empty);
-  let review: HTMLButtonElement | undefined;
-  if (options.group) {
-    review = button("Review move", () => {
-      const folder = input.value.trim();
-      if (!folder) return;
-      d.close();
-      moveTo(folder);
-    });
-    review.disabled = true;
-    listView.append(review);
-  }
   const confirmView = el("div", "move-confirm");
   confirmView.tabIndex = -1;
   confirmView.hidden = true;
@@ -188,9 +178,7 @@ export function openMoveChooser(options: MoveChooserOptions) {
     const text = query.trim();
     empty.textContent = !ready
       ? ""
-      : options.group && !candidates.length && text
-        ? `Review moves to “${text}” in each original account.`
-        : !text
+      : !text
           ? "No shared destination folders. Refresh mail to load each account’s folders."
           : options.foreignEnabled()
             ? "No matching folders in any account."
@@ -198,13 +186,15 @@ export function openMoveChooser(options: MoveChooserOptions) {
     empty.hidden = !ready || candidates.length > 0;
     note.textContent = rankFailed
       ? "Folder search could not load. Other accounts' folders are unavailable; reload Shep to retry."
-      : options.group
-        ? options.foreignEnabled()
-          ? "Folders without an account badge keep each message in its original account. A badged folder moves the messages to that account after review."
-          : "Each message stays in its original account. Enter an existing destination folder."
-        : "";
+      : !options.group
+        ? ""
+        : explicit
+          ? "The messages move to the chosen account after review."
+          : foreignAccounts(options.accounts(), selection, options.foreignEnabled())
+                .length
+            ? "Folders without an account badge keep each message in its original account. A badged folder moves the messages to that account after review."
+            : "Each message stays in its original account.";
     note.hidden = !note.textContent;
-    if (review) review.disabled = !text;
   }
   /** A folder in the explicit account, or in each message's own account. */
   function moveTo(folder: string) {
@@ -283,9 +273,9 @@ export function openMoveChooser(options: MoveChooserOptions) {
     void ready.then(() => {
       if (!d.open || pending) return;
       render();
+      // Only listed folders are destinations; an unknown name opens nothing.
       const first = candidates[0];
       if (first) choose(first);
-      else review?.click();
     });
   };
   // The confirmation owns its keys; a held Enter that chose a row never repeats.
