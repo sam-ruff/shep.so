@@ -81,7 +81,9 @@ special-use attribute, such as `Deleted Items` for Trash, so such a server never
 gains a second literal folder; the sidebar's Trash and Spam entries list those
 same folders. Before an account's first folder sync there is no cached catalogue,
 so a move to one of these logical names lists the server's folders first and
-saves that listing; if the listing fails, the move fails before anything is sent.
+saves that listing. If the listing fails, the move uses the literal name, as it
+did before this lookup existed; the failure is not cached, so the next move lists
+again.
 A destination that truly does not exist is created after Shep asks for the root
 and hierarchy separator with `LIST "" ""`, falling back to a listing of the
 destination's own reference and then, on servers advertising it, to the first

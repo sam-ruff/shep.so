@@ -1,7 +1,9 @@
 import contextlib
 import importlib.util
 import io
+import json
 from pathlib import Path
+import re
 import unittest
 
 spec = importlib.util.spec_from_file_location("gate", Path(__file__).resolve().parents[1] / "scripts/performance_gate.py")
@@ -75,6 +77,26 @@ class PerformanceGate(unittest.TestCase):
                                  {"dataset_messages": dataset, "samples": samples, "metrics_ms": {"test": value}},
                                  {"samples": 20})
 
+    def test_backend_budgets_match_the_benchmark_assertions(self):
+        root = Path(__file__).resolve().parents[1]
+        bench = (root / "benches/responsiveness.rs").read_text()
+        budgets = json.loads((root / "performance-budgets.json").read_text())["budgets_ms"]
+        limits = {name: float(limit) for name, limit in
+                  re.findall(r'let (\w+)=measure\(.*?"[^"]*",([0-9.]+)\)\.await', bench)}
+        body = re.search(r"assert!\(times\[95\]<([0-9.]+)\)", bench)
+        self.assertIsNotNone(body)
+        limits["times[95]"] = float(body.group(1))
+        report = re.search(r'"metrics_ms":\{(.*?)\}\}\);', bench)
+        self.assertIsNotNone(report)
+        metrics = dict(re.findall(r'"(\w+)":([\w\[\]]+)', report.group(1)))
+        self.assertGreaterEqual(len(metrics), 7)
+        for metric, value in metrics.items():
+            with self.subTest(metric=metric):
+                self.assertIn(value, limits)
+                self.assertEqual(budgets.get(metric), limits[value])
+        # The native suite reports the remaining budgets in ui.json.
+        self.assertEqual(set(budgets) - set(metrics), {"ui_handler_p95", "native_navigation_p95"})
+
     def test_valid_measurements_pass(self):
         self.assertEqual(self.evaluate(), [])
 
@@ -101,3 +123,14 @@ class PerformanceGate(unittest.TestCase):
             self.assertTrue(check([{**row, field: value} for row in rows]))
         self.assertTrue(check([{**row, "input_to_pixels_ms": 51} for row in rows]))
         self.assertTrue(check([]))
+
+    def test_html_report_only_keeps_evidence_checks_but_not_budgets(self):
+        budget = {"minimum_samples": 20, "html_budgets_ms": {"warm_return": 50}}
+        rows = [{"case": "warm_return", "cycle": i, "input_to_pixels_ms": 140,
+                 "match": 1., "before_match": 0.} for i in range(20)]
+        def check(rows):
+            with contextlib.redirect_stdout(io.StringIO()):
+                return gate.evaluate_html(budget, {"readings": rows}, enforce=False)
+        self.assertEqual(check(rows), [])
+        self.assertTrue(check(rows[:19]))
+        self.assertTrue(check([{**row, "match": .5} for row in rows]))

@@ -56,7 +56,8 @@ impl Engine {
     /// The wire folder a logical destination such as `Trash` stands for in
     /// `account`, so moves and their cached rows use the physical name. Before
     /// the first folder sync a logical name is resolved from a fresh listing
-    /// rather than guessed; a failed listing fails the move before submission.
+    /// rather than guessed; a failed listing falls back to the literal name and
+    /// is not cached, so the next move lists again.
     pub(super) async fn resolve_destination(
         &self,
         account: &str,
@@ -73,11 +74,15 @@ impl Engine {
         if account.protocol != Protocol::Imap {
             return Ok(crate::folders::resolve_destination(&catalog, folder));
         }
-        let listed = self
-            .move_connections
-            .folders(account.clone())
-            .await
-            .context("Could not list this account's folders to find the destination. The message was not moved; try again.")?;
+        let listed = match self.move_connections.folders(account.clone()).await {
+            Ok(listed) => listed,
+            Err(error) => {
+                tracing::warn!(
+                    "Could not list folders to resolve {folder}; using the literal name: {error:#}"
+                );
+                return Ok(folder.to_owned());
+            }
+        };
         let destination = crate::folders::resolve_destination(&listed, folder);
         if !listed.is_empty()
             && let Err(error) = self.store.save_folder_catalog(account.id, listed).await
@@ -1132,35 +1137,83 @@ mod tests {
 
     #[cfg(feature = "test-support")]
     #[tokio::test]
-    async fn a_failed_listing_before_the_first_folder_sync_submits_nothing() {
+    async fn a_failed_listing_before_the_first_folder_sync_uses_the_literal_name() {
         let (engine, scripted, original) = scripted_engine(ScriptedReply::Accept).await;
+        let account = original.account_id.clone();
         engine
             .store
-            .save_folder_catalog(original.account_id.clone(), Vec::new())
+            .save_folder_catalog(account.clone(), Vec::new())
             .await
             .unwrap();
         *scripted.listing.lock().unwrap() = Err("The server did not confirm the listing.".into());
+        let listed = || scripted.listed.load(std::sync::atomic::Ordering::SeqCst);
         let (output, _events) = futures::channel::mpsc::channel(32);
-        let error = engine
-            .change_folder(&original, "Archive", output, None)
+        let (_, receipt) = engine
+            .change_folder(&original, "Trash", output, None)
             .await
-            .unwrap_err();
-        assert!(error.to_string().contains("was not moved"), "{error:#}");
+            .unwrap();
+        assert_eq!(receipt.folder, "Trash");
+        assert_eq!(listed(), 1);
         assert!(
-            engine
-                .store
-                .mail_move_for_source(original.id.clone())
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            in_folder(&engine.store, "INBOX")
+            !in_folder(&engine.store, "INBOX")
                 .await
                 .rows
                 .iter()
                 .any(|m| m.id == original.id)
         );
+        assert!(
+            engine
+                .store
+                .cached_folder_catalog(account.clone())
+                .await
+                .unwrap()
+                .is_empty(),
+            "a failed listing is not cached"
+        );
+        assert_eq!(
+            engine.resolve_destination(&account, "Trash").await.unwrap(),
+            "Trash"
+        );
+        assert_eq!(listed(), 2, "the next move lists again");
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn refused_durable_archive_reports_its_device_only_move() {
+        let (engine, _, original) = scripted_engine(ScriptedReply::Refuse).await;
+        let lineage = engine
+            .store
+            .query(MailQuery::default())
+            .await
+            .unwrap()
+            .lineages[&original.id]
+            .clone();
+        let (output, mut events) = futures::channel::mpsc::channel(64);
+        let archive = crate::bulk::Action::Move {
+            account: None,
+            folder: "Archive".into(),
+        };
+        let admission =
+            Command::AdmitMail("refused".into(), original.clone(), archive, Some(lineage));
+        engine.execute(admission, output.clone()).await.unwrap();
+        let (sender, input) = crate::engine::CommandSender::channel();
+        drop(sender);
+        let collect = async {
+            let mut sources = Vec::new();
+            while let Some(event) = events.next().await {
+                if let Event::BulkMovedLocally(source) = event {
+                    sources.push(source);
+                }
+            }
+            sources
+        };
+        let owner = async move { engine.clone().run_bulk_queue(input.bulk, output).await };
+        let (sources, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(collect, owner)
+        })
+        .await
+        .expect("the refused archive finishes on this device");
+        assert_eq!(sources, std::slice::from_ref(&original.folder));
     }
 
     #[cfg(feature = "test-support")]

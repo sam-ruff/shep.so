@@ -102,6 +102,73 @@ def request_window_close(display_name, window):
         x11.XSetErrorHandler(previous)
 
 
+def print_browser_executable():
+    return next((path for path in (shutil.which("google-chrome"), shutil.which("chromium"), "/opt/google/chrome/chrome")
+                 if path and Path(path).is_file()), None)
+
+
+def print_profile(directory):
+    """A fresh browser profile whose print preview saves PDFs into directory/printed."""
+    profile = directory / "print-profile"
+    (profile / "Default").mkdir(parents=True)
+    output = directory / "printed"
+    output.mkdir()
+    settings = {"version": 2, "recentDestinations": [{"id": "Save as PDF", "origin": "local", "account": ""}],
+                "selectedDestinationId": "Save as PDF", "isHeaderFooterEnabled": False, "isCssBackgroundEnabled": True}
+    (profile / "Default" / "Preferences").write_text(json.dumps({
+        "printing": {"print_preview_sticky_settings": {"appState": json.dumps(settings)}},
+        "savefile": {"default_directory": str(output)}, "download": {"default_directory": str(output)}}))
+    return profile, output
+
+
+def print_browser_command(chrome, profile):
+    return [chrome, f"--user-data-dir={profile}", "--ozone-platform=x11", "--no-first-run", "--no-default-browser-check",
+            "--disable-background-networking", "--disable-component-update", "--disable-sync"]
+
+
+def kiosk_pdf_printing_works(timeout=15):
+    """Whether the available browser saves a kiosk-printed PDF of a trivial page.
+
+    This uses the print fixture's own profile and flags on an owned Xvfb display,
+    without Shep, so a failure describes the browser environment, not the app.
+    """
+    chrome = print_browser_executable()
+    if not chrome or not shutil.which("Xvfb"):
+        return False
+    with tempfile.TemporaryDirectory(prefix="shep-kiosk-probe-") as name:
+        directory = Path(name)
+        profile, output = print_profile(directory)
+        page = directory / "probe.html"
+        page.write_text("<h1>Kiosk print probe</h1><script>setTimeout(() => print(), 300)</script>")
+        read_fd, write_fd = os.pipe()
+        xvfb = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1024x768x24", "-nolisten", "tcp"],
+                                pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        os.close(write_fd)
+        browser = None
+        try:
+            with os.fdopen(read_fd) as display:
+                number = display.readline().strip()
+            if not number:
+                return False
+            env = {**os.environ, "DISPLAY": f":{number}",
+                   "DBUS_SESSION_BUS_ADDRESS": f"unix:path={directory / 'no-session-bus'}"}
+            browser = subprocess.Popen([*print_browser_command(chrome, profile), "--kiosk-printing", page.as_uri()],
+                                       env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       start_new_session=True)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline and browser.poll() is None:
+                if any(output.glob("*.pdf")):
+                    return True
+                time.sleep(.1)
+            return any(output.glob("*.pdf"))
+        finally:
+            if browser is not None and browser.poll() is None:
+                os.killpg(browser.pid, signal.SIGKILL)
+                browser.wait(timeout=10)
+            xvfb.terminate()
+            xvfb.wait(timeout=10)
+
+
 class Desktop:
     def __init__(self, binary=None):
         self.binary = Path(binary).resolve() if binary is not None else None
@@ -640,19 +707,11 @@ class Desktop:
         if mode == "fail":
             launcher.write_text(f"#!{sys.executable}\nraise SystemExit(1)\n")
         else:
-            chrome = next((path for path in (shutil.which("google-chrome"), shutil.which("chromium"), "/opt/google/chrome/chrome") if path and Path(path).is_file()), None)
+            chrome = print_browser_executable()
             if not chrome or not all(shutil.which(tool) for tool in ("pdftotext", "pdfinfo", "pdftoppm", "convert")):
                 raise RuntimeError("Print E2E needs Chrome/Chromium, Poppler tools and ImageMagick.")
-            profile = self.directory / "print-profile"
-            (profile / "Default").mkdir(parents=True)
-            output = self.directory / "printed"
-            output.mkdir()
-            settings = {"version": 2, "recentDestinations": [{"id": "Save as PDF", "origin": "local", "account": ""}],
-                        "selectedDestinationId": "Save as PDF", "isHeaderFooterEnabled": False, "isCssBackgroundEnabled": True}
-            (profile / "Default" / "Preferences").write_text(json.dumps({
-                "printing": {"print_preview_sticky_settings": {"appState": json.dumps(settings)}},
-                "savefile": {"default_directory": str(output)}, "download": {"default_directory": str(output)}}))
-            common = [chrome, f"--user-data-dir={profile}", "--ozone-platform=x11", "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--disable-component-update", "--disable-sync"]
+            profile, _ = print_profile(self.directory)
+            common = print_browser_command(chrome, profile)
             flags = ["--kiosk-printing"] if mode == "pdf" else []
             self.browser_log = (self.directory / "browser.log").open("w")
             self.browser = subprocess.Popen([*common, *flags, "about:blank"], env=self.env, stdout=self.browser_log, stderr=self.browser_log, start_new_session=True)
