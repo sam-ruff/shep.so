@@ -9,6 +9,9 @@ pub(super) struct Control {
     pub stopping: crate::lifecycle::Signal,
     pub active: crate::lifecycle::Activity,
     pub stop_generation: std::sync::atomic::AtomicU64,
+    /// Work scans issued by the owner, observed by scheduling regressions.
+    #[cfg(test)]
+    pub scans: std::sync::atomic::AtomicUsize,
 }
 
 impl Control {
@@ -23,6 +26,20 @@ impl Control {
 impl Engine {
     pub(super) async fn run_bulk_queue(self, input: mpsc::Receiver<Command>, output: Output) {
         self.run_action_owner(input, output).await;
+    }
+
+    /// Queued work cancelled by a newer admission never reaches the owner, so
+    /// publish its terminal state before the admission that replaced it.
+    pub(super) async fn publish_superseded(
+        &self,
+        admitted: &Job,
+        output: &mut Output,
+    ) -> anyhow::Result<()> {
+        for id in &admitted.superseded {
+            let job = self.store.bulk_job(id.clone()).await?;
+            output.send(Event::BulkUpdate(Arc::new(job))).await?;
+        }
+        Ok(())
     }
 
     #[cfg(test)]
@@ -121,9 +138,12 @@ impl Engine {
                 (lease, job)
             }
         };
-        output
-            .send(Event::BulkUpdate(Arc::new(job.clone())))
-            .await?;
+        // A single claimed position reports its own claim and result below.
+        if position.is_none() {
+            output
+                .send(Event::BulkUpdate(Arc::new(job.clone())))
+                .await?;
+        }
         let mut last_progress = None::<std::time::Instant>;
         let mut completed = 0;
         loop {
@@ -207,6 +227,13 @@ impl Engine {
                 )),
                 _ => None,
             };
+            let local_source = match &result {
+                Ok(Receipt::Move(receipt)) if receipt.local_only && !item.undo => item
+                    .original
+                    .as_ref()
+                    .map(|original| original.folder.clone()),
+                _ => None,
+            };
             let failed = result.is_err();
             job = self.store.finish_bulk_item(item, result).await?;
             completed += 1;
@@ -214,6 +241,9 @@ impl Engine {
                 output
                     .send(Event::BulkIdentity(job, source, current))
                     .await?;
+            }
+            if let Some(source) = local_source {
+                output.send(Event::BulkMovedLocally(source)).await?;
             }
             if failed
                 || job.remaining == 0
@@ -400,6 +430,54 @@ mod tests {
             account: None,
             folder: folder.into(),
         }
+    }
+
+    #[tokio::test]
+    async fn a_newer_admission_publishes_the_queued_job_it_cancelled() {
+        let engine = fixture(1).await;
+        let page = engine.store.query(MailQuery::default()).await.unwrap();
+        let mail = page.rows[0].clone();
+        let lineage = page.lineages[&mail.id].clone();
+        let star = |starred| {
+            Action::Flags(crate::mail_actions::Flags {
+                unread: None,
+                starred: Some(starred),
+            })
+        };
+        let (output, mut events) = futures::channel::mpsc::channel(8);
+        for (id, starred) in [("older", true), ("newer", false)] {
+            let command = Command::AdmitMail(
+                id.into(),
+                mail.clone(),
+                star(starred),
+                Some(lineage.clone()),
+            );
+            engine.execute(command, output.clone()).await.unwrap();
+        }
+        drop(output);
+        let mut received = Vec::new();
+        while let Some(event) = events.next().await {
+            match event {
+                Event::BulkUpdate(job) => received.push(format!(
+                    "update {} remaining={} cancelled={}",
+                    job.id, job.remaining, job.cancelled
+                )),
+                Event::MailAdmitted(id, result) => {
+                    let job = result.unwrap();
+                    received.push(format!("admitted {id} superseded={:?}", job.superseded));
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(
+            received,
+            [
+                "admitted older superseded=[]",
+                "update older remaining=0 cancelled=1",
+                "admitted newer superseded=[\"older\"]",
+            ],
+            "The cancelled queued job must reach the UI before its replacement"
+        );
     }
 
     #[tokio::test]
@@ -1431,6 +1509,53 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((page.total, page.unread), (1, 0));
+    }
+
+    #[tokio::test]
+    async fn one_account_group_with_repeated_progress_wakes_keeps_work_scans_bounded() {
+        const COUNT: usize = 60;
+        let engine = fixture(COUNT).await;
+        start(
+            &engine,
+            "archive-all",
+            MailQuery::default(),
+            movement("Archive"),
+        )
+        .await;
+        let (sender, input) = CommandSender::channel();
+        let (output, mut events) = futures::channel::mpsc::channel(8);
+        // Like the window, wake the owner after every progress update it reports.
+        let collect = async move {
+            let mut sender = Some(sender);
+            while let Some(event) = events.next().await {
+                match event {
+                    Event::BulkUpdate(job) if job.remaining > 0 => {
+                        if let Some(sender) = &sender {
+                            let _ = sender.try_send(Command::BulkRun(job.id.clone()));
+                        }
+                    }
+                    Event::BulkUpdate(job) if job.remaining == 0 => sender = None,
+                    Event::BulkFinished(_, Ok(job)) if job.remaining == 0 => sender = None,
+                    Event::Error(error) => panic!("{error}"),
+                    _ => {}
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(60), async {
+            tokio::join!(engine.clone().run_bulk_queue(input.bulk, output), collect);
+        })
+        .await
+        .expect("the group completes and the owner exits");
+        let job = engine.store.bulk_job("archive-all".into()).await.unwrap();
+        assert_eq!((job.completed, job.remaining), (COUNT, 0));
+        let scans = engine
+            .bulk_control
+            .scans
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(
+            scans <= 15 * COUNT,
+            "{scans} work scans for {COUNT} items: finished domains and running jobs must not be rescanned on every wake"
+        );
     }
 
     #[tokio::test]

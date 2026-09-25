@@ -1735,6 +1735,7 @@ mod tests {
             uncertain: 0,
             cancelled: 0,
             revision,
+            superseded: Vec::new(),
         })
     }
 
