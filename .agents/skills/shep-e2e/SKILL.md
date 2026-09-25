@@ -173,7 +173,7 @@ Forward tests use the reader footer arrow or F. Search the prototype fixture for
 The prototype fixture's Forward arrow is near x=835,y=784 after its four attachments wrap; Reply all is near x=766,y=784. An ordinary message without attachments has its footer lower. A visible bottom notice moves bottom-scrolled settings rows: dismiss Draft saved through its actual × and await `notice == null` before clicking the Forward clear controls near y=780. In search-isolation tests, Alt+F may insert an f into the native field; observe that query before clearing it, then await the restored selected row. A previously matching count or focus label alone can be stale.
 
 
-Print flows use `desktop.start(print_browser="pdf" | "dialog" | "fail")`, with Chrome/Chromium and Poppler installed. The harness owns a fresh profile, explicitly uses X11, and never opens the personal browser. Drive the actual footer icon or Mod+P. `print_output` checks an actual browser-created PDF using count/text/minimum pages and saves a first-page WebP; `browser_screenshot` captures the isolated display, `cancel_print` presses native Escape, and `focus_app` restores native Shep input. Observe `print_pending`, `print_revision` and `print_source` only. Test full formatted/plain/long output, source identity while navigating, retry, shortcut isolation and compact dark attachment wrapping. Review subject/sender headers and CID images in the PDF, plus the real printer dialog before cancellation. The current shortcut rows at the bottom are Print y=780, Forward y=720, Find y=660, Inbox y=600, Delete y=540, without a bottom notice. Keep the saved native equivalents and do not interpret launch completion as a printing receipt.
+Print flows use `desktop.start(print_browser="pdf" | "dialog" | "fail")`, with Chrome/Chromium and Poppler installed. The harness owns a fresh profile, explicitly uses X11, and never opens the personal browser. Drive the actual footer icon or Mod+P. `print_output` checks an actual browser-created PDF using count/text/minimum pages and saves a first-page WebP; `browser_screenshot` captures the isolated display, `cancel_print` presses native Escape, and `focus_app` restores native Shep input. Observe `print_pending`, `print_revision` and `print_source` only. Test full formatted/plain/long output, source identity while navigating, retry, shortcut isolation and compact dark attachment wrapping. Review subject/sender headers and CID images in the PDF, plus the real printer dialog before cancellation. The current shortcut rows at the bottom are Open Activity y=780, Print y=720, Forward y=660, Find y=600, Inbox y=540, without a bottom notice. The two PDF scenarios first run `kiosk_pdf_printing_works`, which kiosk-prints a trivial page with the same profile and flags and no Shep; they skip only when that probe saves no PDF, as with Chrome for Testing 153 in the CI image. Keep the saved native equivalents and do not interpret launch completion as a printing receipt.
 
 
 For HTML frame preparation, use html_mail=true and wait for html_view_current,
@@ -376,6 +376,13 @@ failure rollback and continued navigation; POP3 restrictions; compact dark and
 scaled controls; sidebar scrolling/Unicode/shadow cleanup; and full cross-page
 selection. These are functional fixtures, not live-provider or latency evidence.
 
+`desktop.start(special_use_folders=true)` replaces both fixture accounts' flat
+folders with a catalogue whose spam folder is `Junk Mail` marked `\Junk`, so a
+drop on the unified Spam row resolves the logical `Junk` to that physical folder.
+`test_move_toast_names_the_special_use_folder_the_server_acknowledged` checks the
+toast names `Junk` while pending and `Junk Mail` once acknowledged, in light and
+compact dark layouts.
+
 For nested folder trees use `desktop.start(nested_folders=true)`, optionally with
 `persistent=true` or delayed `mail_actions`. Work uses slash-delimited Projects
 and Teams; Personal uses dot-delimited Home plus literal `Notes/flat.name` with
@@ -500,6 +507,15 @@ control, then restart the owned persistent fixture. `refresh_animation` is an
 observation only; a changing angle does not prove correct drawing. Preserve the
 direct SVG center/scale/clip and partial-redraw tests as well as the native checks.
 
+
+Dropdown dismissal uses the three saved `test_dropdown_*` flows. Open a pick
+list with a real click, press Escape (or Tab), then click the control its menu
+covered: the event dialog's All day checkbox (light and compact dark), the
+second message row under the mail filter with Find open, and the composer To
+field under From. `assert_dropdown_dismissed` compares the menu region before
+opening, while open and after Escape, because no state observation reports an
+open iced menu. Clearing All day adds a time row and recentres the dialog, so
+later coordinates in that flow differ.
 
 For rapid native input ordering, `key_sequence` takes `keys`, an array of 1–32
 individual chords (maximum 80 characters each; no whitespace), and sends one
@@ -787,6 +803,15 @@ the Ubuntu tray/dock extensions and captures panel, dash, grid and Alt+Tab in
 both application styles. It never replaces the personal shell. `--before`
 uses the explicit baseline revision's symbolic SVG and needs its fixture binary for a true
 baseline. Review the saved captures; neither flow proves Windows/macOS execution.
+The GNOME activation and notification scenarios (`scripts/gnome_activation.py`,
+`scripts/gnome_notifications.py`) give GNOME Shell an owned system bus with no
+services, so logind and the display manager are absent both locally and in the
+CI container, and mark the one-time lock-screen notice shown. They need GNOME
+Shell's X11 session (46 in the CI image); GNOME Shell 50 removed it, so they skip
+on newer desktops.
+Under GNOME Shell a mouse press can reach Shep after keys typed later, so after
+clicking a text field wait for `native_focus` (the field id holding native focus
+after the latest press) before typing. `focused_input` covers only programmatic focus.
 
 Compact list navigation observes `inbox_reveal_height`, the actual native viewport.
 After rapid navigation, wait for the target row to be fully revealed before
@@ -868,8 +893,7 @@ native account through restart, and verify the durable shared mapping. Backend
 IDs on old/new servers, interrupted admission, stale native/history/Google/consent
 and remote removal. Keep account passwords out of this fixture. A menu that opens
 above its control can cover the Keep button: select its visible row before the
-next click; the separately tracked Escape-dismissal issue must not be hidden by
-a direct state mutation or by removing keyboard coverage elsewhere. After adding
+next click, or close it with Escape (see the dropdown flows below). After adding
 the shared connection, the same fixture leaves two accounts with one address;
 `test_sidebar_duplicate_addresses_distinguish_saved_names_and_controls` checks
 the sidebar shows their saved names above the address, chooses each account by

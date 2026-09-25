@@ -1,9 +1,10 @@
 use super::*;
+use crate::ui::dropdown::pick_list;
 use iced::{
     Alignment, Border, Length,
     widget::{
-        button, checkbox, column, container, image, mouse_area, opaque, pick_list, row, scrollable,
-        space, stack, text,
+        button, checkbox, column, container, image, mouse_area, opaque, row, scrollable, space,
+        stack, text,
     },
 };
 

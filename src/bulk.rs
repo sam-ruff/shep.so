@@ -105,6 +105,8 @@ pub struct Job {
     pub uncertain: usize,
     pub cancelled: usize,
     pub revision: u64,
+    /// Other jobs whose queued items this admission cancelled.
+    pub superseded: Vec<String>,
 }
 #[derive(Debug, Clone)]
 pub struct Item {

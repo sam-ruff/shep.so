@@ -287,6 +287,9 @@ async fn seed_demo_contents(store: &Store) -> anyhow::Result<()> {
             )
             .await?;
     }
+    if std::env::args().any(|a| a == "--special-use-folders") {
+        seed_special_use_folders(store).await?;
+    }
     if std::env::args().any(|a| a == "--long-folders") {
         let folders = vec![
             "Projects".to_string(),
@@ -775,6 +778,24 @@ pub async fn image_delay() {
         .unwrap_or(0)
         .min(5000);
     tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+}
+
+/// Both fixture accounts mark their spam folder `Junk Mail` with `\Junk`, like
+/// Stalwart and Exchange, so no folder is literally named Junk.
+async fn seed_special_use_folders(store: &Store) -> anyhow::Result<()> {
+    use crate::folders::{FolderRole, Mailbox};
+    for account in ["preview-work", "preview-personal"] {
+        let mut catalog: Vec<Mailbox> = ["INBOX", "Archive", "Projects", "Sent", "Trash"]
+            .into_iter()
+            .map(|name| Mailbox::flat(name.into()))
+            .collect();
+        catalog.push(Mailbox {
+            role: Some(FolderRole::Junk),
+            ..Mailbox::flat("Junk Mail".into())
+        });
+        store.save_folder_catalog(account.into(), catalog).await?;
+    }
+    Ok(())
 }
 
 async fn seed_nested_folders(store: &Store) -> anyhow::Result<()> {
