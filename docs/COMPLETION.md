@@ -38,6 +38,23 @@ unmodified catalogue, R108's "badge" synonym and ninth portable setting had also
 broken two badge flows and the first-device review. The first-device profile scenario's portable-setting
 count is updated to nine, matching R108's synced foreign-folder preference.
 
+Follow-up for Sam's PR #7 answers (25 September 2026): broad queries now name
+the caption matching the most query words by exact, prefix or abbreviation
+(never a typo), when it covers at least half of them and more than the section
+title ("shared profile", "new mail interval", "account passwords backup"; while
+"backup", "profile workspace" and "retention" still open the section top). The
+revealed button, checkbox, shortcut row or labelled field gets a 2 px accent
+outline in its own non-capturing stack layer inside the scroller, cleared after
+1.8 s or on the next click, key or wheel. Unit tests cover the new naming rule,
+typo exclusion, control bounds, outline geometry, dismissal events and stale
+timers. The two reveal scenarios now check the outline appears and clears for a
+field (timeout), shortcut row (key), button (wheel) and compact dark checkbox
+(timeout), comparing the outline edge pixels before and after clearing; light,
+dark and 900x640 captures were reviewed. 96 selected native scenarios using
+Preferences search pass (palette, tray, notification, profile, database, badge,
+preferences, settings, mail-check, S3 and abbreviation flows), one live IMAP
+scenario skipped without credentials.
+
 Limitations: browser and Flutter have no Preferences search, so parity stays
 open. The guard does not build profile join/account reviews, SFTP host-key
 review, staged Google sign-in or failed backup runs; those captions are listed
