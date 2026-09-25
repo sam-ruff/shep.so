@@ -1,0 +1,3 @@
+disallowed-methods = [
+    { path = "iced::widget::pick_list", reason = "use ui::dropdown::pick_list so Escape closes its menu without reaching the view behind it", allow-invalid = true },
+]
