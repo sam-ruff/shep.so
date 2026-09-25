@@ -1,6 +1,7 @@
 use super::*;
+use crate::ui::dropdown::pick_list;
 use iced::Length;
-use iced::widget::{button, column, pick_list, row, space, text};
+use iced::widget::{button, column, row, space, text};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -288,7 +289,7 @@ impl App {
                 }
             }
             self.open(Dialog::FolderCreation);
-            return focus_after_layout("new-folder-name");
+            return self.focus_after_layout("new-folder-name");
         }
         if self.dialog != Some(Dialog::FolderCreation) || self.folder_creation.busy {
             return Task::none();
@@ -296,7 +297,7 @@ impl App {
         match message {
             Message::Resume(saved) => {
                 self.resume_folder_creation(saved);
-                return focus_after_layout("new-folder-name");
+                return self.focus_after_layout("new-folder-name");
             }
             Message::Account(choice) => {
                 self.folder_creation.account = choice.0;

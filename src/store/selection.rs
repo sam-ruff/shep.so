@@ -172,7 +172,11 @@ fn rebase(c: &Connection, source: MailSelectionId, endpoints: &[&str]) -> anyhow
         "DELETE FROM scratch.mail_selection_rows WHERE selection=?",
         [&key],
     )?;
-    c.execute("INSERT INTO scratch.mail_selection_rows SELECT ?,id,position,selected FROM scratch.mail_selection_rows WHERE selection=?", params![key,candidate])?;
+    // Move the ranked rows to the selection instead of copying and deleting them.
+    c.execute(
+        "UPDATE scratch.mail_selection_rows SET selection=? WHERE selection=?",
+        params![key, candidate],
+    )?;
     c.execute(
         "DELETE FROM scratch.mail_selections WHERE id=?",
         [&candidate],

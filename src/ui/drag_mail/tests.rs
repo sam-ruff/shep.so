@@ -124,6 +124,50 @@ async fn destination_rules_cover_mixed_accounts_missing_folders_pop3_and_inbox_a
     );
 }
 #[tokio::test]
+async fn logical_special_folders_accept_the_accounts_special_use_folder() {
+    use crate::folders::{FolderRole, Mailbox};
+    let (mut app, store, _) = fixture().await;
+    store
+        .save_folder_catalog(
+            "a".into(),
+            vec![
+                Mailbox::flat("INBOX".into()),
+                Mailbox {
+                    role: Some(FolderRole::Junk),
+                    ..Mailbox::flat("Junk Mail".into())
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    app.workspace = Arc::new(store.workspace().await.unwrap());
+    let mail = app
+        .page
+        .rows
+        .iter()
+        .find(|m| m.account_id == "a")
+        .unwrap()
+        .clone();
+    let rules = app.drag_rules();
+    let single = |mail: &Mail| Payload::Single(Box::new(mail.clone()), None);
+    assert_eq!(rules.check(&single(&mail), &target(None, "Junk")), Ok(()));
+    assert!(
+        rules
+            .check(&single(&mail), &target(None, "Trash"))
+            .unwrap_err()
+            .contains("unavailable")
+    );
+    let mut filed = mail.clone();
+    filed.folder = "Junk Mail".into();
+    assert!(
+        rules
+            .check(&single(&filed), &target(None, "Junk"))
+            .unwrap_err()
+            .contains("already")
+    );
+}
+
+#[tokio::test]
 async fn drop_uses_dragged_metadata_while_another_body_is_open_and_projects_immediately() {
     let (mut app, _, _) = fixture().await;
     let (sender, mut commands) = engine::CommandSender::network_test_channel();

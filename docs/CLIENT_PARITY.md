@@ -122,6 +122,14 @@ gaps in TODO. Native unit/protocol tests and five new real-control scenarios pas
 with reviewed light and compact dark captures. Existing browser ownership and receipt journals remain authoritative;
 the shared type alone establishes neither behavioural nor provider parity.
 
+22 September desktop destination follow-up: desktop moves resolve logical
+Archive/Trash/Junk names from a fresh LIST before the first folder sync, fall back
+to RFC 2342 NAMESPACE when neither `LIST "" ""` nor the reference listing reports
+a root, and name the acknowledged physical folder in the move toast. The NAMESPACE
+exchange lives in `shared/mail-core`, but the browser and Flutter have no
+special-use destination resolution, fresh-listing fallback or acknowledged-folder
+toast label yet; these remain active parity gaps.
+
 13 September desktop follow-up: verify fresh Move/Delete after a kept recovery
 copy's original reappears, library-backed HTML word/line selection, selectable
 subjects, large-message receipt and the standard Spam shortcut. Browser and
@@ -204,6 +212,7 @@ Every desktop feature/default/provider change must update this matrix and the co
 | Light/Dark/System, approved logo | Implemented | Implemented; saved device preferences | Implemented; saved browser preferences |
 | Visual likeness to the desktop (R80) | Reference shadcn-style palette, typography, spacing, controls and states | Desktop tokens, type scale, icon set, controls and states applied; reviewed light/dark montages and saved captures in `flutter/e2e/web.mjs` and `theme_test.dart`. Open: touch adaptations (composer actions in the app bar, full-bleed rows, unread-only header), device and Apple review | Desktop tokens, custom selects/checkboxes, icons, reader and Preferences layout applied; saved captures in `web/e2e/visual-parity.spec.ts`. Open: light muted text kept darker for the contrast gate, no tabbed Preferences sections, formatted-frame styles unreviewed |
 | Pane resizing, shortcuts and capture safety | Implemented | Touch layout; full shortcut parity open | Saved sidebar/list resizing; remapping/disable, retained shortcut capture/held presses through background completion, conflict/cancel/current-setting preservation, native action Enter/Space and focused-row reader bindings verified; complete keymap/focus behavior open |
+| Dropdown keyboard dismissal | Implemented: an open pick list takes every key; Escape/Tab close only the menu, never a dialog, composer, Find or mail shortcut, and the covered control takes the next click (`ui::dropdown`, saved `test_dropdown_*` flows) | OPEN: Flutter dropdown menus not reviewed in this wave | Native `<select>` popups are browser-owned and shortcuts ignore select targets; no change needed, no saved popup evidence |
 | Contacts, remote-image exceptions and safe HTML | Selectable HTML integrated from upstream 1968e37 | Shared confined HTML implemented; external images blocked; contacts/exceptions/loading open | Sender active content removed, resources converted off-thread, inherited CSP permits only the fixed runtime, opaque sandbox denies app access; automatic remote images blocked, contacts/exceptions/loading open |
 | Google OAuth/refresh/grants and keychain lifecycle | One **Sign in with Google** button with Shep's compiled-in Desktop OAuth client (no pasted credentials), loopback PKCE, cancel and bounded wait; feature-scoped Drive/Calendar consent, staged activation and refresh tested; self-configured grants keep refreshing. Sam's real client and a live audit remain | Native SDK sign-in, requested/saved permissions and durable local disconnect pass host, Android, Appium and offline preview-browser checks. Safe account switching, automatic session restore, provider integration and live/Apple execution remain open; SDK tokens stay outside preferences | Google beta gate tested in Rust and real HTTPS browser flow; provider grants/credential lifecycle open |
 | Encrypted Local/Drive backup, journal, retention/restore | Implemented; multiple Local, Drive, S3, SFTP and FTP/FTPS destinations with per-destination formats, schedules, retention and history arrived from main (R32) | Open | Open; browser file/Drive adapters and client-side encryption required |
