@@ -85,11 +85,69 @@ fn with_role_aliases(
     Ok(expanded)
 }
 
+/// A condition over `alias` and the values it binds, in order.
+pub(super) type Filter = (String, Vec<Value>);
+
+/// Hides mail whose projected or physical account has a committed removal.
+///
+/// The cache table only needs the removed accounts that still own mail, so a
+/// completed cleanup adds no per-row work and page counts stay on covering
+/// indexes. Projected views can show a pending move under its destination
+/// account, so they check every removal with uncorrelated subqueries that run
+/// once per statement. Run the returned condition in the same read transaction.
+pub(super) fn removed_accounts_filter(
+    c: &Connection,
+    alias: &str,
+    source: &str,
+) -> anyhow::Result<Option<Filter>> {
+    const REMOVED: &str = "SELECT id FROM connection_tombstones WHERE kind='account'";
+    if source != "messages" {
+        let removed: bool = c.query_row(&format!("SELECT EXISTS({REMOVED})"), [], |r| r.get(0))?;
+        if !removed {
+            return Ok(None);
+        }
+        let physical = format!(
+            "SELECT physical.id FROM main.messages physical WHERE physical.account IN ({REMOVED})"
+        );
+        return Ok(Some((
+            format!("{alias}.account NOT IN ({REMOVED}) AND {alias}.id NOT IN ({physical})"),
+            Vec::new(),
+        )));
+    }
+    let owners = c
+        .prepare(&format!(
+            "{REMOVED} AND EXISTS(SELECT 1 FROM main.messages m WHERE m.account=connection_tombstones.id)"
+        ))?
+        .query_map([], |r| r.get::<_, String>(0).map(Value::from))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if owners.is_empty() {
+        return Ok(None);
+    }
+    let placeholders = vec!["?"; owners.len()].join(",");
+    Ok(Some((
+        format!("{alias}.account NOT IN ({placeholders})"),
+        owners,
+    )))
+}
+
+/// Unread Inbox mail per account across the whole cache, for launcher badges.
+pub(super) fn inbox_unread_query(c: &Connection, source: &str) -> anyhow::Result<Filter> {
+    let (removed, values) = removed_accounts_filter(c, "m", source)?
+        .map(|(filter, values)| (format!(" AND {filter}"), values))
+        .unwrap_or_default();
+    Ok((
+        format!(
+            "SELECT account,COUNT(*) FROM {source} m WHERE folder='INBOX' AND unread=1{removed} GROUP BY account"
+        ),
+        values,
+    ))
+}
+
 impl Plan {
     pub fn new(c: &Connection, query: &MailQuery) -> anyhow::Result<Self> {
         let scope = query.search_scope();
         let query = scope.as_ref();
-        let mut filters = vec!["NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND (t.id=messages.account OR t.id=(SELECT physical.account FROM main.messages physical WHERE physical.id=messages.id)))".to_string()];
+        let mut filters = vec!["1=1".to_string()];
         let mut values = Vec::new();
         let sent = "((folder='Sent' AND (id LIKE '%:local-sent-%' OR account NOT IN (SELECT account FROM sent_folders))) OR (account,folder) IN (SELECT account,folder FROM sent_folders))";
         let prefix = if let Some(folders) = &query.folders {
@@ -163,6 +221,11 @@ impl Plan {
                 _ => "read_recovered_bulk",
             };
         }
+        // Bindings follow filter order; the search binding comes last.
+        if let Some((removed, bindings)) = removed_accounts_filter(c, "messages", source)? {
+            filters.push(removed);
+            values.extend(bindings);
+        }
         let mut from = format!("{source} AS messages");
         if !search.is_empty() {
             filters.push("mail_search.mail_search MATCH ?".into());
@@ -187,12 +250,16 @@ impl Plan {
         Ok(plan)
     }
 
+    fn counts_query(&self) -> String {
+        format!(
+            "{}SELECT COUNT(*),COALESCE(SUM(unread),0) FROM {} WHERE {}",
+            self.prefix, self.from, self.condition
+        )
+    }
+
     pub fn counts(&self, c: &Connection) -> anyhow::Result<(usize, usize)> {
         Ok(c.query_row(
-            &format!(
-                "{}SELECT COUNT(*),COALESCE(SUM(unread),0) FROM {} WHERE {}",
-                self.prefix, self.from, self.condition
-            ),
+            &self.counts_query(),
             rusqlite::params_from_iter(&self.values),
             |row| {
                 Ok((
@@ -568,6 +635,90 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(subjects(physical), ["binned", "plain-folder"]);
+    }
+
+    fn plan_steps(c: &Connection, sql: &str, values: &[Value]) -> anyhow::Result<Vec<String>> {
+        Ok(c.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?
+            .query_map(rusqlite::params_from_iter(values), |r| {
+                r.get::<_, String>(3)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    #[tokio::test]
+    async fn page_counts_check_removed_accounts_once_per_statement() -> anyhow::Result<()> {
+        let store = Store::memory()?;
+        let unread = |account: &str, subject: &str| {
+            parse_mail(
+                account,
+                subject,
+                "INBOX",
+                format!("Subject: {subject}\r\n\r\nbody").into_bytes(),
+                true,
+                false,
+            )
+        };
+        store
+            .upsert(vec![unread("kept", "kept")?, unread("removed", "hidden")?])
+            .await?;
+        let inbox = MailQuery {
+            folder: "INBOX".into(),
+            ..Default::default()
+        };
+        let query = inbox.clone();
+        store
+            .run(move |c| {
+                // A per-row removal check turned the 100,000-message page
+                // count from a covering index scan into a table walk.
+                let covered = |c: &Connection| -> anyhow::Result<()> {
+                    let plan = Plan::new(c, &query)?;
+                    let (badge, values) = inbox_unread_query(c, "messages")?;
+                    for steps in [
+                        plan_steps(c, &plan.counts_query(), &plan.values)?,
+                        plan_steps(c, &badge, &values)?,
+                    ] {
+                        assert!(steps.iter().any(|s| s.contains("COVERING INDEX")), "{steps:?}");
+                        assert!(!steps.iter().any(|s| s.contains("SUBQUERY")), "{steps:?}");
+                    }
+                    Ok(())
+                };
+                covered(c)?;
+                let remove = |account: &str| {
+                    c.execute(
+                        "INSERT INTO connection_tombstones(kind,id,revision) VALUES('account',?,1)",
+                        [account],
+                    )
+                };
+                // A completed cleanup leaves only the tombstone behind.
+                remove("cleaned")?;
+                assert!(removed_accounts_filter(c, "messages", "messages")?.is_none());
+                remove("removed")?;
+                covered(c)?;
+                let plan = Plan::new(c, &query)?;
+                let (ordered, values) = plan.ordered("messages.id");
+                let (badge, badge_values) = inbox_unread_query(c, "visible_mail")?;
+                let (projected, _) = removed_accounts_filter(c, "messages", "visible_mail")?
+                    .ok_or_else(|| anyhow::anyhow!("a projected view checks every removal"))?;
+                for steps in [
+                    plan_steps(c, &format!("{ordered} LIMIT 50"), &values)?,
+                    plan_steps(c, &badge, &badge_values)?,
+                    plan_steps(
+                        c,
+                        &format!("SELECT COUNT(*) FROM visible_mail AS messages WHERE folder='INBOX' AND {projected}"),
+                        &[],
+                    )?,
+                ] {
+                    assert!(!steps.iter().any(|s| s.contains("CORRELATED")), "{steps:?}");
+                }
+                Ok(())
+            })
+            .await?;
+        let page = store.query(inbox).await?;
+        assert_eq!(page.total, 1);
+        assert_eq!(page.rows[0].account_id, "kept");
+        assert_eq!(page.inbox_unread.len(), 1);
+        assert_eq!(page.inbox_unread.get("kept"), Some(&1));
+        Ok(())
     }
 
     #[tokio::test]

@@ -7,6 +7,7 @@ use async_imap::imap_proto::{MailboxDatum, Response, Status};
 use async_imap::types::{Capabilities, NameAttribute};
 
 mod creation;
+mod namespace;
 pub use creation::{ensure_exact, exists_exact};
 
 fn role(attributes: &[NameAttribute<'_>]) -> Option<FolderRole> {
@@ -52,7 +53,7 @@ pub(super) fn mailbox(
 pub struct ImapFolders<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug> {
     session: async_imap::Session<T>,
     encoding: NameEncoding,
-    create_special_use: bool,
+    extensions: creation::Extensions,
 }
 
 impl ImapFolders<Tls> {
@@ -77,7 +78,7 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
         Ok(Self {
             session,
             encoding: encoding(&capabilities),
-            create_special_use: creation::create_special_use(&capabilities),
+            extensions: creation::Extensions::from(&capabilities),
         })
     }
 }
@@ -189,7 +190,7 @@ mod tests {
             ImapFolders {
                 session,
                 encoding: NameEncoding::ImapUtf7,
-                create_special_use: false,
+                extensions: Default::default(),
             },
             server,
         )

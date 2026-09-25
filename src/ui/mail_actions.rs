@@ -186,6 +186,11 @@ impl App {
         record.stage.unsubmitted().then_some(&record.original)
     }
 
+    /// Explains a durable move the server refused and this device completed.
+    pub(super) fn moved_on_this_device(&mut self, source_folder: &str) {
+        self.notice(local_only_notice(source_folder), true);
+    }
+
     /// The server refused this row's move; it sits at the destination on this
     /// device only until a later retry succeeds.
     pub(super) fn local_only_move(&self, id: &str) -> bool {
@@ -527,6 +532,8 @@ impl App {
                     record.original = entry.mail.clone();
                     record.receipt = Some(receipt.clone());
                 }
+                self.action_toasts
+                    .acknowledged(entry.toast, &receipt.account, &receipt.folder);
                 self.confirm_move_display(
                     entry.recovered.as_ref().unwrap_or(&entry.mail),
                     &receipt,

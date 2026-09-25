@@ -43,6 +43,9 @@ class ProfileDriveFixture:
         self.updated = False
         self.release = threading.Event()
         self.upload_held = threading.Event()
+        # Only the first slow upload waits: a close can then interrupt it, while
+        # the resumed setup does not scale with the remaining record count.
+        self.slow_upload_pending = mode == "slow-upload"
         if mode.startswith("existing"):
             self.seed_existing()
         if mode == "existing-passwords":
@@ -195,7 +198,8 @@ class ProfileDriveFixture:
                 if owner.mode == "held-upload" and not owner.release.is_set():
                     owner.upload_held.set()
                     owner.release.wait()
-                if owner.mode == "slow-upload":
+                if owner.slow_upload_pending:
+                    owner.slow_upload_pending = False
                     time.sleep(1)
                 self.reply(201, metadata)
 
