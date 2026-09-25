@@ -1027,6 +1027,45 @@ mod tests {
 
     #[cfg(feature = "test-support")]
     #[tokio::test]
+    async fn refused_durable_archive_reports_its_device_only_move() {
+        let (engine, _, original) = scripted_engine(ScriptedReply::Refuse).await;
+        let lineage = engine
+            .store
+            .query(MailQuery::default())
+            .await
+            .unwrap()
+            .lineages[&original.id]
+            .clone();
+        let (output, mut events) = futures::channel::mpsc::channel(64);
+        let archive = crate::bulk::Action::Move {
+            account: None,
+            folder: "Archive".into(),
+        };
+        let admission =
+            Command::AdmitMail("refused".into(), original.clone(), archive, Some(lineage));
+        engine.execute(admission, output.clone()).await.unwrap();
+        let (sender, input) = crate::engine::CommandSender::channel();
+        drop(sender);
+        let collect = async {
+            let mut sources = Vec::new();
+            while let Some(event) = events.next().await {
+                if let Event::BulkMovedLocally(source) = event {
+                    sources.push(source);
+                }
+            }
+            sources
+        };
+        let owner = async move { engine.clone().run_bulk_queue(input.bulk, output).await };
+        let (sources, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(collect, owner)
+        })
+        .await
+        .expect("the refused archive finishes on this device");
+        assert_eq!(sources, std::slice::from_ref(&original.folder));
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
     async fn refused_server_move_completes_on_this_device_and_a_later_check_finishes_it() {
         use crate::mail_actions::journal::MoveStage;
         let (mut engine, scripted, original) = scripted_engine(ScriptedReply::Refuse).await;

@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 import tempfile
 import subprocess
@@ -7,7 +8,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from gnome_activation import cleanup_all, desktop_entry, fixture_processes, notifier_items, require_stable, stop_process
+from gnome_activation import (cleanup_all, desktop_entry, fixture_processes, notifier_items, require_stable,
+                              start_system_bus, stop_process)
 
 
 class GnomeActivationTests(unittest.TestCase):
@@ -66,3 +68,24 @@ class GnomeActivationTests(unittest.TestCase):
                 process.mkdir()
                 (process / "cmdline").write_bytes("\0".join(arguments).encode() + b"\0")
             self.assertEqual(fixture_processes("/owned/shep", "/owned/state.json", root), [11])
+
+    @unittest.skipUnless(shutil.which("dbus-daemon") and shutil.which("busctl"), "dbus-daemon and busctl are required")
+    def test_owned_system_bus_has_no_services_and_marks_the_lock_notice_shown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "run").mkdir()
+            desktop = Mock(directory=root, env={"XDG_RUNTIME_DIR": str(root / "run"),
+                                                "XDG_DATA_HOME": str(root / "data")})
+            bus = start_system_bus(desktop)
+            try:
+                address = desktop.env["DBUS_SYSTEM_BUS_ADDRESS"]
+                self.assertEqual(address, f"unix:path={root / 'run' / 'system-bus'}")
+                self.assertIn("<type>system</type>", (root / "system-bus.conf").read_text())
+                names = json.loads(subprocess.check_output(
+                    ["busctl", f"--address={address}", "--json=short", "call", "org.freedesktop.DBus",
+                     "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListActivatableNames"]))
+                self.assertEqual(names["data"], [["org.freedesktop.DBus"]])
+                self.assertTrue((root / "data/gnome-shell/lock-warning-shown").exists())
+            finally:
+                stop_process(bus)
+            self.assertIsNotNone(bus.poll())
