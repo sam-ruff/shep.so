@@ -1,5 +1,36 @@
 # Completion audit
 
+## Move destination follow-ups, 23 September 2026
+
+Branch `fix/move-destination-followups` (desktop, R101 follow-ups). Move toasts
+now name the folder the receipt reports, through the account's decoded folder
+label: a drop on unified Spam reads "Moved 1 message to Junk" while pending and
+"Junk Mail" once acknowledged. Receipts that disagree (a group across accounts)
+keep the requested name; Archive and Delete keep their verbs. `shared/mail-core`
+adds an RFC 2342 NAMESPACE parser and a raw-stream exchange, used as the last
+discovery fallback on servers advertising NAMESPACE after `LIST "" ""` and the
+reference listing report nothing. The exchange reads only up to its own tagged
+completion; tagged NO/BAD, BYE, partial data, unexpected lines and oversized
+replies are errors and retire the session. A logical Archive/Trash/Junk move
+before the first folder sync lists the server's folders through the injected
+`MoveConnections` seam and saves the listing; if the listing fails, the move uses
+the literal name as before and nothing is cached, so the next move lists again
+(Sam's decision on PR #6). Dragging onto the unified Archive/Trash/Spam rows now accepts an
+account whose folder exists only under its special-use name; it was rejected as
+unavailable. Move journal and recovery semantics are unchanged.
+
+Tests: parser cases from RFC 2342 plus literals, extensions and malformed input;
+raw exchange tests for unsolicited lines, stopping at the tagged completion,
+refusals, partial replies and size bounds; loopback IMAP transcripts for an empty
+root and reference listing falling back to NAMESPACE, an `INBOX.` personal
+prefix, NO/BAD/partial NAMESPACE never creating, and a missing personal
+namespace; engine tests for the fresh listing and a failed listing; toast and drag
+rule unit tests. The new native flow
+`test_move_toast_names_the_special_use_folder_the_server_acknowledged` uses the
+`special_use_folders` fixture; light and compact dark captures were reviewed.
+Limitations: no live server lacking a `LIST "" ""` root was tried; browser and
+Flutter parity remain open in TODO.
+
 ## Native dropdown keyboard dismissal (R15/R63), 22 September 2026
 
 Branch `fix/dropdown-escape-dismissal`, awaiting integration. Every native pick

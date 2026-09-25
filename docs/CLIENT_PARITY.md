@@ -122,6 +122,14 @@ gaps in TODO. Native unit/protocol tests and five new real-control scenarios pas
 with reviewed light and compact dark captures. Existing browser ownership and receipt journals remain authoritative;
 the shared type alone establishes neither behavioural nor provider parity.
 
+22 September desktop destination follow-up: desktop moves resolve logical
+Archive/Trash/Junk names from a fresh LIST before the first folder sync, fall back
+to RFC 2342 NAMESPACE when neither `LIST "" ""` nor the reference listing reports
+a root, and name the acknowledged physical folder in the move toast. The NAMESPACE
+exchange lives in `shared/mail-core`, but the browser and Flutter have no
+special-use destination resolution, fresh-listing fallback or acknowledged-folder
+toast label yet; these remain active parity gaps.
+
 13 September desktop follow-up: verify fresh Move/Delete after a kept recovery
 copy's original reappears, library-backed HTML word/line selection, selectable
 subjects, large-message receipt and the standard Spam shortcut. Browser and
