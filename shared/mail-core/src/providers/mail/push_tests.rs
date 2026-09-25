@@ -138,7 +138,11 @@ async fn run_script(script: Script) -> Run {
 
 const CAPABLE: (&str, &str) = (
     "CAPABILITY",
-    "* CAPABILITY IMAP4rev1 IDLE CONDSTORE QRESYNC\r\n$TAG OK done\r\n",
+    "* CAPABILITY IMAP4rev1 IDLE CONDSTORE\r\n$TAG OK done\r\n",
+);
+const QRESYNC: (&str, &str) = (
+    "CAPABILITY",
+    "* CAPABILITY IMAP4rev1 IDLE ENABLE CONDSTORE QRESYNC\r\n$TAG OK done\r\n",
 );
 const SELECT: (&str, &str) = (
     "SELECT \"INBOX\"",
@@ -266,6 +270,86 @@ async fn a_dropped_connection_is_an_error_for_the_caller_to_retry() {
     assert_eq!(
         run.pushes.iter().map(|(push, _)| *push).collect::<Vec<_>>(),
         [Push::Connected]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn qresync_is_enabled_before_select_and_a_live_vanished_reports_a_change() {
+    let run = run(
+        vec![
+            QRESYNC,
+            ("ENABLE QRESYNC", "* ENABLED QRESYNC\r\n$TAG OK enabled\r\n"),
+            SELECT,
+            ("IDLE", "+ idling\r\n* VANISHED 7\r\n"),
+            DONE,
+            IDLING,
+            DONE,
+            LOGOUT,
+        ],
+        Some(6),
+    )
+    .await;
+    assert_eq!(
+        run.names(),
+        [
+            "CAPABILITY",
+            "ENABLE QRESYNC",
+            SELECT.0,
+            "IDLE",
+            "DONE",
+            "IDLE",
+            "DONE",
+            "LOGOUT"
+        ]
+    );
+    assert_eq!(
+        run.pushes.iter().map(|(push, _)| *push).collect::<Vec<_>>(),
+        [Push::Connected, Push::Changed]
+    );
+    assert!(
+        matches!(run.result, Ok(WatchEnd::Stopped)),
+        "{:?}",
+        run.result
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_refused_qresync_keeps_watching_with_expunge() {
+    let run = run(
+        vec![
+            QRESYNC,
+            ("ENABLE QRESYNC", "$TAG NO not today\r\n"),
+            SELECT,
+            ("IDLE", "+ idling\r\n* 2 EXPUNGE\r\n"),
+            DONE,
+            IDLING,
+            DONE,
+            LOGOUT,
+        ],
+        Some(6),
+    )
+    .await;
+    assert_eq!(
+        run.names(),
+        [
+            "CAPABILITY",
+            "ENABLE QRESYNC",
+            SELECT.0,
+            "IDLE",
+            "DONE",
+            "IDLE",
+            "DONE",
+            "LOGOUT"
+        ]
+    );
+    assert_eq!(
+        run.pushes.iter().map(|(push, _)| *push).collect::<Vec<_>>(),
+        [Push::Connected, Push::Changed]
+    );
+    assert!(
+        matches!(run.result, Ok(WatchEnd::Stopped)),
+        "{:?}",
+        run.result
     );
 }
 
