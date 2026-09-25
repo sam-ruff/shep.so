@@ -36,8 +36,8 @@ def main():
     e2e = load_e2e()
     client = e2e.McpClient()
     try:
-        artifacts = Path(client.call("desktop.start")["artifacts"])
-        client.batch(*e2e.store_screenshot_tour())
+        artifacts = Path(client.call("desktop.start", store_capture=True)["artifacts"])
+        client.batch(e2e.check("test_badge", False), *e2e.store_screenshot_tour())
         args.output.mkdir(parents=True, exist_ok=True)
         for name in e2e.STORE_SCREENSHOTS:
             convert(artifacts / f"{name}.webp", args.output / f"{name}.png")
