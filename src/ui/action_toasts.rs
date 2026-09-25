@@ -14,22 +14,49 @@ pub(super) struct Toast {
     items: HashMap<u64, usize>,
     updated: Instant,
     restored: bool,
+    destination: Destination,
+}
+
+/// The physical folder the counted moves reached, which can differ from the
+/// logical name the action asked for, such as `Junk Mail` for `Junk`.
+#[derive(Default)]
+enum Destination {
+    #[default]
+    Requested,
+    Acknowledged {
+        account: String,
+        folder: String,
+    },
+    /// Receipts named different folders, so only the requested name is true.
+    Mixed,
 }
 
 impl Toast {
+    fn new(account: &str, folder: &str, now: Instant) -> Self {
+        Self {
+            account: account.into(),
+            folder: folder.into(),
+            items: HashMap::new(),
+            updated: now,
+            restored: false,
+            destination: Destination::Requested,
+        }
+    }
+    /// The account and wire folder the label names.
+    fn named(&self) -> (&str, &str) {
+        match &self.destination {
+            Destination::Acknowledged { account, folder } => (account, folder),
+            Destination::Requested | Destination::Mixed => (&self.account, &self.folder),
+        }
+    }
+    #[cfg(test)]
     pub fn label(&self) -> String {
-        self.label_with_folder(&self.folder)
+        self.label_with_folder(self.named().1)
     }
     pub fn display_label(&self, workspace: &crate::store::Workspace) -> String {
-        let folder = workspace.folder_label(
-            (!self.account.is_empty()).then_some(self.account.as_str()),
-            &self.folder,
-        );
-        if folder == self.folder {
-            self.label()
-        } else {
-            self.label_with_folder(&folder)
-        }
+        let (account, folder) = self.named();
+        let display = workspace.folder_label((!account.is_empty()).then_some(account), folder);
+        self.label_with_folder(&display)
     }
     fn label_with_folder(&self, display_folder: &str) -> String {
         let count: usize = self.items.values().sum();
@@ -41,7 +68,7 @@ impl Toast {
         } else if self.folder.eq_ignore_ascii_case("Trash") {
             format!("Deleted {count} {noun}")
         } else {
-            let folder = if self.folder.eq_ignore_ascii_case("INBOX") {
+            let folder = if display_folder.eq_ignore_ascii_case("INBOX") {
                 "Inbox"
             } else {
                 display_folder
@@ -71,28 +98,18 @@ impl ActionToasts {
         self.expire(now);
         self.sequence += 1;
         let token = self.sequence;
-        let toast = self.current.get_or_insert_with(|| Toast {
-            account: account.into(),
-            folder: folder.into(),
-            items: HashMap::new(),
-            updated: now,
-            restored: false,
-        });
+        let toast = self
+            .current
+            .get_or_insert_with(|| Toast::new(account, folder, now));
         let standard_folder =
             folder.eq_ignore_ascii_case("Archive") || folder.eq_ignore_ascii_case("Trash");
         let same_folder = if standard_folder {
             toast.folder.eq_ignore_ascii_case(folder)
         } else {
-            toast.folder == folder
+            toast.folder == folder || toast.named() == (account, folder)
         };
         if toast.restored || !same_folder || (!standard_folder && toast.account != account) {
-            *toast = Toast {
-                account: account.into(),
-                folder: folder.into(),
-                items: HashMap::new(),
-                updated: now,
-                restored: false,
-            };
+            *toast = Toast::new(account, folder, now);
         }
         toast.items.insert(token, 1);
         toast.updated = now;
@@ -126,12 +143,32 @@ impl ActionToasts {
     }
     pub fn restored_counts(&mut self, tokens: Vec<(u64, usize)>, now: Instant) {
         self.current = (!tokens.is_empty()).then(|| Toast {
-            account: String::new(),
-            folder: String::new(),
             items: tokens.into_iter().collect(),
-            updated: now,
             restored: true,
+            ..Toast::new("", "", now)
         });
+    }
+    /// Records the folder a counted move's receipt reports. It neither refreshes
+    /// the deadline nor recreates a dismissed or expired toast.
+    pub fn acknowledged(&mut self, token: u64, account: &str, folder: &str) {
+        let Some(toast) = self
+            .current
+            .as_mut()
+            .filter(|toast| !toast.restored && toast.items.contains_key(&token))
+        else {
+            return;
+        };
+        toast.destination = match &toast.destination {
+            Destination::Requested => Destination::Acknowledged {
+                account: account.into(),
+                folder: folder.into(),
+            },
+            Destination::Acknowledged {
+                account: known_account,
+                folder: known_folder,
+            } if known_account == account && known_folder == folder => return,
+            Destination::Acknowledged { .. } | Destination::Mixed => Destination::Mixed,
+        };
     }
     pub fn failed(&mut self, token: u64) {
         if let Some(toast) = &mut self.current {
@@ -204,6 +241,48 @@ mod tests {
         assert_eq!(
             toasts.current.as_ref().unwrap().label(),
             "Moved 1 message to Inbox"
+        );
+    }
+
+    #[test]
+    fn receipts_name_the_acknowledged_folder_only_when_they_agree() {
+        let label = |toasts: &ActionToasts| toasts.current.as_ref().map(Toast::label);
+        let mut toasts = ActionToasts::default();
+        let now = Instant::now();
+        let first = toasts.add("work", "Junk", now);
+        let second = toasts.add("work", "Junk", now);
+        toasts.acknowledged(99, "work", "Elsewhere");
+        assert_eq!(label(&toasts).unwrap(), "Moved 2 messages to Junk");
+        toasts.acknowledged(first, "work", "Junk Mail");
+        toasts.acknowledged(second, "work", "Junk Mail");
+        assert_eq!(label(&toasts).unwrap(), "Moved 2 messages to Junk Mail");
+        toasts.acknowledged(second, "work", "Spam");
+        assert_eq!(
+            label(&toasts).unwrap(),
+            "Moved 2 messages to Junk",
+            "conflicting receipts fall back to the requested name"
+        );
+
+        let group = toasts.add_group("", "Junk", 3, now);
+        toasts.acknowledged(group, "work", "Junk Mail");
+        toasts.acknowledged(group, "personal", "Spam");
+        assert_eq!(label(&toasts).unwrap(), "Moved 3 messages to Junk");
+
+        let archived = toasts.add("work", "Archive", now);
+        toasts.acknowledged(archived, "work", "Archives");
+        assert_eq!(label(&toasts).unwrap(), "Archived 1 message");
+
+        let moved = toasts.add("work", "Junk", now);
+        toasts.restored(vec![moved], now);
+        toasts.acknowledged(moved, "work", "Junk Mail");
+        assert_eq!(label(&toasts).unwrap(), "Restored 1 message");
+
+        let late = toasts.add("work", "Junk", now);
+        toasts.expire(now + LIFETIME);
+        toasts.acknowledged(late, "work", "Junk Mail");
+        assert!(
+            toasts.current.is_none(),
+            "a receipt never recreates a toast"
         );
     }
 }

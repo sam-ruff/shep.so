@@ -398,3 +398,38 @@ async fn move_feedback_decodes_labels_without_changing_action_or_undo_identity()
         "Moved 1 message to Projects/&ZeVnLIqe-"
     );
 }
+
+#[tokio::test]
+async fn move_feedback_names_the_acknowledged_folder_with_its_account_label() {
+    let (mut app, store, _commands) = fixture().await;
+    store
+        .save_folder_catalog(
+            "a".into(),
+            vec![Mailbox {
+                name: "&ZeVnLIqe-".into(),
+                delimiter: Some('/'),
+                selectable: true,
+                encoding: NameEncoding::ImapUtf7,
+                no_inferiors: false,
+                non_existent: false,
+                role: Some(crate::folders::FolderRole::Junk),
+            }],
+        )
+        .await
+        .unwrap();
+    app.workspace = Arc::new(store.workspace().await.unwrap());
+    let token = app.action_toasts.add("a", "Junk", Instant::now());
+    let label = |app: &App| {
+        app.action_toasts
+            .current
+            .as_ref()
+            .unwrap()
+            .display_label(&app.workspace)
+    };
+    assert_eq!(label(&app), "Moved 1 message to Junk");
+    app.action_toasts.acknowledged(token, "a", "&ZeVnLIqe-");
+    assert_eq!(label(&app), "Moved 1 message to 日本語");
+    // A later move to the acknowledged physical folder counts in the same toast.
+    app.action_toasts.add("a", "&ZeVnLIqe-", Instant::now());
+    assert_eq!(label(&app), "Moved 2 messages to 日本語");
+}

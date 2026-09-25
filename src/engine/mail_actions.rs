@@ -36,15 +36,60 @@ impl Engine {
         }
         record
     }
+    /// The wire folder a logical destination such as `Trash` stands for in the
+    /// account of `mail`. A local-only copy never contacts the server, so it
+    /// resolves against the cached catalogue alone.
+    pub(super) async fn destination_for(
+        &self,
+        mail: &Mail,
+        folder: &str,
+    ) -> anyhow::Result<String> {
+        if mail.is_local_copy() {
+            let catalog = self
+                .store
+                .cached_folder_catalog(mail.account_id.clone())
+                .await?;
+            return Ok(crate::folders::resolve_destination(&catalog, folder));
+        }
+        self.resolve_destination(&mail.account_id, folder).await
+    }
     /// The wire folder a logical destination such as `Trash` stands for in
-    /// `account`, so moves and their cached rows use the physical name.
+    /// `account`, so moves and their cached rows use the physical name. Before
+    /// the first folder sync a logical name is resolved from a fresh listing
+    /// rather than guessed; a failed listing falls back to the literal name and
+    /// is not cached, so the next move lists again.
     pub(super) async fn resolve_destination(
         &self,
         account: &str,
         folder: &str,
     ) -> anyhow::Result<String> {
         let catalog = self.store.cached_folder_catalog(account.to_owned()).await?;
-        Ok(crate::folders::resolve_destination(&catalog, folder))
+        if !catalog.is_empty()
+            || self.demo
+            || crate::folders::FolderRole::for_logical_name(folder).is_none()
+        {
+            return Ok(crate::folders::resolve_destination(&catalog, folder));
+        }
+        let account = self.account(account).await?;
+        if account.protocol != Protocol::Imap {
+            return Ok(crate::folders::resolve_destination(&catalog, folder));
+        }
+        let listed = match self.move_connections.folders(account.clone()).await {
+            Ok(listed) => listed,
+            Err(error) => {
+                tracing::warn!(
+                    "Could not list folders to resolve {folder}; using the literal name: {error:#}"
+                );
+                return Ok(folder.to_owned());
+            }
+        };
+        let destination = crate::folders::resolve_destination(&listed, folder);
+        if !listed.is_empty()
+            && let Err(error) = self.store.save_folder_catalog(account.id, listed).await
+        {
+            tracing::warn!("Could not cache the folder listing taken for a move: {error:#}");
+        }
+        Ok(destination)
     }
     async fn authorize_mail_mutation(
         &self,
@@ -170,7 +215,7 @@ impl Engine {
             "The message moved since it was selected. Refresh its folder."
         );
         let mail = &current;
-        let folder = &self.resolve_destination(&mail.account_id, folder).await?;
+        let folder = &self.destination_for(mail, folder).await?;
         if mail.is_local_copy() {
             let receipt = MoveReceipt::local(mail, folder);
             self.store
@@ -960,6 +1005,9 @@ mod tests {
     #[cfg(feature = "test-support")]
     struct ScriptedMoves {
         reply: std::sync::Mutex<ScriptedReply>,
+        /// The folder listing reply, or its error text.
+        listing: std::sync::Mutex<Result<Vec<crate::folders::Mailbox>, String>>,
+        listed: std::sync::atomic::AtomicUsize,
     }
     #[cfg(feature = "test-support")]
     #[derive(Clone, Copy)]
@@ -1001,6 +1049,15 @@ mod tests {
                 });
             Ok(Box::new(connection))
         }
+        async fn folders(&self, _account: Account) -> anyhow::Result<Vec<crate::folders::Mailbox>> {
+            self.listed
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.listing
+                .lock()
+                .unwrap()
+                .clone()
+                .map_err(anyhow::Error::msg)
+        }
     }
     #[cfg(feature = "test-support")]
     async fn scripted_engine(reply: ScriptedReply) -> (Engine, Arc<ScriptedMoves>, Mail) {
@@ -1008,6 +1065,8 @@ mod tests {
         crate::test_support::seed_demo(&engine.store).await.unwrap();
         let scripted = Arc::new(ScriptedMoves {
             reply: std::sync::Mutex::new(reply),
+            listing: std::sync::Mutex::new(Ok(Vec::new())),
+            listed: Default::default(),
         });
         engine.move_connections = scripted.clone();
         engine.demo = false;
@@ -1023,6 +1082,99 @@ mod tests {
             })
             .await
             .unwrap()
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn a_logical_destination_before_the_first_folder_sync_uses_a_fresh_listing() {
+        use crate::folders::{FolderRole, Mailbox};
+        let (engine, scripted, original) = scripted_engine(ScriptedReply::Accept).await;
+        let account = original.account_id.clone();
+        engine
+            .store
+            .save_folder_catalog(account.clone(), Vec::new())
+            .await
+            .unwrap();
+        *scripted.listing.lock().unwrap() = Ok(vec![
+            Mailbox::flat("INBOX".into()),
+            Mailbox {
+                role: Some(FolderRole::Trash),
+                ..Mailbox::flat("Deleted Items".into())
+            },
+        ]);
+        let listed = || scripted.listed.load(std::sync::atomic::Ordering::SeqCst);
+        // Only logical special names need the server's catalogue.
+        assert_eq!(
+            engine
+                .resolve_destination(&account, "Projects")
+                .await
+                .unwrap(),
+            "Projects"
+        );
+        assert_eq!(listed(), 0);
+        let (output, _events) = futures::channel::mpsc::channel(32);
+        let (_, receipt) = engine
+            .change_folder(&original, "Trash", output, None)
+            .await
+            .unwrap();
+        assert_eq!(receipt.folder, "Deleted Items");
+        assert_eq!(listed(), 1);
+        assert!(
+            engine
+                .store
+                .cached_folder_catalog(account.clone())
+                .await
+                .unwrap()
+                .iter()
+                .any(|mailbox| mailbox.name == "Deleted Items")
+        );
+        assert_eq!(
+            engine.resolve_destination(&account, "Trash").await.unwrap(),
+            "Deleted Items"
+        );
+        assert_eq!(listed(), 1, "the saved listing serves later moves");
+    }
+
+    #[cfg(feature = "test-support")]
+    #[tokio::test]
+    async fn a_failed_listing_before_the_first_folder_sync_uses_the_literal_name() {
+        let (engine, scripted, original) = scripted_engine(ScriptedReply::Accept).await;
+        let account = original.account_id.clone();
+        engine
+            .store
+            .save_folder_catalog(account.clone(), Vec::new())
+            .await
+            .unwrap();
+        *scripted.listing.lock().unwrap() = Err("The server did not confirm the listing.".into());
+        let listed = || scripted.listed.load(std::sync::atomic::Ordering::SeqCst);
+        let (output, _events) = futures::channel::mpsc::channel(32);
+        let (_, receipt) = engine
+            .change_folder(&original, "Trash", output, None)
+            .await
+            .unwrap();
+        assert_eq!(receipt.folder, "Trash");
+        assert_eq!(listed(), 1);
+        assert!(
+            !in_folder(&engine.store, "INBOX")
+                .await
+                .rows
+                .iter()
+                .any(|m| m.id == original.id)
+        );
+        assert!(
+            engine
+                .store
+                .cached_folder_catalog(account.clone())
+                .await
+                .unwrap()
+                .is_empty(),
+            "a failed listing is not cached"
+        );
+        assert_eq!(
+            engine.resolve_destination(&account, "Trash").await.unwrap(),
+            "Trash"
+        );
+        assert_eq!(listed(), 2, "the next move lists again");
     }
 
     #[cfg(feature = "test-support")]
