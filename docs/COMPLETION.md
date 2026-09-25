@@ -1,5 +1,65 @@
 # Completion audit
 
+## Preferences search coverage and control reveal, 23 September 2026
+
+R99 desktop work on `feat/settings-search-coverage`. The catalogue now lists
+the captions Preferences actually renders; several earlier labels (Privacy
+sender/domain fields, Profiles switch/open, shortcut names) did not exist in the
+UI and are corrected, with keyboard shortcut labels generated from
+`shortcuts::Action`. A result names the control whose caption reads as the query
+and opens its section, scrolls the caption into view through a layout operation
+and focuses a text field on its row or directly below it. Missing captions
+leave the section open; sections now open at their top.
+
+The 18 September native regression is fixed in the catalogue, not the scenario:
+"Profiles" and "Profiles and sync" are distinct cards, but "shared" was read as
+a two-edit typo of "saved". A query word spelled like a real catalogue word or
+prefix is no longer corrected into another word, while unknown words keep typo
+matching. The same review removed the dock-badge meaning clash that R108's
+"badge" synonym introduced on Reading and layout.
+
+`settings_search/coverage.rs` renders every tab in eleven fixture states and
+fails when a laid-out caption has no catalogue title, control or description
+entry, or when a catalogue control never renders. Data, counts, binding values
+and palette samples are documented exclusions. Unit tests cover the guard's
+negative cases, anchored typo matching, control naming, ranking stability,
+synonyms and reveal generations; the reveal operation has geometry tests.
+
+Evidence: `cargo test --all-features --lib settings_search` (19 passed, one
+ignored timing test). New native scenarios
+`test_settings_search_reveals_and_focuses_individual_controls` and
+`test_settings_search_reveal_compact_dark_scrolls_clicks_and_reports_missing`
+reveal and operate controls in General, Shortcuts, Privacy, Backups and Accounts,
+including the missing and no-results paths; light, dark and 900x640 captures
+were reviewed. All 70 native scenarios that use Preferences search pass (the
+live IMAP one skips without credentials), as do the 17 `-k profile_sync` and
+`-k settings` scenarios; the TODO regression scenario passes unchanged. On the
+unmodified catalogue, R108's "badge" synonym and ninth portable setting had also
+broken two badge flows and the first-device review. The first-device profile scenario's portable-setting
+count is updated to nine, matching R108's synced foreign-folder preference.
+
+Follow-up for Sam's PR #7 answers (25 September 2026): broad queries now name
+the caption matching the most query words by exact, prefix or abbreviation
+(never a typo), when it covers at least half of them and more than the section
+title ("shared profile", "new mail interval", "account passwords backup"; while
+"backup", "profile workspace" and "retention" still open the section top). The
+revealed button, checkbox, shortcut row or labelled field gets a 2 px accent
+outline in its own non-capturing stack layer inside the scroller, cleared after
+1.8 s or on the next click, key or wheel. Unit tests cover the new naming rule,
+typo exclusion, control bounds, outline geometry, dismissal events and stale
+timers. The two reveal scenarios now check the outline appears and clears for a
+field (timeout), shortcut row (key), button (wheel) and compact dark checkbox
+(timeout), comparing the outline edge pixels before and after clearing; light,
+dark and 900x640 captures were reviewed. 96 selected native scenarios using
+Preferences search pass (palette, tray, notification, profile, database, badge,
+preferences, settings, mail-check, S3 and abbreviation flows), one live IMAP
+scenario skipped without credentials.
+
+Limitations: browser and Flutter have no Preferences search, so parity stays
+open. The guard does not build profile join/account reviews, SFTP host-key
+review, staged Google sign-in or failed backup runs; those captions are listed
+exclusions or held in descriptions. No timing measurement was taken.
+
 ## Move destination follow-ups, 23 September 2026
 
 Branch `fix/move-destination-followups` (desktop, R101 follow-ups). Move toasts
