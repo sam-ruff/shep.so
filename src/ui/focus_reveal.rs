@@ -8,9 +8,6 @@ use iced::advanced::widget::{
 use iced::widget::scrollable::AbsoluteOffset;
 use iced::{Rectangle, Vector};
 
-/// The scrollable holding Preferences content.
-pub(super) const PREFERENCES: &str = "preferences-scroll";
-
 struct Find {
     scroller: Id,
     viewport: Option<(Rectangle, Rectangle, Vector)>,

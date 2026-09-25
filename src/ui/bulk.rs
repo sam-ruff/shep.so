@@ -474,7 +474,12 @@ impl App {
     }
     pub(super) fn bulk_event(&mut self, event: Event) {
         match event {
-            Event::BulkIdentity(job, source, current) => {
+            Event::BulkIdentity(job, source, current, destination) => {
+                if let Some((account, folder)) = &destination {
+                    for (token, _) in self.bulk.tokens.iter().filter(|(_, id)| **id == job) {
+                        self.action_toasts.acknowledged(*token, account, folder);
+                    }
+                }
                 if self
                     .bulk
                     .originals
