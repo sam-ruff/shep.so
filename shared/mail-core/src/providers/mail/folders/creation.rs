@@ -2,13 +2,36 @@ use super::*;
 use crate::folder_actions::creation::{self, Connection as CreationConnection, CreateOutcome};
 use tokio::sync::Mutex;
 
+/// Optional server extensions that change how folders are discovered and created.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct Extensions {
+    /// CREATE-SPECIAL-USE: a created folder can carry its special-use attribute.
+    pub create_special_use: bool,
+    /// NAMESPACE (RFC 2342): the last discovery fallback.
+    pub namespace: bool,
+}
+impl Extensions {
+    pub(super) fn from(capabilities: &Capabilities) -> Self {
+        Self {
+            create_special_use: capabilities.has_str("CREATE-SPECIAL-USE"),
+            namespace: capabilities.has_str("NAMESPACE"),
+        }
+    }
+    fn without_special_use(self) -> Self {
+        Self {
+            create_special_use: false,
+            ..self
+        }
+    }
+}
+
 struct SessionConnection<
     'a,
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug,
 > {
     session: Mutex<&'a mut async_imap::Session<T>>,
     encoding: NameEncoding,
-    create_special_use: bool,
+    extensions: Extensions,
     usable: std::sync::atomic::AtomicBool,
 }
 
@@ -123,9 +146,39 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
         self.listing(&reference, "", true).await
     }
     async fn namespaces(&self) -> anyhow::Result<Option<Mailbox>> {
-        // imap-proto cannot decode a NAMESPACE response, and an undecodable
-        // line ends the session, so this transport never issues the command.
-        Ok(None)
+        use std::sync::atomic::Ordering;
+        if !self.extensions.namespace {
+            return Ok(None);
+        }
+        anyhow::ensure!(
+            self.usable.load(Ordering::Acquire),
+            "Reconnect before checking the folder namespace."
+        );
+        let mut session = self.session.lock().await;
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            super::namespace::exchange(session.get_mut()),
+        )
+        .await
+        .context("The server took too long to report its folder namespace.")
+        .and_then(|result| result);
+        let personal = match result {
+            Ok(personal) => personal,
+            Err(error) => {
+                self.usable.store(false, Ordering::Release);
+                return Err(error);
+            }
+        };
+        // The first personal namespace is the default for new folders.
+        Ok(personal.into_iter().next().map(|namespace| Mailbox {
+            name: namespace.prefix,
+            delimiter: namespace.delimiter,
+            selectable: false,
+            encoding: self.encoding,
+            no_inferiors: false,
+            non_existent: false,
+            role: None,
+        }))
     }
     async fn create(&self, path: String, role: Option<FolderRole>) -> CreateOutcome {
         use async_imap::error::Error;
@@ -135,7 +188,7 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
         }
         let mut session = self.session.lock().await;
         let command = async {
-            match role.filter(|_| self.create_special_use) {
+            match role.filter(|_| self.extensions.create_special_use) {
                 Some(role) => {
                     let name = match receipts::quoted(&path) {
                         Ok(name) => name,
@@ -170,18 +223,14 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
 fn connection<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug>(
     session: &mut async_imap::Session<T>,
     encoding: NameEncoding,
-    create_special_use: bool,
+    extensions: Extensions,
 ) -> SessionConnection<'_, T> {
     SessionConnection {
         session: Mutex::new(session),
         encoding,
-        create_special_use,
+        extensions,
         usable: std::sync::atomic::AtomicBool::new(true),
     }
-}
-
-pub(super) fn create_special_use(capabilities: &Capabilities) -> bool {
-    capabilities.has_str("CREATE-SPECIAL-USE")
 }
 
 /// A missing move destination named like a logical special folder is created
@@ -200,7 +249,7 @@ pub async fn ensure_exact<
         &connection(
             session,
             encoding(&capabilities),
-            create_special_use(&capabilities),
+            Extensions::from(&capabilities),
         ),
         wire_path,
         FolderRole::for_logical_name(wire_path),
@@ -219,7 +268,11 @@ pub async fn exists_exact<
         .await
         .context("The server took too long to report its capabilities.")??;
     creation::exists(
-        &connection(session, encoding(&capabilities), false),
+        &connection(
+            session,
+            encoding(&capabilities),
+            Extensions::from(&capabilities).without_special_use(),
+        ),
         wire_path,
     )
     .await
@@ -239,7 +292,7 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
 
     pub async fn ensure_folder_exact(&mut self, wire_path: &str) -> anyhow::Result<Mailbox> {
         creation::ensure(
-            &connection(&mut self.session, self.encoding, self.create_special_use),
+            &connection(&mut self.session, self.encoding, self.extensions),
             wire_path,
             None,
         )
@@ -260,9 +313,13 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
                 "The server's folder encoding changed. Refresh the saved request.".into(),
             );
         }
-        connection(&mut self.session, self.encoding, false)
-            .create(target.name.clone(), None)
-            .await
+        connection(
+            &mut self.session,
+            self.encoding,
+            self.extensions.without_special_use(),
+        )
+        .create(target.name.clone(), None)
+        .await
     }
 
     pub async fn find_planned_folder(
@@ -278,9 +335,13 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
 
     pub async fn find_folder_exact(&mut self, wire_path: &str) -> anyhow::Result<Option<Mailbox>> {
         creation::valid_path(wire_path)?;
-        let result = connection(&mut self.session, self.encoding, false)
-            .inspect(wire_path.into())
-            .await?;
+        let result = connection(
+            &mut self.session,
+            self.encoding,
+            self.extensions.without_special_use(),
+        )
+        .inspect(wire_path.into())
+        .await?;
         if let Some(mailbox) = &result {
             anyhow::ensure!(
                 mailbox.selectable && !mailbox.non_existent,
@@ -296,7 +357,11 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
         name: &str,
     ) -> anyhow::Result<Mailbox> {
         creation::valid_path(name).map_err(|error| creation::PlanRejected(error.to_string()))?;
-        let connection = connection(&mut self.session, self.encoding, false);
+        let connection = connection(
+            &mut self.session,
+            self.encoding,
+            self.extensions.without_special_use(),
+        );
         let root = creation::discover_namespace(&connection, parent.unwrap_or("")).await?;
         let parent = match parent {
             Some(path) => {
@@ -414,14 +479,18 @@ mod tests {
                 server.read_line(&mut line).await.expect("command");
                 let (tag, command) = line.trim_end().split_once(' ').expect("tagged command");
                 assert_eq!(command, expected);
-                if response == "EOF" {
-                    return;
-                }
+                // A trailing EOF closes the connection after any partial reply.
+                let (response, close) = response
+                    .strip_suffix("EOF")
+                    .map_or((response, false), |partial| (partial, true));
                 server
                     .get_mut()
                     .write_all(response.replace("$TAG", tag).as_bytes())
                     .await
                     .expect("response");
+                if close {
+                    return;
+                }
             }
             line.clear();
             let bytes = tokio::time::timeout(Duration::from_secs(1), server.read_line(&mut line))
@@ -437,7 +506,7 @@ mod tests {
             let mut folders = ImapFolders {
                 session,
                 encoding: NameEncoding::ImapUtf7,
-                create_special_use: false,
+                extensions: Extensions::default(),
             };
             action(&mut folders).await;
         };
@@ -517,7 +586,11 @@ mod tests {
                 ),
             ],
             async |folders| {
-                let adapter = connection(&mut folders.session, folders.encoding, false);
+                let adapter = connection(
+                    &mut folders.session,
+                    folders.encoding,
+                    Extensions::default(),
+                );
                 assert_eq!(
                     creation::ensure(&adapter, "Archive", None)
                         .await
@@ -619,7 +692,14 @@ mod tests {
                 ("LIST \"Archive\" \"\"", "$TAG OK nothing\r\n"),
             ],
             async |folders| {
-                let adapter = connection(&mut folders.session, folders.encoding, true);
+                let adapter = connection(
+                    &mut folders.session,
+                    folders.encoding,
+                    Extensions {
+                        create_special_use: true,
+                        namespace: false,
+                    },
+                );
                 let error = creation::ensure(&adapter, "Archive", Some(FolderRole::Archive))
                     .await
                     .expect_err("no namespace");
@@ -627,6 +707,128 @@ mod tests {
                     error
                         .to_string()
                         .contains("did not report its folder namespace")
+                );
+            },
+        )
+        .await;
+    }
+
+    const NAMESPACE_CAPABILITY: &str =
+        "* CAPABILITY IMAP4rev1 NAMESPACE MOVE UIDPLUS\r\n$TAG OK done\r\n";
+
+    /// A server that lists nothing for both the root and the destination's
+    /// reference (RFC 3501 permits either) still creates through NAMESPACE, and
+    /// the session keeps working for the async-imap commands that follow.
+    #[tokio::test]
+    async fn empty_root_and_reference_listings_fall_back_to_namespace() {
+        script(
+            vec![
+                ("CAPABILITY", NAMESPACE_CAPABILITY),
+                ("LIST \"\" \"Archive\"", "$TAG OK absent\r\n"),
+                ("LIST \"\" \"\"", "$TAG OK nothing\r\n"),
+                ("LIST \"Archive\" \"\"", "$TAG OK nothing\r\n"),
+                (
+                    "NAMESPACE",
+                    "* NAMESPACE ((\"\" \"/\")) NIL ((\"Shared/\" \"/\"))\r\n$TAG OK done\r\n",
+                ),
+                ("CREATE \"Archive\"", "$TAG OK created\r\n"),
+                (
+                    "LIST \"\" \"Archive\"",
+                    "* LIST () \"/\" \"Archive\"\r\n$TAG OK complete\r\n",
+                ),
+            ],
+            async |folders| {
+                let created = ensure_exact(&mut folders.session, "Archive")
+                    .await
+                    .expect("created");
+                assert_eq!(created.name, "Archive");
+                assert!(created.selectable);
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn namespace_prefix_plans_new_folders_inside_the_personal_namespace() {
+        let namespace = "* NAMESPACE ((\"INBOX.\" \".\")) NIL NIL\r\n$TAG OK done\r\n";
+        script(
+            vec![
+                ("LIST \"\" \"\"", "$TAG OK nothing\r\n"),
+                ("NAMESPACE", namespace),
+                ("LIST \"\" \"INBOX.Projects\"", "$TAG OK absent\r\n"),
+                ("LIST \"\" \"\"", "$TAG OK nothing\r\n"),
+                ("LIST \"INBOX.Projects\" \"\"", "$TAG OK nothing\r\n"),
+                ("NAMESPACE", namespace),
+                ("CREATE \"INBOX.Projects\"", "$TAG OK created\r\n"),
+                (
+                    "LIST \"\" \"INBOX.Projects\"",
+                    "* LIST () \".\" \"INBOX.Projects\"\r\n$TAG OK complete\r\n",
+                ),
+            ],
+            async |folders| {
+                folders.extensions.namespace = true;
+                assert_eq!(
+                    folders
+                        .create_folder(None, "Projects")
+                        .await
+                        .expect("created")
+                        .name,
+                    "INBOX.Projects"
+                );
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn namespace_refusal_or_partial_reply_is_an_error_and_never_creates() {
+        for reply in [
+            "$TAG NO unavailable\r\n",
+            "* NAMESPACE ((\"\" \"/\")) NIL NIL\r\n$TAG BAD later\r\n",
+            "* NAMESPACE ((\"\" \"/\")) NIL NIL\r\nEOF",
+        ] {
+            script(
+                vec![
+                    ("CAPABILITY", NAMESPACE_CAPABILITY),
+                    ("LIST \"\" \"Archive\"", "$TAG OK absent\r\n"),
+                    ("LIST \"\" \"\"", "$TAG OK nothing\r\n"),
+                    ("LIST \"Archive\" \"\"", "$TAG OK nothing\r\n"),
+                    ("NAMESPACE", reply),
+                ],
+                async |folders| {
+                    let error = ensure_exact(&mut folders.session, "Archive")
+                        .await
+                        .expect_err("unconfirmed namespace");
+                    assert!(
+                        error.downcast_ref::<creation::PlanRejected>().is_none(),
+                        "{error:#}"
+                    );
+                },
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn namespace_without_a_personal_entry_reports_no_namespace() {
+        script(
+            vec![
+                ("CAPABILITY", NAMESPACE_CAPABILITY),
+                ("LIST \"\" \"Archive\"", "$TAG OK absent\r\n"),
+                ("LIST \"\" \"\"", "$TAG OK nothing\r\n"),
+                ("LIST \"Archive\" \"\"", "$TAG OK nothing\r\n"),
+                (
+                    "NAMESPACE",
+                    "* NAMESPACE NIL NIL ((\"Public/\" \"/\"))\r\n$TAG OK done\r\n",
+                ),
+            ],
+            async |folders| {
+                let error = ensure_exact(&mut folders.session, "Archive")
+                    .await
+                    .expect_err("no personal namespace");
+                assert!(
+                    error.downcast_ref::<creation::PlanRejected>().is_some(),
+                    "{error:#}"
                 );
             },
         )
@@ -770,7 +972,11 @@ mod tests {
             "EOF",
         ] {
             script(vec![("LIST \"\" \"Archive\"", response)], async |folders| {
-                let adapter = connection(&mut folders.session, folders.encoding, false);
+                let adapter = connection(
+                    &mut folders.session,
+                    folders.encoding,
+                    Extensions::default(),
+                );
                 assert!(creation::exists(&adapter, "Archive").await.is_err());
             })
             .await;
@@ -792,7 +998,11 @@ mod tests {
             script(
                 vec![("LIST \"\" \"Archive%\"", response)],
                 async |folders| {
-                    let adapter = connection(&mut folders.session, folders.encoding, false);
+                    let adapter = connection(
+                        &mut folders.session,
+                        folders.encoding,
+                        Extensions::default(),
+                    );
                     let result = creation::exists(&adapter, "Archive%").await;
                     if rejected {
                         assert!(result.is_err());
@@ -817,7 +1027,11 @@ mod tests {
                 ("CREATE \"Archive\"", "EOF"),
             ],
             async |folders| {
-                let adapter = connection(&mut folders.session, folders.encoding, false);
+                let adapter = connection(
+                    &mut folders.session,
+                    folders.encoding,
+                    Extensions::default(),
+                );
                 assert!(creation::ensure(&adapter, "Archive", None).await.is_err());
             },
         )

@@ -21,6 +21,9 @@ pub trait MoveConnections: Send + Sync {
         source: Account,
         destination: Option<Account>,
     ) -> anyhow::Result<Box<dyn Connection>>;
+    /// A complete, tagged-OK folder listing of `account`, used to find special-use
+    /// destinations before the account's first folder sync.
+    async fn folders(&self, account: Account) -> anyhow::Result<Vec<crate::folders::Mailbox>>;
 }
 
 pub struct ImapMoveConnections {
@@ -46,6 +49,14 @@ impl MoveConnections for ImapMoveConnections {
             source_secret,
             destination,
         )))
+    }
+    async fn folders(&self, account: Account) -> anyhow::Result<Vec<crate::folders::Mailbox>> {
+        use crate::folder_actions::Connection;
+        let secret = self.credentials.account_password(&account, false).await?;
+        folders::ImapFolders::open(&account, &secret)
+            .await?
+            .catalog()
+            .await
     }
 }
 
