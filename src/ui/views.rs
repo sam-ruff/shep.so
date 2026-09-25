@@ -274,7 +274,7 @@ impl App {
             ))
             .size(12),
             space().width(Length::Fill),
-            if self.demo {
+            if self.test_badge_visible() {
                 badge("TEST")
             } else {
                 space().into()

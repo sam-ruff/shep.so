@@ -66,18 +66,28 @@ impl ksni::Tray for Tray {
     }
 }
 
+/// Present inside every Flatpak sandbox.
+const FLATPAK_MARKER: &str = "/.flatpak-info";
+
+/// Flatpak's D-Bus proxy refuses the per-process `StatusNotifierItem-PID-ID`
+/// name, so a sandboxed tray registers its unique connection name instead.
+fn sandboxed(marker: &std::path::Path) -> bool {
+    marker.exists()
+}
+
 pub(super) async fn run(
     icon: Arc<Icon>,
     actions: watch::Sender<Option<Action>>,
     availability: tokio::sync::watch::Sender<bool>,
 ) {
+    let without_name = sandboxed(std::path::Path::new(FLATPAK_MARKER));
     loop {
         let tray = Tray {
             icon: icon.clone(),
             actions: actions.clone(),
             availability: availability.clone(),
         };
-        match tray.spawn().await {
+        match tray.disable_dbus_name(without_name).spawn().await {
             Ok(handle) => {
                 availability.send_replace(true);
                 loop {
@@ -104,6 +114,15 @@ pub(super) async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sandbox_marker_disables_the_well_known_tray_name() {
+        let root = tempfile::tempdir().expect("temporary directory");
+        let marker = root.path().join(".flatpak-info");
+        assert!(!sandboxed(&marker));
+        std::fs::write(&marker, "[Application]\nname=so.shep.Shep\n").expect("marker");
+        assert!(sandboxed(&marker));
+    }
+
     #[test]
     fn watcher_loss_is_retained_even_with_unobserved_native_actions() {
         let (actions, _input) = watch::channel(None);
