@@ -515,7 +515,7 @@ Read-on-leave and action feedback requirements: selecting an inbox message and t
 - Prefer 40–44 px click targets; visible focus, descriptive labels/tooltips, persistent errors with a clear recovery, no text clipping at 900×640 and 1440×920. Mouse and keyboard should reach the same core actions.
 - User-visible messages should explain the problem and next action. Do not present sample data as live accounts, pretend a sync succeeded after errors, or silently lose unsent drafts.
 
-Run `python3 scripts/performance_gate.py` after backend, native navigation and HTML pixel timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence.
+Run `python3 scripts/performance_gate.py` after backend, native navigation and HTML pixel timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence. Sam decided on 25 September that CI passes `--html-report-only`: the sophie runner renders HTML 3-4x slower than a quiet workstation, so CI still validates and uploads the HTML pixel evidence but reports its budgets; local `scripts/check.sh` keeps them strict.
 
 The inbox/reader divider must remain mouse-draggable with saved preferences and minimum widths. Filtering and sorting must invalidate stale page prefetches; flags map to IMAP `\Flagged` and remain local for POP3. Cover drag persistence, mouse flagging/filtering/sorting and page navigation in the MCP suite.
 
