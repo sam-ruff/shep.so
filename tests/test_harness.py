@@ -446,6 +446,16 @@ class HarnessTests(unittest.TestCase):
         schema = next(t for t in harness.TOOLS if t["name"] == "desktop.start")["inputSchema"]["properties"]
         self.assertEqual(schema["idle_navigation"], {"type": "boolean", "default": False})
 
+    def test_store_capture_fixture_is_validated_and_declared(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (0, 1, "yes", None):
+                with self.assertRaisesRegex(ValueError, "Store capture fixture"):
+                    desktop.start(store_capture=value)
+            launch.assert_not_called()
+        schema = next(t for t in harness.TOOLS if t["name"] == "desktop.start")["inputSchema"]["properties"]
+        self.assertEqual(schema["store_capture"], {"type": "boolean", "default": False})
+
     def test_badge_fixture_requires_a_boolean_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

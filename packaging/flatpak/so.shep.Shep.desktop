@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Shep
+GenericName=Email and Calendar
+Comment=A calm home for your mail and calendar
+Exec=shep
+Icon=so.shep.Shep
+Terminal=false
+Categories=Network;Email;Office;Calendar;
+Keywords=mail;email;calendar;imap;pop3;
+StartupWMClass=so.shep.Shep
+StartupNotify=false
