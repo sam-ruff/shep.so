@@ -224,6 +224,7 @@ impl Engine {
                     item.job.clone(),
                     item.id.clone(),
                     receipt.current.as_ref().map(|m| m.id.clone()),
+                    (!item.undo).then(|| (receipt.account.clone(), receipt.folder.clone())),
                 )),
                 _ => None,
             };
@@ -237,9 +238,9 @@ impl Engine {
             let failed = result.is_err();
             job = self.store.finish_bulk_item(item, result).await?;
             completed += 1;
-            if let Some((job, source, current)) = identity {
+            if let Some((job, source, current, destination)) = identity {
                 output
-                    .send(Event::BulkIdentity(job, source, current))
+                    .send(Event::BulkIdentity(job, source, current, destination))
                     .await?;
             }
             if let Some(source) = local_source {
@@ -296,11 +297,7 @@ impl Engine {
                     )
                     .await
                     .map(|(_, r)| Receipt::Move(Box::new(r)))
-                } else if original.folder
-                    == self
-                        .resolve_destination(&original.account_id, folder)
-                        .await?
-                {
+                } else if original.folder == self.destination_for(original, folder).await? {
                     Ok(Receipt::Unchanged)
                 } else {
                     self.change_folder(original, folder, output, Some(item))

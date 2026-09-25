@@ -242,6 +242,31 @@ class NativeFlows(unittest.TestCase):
                        shot("spam-moved-message"), click(1308, 874), check("total", 0),
                        key("ctrl+1"), check("total", 120))
 
+    def test_move_toast_names_the_special_use_folder_the_server_acknowledged(self):
+        started = self.mcp.call("desktop.start", special_use_folders=True, mail_actions="slow")
+        print(f"Special-use destination evidence: {started['artifacts']}", flush=True)
+        self.hold_mail_over(402, mail_row_y(1), 85, 477)
+        self.mcp.batch(check("mail_drag.target", "Junk"), check("mail_drag.valid", True),
+                       {"type": "mouse_up"}, check("total", 119), check("mail_pending", 1),
+                       check("action_toast.label", "Moved 1 message to Junk"),
+                       shot("special-use-move-pending"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       check("action_toast.label", "Moved 1 message to Junk Mail"),
+                       shot("special-use-move-acknowledged"),
+                       click(1390, 874), check("action_toast", None),
+                       click(85, 482), check("folder", "Junk"), check("total", 1),
+                       key("ctrl+1"), check("folder", "INBOX"), check("total", 119))
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True), key("ctrl+1"),
+                       {"type": "resize", "width": 900, "height": 640}, wait(180),
+                       check("tab", "Mail"))
+        self.hold_mail_over(402, mail_row_y(0), 85, 477)
+        self.mcp.batch(check("mail_drag.target", "Junk"), {"type": "mouse_up"},
+                       check("total", 118), check("action_toast.label", "Moved 1 message to Junk"),
+                       {**check("mail_pending", 0), "timeout_ms": 5000},
+                       check("action_toast.label", "Moved 1 message to Junk Mail"),
+                       shot("special-use-move-acknowledged-compact-dark"))
+
     def test_spam_shortcut_compact_dark_context_menu(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
                        click(690, 366), check("dark", True), key("ctrl+1"),
