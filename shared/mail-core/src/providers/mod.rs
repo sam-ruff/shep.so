@@ -25,6 +25,22 @@ pub trait MailProvider: Send + Sync {
         known: &std::collections::HashSet<String>,
         output: tokio::sync::mpsc::Sender<MailSyncItem>,
     ) -> anyhow::Result<Vec<String>>;
+    /// Like `sync_staged`, refreshing cached flags from the saved CONDSTORE
+    /// folder states where the provider supports it.
+    #[cfg(feature = "condstore")]
+    async fn sync_resuming(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        known: &std::collections::HashSet<String>,
+        resume: &mail::condstore::Resume,
+        output: tokio::sync::mpsc::Sender<MailSyncItem>,
+        plaintext_staging: bool,
+    ) -> anyhow::Result<Vec<String>> {
+        let _ = resume;
+        self.sync_staged(account, password, known, output, plaintext_staging)
+            .await
+    }
     async fn move_mail(
         &self,
         account: &Account,
