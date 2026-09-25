@@ -319,6 +319,7 @@ String _settingLabel(String key) =>
       'image_policy': 'External images',
       'cross_account_moves': 'Cross-account moves',
       'foreign_move_folders': "Other accounts' folders when moving",
+      'help_icons': 'Help icons',
       'group_conversations': 'Group conversations',
       'desktop_badges': 'Unread badges',
     }[key] ??

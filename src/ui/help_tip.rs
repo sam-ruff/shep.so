@@ -1,6 +1,6 @@
 //! A small focusable "?" beside a setting whose meaning is not obvious. Its
 //! short help appears while the pointer is over it or while it has keyboard
-//! focus, and the whole control is omitted when icon tooltips are turned off.
+//! focus, and the whole control is omitted when help icons are turned off.
 use super::{App, Message, components};
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
@@ -62,19 +62,23 @@ pub const ALL: [&Topic; 7] = [
     &SYNCED_PASSWORDS,
 ];
 
-/// Logical size of the drawn icon; it stays within a 13px text line.
-const ICON: f32 = 16.;
+/// Logical size of the focusable target; the mark sits at its top.
+const TARGET: f32 = 16.;
+/// Diameter of the drawn mark, raised like a footnote beside its label.
+const MARK: f32 = 11.;
 /// Extra pointer margin so the effective target is 24px square.
 const REACH: f32 = 4.;
+/// Space between the mark and the focus ring drawn around it.
+const RING_GAP: f32 = 2.;
 const GAP: f32 = 6.;
 const TIP_WIDTH: f32 = 300.;
 /// The tip keeps this margin from every window edge.
 const MARGIN: f32 = 8.;
 
 impl App {
-    /// The help icon for `topic`, or nothing when icon tooltips are off.
+    /// The help icon for `topic`, or nothing when help icons are off.
     pub(super) fn help(&self, topic: &'static Topic) -> Element<'static, Message> {
-        if !self.preferences.tooltips {
+        if !self.preferences.help_icons {
             return space().width(0).into();
         }
         let tip = HelpTip::new(topic);
@@ -83,15 +87,15 @@ impl App {
         tip.into()
     }
 
-    /// A setting control followed by its help icon on the same line.
+    /// A setting control followed by its help mark, raised at the top of the line.
     pub(super) fn with_help<'a>(
         &self,
         control: impl Into<Element<'a, Message>>,
         topic: &'static Topic,
     ) -> Element<'a, Message> {
         row![control.into(), self.help(topic)]
-            .spacing(8)
-            .align_y(Alignment::Center)
+            .spacing(4)
+            .align_y(Alignment::Start)
             .into()
     }
 }
@@ -147,6 +151,15 @@ impl HelpTip {
     }
 }
 
+/// The drawn mark: centred horizontally at the top of the target, leaving room
+/// for the focus ring above it.
+pub(super) fn mark_bounds(target: Rectangle) -> Rectangle {
+    Rectangle::new(
+        Point::new(target.center_x() - MARK / 2., target.y + RING_GAP),
+        Size::new(MARK, MARK),
+    )
+}
+
 /// Where the tip goes: centred below the icon, above it when there is no room
 /// below, and always inside the window.
 pub(super) fn place(anchor: Rectangle, tip: Size, window: Size) -> Rectangle {
@@ -176,10 +189,10 @@ impl Widget<Message, Theme, Renderer> for HelpTip {
         tree.diff_children(std::slice::from_ref(&self.tip));
     }
     fn size(&self) -> Size<Length> {
-        Size::new(Length::Fixed(ICON), Length::Fixed(ICON))
+        Size::new(Length::Fixed(TARGET), Length::Fixed(TARGET))
     }
     fn layout(&mut self, _: &mut Tree, _: &Renderer, limits: &layout::Limits) -> layout::Node {
-        layout::Node::new(limits.resolve(ICON, ICON, Size::new(ICON, ICON)))
+        layout::Node::new(limits.resolve(TARGET, TARGET, Size::new(TARGET, TARGET)))
     }
     fn operate(
         &mut self,
@@ -263,34 +276,35 @@ impl Widget<Message, Theme, Renderer> for HelpTip {
             return;
         };
         let p = components::colors(theme);
-        let (fill, mark, edge) = if state.open() {
+        let (fill, colour, edge) = if state.open() {
             (p.tint, p.accent, p.accent)
         } else {
             (Color::TRANSPARENT, p.muted, p.muted)
         };
+        let mark = mark_bounds(bounds);
         renderer::Renderer::fill_quad(
             renderer,
             renderer::Quad {
-                bounds,
+                bounds: mark,
                 border: Border {
                     color: edge,
                     width: 1.,
-                    radius: (ICON / 2.).into(),
+                    radius: (MARK / 2.).into(),
                 },
                 ..Default::default()
             },
             fill,
         );
         if state.focused {
-            // A visible focus ring outside the icon, as for other controls.
+            // A visible focus ring around the mark, as for other controls.
             renderer::Renderer::fill_quad(
                 renderer,
                 renderer::Quad {
-                    bounds: bounds.expand(3.),
+                    bounds: mark.expand(RING_GAP),
                     border: Border {
                         color: p.accent,
-                        width: 2.,
-                        radius: (ICON / 2. + 3.).into(),
+                        width: 1.5,
+                        radius: (MARK / 2. + RING_GAP).into(),
                     },
                     ..Default::default()
                 },
@@ -300,8 +314,8 @@ impl Widget<Message, Theme, Renderer> for HelpTip {
         renderer.fill_text(
             core_text::Text {
                 content: "?".into(),
-                bounds: bounds.size(),
-                size: Pixels(11.),
+                bounds: mark.size(),
+                size: Pixels(8.5),
                 line_height: core_text::LineHeight::Relative(1.),
                 font: components::BOLD,
                 align_x: core_text::Alignment::Center,
@@ -309,8 +323,8 @@ impl Widget<Message, Theme, Renderer> for HelpTip {
                 shaping: core_text::Shaping::Basic,
                 wrapping: core_text::Wrapping::None,
             },
-            bounds.center(),
-            mark,
+            mark.center(),
+            colour,
             visible,
         );
     }

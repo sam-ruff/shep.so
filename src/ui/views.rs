@@ -1441,7 +1441,10 @@ impl App {
                         .on_toggle(Message::PrefTooltips),
                     checkbox(self.preferences.shortcut_tooltips)
                         .label("Show primary shortcut in tooltips")
-                        .on_toggle(Message::PrefShortcutTooltips)
+                        .on_toggle(Message::PrefShortcutTooltips),
+                    checkbox(self.preferences.help_icons)
+                        .label("Show help icons beside settings")
+                        .on_toggle(Message::PrefHelpIcons)
                 ]
                 .spacing(16)
                 .into()

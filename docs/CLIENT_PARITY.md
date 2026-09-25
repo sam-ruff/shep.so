@@ -8,8 +8,9 @@ regressions, with reviewed captures and clean Clippy. Browser and Flutter common
 Activity parity and final platform/latency verification remain active.
 
 Desktop Preferences shows **?** help beside seven easily misunderstood
-settings (R98), on hover, click and Tab focus, hidden when icon tooltips are
-off. The browser Preferences has none of these settings nor a Tooltips choice,
+settings (R98), on hover, click and Tab focus, hidden by its own synced
+`help_icons` preference. The browser and Flutter clients label that shared
+setting in profile reviews but do not act on it yet. The browser Preferences has none of these settings nor a Tooltips choice,
 and Flutter was out of scope for this wave; both remain explicit gaps in TODO
 R98 and should reuse the same help text when those settings arrive.
 
