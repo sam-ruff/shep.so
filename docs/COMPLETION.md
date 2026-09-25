@@ -22,9 +22,19 @@ identity/icon parity, licence notices and permissions. The saved native
 `test_store_screenshots_tour_fixture_mail_calendar_and_reply` scenario passed in
 an offline container with the harness tools; its captures were reviewed.
 
-Limitations: no `flatpak-builder` build, `flatpak run` or Flathub lint (flatpak is
-not installed on this host); screenshot URLs resolve only after merge; the Google
-OAuth client is not embedded; portal-backed export/backup paths and sound-only
+Integration on 25 September after merging main: `flatpak-builder` 1.4.9 (the
+`org.flatpak.Builder` Flatpak) built the manifest with the 26.08 SDK and
+rust-stable 1.98 without warnings, and the installed build reached the first-run
+screen through `flatpak run` on an owned Xvfb display. `flatpak-builder-lint
+manifest` passes; its build-dir and repo checks report only the screenshots,
+whose `main` URLs resolve after merge. Following Sam's replies, the homepage is
+https://shep.so/ with a contribute link, and `desktop.start(store_capture=true)`
+hides the TEST badge in test-support demo builds; the saved scenario asserts
+the `test_badge` observation both ways and all four screenshots were recaptured
+and reviewed.
+
+Limitations: screenshot URLs resolve only after merge; no secret is embedded, so
+Google sign-in stays disabled in the Flatpak until the build-secret TODO lands; portal-backed export/backup paths and sound-only
 notifications are unverified in the sandbox. Flathub submission stays in TODO.
 
 ## Move destination follow-ups, 23 September 2026

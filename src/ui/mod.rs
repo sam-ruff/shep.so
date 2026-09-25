@@ -525,6 +525,9 @@ pub struct App {
     initial_page_loaded: bool,
     #[cfg(feature = "test-support")]
     idle_navigation: bool,
+    /// Hides the TEST badge for AppStream screenshots.
+    #[cfg(feature = "test-support")]
+    store_capture: bool,
     /// Fixture owner that never answers a newer build's restart request.
     #[cfg(feature = "test-support")]
     hold_restart_requests: bool,
@@ -725,6 +728,8 @@ impl App {
                 #[cfg(feature = "test-support")]
                 idle_navigation: demo && args.iter().any(|a| a == "--idle-navigation"),
                 #[cfg(feature = "test-support")]
+                store_capture: demo && args.iter().any(|a| a == "--store-capture"),
+                #[cfg(feature = "test-support")]
                 hold_restart_requests: demo && args.iter().any(|a| a == "--hold-restart-requests"),
                 #[cfg(feature = "test-support")]
                 store_truth: Default::default(),
@@ -738,6 +743,15 @@ impl App {
     fn theme(&self) -> Theme {
         self.theme_cache
             .get(self.preferences.palettes.get(self.dark()), self.dark())
+    }
+
+    /// Fixture builds mark their header, except in store screenshot captures.
+    fn test_badge_visible(&self) -> bool {
+        #[cfg(feature = "test-support")]
+        let hidden = self.store_capture;
+        #[cfg(not(feature = "test-support"))]
+        let hidden = false;
+        self.demo && !hidden
     }
 
     fn dark(&self) -> bool {
@@ -4433,6 +4447,7 @@ impl App {
         #[cfg(feature = "test-support")]
         {
             data["page_loaded"] = serde_json::json!(self.initial_page_loaded);
+            data["test_badge"] = serde_json::json!(self.test_badge_visible());
             data["store_truth"] = self.store_truth_observation();
             let (frame, rows) = self.draw_log.snapshot();
             let ids: Vec<String> = self.page.rows.iter().map(|mail| mail.id.clone()).collect();

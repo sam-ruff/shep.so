@@ -182,8 +182,9 @@ class Metainfo(unittest.TestCase):
     def test_store_metadata_is_complete(self):
         self.assertLessEqual(len(self.root.findtext("summary")), 35)
         self.assertTrue(self.root.findtext("developer/name"))
-        for kind in ("homepage", "bugtracker", "vcs-browser", "help"):
+        for kind in ("homepage", "bugtracker", "vcs-browser", "help", "contribute"):
             self.assertTrue(self.root.findtext(f"url[@type='{kind}']", "").startswith("https://"), kind)
+        self.assertEqual(self.root.findtext("url[@type='homepage']"), "https://shep.so/")
         colours = {colour.get("scheme_preference"): colour.text for colour in self.root.findall("branding/color")}
         self.assertEqual(set(colours), {"light", "dark"})
         for colour in colours.values():

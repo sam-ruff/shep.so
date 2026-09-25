@@ -1,6 +1,6 @@
 # Flatpak and Linux stores
 
-Shep's Flathub packaging lives in `packaging/flatpak/`. It is prepared, not published: no Flatpak has been built with `flatpak-builder` yet, nothing has been submitted to Flathub, and store publication is tracked separately in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md).
+Shep's Flathub packaging lives in `packaging/flatpak/`. It is prepared, not published: it builds locally with `flatpak-builder` and starts with `flatpak run`, but nothing has been submitted to Flathub, and store publication is tracked separately in [TODO.md](https://github.com/sam-ruff/shep.so/blob/main/TODO.md).
 
 ## Files
 
@@ -19,6 +19,8 @@ python3 packaging/flatpak/cargo_sources.py
 flatpak-builder --user --install --force-clean build-dir packaging/flatpak/so.shep.Shep.json
 flatpak run so.shep.Shep
 ```
+
+With the `org.flatpak.Builder` Flatpak, run `flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest packaging/flatpak/so.shep.Shep.json` after generating the sources. That builder looks up the SDK from its own data directory (`~/.var/app/org.flatpak.Builder/data/flatpak`), so a user installation of the SDK elsewhere is reported as not installed.
 
 `cargo_sources.py` produces the same crate entries as [flatpak-cargo-generator](https://github.com/flatpak/flatpak-builder-tools/tree/master/cargo) (checked against revision `41c20aa`), except that it names the Cargo configuration `config.toml`. It needs only the Python standard library, and refuses git or other registry sources, so every crate is pinned by its `Cargo.lock` checksum. Regenerate it whenever `Cargo.lock` changes.
 
@@ -57,7 +59,7 @@ With the `test-ui` build and the harness tools from the [native E2E skill](https
 python3 packaging/flatpak/capture_screenshots.py
 ```
 
-It runs the saved `test_store_screenshots_*` tour on fictional fixture mail and converts the captures to PNG. The images show the fixture's TEST badge. The metainfo references them on `main` through `raw.githubusercontent.com`, so the URLs only resolve after merging.
+It runs the saved `test_store_screenshots_*` tour on fictional fixture mail and converts the captures to PNG. It starts the harness with `store_capture=true`, which hides the fixture's TEST badge; that option needs a test-support demo build, and the `test_badge` observation confirms the header state. The metainfo references them on `main` through `raw.githubusercontent.com`, so the URLs only resolve after merging.
 
 ## Other Linux stores
 

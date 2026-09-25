@@ -18,6 +18,10 @@ without the app's periodic Tick). The explicit 150 ms settle plus screenshot's
 this independent of the broader appearance tour's slower screenshots. This is a
 pixel-backed correctness check, not a latency percentile.
 
+`store_capture=true` hides the header's TEST badge for AppStream screenshots
+(`packaging/flatpak/capture_screenshots.py`); the read-only `test_badge`
+observation reports whether it is drawn. Other fixture behavior is unchanged.
+
 For HTML opening speed, the automated equivalent is `scripts/html_latency.py`.
 Run `python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json`
 without concurrent builds, then `python3 scripts/performance_gate.py --html-only`.

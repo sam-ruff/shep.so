@@ -7705,7 +7705,9 @@ class NativeFlows(unittest.TestCase):
         self.assertEqual(self.live.subjects("Archive") if self.live.has_folder("Archive") else [], [])
 
     def test_store_screenshots_tour_fixture_mail_calendar_and_reply(self):
-        self.mcp.batch(*store_screenshot_tour())
+        self.mcp.batch(check("test_badge", True))
+        self.artifacts = Path(self.mcp.call("desktop.start", store_capture=True)["artifacts"])
+        self.mcp.batch(check("test_badge", False), *store_screenshot_tour())
         for name in STORE_SCREENSHOTS:
             self.assertTrue((self.artifacts / f"{name}.webp").is_file(), name)
 
