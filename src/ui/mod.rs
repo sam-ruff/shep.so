@@ -354,6 +354,7 @@ pub enum Message {
     RevealSetting(SettingsTab, &'static str, &'static str),
     RevealSettingAttempt(u64, u8),
     SettingRevealed(u64, u8, settings_search::reveal::Found),
+    DismissSettingOutline(u64),
     ShowAllSettings,
     PrefCrossAccount(bool),
     PrefForeignMoveFolders(bool),
@@ -2237,6 +2238,9 @@ impl App {
             }
             Message::SettingRevealed(generation, attempt, found) => {
                 return self.setting_revealed(generation, attempt, found);
+            }
+            Message::DismissSettingOutline(generation) => {
+                self.dismiss_setting_outline(generation);
             }
             Message::FindSetting(tab, group) => {
                 if group == "Profiles" {
@@ -4519,9 +4523,13 @@ impl App {
                     ("revealed", Some(top), focused)
                 }
             };
+            let outline = reveal.outline.map(|outline| {
+                let bounds = outline.window;
+                [bounds.x, bounds.y, bounds.width, bounds.height]
+            });
             serde_json::json!({
                 "control": reveal.control, "section": reveal.section,
-                "state": state, "top": top, "focused": focused,
+                "state": state, "top": top, "focused": focused, "outline": outline,
             })
         }));
         data["page_unread"] = serde_json::json!(self.page.unread);

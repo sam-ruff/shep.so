@@ -18,16 +18,63 @@ pub enum Found {
     Revealed {
         top: f32,
         focused: bool,
+        outline: Outline,
     },
+}
+
+/// Where the revealed control is outlined.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Outline {
+    /// Control bounds relative to the scrolled content.
+    pub content: Rectangle,
+    /// The drawn outline in window coordinates just after scrolling.
+    pub window: Rectangle,
 }
 
 /// Largest gap between a caption and the text field it labels from above.
 const FIELD_GAP: f32 = 24.;
+/// A container this much taller than its caption is a card or list, not the
+/// caption's own button or row.
+const CONTROL_PADDING: f32 = 40.;
+/// A wider enclosing container holds sibling controls too.
+const CONTROL_WIDENING: f32 = 64.;
+
+fn contains(outer: Rectangle, inner: Rectangle) -> bool {
+    outer.x <= inner.x + 0.5
+        && outer.y <= inner.y + 0.5
+        && outer.x + outer.width + 0.5 >= inner.x + inner.width
+        && outer.y + outer.height + 0.5 >= inner.y + inner.height
+}
+
+/// The button or row that owns a caption: the innermost enclosing container,
+/// widened to its parents while they only add padding. A caption inside a
+/// taller card, such as a checkbox, stands for itself.
+fn control(containers: &[Rectangle], caption: Rectangle) -> Rectangle {
+    let mut control = caption;
+    let mut first = true;
+    for &bounds in containers
+        .iter()
+        .rev()
+        .filter(|&&bounds| contains(bounds, caption))
+    {
+        let fits = bounds.height <= caption.height + CONTROL_PADDING
+            && (first || bounds.width <= control.width + CONTROL_WIDENING);
+        if !fits {
+            break;
+        }
+        control = bounds;
+        first = false;
+    }
+    control
+}
 
 struct Locate {
     caption: &'static str,
     viewport: Option<(Rectangle, Rectangle, Vector)>,
+    /// Containers laid out before the caption, outermost first.
+    containers: Vec<Rectangle>,
     caption_bounds: Option<Rectangle>,
+    control: Option<Rectangle>,
     /// Another caption was laid out after ours, so a field below is not ours.
     intervened: bool,
     /// The first text field after the caption has been considered.
@@ -66,6 +113,11 @@ impl Operation<Found> for Locate {
             self.viewport = Some((bounds, content, translation));
         }
     }
+    fn container(&mut self, _: Option<&Id>, bounds: Rectangle) {
+        if self.caption_bounds.is_none() {
+            self.containers.push(bounds);
+        }
+    }
     fn text(&mut self, _: Option<&Id>, bounds: Rectangle, text: &str) {
         if self.caption_bounds.is_some() {
             self.intervened = true;
@@ -73,6 +125,7 @@ impl Operation<Found> for Locate {
         }
         if text.trim() == self.caption && self.inside(bounds) {
             self.caption_bounds = Some(bounds);
+            self.control = Some(control(&self.containers, bounds));
         }
     }
     fn text_input(&mut self, _: Option<&Id>, bounds: Rectangle, _: &mut dyn TextInput) {
@@ -100,11 +153,25 @@ impl Operation<Found> for Locate {
         } else {
             (target.y - bounds.y - MARGIN).clamp(0., (content.height - bounds.height).max(0.))
         };
+        // A labelled field is outlined with its label; other captions with the
+        // button or row that owns them.
+        let marked = self.input.map_or(self.control.unwrap_or(caption), |input| {
+            caption.union(&input)
+        });
+        let outline = Outline {
+            content: Rectangle {
+                x: marked.x - content.x,
+                y: marked.y - content.y,
+                ..marked
+            },
+            window: super::highlight::frame(marked, Vector::new(0., -offset)),
+        };
         Outcome::Chain(Box::new(Apply {
             offset,
             input: self.input,
             top: caption.y - offset,
             focused: false,
+            outline,
         }))
     }
 }
@@ -114,6 +181,7 @@ struct Apply {
     input: Option<Rectangle>,
     top: f32,
     focused: bool,
+    outline: Outline,
 }
 
 impl Operation<Found> for Apply {
@@ -150,6 +218,7 @@ impl Operation<Found> for Apply {
         Outcome::Some(Found::Revealed {
             top: self.top,
             focused: self.focused,
+            outline: self.outline,
         })
     }
 }
@@ -158,7 +227,9 @@ pub(super) fn reveal(caption: &'static str) -> Task<Found> {
     iced::advanced::widget::operate(Locate {
         caption,
         viewport: None,
+        containers: Vec::new(),
         caption_bounds: None,
+        control: None,
         intervened: false,
         field_checked: false,
         input: None,
@@ -231,7 +302,9 @@ mod tests {
         Locate {
             caption,
             viewport: None,
+            containers: Vec::new(),
             caption_bounds: None,
+            control: None,
             intervened: false,
             field_checked: false,
             input: None,
@@ -353,5 +426,73 @@ mod tests {
         );
         op.text(None, row(300.), "Printer");
         assert!(matches!(op.finish(), Outcome::Some(Found::Missing)));
+    }
+
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> Rectangle {
+        Rectangle {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn buttons_rows_and_checkboxes_are_outlined_by_their_own_bounds() {
+        let card = rect(40., 200., 900., 400.);
+        let caption = rect(76., 312., 90., 16.);
+        // A button beside another button, with an icon row inside it.
+        let buttons = rect(40., 300., 400., 40.);
+        let button = rect(60., 300., 140., 40.);
+        let inner = rect(72., 310., 110., 20.);
+        assert_eq!(control(&[card, buttons, button, inner], caption), button);
+        // A shortcut caption owns its whole row of bindings.
+        let shortcut = rect(40., 300., 900., 50.);
+        assert_eq!(control(&[card, shortcut], caption), shortcut);
+        // A checkbox reports its own bounds as its caption inside a tall card.
+        let checkbox = rect(40., 300., 320., 20.);
+        assert_eq!(control(&[card], checkbox), checkbox);
+        // Containers laid out earlier elsewhere are not the caption's owner.
+        assert_eq!(
+            control(&[card, rect(40., 240., 200., 40.)], checkbox),
+            checkbox
+        );
+    }
+
+    #[test]
+    fn outline_marks_a_labelled_field_with_its_caption_after_scrolling() {
+        let mut op = locate("Copies to keep (1–100)");
+        let mut scroll = Scroll::default();
+        let mut target = Field::default();
+        op.scrollable(
+            Some(&Id::new(SCROLLER)),
+            VIEWPORT,
+            CONTENT,
+            Vector::ZERO,
+            &mut scroll,
+        );
+        op.container(None, rect(30., 200., 900., 2000.));
+        op.text(None, row(1200.), "Copies to keep (1–100)");
+        op.text_input(None, row(1228.), &mut target);
+        let Outcome::Chain(mut chain) = op.finish() else {
+            panic!("expected a scroll")
+        };
+        chain.scrollable(
+            Some(&Id::new(SCROLLER)),
+            VIEWPORT,
+            CONTENT,
+            Vector::ZERO,
+            &mut scroll,
+        );
+        let Outcome::Some(Found::Revealed { outline, .. }) = chain.finish() else {
+            panic!("expected a revealed control")
+        };
+        let marked = rect(60., 1200., 200., 48.);
+        assert_eq!(outline.content, rect(30., 1000., 200., 48.));
+        let offset = 1200. - 200. - MARGIN;
+        assert_eq!(
+            outline.window,
+            crate::ui::settings_search::highlight::frame(marked, Vector::new(0., -offset))
+        );
     }
 }

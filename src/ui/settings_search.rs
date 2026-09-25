@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 mod catalogue;
 #[cfg(test)]
 mod coverage;
+mod highlight;
 #[cfg(test)]
 mod performance;
 pub(super) mod reveal;
@@ -40,6 +41,8 @@ pub(super) struct Reveal {
     pub section: &'static str,
     pub control: &'static str,
     pub state: RevealState,
+    /// The accent outline shown briefly over the revealed control.
+    pub outline: Option<reveal::Outline>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -172,6 +175,52 @@ fn best_in(
         .sum()
 }
 
+/// How many query terms a caption's words match, and the sum of their best
+/// scores. `score_word` scores only matches that are not typos.
+fn caption_words(
+    words: &[String],
+    terms: usize,
+    score_word: &mut dyn FnMut(usize, &str) -> Option<usize>,
+) -> (usize, usize) {
+    (0..terms)
+        .filter_map(|term| words.iter().filter_map(|word| score_word(term, word)).min())
+        .fold((0, 0), |(count, total), score| (count + 1, total + score))
+}
+
+/// The caption matching the most query words, then the best phrase and score,
+/// then the shortest. It must match at least half of the words and more of them
+/// than the section title, which otherwise keeps the whole section.
+fn best_control(
+    entry: &IndexedSetting,
+    phrase: &[String],
+    terms: usize,
+    score_word: &mut dyn FnMut(usize, &str) -> Option<usize>,
+) -> Option<&'static str> {
+    let (title, _) = caption_words(&entry.title_words, terms, score_word);
+    entry
+        .labels
+        .iter()
+        .enumerate()
+        .filter_map(|(position, label)| {
+            let (count, score) = caption_words(&label.words, terms, score_word);
+            (count * 2 >= terms && count > title).then(|| {
+                let tier = phrase_tier(&label.words, phrase);
+                (
+                    (
+                        std::cmp::Reverse(count),
+                        tier,
+                        score,
+                        label.words.len(),
+                        position,
+                    ),
+                    label.text,
+                )
+            })
+        })
+        .min_by_key(|(key, _)| *key)
+        .map(|(_, text)| text)
+}
+
 fn matches_with(query: &str, scorer: &mut impl FnMut(&str, &str) -> Option<usize>) -> Vec<Match> {
     let query = crate::fuzzy::normalized(query.trim());
     let mut terms: Vec<_> = query
@@ -223,20 +272,12 @@ fn matches_with(query: &str, scorer: &mut impl FnMut(&str, &str) -> Option<usize
             } else {
                 3
             };
-            // Only a caption that reads as the query names a control, and a
-            // section title that reads as well as it keeps the whole section.
-            let title = phrase_tier(&entry.title_words, &phrase);
-            let control = entry
-                .labels
-                .iter()
-                .enumerate()
-                .map(|(position, label)| {
-                    let tier = phrase_tier(&label.words, &phrase);
-                    ((tier, label.words.len(), position), label.text)
-                })
-                .filter(|((tier, ..), _)| *tier < title.min(2))
-                .min_by_key(|(key, _)| *key)
-                .map(|(_, text)| text);
+            // A typo finds the section but does not name a control.
+            let mut score_caption = |term: usize, word: &str| {
+                let score = score_word(term, word)?;
+                is_subsequence(terms[term], word).then_some(score)
+            };
+            let control = best_control(entry, &phrase, terms.len(), &mut score_caption);
             Some((tier, score, entry, control))
         })
         .collect();
@@ -273,6 +314,7 @@ impl App {
             section,
             control,
             state: RevealState::Pending,
+            outline: None,
         });
         task.chain(self.reveal_setting_attempt(self.settings_reveal_generation, 0))
     }
@@ -301,20 +343,51 @@ impl App {
         if self.current_reveal(generation).is_none() {
             return Task::none();
         }
-        let state = match found {
-            reveal::Found::Revealed { top, focused } => RevealState::Revealed { top, focused },
+        let (state, outline) = match found {
+            reveal::Found::Revealed {
+                top,
+                focused,
+                outline,
+            } => (RevealState::Revealed { top, focused }, Some(outline)),
             reveal::Found::Missing if attempt + 1 < REVEAL_ATTEMPTS => {
                 return Task::perform(
                     tokio::time::sleep(std::time::Duration::from_millis(32)),
                     move |()| Message::RevealSettingAttempt(generation, attempt + 1),
                 );
             }
-            reveal::Found::Missing => RevealState::Missing,
+            reveal::Found::Missing => (RevealState::Missing, None),
         };
         if let Some(reveal) = self.settings_reveal.as_mut() {
             reveal.state = state;
+            reveal.outline = outline;
         }
-        Task::none()
+        if outline.is_none() {
+            return Task::none();
+        }
+        Task::perform(tokio::time::sleep(highlight::DURATION), move |()| {
+            Message::DismissSettingOutline(generation)
+        })
+    }
+    pub(super) fn dismiss_setting_outline(&mut self, generation: u64) {
+        if let Some(reveal) = self
+            .settings_reveal
+            .as_mut()
+            .filter(|reveal| reveal.generation == generation)
+        {
+            reveal.outline = None;
+        }
+    }
+    /// The outline layer drawn above the Preferences content, or nothing.
+    pub(super) fn settings_outline(&self) -> Option<Element<'_, Message>> {
+        let reveal = self.current_reveal(self.settings_reveal?.generation)?;
+        let outline = reveal.outline?;
+        Some(
+            highlight::Outline {
+                bounds: outline.content,
+                dismiss: Message::DismissSettingOutline(reveal.generation),
+            }
+            .into(),
+        )
     }
     pub(super) fn settings_results(&self) -> Element<'_, Message> {
         let results = self.settings_matches();

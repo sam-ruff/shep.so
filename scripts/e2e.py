@@ -4499,13 +4499,33 @@ class NativeFlows(unittest.TestCase):
                        check("settings_search", query), check("settings_matches.0", section),
                        check("settings_match_controls.0", control))
 
+    def assert_setting_outline(self, name, directory, dismiss=None):
+        """The revealed control shows an accent outline that clears on input or after its timeout."""
+        self.mcp.batch(check("settings_reveal.outline", None, "ne"), shot(f"{name}-outline"))
+        outline = self.mcp.call("desktop.state")["settings_reveal"]["outline"]
+        self.mcp.batch(*([dismiss] if dismiss else []), check("settings_reveal.outline", None),
+                       wait(120), shot(f"{name}-outline-cleared"))
+        if dismiss and dismiss.get("type") == "scroll":
+            return
+        x, y, width, _ = (round(value) for value in outline)
+        # The outline's top edge, away from its rounded corners.
+        strip = f"{max(width - 24, 8)}x2+{x + 12}+{y}"
+        def pixels(capture):
+            return subprocess.check_output(["convert", str(directory / f"{capture}.webp"),
+                                            "-crop", strip, "-depth", "8", "rgb:-"])
+        shown, cleared = pixels(f"{name}-outline"), pixels(f"{name}-outline-cleared")
+        difference = sum(abs(a - b) for a, b in zip(shown, cleared)) / len(shown)
+        self.assertGreater(difference, 20, f"No outline drawn in {name}")
+        self.assertLessEqual(max(cleared) - min(cleared), 24, f"Outline pixels left behind in {name}")
+
     def test_settings_search_reveals_and_focuses_individual_controls(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80))
         self.search_setting("check for new mail", "Mail & performance", "Check for new mail")
         self.mcp.batch(shot("settings-control-result"), click(480, 289),
                        check("settings_group", "Mail & performance"), check("settings_search", ""),
-                       check("settings_reveal.state", "revealed"), check("settings_reveal.focused", True),
-                       key("ctrl+a"), type_text("30"), click(1352, 88),
+                       check("settings_reveal.state", "revealed"), check("settings_reveal.focused", True))
+        self.assert_setting_outline("settings-control-field", self.artifacts)
+        self.mcp.batch(key("ctrl+a"), type_text("30"), click(1352, 88),
                        check("mail_check_seconds", 30), check("preferences_saved", True),
                        shot("settings-control-field-saved"))
         self.search_setting("print message", "Keyboard shortcuts", "Print message")
@@ -4514,16 +4534,23 @@ class NativeFlows(unittest.TestCase):
                        check("settings_reveal.state", "revealed"), check("settings_reveal.focused", False),
                        check("settings_reveal.top", 200, "gte"), check("settings_reveal.top", 880, "lte"),
                        shot("settings-control-shortcut-row"))
+        self.assert_setting_outline("settings-control-shortcut-row", self.artifacts, key("shift"))
         self.search_setting("clear image exceptions", "Privacy", "Clear image exceptions")
         self.mcp.batch(click(480, 289), check("settings_tab", "Privacy"),
                        check("settings_reveal.state", "revealed"), shot("settings-control-privacy"))
+        self.assert_setting_outline("settings-control-button", self.artifacts,
+                                    {"type": "scroll", "amount": 1})
+        # A broader query still names the control that matches most of its words.
+        self.search_setting("shared profile", "Profiles and sync", "Check for shared profiles after Google sign-in")
+        self.mcp.batch(click(480, 289), check("settings_tab", "Accounts"),
+                       check("settings_reveal.state", "revealed"), shot("settings-control-broad"))
         self.search_setting("backups", "Backups", None)
         self.mcp.batch(click(480, 289), check("settings_group", "Backups"), check("settings_reveal", None),
                        click(1150, 88), type_text("qzxvjkwp"), check("settings_matches", []),
                        check("settings_match_controls", []), shot("settings-control-no-results"))
 
     def test_settings_search_reveal_compact_dark_scrolls_clicks_and_reports_missing(self):
-        self.mcp.call("desktop.start", width=900, height=640)
+        directory = Path(self.mcp.call("desktop.start", width=900, height=640)["artifacts"])
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
                        check("backup_accounts", False))
         control = "Include account passwords in the encrypted backup"
@@ -4533,6 +4560,7 @@ class NativeFlows(unittest.TestCase):
                        check("settings_reveal.state", "revealed"),
                        check("settings_reveal.top", 200, "gte"), check("settings_reveal.top", 600, "lte"))
         top = round(self.mcp.call("desktop.state")["settings_reveal"]["top"])
+        self.assert_setting_outline("settings-control-compact-checkbox", directory)
         self.mcp.batch(shot("settings-control-compact-scrolled"), click(270, top + 8),
                        check("backup_accounts", True), shot("settings-control-compact-clicked"))
         self.search_setting("backup passphrase", "Backups", "Backup passphrase", search_x=650)

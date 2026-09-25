@@ -363,7 +363,13 @@ fn found(query: &str) -> Vec<(&'static str, Option<&'static str>)> {
 
 #[test]
 fn real_catalogue_words_are_not_read_as_typos_of_other_words() {
-    assert_eq!(found("shared profile"), [("Profiles and sync", None)]);
+    assert_eq!(
+        found("shared profile"),
+        [(
+            "Profiles and sync",
+            Some("Check for shared profiles after Google sign-in")
+        )]
+    );
     assert_eq!(found("profile workspace"), [("Profiles", None)]);
     assert_eq!(found("database transfer"), [("Database transfer", None)]);
     assert!(
@@ -401,8 +407,24 @@ fn results_name_the_control_that_explains_the_match() {
             "Backups",
             Some("Back up automatically while Shep is running"),
         ),
-        ("shared profile", "Profiles and sync", None),
-        ("copies keep", "Backups", None),
+        (
+            "shared profile",
+            "Profiles and sync",
+            Some("Check for shared profiles after Google sign-in"),
+        ),
+        (
+            "new mail interval",
+            "Mail & performance",
+            Some("Check for new mail"),
+        ),
+        (
+            "account passwords backup",
+            "Backups",
+            Some("Include account passwords in the encrypted backup"),
+        ),
+        ("copies keep", "Backups", Some("Copies to keep (1–100)")),
+        ("profile workspace", "Profiles", None),
+        ("dark mode", "Appearance", Some("Dark")),
         (
             "refresh connections",
             "Your accounts",
@@ -410,7 +432,8 @@ fn results_name_the_control_that_explains_the_match() {
         ),
         ("backups", "Backups", None),
         ("backup", "Backups", None),
-        ("dark mode", "Appearance", None),
+        // A typo finds the section but does not name a control.
+        ("comprses", "Backups", None),
         ("retention", "Backups", None),
         ("system tray", "System tray", None),
     ] {
@@ -501,9 +524,20 @@ async fn reveal_results_follow_the_current_request_and_give_up_on_missing_captio
     assert_eq!(first.state, RevealState::Pending);
     assert_eq!(app.settings_group, Some("Backups"));
     assert_eq!(app.settings_tab, SettingsTab::Backups);
+    let bounds = iced::Rectangle {
+        x: 20.,
+        y: 900.,
+        width: 200.,
+        height: 48.,
+    };
+    let outline = reveal::Outline {
+        content: bounds,
+        window: bounds,
+    };
     let revealed = Found::Revealed {
         top: 300.,
         focused: true,
+        outline,
     };
     let _ = app.handle(Message::SettingRevealed(first.generation + 1, 0, revealed));
     assert_eq!(
@@ -549,6 +583,21 @@ async fn reveal_results_follow_the_current_request_and_give_up_on_missing_captio
             top: 300.,
             focused: true
         })
+    );
+    assert_eq!(app.settings_reveal.and_then(|r| r.outline), Some(outline));
+    assert!(app.settings_outline().is_some());
+    // An older timer or dismissal leaves the current outline alone.
+    let _ = app.handle(Message::DismissSettingOutline(first.generation));
+    assert!(app.settings_outline().is_some());
+    let _ = app.handle(Message::DismissSettingOutline(second.generation));
+    assert!(app.settings_outline().is_none());
+    assert_eq!(
+        app.settings_reveal.map(|r| r.state),
+        Some(RevealState::Revealed {
+            top: 300.,
+            focused: true
+        }),
+        "dismissing the outline keeps the revealed state"
     );
 
     let _ = app.handle(Message::SettingsSearch("copies".into()));
