@@ -556,9 +556,13 @@ fn read_page(
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let source = read_moves::source(c)?;
-    let inbox_unread = c.prepare(&format!("SELECT account,COUNT(*) FROM {source} m WHERE folder='INBOX' AND unread=1 AND NOT EXISTS(SELECT 1 FROM connection_tombstones t WHERE t.kind='account' AND (t.id=m.account OR t.id=(SELECT physical.account FROM main.messages physical WHERE physical.id=m.id))) GROUP BY account"))?
-                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize)))?
-                .collect::<rusqlite::Result<_>>()?;
+    let (inbox_unread, removed) = mail_query::inbox_unread_query(c, source)?;
+    let inbox_unread = c
+        .prepare(&inbox_unread)?
+        .query_map(rusqlite::params_from_iter(&removed), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
     let mut observed = std::collections::HashMap::new();
     let mut relocated = std::collections::HashMap::new();
     let mut statement = c.prepare(&format!(

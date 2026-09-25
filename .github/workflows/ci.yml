@@ -60,10 +60,12 @@ jobs:
             runner: [self-hosted, sophie]
             target: x86_64-unknown-linux-gnu
             python: python3
-          - platform: windows
-            runner: [self-hosted, Windows, X64]
-            target: x86_64-pc-windows-msvc
-            python: python
+          # Windows is paused while its runner clones lose contact mid-job (TODO "Windows CI
+          # paused"); restore this entry with the runner fix:
+          #   - platform: windows
+          #     runner: [self-hosted, Windows, X64]
+          #     target: x86_64-pc-windows-msvc
+          #     python: python
     runs-on: ${{ matrix.runner }}
     # Linux runs unit tests, the benchmark build and the full native suite in sequence; the
     # suite alone passed 36 minutes on 18 September 2026 when the 120 minute cap cancelled it.
