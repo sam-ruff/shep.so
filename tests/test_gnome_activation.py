@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from gnome_activation import (cleanup_all, desktop_entry, fixture_processes, notifier_items, require_stable,
-                              runtime_processes, start_system_bus, stop_process, stop_runtime_processes)
+from gnome_activation import (cleanup_all, desktop_entry, eventually, fixture_processes, notifier_items,
+                              require_stable, runtime_processes, start_system_bus, stop_process, stop_runtime_processes)
 
 
 class GnomeActivationTests(unittest.TestCase):
@@ -84,13 +84,15 @@ class GnomeActivationTests(unittest.TestCase):
             (root / "self").mkdir()
             self.assertEqual(runtime_processes("/tmp/shep-notification-runtime-owned", root), [21])
 
+    @unittest.skipUnless(Path("/proc/self/environ").exists(), "the sweep reads Linux /proc")
     def test_runtime_sweep_stops_an_actual_escaped_process(self):
         with tempfile.TemporaryDirectory(prefix="shep-sweep-runtime-") as runtime:
             # A new session escapes process-group cleanup, like the daemonised input method.
             escaped = subprocess.Popen(["sleep", "60"], env={"XDG_RUNTIME_DIR": runtime, "PATH": "/usr/bin:/bin"},
                                        start_new_session=True)
             try:
-                self.assertEqual(runtime_processes(runtime), [escaped.pid])
+                # Until the child execs, /proc shows the parent's environment.
+                eventually(lambda: runtime_processes(runtime) == [escaped.pid], "escaped child environment", 5)
                 stop_runtime_processes(runtime)
                 self.assertIsNotNone(escaped.wait(timeout=5))
                 self.assertEqual(runtime_processes(runtime), [])
