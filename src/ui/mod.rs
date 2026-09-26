@@ -375,6 +375,7 @@ pub enum Message {
     MoreBody,
     PrefReplies(ReplyDisplay),
     PrefConversations(bool),
+    PrefReplyIncludeOriginal(bool),
     ConversationMessage(String),
     ConversationFlag(String),
     ConversationPage(bool),
@@ -1243,6 +1244,10 @@ impl App {
             }
             Message::PrefUnreadBadge(value) => {
                 self.preferences.unread_badge = value;
+                self.save_preferences();
+            }
+            Message::PrefReplyIncludeOriginal(value) => {
+                self.preferences.reply_include_original = value;
                 self.save_preferences();
             }
             Message::HtmlScaleRequest(id) => {
@@ -2747,7 +2752,7 @@ impl App {
                             account_id: detail.summary.account_id.clone(),
                             mail_id: detail.summary.id.clone(),
                             quote: std::mem::take(&mut draft.body),
-                            include_quote: true,
+                            include_quote: self.preferences.reply_include_original,
                         });
                         self.load_draft(draft);
                     }
@@ -4663,6 +4668,9 @@ impl App {
         data["google_sign_in"] = self.google_sign_in_state();
         data["event_access"] = serde_json::json!(self.event_access());
         data["group_conversations"] = serde_json::json!(self.preferences.group_conversations);
+        data["reply_include_original"] = serde_json::json!(self.preferences.reply_include_original);
+        data["saved_reply_include_original"] =
+            serde_json::json!(self.preference_sync.saved.value.reply_include_original);
         data["draft_attachments"] = serde_json::json!(self.composer.current.draft.attachments);
         data["drafts_collapsed"] = serde_json::json!(self.preferences.collapsed_drafts);
         data["saved_drafts_collapsed"] =

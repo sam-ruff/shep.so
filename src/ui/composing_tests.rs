@@ -1049,3 +1049,80 @@ fn close_after_forward_failure_stays_open_but_old_result_keeps_newer_dependency(
         assert_eq!(app.pending_close, (!current).then_some(window));
     }
 }
+
+fn reply_include(app: &App) -> Option<bool> {
+    app.composer
+        .current
+        .draft
+        .reply_context
+        .as_ref()
+        .map(|context| context.include_quote)
+}
+
+#[tokio::test]
+async fn new_replies_include_the_original_by_default_and_reply_all_follows_the_preference() {
+    let (mut app, _commands, _detail, _store) =
+        crate::ui::mail_actions::tests::fixture_store().await;
+    assert!(crate::model::Preferences::default().reply_include_original);
+    let _ = app.handle(Message::Reply);
+    assert_eq!(reply_include(&app), Some(true));
+    assert!(app.current_draft().delivery_body().contains("Selectable"));
+
+    let (mut app, _commands, _detail, _store) =
+        crate::ui::mail_actions::tests::fixture_store().await;
+    let _ = app.handle(Message::PrefReplyIncludeOriginal(false));
+    let _ = app.handle(Message::ReplyAll);
+    assert_eq!(reply_include(&app), Some(false));
+    assert!(!app.current_draft().delivery_body().contains("Selectable"));
+}
+
+#[tokio::test]
+async fn per_reply_override_changes_only_that_draft_and_not_the_preference() {
+    let (mut app, _commands, _detail, _store) =
+        crate::ui::mail_actions::tests::fixture_store().await;
+    let _ = app.handle(Message::PrefReplyIncludeOriginal(false));
+    let _ = app.handle(Message::Reply);
+    assert_eq!(reply_include(&app), Some(false));
+    let _ = app.handle(Message::IncludeOriginal(true));
+    assert_eq!(reply_include(&app), Some(true));
+    assert!(app.current_draft().delivery_body().contains("Selectable"));
+    assert!(!app.preferences.reply_include_original);
+}
+
+#[tokio::test]
+async fn changing_the_preference_never_rewrites_parked_or_saved_replies() {
+    let (mut app, _commands, _detail, _store) =
+        crate::ui::mail_actions::tests::fixture_store().await;
+    let _ = app.handle(Message::Reply);
+    let parked = app.composer.current.draft.id.clone();
+    assert_eq!(reply_include(&app), Some(true));
+    app.park_composer();
+    app.composer.dismissed_for = None;
+    let _ = app.handle(Message::PrefReplyIncludeOriginal(false));
+    assert_eq!(
+        app.owned_draft(&parked)
+            .and_then(|draft| draft.reply_context)
+            .map(|context| context.include_quote),
+        Some(true)
+    );
+    let _ = app.handle(Message::Reply);
+    assert_eq!(app.composer.current.draft.id, parked);
+    assert_eq!(reply_include(&app), Some(true));
+
+    // A reply saved before a restart keeps its own choice as well.
+    let (mut app, _commands, detail, _store) =
+        crate::ui::mail_actions::tests::fixture_store().await;
+    let mut saved = draft("saved-reply");
+    saved.account_id = detail.summary.account_id.clone();
+    saved.reply_context = Some(ReplyContext {
+        account_id: detail.summary.account_id.clone(),
+        mail_id: detail.summary.id.clone(),
+        quote: "Original message".into(),
+        include_quote: false,
+    });
+    Arc::make_mut(&mut app.workspace).drafts = vec![saved];
+    assert!(app.preferences.reply_include_original);
+    let _ = app.handle(Message::Reply);
+    assert_eq!(app.composer.current.draft.id, "saved-reply");
+    assert_eq!(reply_include(&app), Some(false));
+}
