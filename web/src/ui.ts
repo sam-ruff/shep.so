@@ -1620,12 +1620,8 @@ export function mount(
     const img = el("img");
     img.src = "./logo-light.webp";
     img.alt = "";
-    img.className = "logo light-logo";
-    const dark = el("img");
-    dark.src = "./logo-dark.webp";
-    dark.alt = "";
-    dark.className = "logo dark-logo";
-    brand.append(img, dark, el("span", "", "shep"));
+    img.className = "logo";
+    brand.append(img, el("span", "", "shep"));
     aside.append(brand);
     const nav = el("nav");
     nav.setAttribute("aria-label", "Workspace");

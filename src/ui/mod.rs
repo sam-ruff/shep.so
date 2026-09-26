@@ -520,8 +520,7 @@ pub struct App {
     google_disconnect_pending: Option<u64>,
     system_dark: bool,
     size: Size,
-    light_logo: widget::image::Handle,
-    dark_logo: widget::image::Handle,
+    logo: widget::image::Handle,
     backups: Arc<Vec<BackupCopy>>,
     backups_target: Option<BackupTarget>,
     backups_generation: u64,
@@ -721,11 +720,9 @@ impl App {
                 google_disconnect_pending: None,
                 system_dark: false,
                 size: Size::new(1440., 920.),
-                light_logo: widget::image::Handle::from_bytes(
+                // The white Shepherd, as on the website and launcher, in both appearances.
+                logo: widget::image::Handle::from_bytes(
                     include_bytes!("../../assets/logo-light.webp").as_slice(),
-                ),
-                dark_logo: widget::image::Handle::from_bytes(
-                    include_bytes!("../../assets/logo-dark.webp").as_slice(),
                 ),
                 backups: Arc::new(Vec::new()),
                 backups_target: None,

@@ -173,9 +173,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               child: Row(
                 children: [
                   Image.asset(
-                    Theme.of(context).brightness == Brightness.dark
-                        ? 'assets/logo-dark.webp'
-                        : 'assets/logo-light.webp',
+                    'assets/logo-light.webp',
                     width: 38,
                     height: 38,
                   ),

@@ -342,13 +342,7 @@ impl App {
     fn welcome(&self) -> Element<'_, Message> {
         container(
             column![
-                image(if self.dark() {
-                    self.dark_logo.clone()
-                } else {
-                    self.light_logo.clone()
-                })
-                .width(88)
-                .height(88),
+                image(self.logo.clone()).width(88).height(88),
                 space().height(12),
                 text("Add your first account").font(BOLD).size(27),
                 muted("Bring your accounts and calendars together in one considered space.")
@@ -1498,11 +1492,7 @@ impl App {
                 "About Shep",
                 "",
                 row![
-                    image(if self.dark() {
-                        self.dark_logo.clone()
-                    } else {
-                        self.light_logo.clone()
-                    })
+                    image(self.logo.clone())
                     .width(42)
                     .height(42),
                     column![

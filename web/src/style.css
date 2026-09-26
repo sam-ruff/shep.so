@@ -250,23 +250,6 @@ h2 {
   height: 38px;
   object-fit: contain;
 }
-.dark-logo {
-  display: none;
-}
-:root[data-theme="dark"] .light-logo {
-  display: none;
-}
-:root[data-theme="dark"] .dark-logo {
-  display: block;
-}
-@media (prefers-color-scheme: dark) {
-  :root[data-theme="system"] .light-logo {
-    display: none;
-  }
-  :root[data-theme="system"] .dark-logo {
-    display: block;
-  }
-}
 nav {
   display: flex;
   flex-direction: column;
