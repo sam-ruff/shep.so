@@ -6,7 +6,11 @@
 # Shared MIME and profile crates compiled to WebAssembly for the demo's workers.
 FROM rust:1.96.0-slim-bookworm@sha256:4732ca96fd086cb9be682050c3f0176288eebaac2b80aa2bcefccfaf198e1950 AS wasm
 
-RUN rustup target add wasm32-unknown-unknown \
+# Node only runs the web client's own build script, so crates and features stay in one place.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends nodejs \
+ && rm -rf /var/lib/apt/lists/* \
+ && rustup target add wasm32-unknown-unknown \
  && cargo install --locked --root /opt/wasm-tools --version 0.2.128 wasm-bindgen-cli
 
 WORKDIR /src
@@ -15,12 +19,10 @@ COPY src ./src
 COPY benches ./benches
 COPY vendor ./vendor
 COPY shared ./shared
+COPY scripts/clients/build_mail_content.mjs ./scripts/clients/
 
-RUN for crate in shep_mail_content shep_profile_core; do \
-      cargo build --locked -p "$(echo "$crate" | tr _ -)" --target wasm32-unknown-unknown --release \
-   && /opt/wasm-tools/bin/wasm-bindgen "target/wasm32-unknown-unknown/release/$crate.wasm" \
-        --target web --out-dir /wasm || exit 1; \
-    done
+RUN SHEP_WASM_BINDGEN=/opt/wasm-tools/bin/wasm-bindgen node scripts/clients/build_mail_content.mjs \
+ && mv web/src/wasm /wasm
 
 FROM node:24.17.0-alpine@sha256:156b55f92e98ccd5ef49578a8cea0df4679826564bad1c9d4ef04462b9f0ded6 AS demo
 

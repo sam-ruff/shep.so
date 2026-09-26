@@ -47,6 +47,7 @@ test('Docker context allows only the promotional and demo build inputs', () => {
     '!docs/images/', '!docs/images/mail-light.webp', '!docs/images/calendar-dark.webp',
     '!Cargo.toml', '!Cargo.lock', '!build.rs', '!src/', '!src/**', '!benches/', '!benches/**',
     '!vendor/', '!vendor/**', '!shared/', '!shared/**', 'shared/**/target/',
+    '!scripts/', '!scripts/clients/', '!scripts/clients/build_mail_content.mjs',
     '!web/', '!web/package.json', '!web/package-lock.json', '!web/index.html',
     '!web/preview.html', '!web/print.html', '!web/tsconfig.json', '!web/vite.config.ts',
     '!web/public/', '!web/public/**', '!web/src/', '!web/src/**', 'web/src/wasm/',
@@ -56,6 +57,7 @@ test('Docker context allows only the promotional and demo build inputs', () => {
     assert.match(docker, stage);
   }
   assert.match(docker, /--version 0\.2\.128 wasm-bindgen-cli/);
+  assert.match(docker, /node scripts\/clients\/build_mail_content\.mjs/);
   assert.match(docker, /COPY --from=demo \/app\/web\/dist-preview \/app\/web\/dist-preview/);
 });
 
