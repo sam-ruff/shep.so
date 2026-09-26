@@ -119,6 +119,19 @@ Content-Transfer-Encoding: base64
             false,
         )?])
         .await?;
+    // Clears its body background and uses dark text, relying on the client's
+    // canvas like many newsletters. Kept out of Inbox so saved rows stay put.
+    let transparent = b"From: Example Lessons <lessons@example.test>\r\nTo: alex@studio.example\r\nSubject: Confirm your fictional lesson\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<html><body style=\"background-color:transparent;margin:0\"><table width=\"100%\" style=\"background-color:transparent\"><tr><td align=\"center\"><table width=\"480\" style=\"border:1px solid #00463a\"><tr><td style=\"padding:24px\"><h1 style=\"color:#00463a;text-align:center\">Confirm your lesson</h1><p style=\"color:#242424\">Your fictional tutor has booked a lesson for you.</p><p style=\"color:#242424\">Please confirm your booking ahead of time.</p><p style=\"text-align:center\"><span style=\"background:#55ed47;color:#00463a;padding:12px 32px;border-radius:24px\">Confirm booking</span></p></td></tr></table></td></tr></table></body></html>";
+    store
+        .upsert(vec![parse_mail(
+            "preview-work",
+            "html-transparent",
+            "Junk",
+            transparent.to_vec(),
+            false,
+            false,
+        )?])
+        .await?;
     // Distinct, fictional nested-table mail with more images than the original
     // eight-image cache. Used by repeated-open pixel and native regressions.
     for (index, title, color) in [

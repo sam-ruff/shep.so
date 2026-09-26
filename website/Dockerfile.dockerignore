@@ -26,6 +26,9 @@
 !shared/
 !shared/**
 shared/**/target/
+!scripts/
+!scripts/clients/
+!scripts/clients/build_mail_content.mjs
 !web/
 !web/package.json
 !web/package-lock.json

@@ -354,6 +354,7 @@ fn document(
                         height: viewport.height as f32,
                     }),
                 );
+                surface.finish_draw();
                 let mut pixels = surface.0.borrow().pixels().to_vec();
                 // tiny-skia's buffer is premultiplied; iced images use straight RGBA.
                 for p in pixels.as_chunks_mut::<4>().0 {

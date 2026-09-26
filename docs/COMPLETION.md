@@ -36,6 +36,30 @@ timing remain native only; fixture options passed as process arguments
 hashes are not committed because iced's font system loads host fallback fonts.
 The native scenarios are unchanged and still required.
 
+## Readable canvas for transparent HTML email (R38), 26 September 2026
+
+Branch `fix/html-dark-canvas`. Sam reported a real newsletter whose near-black
+and dark green text sat on the dark reader. Its body sets
+`background-color:transparent`, overriding Shep's white default, and its only
+white background sits inside an Outlook-only conditional comment, so it relies
+on the client supplying a white canvas. The renderer now counts the characters
+it draws in dark and light text and, when the document's root background is
+transparent, chooses white paper for mostly dark text or a dark canvas for
+mostly light text. The choice is made once on the first paint and reported as
+the document background, so the reader surround and controls follow it and
+scrolling cannot switch it. Documents with their own opaque background are
+unchanged. Checked read-only against the reported message from the local
+cache; no personal content entered the repository.
+
+Tests: renderer tests for dark, light, authored-background and locked-on-scroll
+documents plus text-tone counting; the new native flow
+`test_html_transparent_newsletter_gets_readable_paper_in_both_themes` uses a
+fictional message in the Junk fixture folder and checks the white surround and
+text contrast in light and dark; `test_html_background_matches_document_surround_in_both_themes`
+still passes. Limitations: the browser and Flutter clients keep the parity gap
+recorded in TODO R38, and transparent cells over authored dark rows are not
+analysed separately.
+
 ## Browser group progress pacing (R42), 26 September 2026
 
 Branch `fix/web-bulk-group-execution` restores `web/e2e/bulk-controls.spec.ts`,
