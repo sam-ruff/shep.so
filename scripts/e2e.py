@@ -1400,6 +1400,12 @@ class NativeFlows(unittest.TestCase):
                        click(650 if compact else 1150,88), type_text("system tray"), check("settings_matches", ["System tray"]),
                        click(450,289), check("settings_group", "System tray"))
 
+    def disable_close_to_tray(self, compact=False):
+        """Close to tray is on by default; the temporary saving tray needs it off."""
+        self.open_tray_preferences(compact)
+        self.mcp.batch(check("tray.enabled", True), click(288,342), check("tray.saved_enabled", False),
+                       key("ctrl+1"), check("tab", "Mail"))
+
     def test_gnome_launcher_restores_one_owner_and_retains_draft(self):
         require_gnome_x11_session(self)
         from gnome_activation import run
@@ -1420,8 +1426,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("tray.available", True), check("tray_host.icon_name", "so.shep.Shep-tray"),
                        check("tray_host.icon_themed", True), check("tray_host.dark", False),
                        check("tray_host.icon_sizes", [16,18,20,22,24,32,36,40,44,48,64]))
-        self.open_tray_preferences()
-        self.mcp.batch(click(288,342), check("tray.saved_enabled", True), {"type":"close_request"},
+        self.mcp.batch(check("tray.enabled", True), {"type":"close_request"},
                        check("tray.visible", False), {"type":"tray_menu"}, key("Escape"),
                        {"type":"wait","ms":150}, shot("light-dog-tray-light"),
                        {"type":"tray_theme"}, check("tray_host.dark",True),
@@ -1433,7 +1438,7 @@ class NativeFlows(unittest.TestCase):
         started = self.mcp.call("desktop.start", tray="available", persistent=True)
         self.mcp.batch(check("tray.available", True))
         self.open_tray_preferences()
-        self.mcp.batch(click(288,342), check("tray.saved_enabled", True), shot("tray-preferences-light"),
+        self.mcp.batch(check("tray.enabled", True), check("tray.saved_enabled", True), shot("tray-preferences-light"),
                        key("ctrl+1"), check("tab", "Mail"), {"type":"close_request"},
                        check("tray.visible", False), check("close_pending", False), shot("tray-hidden"),
                        {"type":"tray_menu"}, check("tray_host.entries.0.label", "Open Shep"),
@@ -1444,11 +1449,17 @@ class NativeFlows(unittest.TestCase):
         restarted = self.mcp.call("desktop.restart")
         self.assertNotEqual(started["pid"], restarted["pid"])
         self.mcp.batch(check("tray.enabled", True), check("tray.available", True))
+        # An explicit off is kept across restart, and closing then quits.
+        self.open_tray_preferences()
+        report = self.mcp.batch(click(288,342), check("tray.saved_enabled", False), shot("tray-preferences-off-light"),
+                                {"type":"close_request"}, {"type":"wait_exit"})
+        self.assertEqual(report["actions"][-1]["result"]["returncode"], 0)
+        again = self.mcp.call("desktop.restart")
+        self.assertNotEqual(restarted["pid"], again["pid"])
+        self.mcp.batch(check("tray.available", True), check("tray.enabled", False), check("tray.saved_enabled", False))
 
     def hide_to_tray(self):
-        self.mcp.batch(check("tray.available", True))
-        self.open_tray_preferences()
-        self.mcp.batch(click(288, 342), check("tray.saved_enabled", True), key("ctrl+1"), check("tab", "Mail"),
+        self.mcp.batch(check("tray.available", True), check("tray.enabled", True),
                        {"type": "close_request"}, check("tray.visible", False), check("close_pending", False))
 
     def test_activation_native_same_build_launch_restores_hidden_owner(self):
@@ -1523,7 +1534,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(check("tray.available", True), key("ctrl+comma"), check("tab", "Preferences"),
                        click(563,366), check("dark", True))
         self.open_tray_preferences(compact=True)
-        self.mcp.batch(click(288,342), check("tray.saved_enabled", True), shot("tray-preferences-dark-compact"),
+        self.mcp.batch(check("tray.saved_enabled", True), shot("tray-preferences-dark-compact"),
                        {"type":"close_request"}, check("tray.visible", False), check("close_pending", False),
                        check("total", 121), check("notifications.sent", 1), check("tray.visible", False),
                        {"type":"tray_menu"}, key("Down"), key("Return"), check("tray.visible", True),
@@ -1533,18 +1544,21 @@ class NativeFlows(unittest.TestCase):
     def test_tray_native_missing_host_and_host_loss_keep_app_accessible(self):
         self.mcp.call("desktop.start", tray="missing")
         self.open_tray_preferences()
-        self.mcp.batch(check("tray.available", False), click(288,342), check("tray.saved_enabled", True),
-                       {"type":"close_request"}, check("tray.visible", True), check("notice", "unavailable", "contains"),
+        self.mcp.batch(check("tray.available", False), check("tray.saved_enabled", True),
                        shot("tray-missing-host"), {"type":"tray_host_start"},
                        {**check("tray.available", True), "timeout_ms":5000},
                        {"type":"close_request"}, check("tray.visible", False),
                        {"type":"tray_host_stop"}, check("tray.available", False), check("tray.visible", True),
                        {"type":"focus_app"}, check("notice", "reopened", "contains"), shot("tray-host-loss-reopened"))
+        # With no tray host the default still leaves a way out: close quits.
+        report = self.mcp.batch({"type":"close_request"}, {"type":"wait_exit"})
+        self.assertEqual(report["actions"][-1]["result"]["returncode"], 0)
 
     def test_tray_native_attachment_picker_stays_accessible_then_save_hides_and_recovers(self):
         started = self.mcp.call("desktop.start", tray="available", mail_actions="fail")
         fixture = Path(started["artifacts"]) / "tray attachment.txt"
         fixture.write_text("Fixture bytes to retain through a failed save")
+        self.disable_close_to_tray()
         self.mcp.batch(check("tray.available", True), key("c"), check("composer.visible", True), wait(80),
                        click(850,279), type_text("Keep my attachment draft"), click(750,633), check("draft_io", True),
                        {"type":"close_request"}, check("close_pending", True), check("tray.visible", True),
@@ -1559,10 +1573,7 @@ class NativeFlows(unittest.TestCase):
             with self.subTest(quit_after_hiding=quit_after_hiding):
                 started = self.mcp.call("desktop.start", tray="available", mail_actions="slow")
                 print(f"Ordinary tray failure ({quit_after_hiding}): {started['artifacts']}", flush=True)
-                self.mcp.batch(check("tray.available", True))
-                self.open_tray_preferences()
-                self.mcp.batch(click(288,342), check("tray.saved_enabled", True),
-                               key("ctrl+1"), check("tab", "Mail"), key("r"),
+                self.mcp.batch(check("tray.available", True), check("tray.saved_enabled", True), key("r"),
                                check("focused_input", "compose-body"), type_text("Keep this hidden reply after failure."))
                 draft = self.mcp.call("desktop.state")["composer"]["id"]
                 self.mcp.batch(click(675,564), check("busy", "send:"+draft, "contains"),
@@ -1577,6 +1588,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_tray_native_temporary_saving_notifies_and_failure_reopens_draft(self):
         self.mcp.call("desktop.start", tray="available", mail_actions="slow")
+        self.disable_close_to_tray()
         self.mcp.batch(check("tray.available", True), key("r"), check("focused_input", "compose-body"),
                        type_text("Keep this reply when sending fails."))
         draft = self.mcp.call("desktop.state")["composer"]["id"]
@@ -1590,6 +1602,7 @@ class NativeFlows(unittest.TestCase):
     def test_tray_native_temporary_saving_quits_after_durable_receipt(self):
         started = self.mcp.call("desktop.start", tray="available", persistent=True, mail_actions="slow")
         self.mcp.batch(check("tray.available", True))
+        self.disable_close_to_tray()
         self.archive_two_for_recovery()
         self.mcp.batch({"type":"close_request"}, check("tray.temporary", True), check("tray.visible", False),
                        check("tray_host.notifications.0.title", "Shep is finishing your changes"),
@@ -1600,6 +1613,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_tray_native_open_while_saving_cancels_quit(self):
         self.mcp.call("desktop.start", tray="available", mail_actions="slow")
+        self.disable_close_to_tray()
         self.mcp.batch(check("tray.available", True), key("r"), check("focused_input", "compose-body"),
                        type_text("Continue working after reopening."))
         draft = self.mcp.call("desktop.state")["composer"]["id"]
@@ -1614,6 +1628,7 @@ class NativeFlows(unittest.TestCase):
         started = self.mcp.call("desktop.start", tray="available", backup_run="held", notification_delivery="slow")
         print(f"Queued notification cancellation: {started['artifacts']}", flush=True)
         self.mcp.batch(check("tray.available", True))
+        self.disable_close_to_tray()
         self.start_backup_all()
         self.open_notification_preferences()
         self.mcp.batch(click(350,499), check("notifications.testing", True), wait(200),
@@ -1641,6 +1656,7 @@ class NativeFlows(unittest.TestCase):
         directory = Path(started["artifacts"])
         print(f"Close during slow backup upload: {directory}", flush=True)
         self.mcp.batch(check("tray.available", True))
+        self.disable_close_to_tray()
         self.start_backup_all()
         report = self.mcp.batch({"type": "close_request"}, check("close_pending", True),
                                 check("tray.temporary", True), check("tray.visible", False),
@@ -1658,6 +1674,7 @@ class NativeFlows(unittest.TestCase):
         directory = Path(started["artifacts"])
         print(f"Quit during held backup upload: {directory}", flush=True)
         self.mcp.batch(check("tray.available", True))
+        self.disable_close_to_tray()
         self.start_backup_all()
         # The stalled transfer never acknowledges: the first close waits in the
         # tray with a notice, and the tray menu's Quit leaves at once because the
@@ -1689,6 +1706,7 @@ class NativeFlows(unittest.TestCase):
             if compact:
                 self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
                                key("ctrl+1"), check("tab", "Mail"))
+            self.disable_close_to_tray(compact)
             self.mcp.batch(key("r"), check("focused_input", "compose-body"), type_text("Keep this reply through a repeated Quit."))
             draft = self.mcp.call("desktop.state")["composer"]["id"]
             # A send is not journaled until the server answers, so Quit cannot
@@ -1707,9 +1725,7 @@ class NativeFlows(unittest.TestCase):
         directory = Path(started["artifacts"])
         print(f"Quit during held read-only sync: {directory}", flush=True)
         self.mcp.batch(check("tray.available", True), check("account_sync_waiting", True))
-        self.open_tray_preferences()
-        report = self.mcp.batch(click(288, 342), check("tray.saved_enabled", True), key("ctrl+1"), check("tab", "Mail"),
-                                {"type": "close_request"}, check("tray.visible", False), check("close_pending", False),
+        report = self.mcp.batch(check("tray.saved_enabled", True), {"type": "close_request"}, check("tray.visible", False), check("close_pending", False),
                                 check("account_sync_waiting", True), shot("tray-hidden-during-held-sync"),
                                 {"type": "tray_menu"}, key("End"), key("Return"), {"type": "wait_exit"})
         self.assertEqual(report["actions"][-1]["result"]["returncode"], 0)

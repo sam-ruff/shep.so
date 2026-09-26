@@ -1480,7 +1480,7 @@ impl App {
                     muted(if self.tray.available {
                         "Open Shep or quit from the tray menu."
                     } else {
-                        "A system tray is not currently available on this desktop."
+                        "No system tray is available on this desktop, so closing the window quits Shep."
                     })
                     .size(12),
                     button(text("Quit Shep").size(13))
