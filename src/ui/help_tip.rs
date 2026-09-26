@@ -36,7 +36,7 @@ pub const FOREIGN_MOVE_FOLDERS: Topic = Topic {
 };
 pub const CLOSE_TO_TRAY: Topic = Topic {
     id: "help-close-to-tray",
-    text: "Closing the window hides Shep instead of quitting, so it keeps checking mail and showing notifications. Open or quit it from the tray icon.",
+    text: "Closing the window hides Shep instead of quitting, so it keeps checking mail and showing notifications. Open or quit it from the tray icon. Without a system tray, closing quits.",
 };
 pub const BACKUP_COMPRESSION: Topic = Topic {
     id: "help-backup-compression",
