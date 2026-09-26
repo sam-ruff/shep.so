@@ -57,6 +57,8 @@ export interface LocalStore {
   removeAccount?(review: RemovalReview, discard: boolean): Promise<void>;
   all<T>(store: StoreName, limit?: number): Promise<T[]>;
   get<T>(store: StoreName, key: string): Promise<T | undefined>;
+  /** A message read through its alias in one snapshot. */
+  resolveMail?<T>(id: string): Promise<T | undefined>;
   commit(changes: Change[], intent?: IntentLease): Promise<void>;
   snapshot(
     names: readonly StoreName[],
@@ -239,6 +241,23 @@ export class BrowserStore implements LocalStore {
   }
   get<T>(store: StoreName, key: string) {
     return this.read<T | undefined>(store, key);
+  }
+  resolveMail<T>(id: string): Promise<T | undefined> {
+    return new Promise((resolve, reject) => {
+      const tx = this.db.transaction(["mailAliases", "mail"], "readonly");
+      let mail: IDBRequest | undefined;
+      const alias = tx.objectStore("mailAliases").get(id);
+      alias.onsuccess = () => {
+        const target = (alias.result as { target?: string } | undefined)
+          ?.target;
+        mail = tx.objectStore("mail").get(target ?? id);
+      };
+      tx.oncomplete = () => resolve(mail?.result as T | undefined);
+      tx.onabort = () =>
+        reject(
+          new Error("Could not read browser storage. Reopen Shep to retry."),
+        );
+    });
   }
   snapshot(
     names: readonly StoreName[],

@@ -62,8 +62,11 @@ export class MailPaging {
   async reload() {
     this.nonce++;
     this.sync();
-    // A completion callback can request a replacement during finally.
-    // Follow that replacement too, so Refresh does not report completion early.
+    await this.settled();
+  }
+  /** Resolves when no page request is running. A completion callback can
+   * request a replacement during finally; follow that replacement too. */
+  async settled() {
     do {
       await this.running;
     } while (!this.closed && this.running);

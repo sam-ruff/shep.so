@@ -3,6 +3,7 @@ import { read, snapshot } from "./mailbox_cache";
 import type { CacheMail, CacheState } from "./cache_changes";
 import type { MailAlias } from "./sent_cache";
 import { BulkExecutor } from "./bulk_executor";
+import { ProgressPacer } from "./progress_pacer";
 import {
   BulkJournal,
   tabLock,
@@ -49,6 +50,10 @@ export class BrowserGroups extends EventTarget {
   private releaseTab?: () => void;
   private sweeping?: Promise<void>;
   private sweepTimer?: ReturnType<typeof setTimeout>;
+  private progressConsumers = new Set<() => Promise<unknown> | undefined>();
+  private pacer = new ProgressPacer<BulkJob>((job) =>
+    this.deliverProgress(job),
+  );
   constructor(
     private repository: GatewayRepository,
     private selection: () => SelectionWorkerClient | undefined,
@@ -64,10 +69,24 @@ export class BrowserGroups extends EventTarget {
     );
   }
   private progress(job: BulkJob) {
-    if (!this.closed) {
-      this.dispatchEvent(new CustomEvent("progress", { detail: job }));
-      this.refreshAttention();
-    }
+    if (!this.closed) this.pacer.push(job);
+  }
+  /** One progress round: listeners refresh synchronously, then every
+   * registered consumer reports when the reads it started have finished. */
+  private deliverProgress(job: BulkJob) {
+    if (this.closed) return;
+    this.dispatchEvent(new CustomEvent("progress", { detail: job }));
+    this.refreshAttention();
+    return Promise.allSettled([
+      this.attentionReading,
+      ...[...this.progressConsumers].map((consumer) => consumer()),
+    ]);
+  }
+  /** Register reads that each progress round starts, so the next round waits
+   * for them instead of stacking more reads on the executor's stores. */
+  addProgressConsumer(consumer: () => Promise<unknown> | undefined) {
+    this.progressConsumers.add(consumer);
+    return () => this.progressConsumers.delete(consumer);
   }
   refreshAttention() {
     if (this.closed) return;
@@ -129,6 +148,7 @@ export class BrowserGroups extends EventTarget {
   stop() {
     this.closed = true;
     clearTimeout(this.sweepTimer);
+    this.pacer.close();
     this.executor.stop();
     this.releaseTab?.();
   }
