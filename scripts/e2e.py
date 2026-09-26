@@ -2109,6 +2109,26 @@ class NativeFlows(unittest.TestCase):
             self.mcp.batch(click(85,282),check("folder","INBOX"),check("html_view_current",True),
                            check("html_background",[16,16,16,255]),wait(100),shot(f"html-dark-document-{dark}"))
 
+    def test_html_transparent_newsletter_gets_readable_paper_in_both_themes(self):
+        from PIL import Image
+        for dark in (False, True):
+            result = self.mcp.call("desktop.start", html_mail=True)
+            print(f"Transparent newsletter evidence ({'dark' if dark else 'light'}): {result['artifacts']}", flush=True)
+            if dark:
+                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),key("ctrl+1"))
+            self.mcp.batch(click(85,477),check("selected","Confirm your fictional lesson"),check("html_view_current",True),
+                           check("html_background",[255,255,255,255]),wait(100),shot(f"html-transparent-paper-{dark}"))
+            state = self.mcp.call("desktop.state")
+            x,y,w,h = state["html_body_visible"]
+            capture = Image.open(Path(result["artifacts"])/f"html-transparent-paper-{dark}.webp").convert("RGB")
+            surround = capture.getpixel((int(x-20),int(y+30)))
+            self.assertTrue(all(v >= 247 for v in surround), surround)
+            # The dark body text must sit on light paper, never on the dark app theme.
+            body = capture.crop((int(x), int(y), int(x+w), int(y+h)))
+            darkest = min(sum(p)/3 for p in body.getdata())
+            lightest = max(sum(p)/3 for p in body.getdata())
+            self.assertGreater(lightest - darkest, 150, (darkest, lightest))
+
     def test_conversation_refresh_preserves_scrolled_position(self):
         self.mcp.call("desktop.start",conversation_mail=True)
         self.mcp.batch(key("ctrl+k"),check("focused_input","search"),type_text("Long project review"),
