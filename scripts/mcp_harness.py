@@ -735,7 +735,8 @@ class Desktop:
         """Read actual browser-produced PDF output and capture its first page."""
         if not 1 <= int(count) <= 20 or not 1 <= int(pages) <= 1000 or not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", name):
             raise ValueError("Invalid print output assertion.")
-        deadline = time.monotonic() + 5
+        # The external browser can take the full 5 s to write a PDF on a loaded host.
+        deadline = time.monotonic() + 15
         while True:
             files = sorted((self.directory / "printed").glob("*.pdf"), key=lambda p: p.stat().st_mtime_ns)
             try:
