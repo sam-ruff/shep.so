@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { BulkJournal, tabLock, type BulkSweep } from "./bulk_journal";
+import {
+  BulkJournal,
+  tabLock,
+  type BulkJob,
+  type BulkSweep,
+} from "./bulk_journal";
 import { BulkExecutor } from "./bulk_executor";
 import { BrowserGroups } from "./bulk_client";
 import type { GatewayRepository } from "./provider";
@@ -89,6 +94,44 @@ test("a wake waits for an in-flight sweep, and retired reviews refresh the recov
     expect(inspect.mock.calls.length).toBeGreaterThan(before),
   );
   g.stop();
+});
+
+test("executor progress waits for the reads each round started and then shows the latest job", async () => {
+  const g = groups();
+  const shown: number[] = [];
+  g.addEventListener("progress", (event) =>
+    shown.push((event as CustomEvent<BulkJob>).detail.revision),
+  );
+  let page = deferred<void>();
+  const consumer = vi.fn(() => page.promise);
+  const remove = g.addProgressConsumer(consumer);
+  const notice = (revision: number) =>
+    (
+      g as unknown as { executor: { changed: (job: BulkJob) => void } }
+    ).executor.changed({ revision } as BulkJob);
+  notice(1);
+  expect(shown).toEqual([1]);
+  expect(consumer).toHaveBeenCalledTimes(1);
+  notice(2);
+  notice(3);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(shown).toEqual([1]);
+  const finished = page;
+  page = deferred<void>();
+  finished.resolve();
+  await vi.advanceTimersByTimeAsync(2000);
+  // The earlier progress is skipped rather than replayed.
+  expect(shown).toEqual([1, 3]);
+  remove();
+  page.resolve();
+  await vi.advanceTimersByTimeAsync(2000);
+  notice(4);
+  expect(shown).toEqual([1, 3, 4]);
+  expect(consumer).toHaveBeenCalledTimes(2);
+  g.stop();
+  notice(5);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(shown).toEqual([1, 3, 4]);
 });
 
 test("a sweep refused by another tab's owner is ignored and does not report a group failure", async () => {

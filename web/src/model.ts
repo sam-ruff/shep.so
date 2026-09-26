@@ -548,6 +548,10 @@ export class Workspace extends EventTarget {
   get pageError() {
     return this.paging?.error ?? null;
   }
+  /** Resolves when the current mailbox page request and its replacement finish. */
+  pageSettled() {
+    return this.paging?.settled();
+  }
   get total() {
     return this.paging
       ? this.paging.ready

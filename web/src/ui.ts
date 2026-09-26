@@ -344,28 +344,35 @@ export function mount(
   const gateway =
     w.repository instanceof GatewayRepository ? w.repository : undefined;
   const groupUI = gateway ? new GroupUI(w, gateway) : undefined;
-  let activitySummary = "", activityReading = false, activityAgain = false;
-  async function refreshActivitySummary() {
+  let activitySummary = "", activityReading: Promise<void> | undefined, activityAgain = false;
+  function refreshActivitySummary() {
     if (!gateway?.actionActivity) return;
     activityAgain = true;
-    if (activityReading) return;
-    activityReading = true;
-    do {
-      activityAgain = false;
-      let summary: string;
-      try {
-        const [page, connections, folders, calendars] = await Promise.all([
-          gateway.actionActivity.page(), connectionActivity(gateway), gateway.folderActivity?.page(), gateway.calendar?.journal.summary(),
-        ]);
-        const count = page.rows.length + connections.rows.length + (folders?.rows.length ?? 0) + (calendars?.pending ?? 0);
-        summary = count ? `${count}${page.next || connections.more || folders?.next ? "+" : ""}` : "";
-      } catch { summary = "!"; }
-      if (summary !== activitySummary) { activitySummary = summary; render(); }
-    } while (activityAgain);
-    activityReading = false;
+    return (activityReading ??= readActivitySummary(gateway, gateway.actionActivity));
+  }
+  async function readActivitySummary(gateway: GatewayRepository, activity: NonNullable<GatewayRepository["actionActivity"]>) {
+    try {
+      do {
+        activityAgain = false;
+        let summary: string;
+        try {
+          const [page, connections, folders, calendars] = await Promise.all([
+            activity.page(), connectionActivity(gateway), gateway.folderActivity?.page(), gateway.calendar?.journal.summary(),
+          ]);
+          const count = page.rows.length + connections.rows.length + (folders?.rows.length ?? 0) + (calendars?.pending ?? 0);
+          summary = count ? `${count}${page.next || connections.more || folders?.next ? "+" : ""}` : "";
+        } catch { summary = "!"; }
+        if (summary !== activitySummary) { activitySummary = summary; render(); }
+      } while (activityAgain);
+    } finally {
+      // Cleared in the same turn as the last check, so no request is missed.
+      activityReading = undefined;
+    }
   }
   w.addEventListener("change", () => void refreshActivitySummary());
   void refreshActivitySummary();
+  // Group progress waits for this summary instead of stacking reads on it.
+  gateway?.groups.addProgressConsumer(() => activityReading);
   function newFolder(account: string) {
     if (!gateway?.folderActivity) return;
     const d = modal("Create folder"), name = el("input"), parent = el("select"), status = el("p", "form-status");
