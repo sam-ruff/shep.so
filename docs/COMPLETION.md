@@ -1,5 +1,82 @@
 # Completion audit
 
+## Browser group progress pacing (R42), 26 September 2026
+
+Branch `fix/web-bulk-group-execution` restores `web/e2e/bulk-controls.spec.ts`,
+which failed 11 of 15 in Chromium on main. The groups were not stalled: counts
+rose steadily, but at 8 to 20 messages a second a 125-message group outlasted
+the five-second expectations. Instrumenting every IndexedDB transaction showed
+why. Each step makes about two dozen short transactions, and most of their time
+was spent queued behind readers: every 100 ms progress notice started a
+mailbox worker requery, the Activity summary (four reads), the attention check
+and, with History open, its page. When a host is busy a round of those reads
+takes longer than 100 ms, so they ran back to back and the executor's writes
+waited on them. The same failures reproduce on a copy of `a6ae2f3`, so this was
+long-standing rather than a regression.
+
+`web/src/progress_pacer.ts` now delivers only the latest group progress, one
+round at a time: listeners register the reads a round starts
+(`BrowserGroups.addProgressConsumer`), and the next round waits for them and
+then for at least as long as they took (never less than 100 ms). Those reads
+therefore hold the stores for at most half the time, however slow the host.
+Group steps skip the three Activity writes that found no row (only individual
+actions own an Activity record), and `BrowserStore.resolveMail` reads an alias
+and its message in one transaction instead of two. Because progress can now
+arrive after an Undo click, a job saved before a pending notification Undo
+decision keeps its Undo state instead of offering Undo again; that race also
+existed before for an Undo clicked mid-group. On one worker a 125-message
+Archive now finishes in about 2 seconds; before, it took 3 to 30 depending on
+load. The spec's whole-group waits use a helper that fails after five seconds
+without progress rather than five seconds in total, and the file allows 90
+seconds per scenario, as `foreign-move.spec.ts` does.
+
+Evidence: 292 web unit tests including new pacer, progress-consumer and
+single-transaction alias tests; `bulk-controls.spec.ts` 15 of 15 on one worker
+and in two runs on the default eight workers, with the held-decision toast
+scenario passing five repeats; 138 of 139 in the other bulk, selection, move,
+Activity, intent, read-tracking, mailbox, folder, calendar, storage and
+workspace specs, the failure being one that fails identically on an
+origin/main copy. Light and
+dark captures of History during and after a held 125-message group were
+reviewed at 1440×920 and 390×844. Measurements were taken on a host shared
+with other builds (load average 7 to 30), not an idle one.
+
+Remaining: the group notification expires six seconds after approval, as on
+the desktop, so its Undo scenario fails when a group takes longer (eight
+parallel copies of that one scenario); group
+actions are unreachable at 760 px and below because the selection summary is
+hidden; `bulk-removal.spec.ts` "a committed removal shows its cleanup warning"
+fails on main on a duplicate alert; and the POP3 group scenario in
+`foreign-move.spec.ts` occasionally stays in INBOX under full-suite load on
+main too.
+
+## Close to tray on by default (R86 follow-up), 26 September 2026
+
+Branch `feat/close-to-tray-default` does what Sam asked on 11 September: the
+desktop's "Keep Shep running in the system tray when closing the window" now
+starts on. New installs and settings saved before the tray existed (the field
+is absent from their stored record) get it on. Every preference save writes the
+whole record, so a stored off cannot be told apart from a value nobody touched;
+it is kept as the user's choice rather than guessed at. Where no tray host is
+available, closing the window now quits normally through the ordinary close
+path, which still waits for required saves and receipts; before, an enabled
+preference with no tray refused to close and pointed at Quit Shep. The
+Preferences caption, its search entry, the help icon and `docs/mail.md` say so.
+
+Evidence: the new store test (pre-tray record defaults on, saved off survives
+reopen), two new tray controller tests (default on hides when a host exists; no
+host quits when idle and waits for a pending send), the ten temporary-tray
+controller tests now set the preference off explicitly, 433 `ui::` unit tests
+and 16 preference tests pass. Sixteen tray and hidden-owner activation native
+scenarios pass on the test-ui build: they now rely on the default instead of
+clicking it on, turn it off with the real checkbox where the temporary saving
+tray is under test, check an explicit off survives restart and then quits on
+close, and check a closed window quits once the tray host is lost. Five
+ordinary close/restart scenarios without a tray host also pass. Reviewed
+light, compact-dark, no-host and explicit-off WebPs. Limits: close-to-tray is
+still a device-local setting (the coordinated "sync every preference" change is
+separate), and Windows/macOS tray execution remains unverified.
+
 ## Browser foreign folders when moving (R108), 22 September 2026
 
 Branch `feat/web-foreign-move-folders` brings the desktop Move behaviour to the

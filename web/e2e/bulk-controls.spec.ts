@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { seed, profile, subject } from "./mailbox-fixture";
 
@@ -131,6 +131,51 @@ async function openGroup(page: Page, name: RegExp) {
   await d.getByRole("button", { name }).first().click();
   return d;
 }
+/** A whole group takes one saved step per message, so under parallel load it
+ * can outlast one expect timeout. The wait continues only while the observed
+ * value keeps changing: a stalled group still fails after five seconds
+ * without progress, the same bound as an ordinary expectation. */
+async function steadily<T>(
+  observe: () => Promise<T>,
+  check: (value: T) => void,
+  stall = 5000,
+) {
+  let last: string | undefined,
+    changed = Date.now();
+  for (;;) {
+    const value = await observe();
+    try {
+      check(value);
+      return;
+    } catch (error) {
+      const key = JSON.stringify(value);
+      if (key !== last) {
+        last = key;
+        changed = Date.now();
+      } else if (Date.now() - changed > stall) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+/** Group progress reaches `text` while it keeps advancing. */
+const progressReaches = (d: Locator, text: string) =>
+  steadily(
+    async () => (await d.locator(".group-progress").textContent()) ?? "",
+    (value) => expect(value).toContain(text),
+  );
+/** The cached folders reach `expected` while the group keeps advancing. */
+const cacheReaches = (page: Page, expected: Record<string, number>) =>
+  steadily(
+    () => cached(page),
+    (value) => expect(value).toEqual(expected),
+  );
+const starredReaches = (page: Page, count: number) =>
+  steadily(
+    async () => (await starred(page)).length,
+    (value) => expect(value).toBe(count),
+  );
+// Several scenarios wait for more than one complete 125-message group.
+test.describe.configure({ timeout: 90000 });
 
 test("actual mixed-account group review cancels safely, applies all 125 rows and restores them through bounded History", async ({
   page,
@@ -165,16 +210,16 @@ test("actual mixed-account group review cancels safely, applies all 125 rows and
   await expect(page.locator("main > header")).toContainText(
     "0 messages · 0 unread",
   );
-  await expect.poll(() => cached(page)).toEqual({ Archive: 125 });
+  await cacheReaches(page, { Archive: 125 });
   const d = await history(page);
-  await expect(d.locator(".group-progress")).toContainText("125 changed");
+  await progressReaches(d, "125 changed");
   await expect(d.locator(".group-item")).toHaveCount(50);
   await d.getByRole("button", { name: "Next results", exact: true }).click();
   await expect(d.locator(".group-item").first()).toContainText("Message 51");
   await d.getByRole("button", { name: "Next results", exact: true }).click();
   await expect(d.locator(".group-item")).toHaveCount(25);
   await d.getByRole("button", { name: "Undo group", exact: true }).click();
-  await expect(d.locator(".group-progress")).toContainText("125 restored");
+  await progressReaches(d, "125 restored");
   expect(await cached(page)).toEqual({ INBOX: 125 });
   await page.screenshot({ path: "../artifacts/web/bulk-history-light.png" });
 });
@@ -309,7 +354,7 @@ test("failed and unconfirmed results remain visible; History retries only a defi
   await d.getByRole("button", { name: "Retry message 1", exact: true }).click();
   const resume = d.getByRole("button", { name: "Resume group", exact: true });
   if (await resume.isVisible()) await resume.click();
-  await expect(d.locator(".group-progress")).toContainText("124 changed");
+  await progressReaches(d, "124 changed");
   await expect(d.locator(".group-progress")).toContainText(
     "1 unavailable or skipped",
   );
@@ -569,7 +614,7 @@ test("a group captured during an earlier move flags the same full membership at 
   await expect
     .poll(() => page.evaluate(() => (window as any).historyPreviewPending))
     .toBe(true);
-  await expect(d.locator(".group-progress")).toContainText("125 changed");
+  await progressReaches(d, "125 changed");
   await expect(
     d.getByRole("button", { name: "Undo group", exact: true }),
   ).toBeDisabled();
@@ -605,7 +650,7 @@ test("a group captured during an earlier move flags the same full membership at 
   await expect(
     d.getByRole("heading", { name: "Flag · 125 messages", exact: true }),
   ).toBeVisible();
-  await expect(d.locator(".group-progress")).toContainText("125 changed");
+  await progressReaches(d, "125 changed");
   await expect(d.locator(".group-progress")).toContainText("0 failed");
   const final = await page.evaluate(async (profile) => {
     const path = "/src/storage.ts",
@@ -638,7 +683,7 @@ test("group Undo restores rows and counts while its decision and subsequent quer
     .getByRole("dialog", { name: "Review group action", exact: true })
     .getByRole("button", { name: "Archive 125 messages", exact: true })
     .click();
-  await expect.poll(() => cached(page)).toEqual({ Archive: 125 });
+  await cacheReaches(page, { Archive: 125 });
   await expect(page.locator("main > header")).toContainText(
     "0 messages · 0 unread",
   );
@@ -688,7 +733,7 @@ test("group Undo restores rows and counts while its decision and subsequent quer
     (window as any).releaseUndoDecision();
     (window as any).releaseUndoQueries();
   });
-  await expect.poll(() => cached(page)).toEqual({ INBOX: 125 });
+  await cacheReaches(page, { INBOX: 125 });
   await expect(page.locator("main > header")).toContainText(
     "125 messages · 125 unread",
   );
@@ -788,7 +833,7 @@ test("a failed History Undo preview leaves progress usable and retries through R
     .getByRole("dialog", { name: "Review group action", exact: true })
     .getByRole("button", { name: "Archive 125 messages", exact: true })
     .click();
-  await expect.poll(() => cached(page)).toEqual({ Archive: 125 });
+  await cacheReaches(page, { Archive: 125 });
   await page.evaluate(async () => {
     const path = "/src/mailbox_worker_client.ts",
       { MailboxWorkerClient } = await import(path),
@@ -801,7 +846,7 @@ test("a failed History Undo preview leaves progress usable and retries through R
     };
   });
   const d = await history(page);
-  await expect(d.locator(".group-progress")).toContainText("125 changed");
+  await progressReaches(d, "125 changed");
   const error = d
     .getByRole("alert")
     .filter({ hasText: "Refresh history to retry Undo" });
@@ -824,7 +869,7 @@ test("a failed History Undo preview leaves progress usable and retries through R
     d.getByRole("button", { name: "Undo group", exact: true }),
   ).toBeEnabled();
   await d.getByRole("button", { name: "Undo group", exact: true }).click();
-  await expect(d.locator(".group-progress")).toContainText("125 restored");
+  await progressReaches(d, "125 restored");
   expect(await cached(page)).toEqual({ INBOX: 125 });
 });
 
@@ -899,13 +944,13 @@ test("Y/N/Enter/Escape decline, close and approve reviews; a text field keeps En
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.keyboard.press("y");
   await expect(review).toBeHidden();
-  await expect.poll(() => cached(page)).toEqual({ Spam: 125 });
+  await cacheReaches(page, { Spam: 125 });
   await expect
     .poll(() => journal(page))
     .toEqual([{ state: "ready", rows: 50 }]);
   const d = await openGroup(page, /^Move to Spam 125 messages/);
   await d.getByRole("button", { name: "Undo group", exact: true }).click();
-  await expect(d.locator(".group-progress")).toContainText("125 restored");
+  await progressReaches(d, "125 restored");
   // Decline closes History when nothing is checked.
   await page.keyboard.press("n");
   await expect(d).toBeHidden();
@@ -916,7 +961,7 @@ test("Y/N/Enter/Escape decline, close and approve reviews; a text field keeps En
   await expect(apply).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(review).toBeHidden();
-  await expect.poll(() => cached(page)).toEqual({ Archive: 125 });
+  await cacheReaches(page, { Archive: 125 });
 });
 
 test("History keys accept only a single checked folder review; Escape clears the check before it closes", async ({
@@ -990,7 +1035,7 @@ test("History keys accept only a single checked folder review; Escape clears the
   await page.keyboard.press("y");
   await expect(d.locator(".group-progress")).toContainText("0 unconfirmed");
   await d.getByRole("button", { name: "Resume group", exact: true }).click();
-  await expect(d.locator(".group-progress")).toContainText("123 changed");
+  await progressReaches(d, "123 changed");
   await expect(d.locator(".group-progress")).toContainText(
     "2 unavailable or skipped",
   );
@@ -1006,14 +1051,14 @@ test("group Undo after the scope and page changed restores the original rows and
     .getByRole("button", { name: "Flag selected messages", exact: true })
     .click();
   await approve(page, "Flag 125 messages");
-  await expect.poll(async () => (await starred(page)).length).toBe(125);
+  await starredReaches(page, 125);
   await page.getByRole("button", { name: "Next page", exact: true }).click();
   await expect(
     page.getByRole("button", { name: `Unflag ${subject(50)}`, exact: true }),
   ).toBeVisible();
   const d = await openGroup(page, /^Flag 125 messages/);
   await d.getByRole("button", { name: "Undo group", exact: true }).click();
-  await expect(d.locator(".group-progress")).toContainText("125 restored");
+  await progressReaches(d, "125 restored");
   await d.getByRole("button", { name: "Close", exact: true }).click();
   await expect(
     page.getByRole("button", { name: `Flag ${subject(50)}`, exact: true }),
@@ -1024,7 +1069,7 @@ test("group Undo after the scope and page changed restores the original rows and
     .getByRole("button", { name: "Archive selected messages", exact: true })
     .click();
   await approve(page, "Archive 125 messages");
-  await expect.poll(() => cached(page)).toEqual({ Archive: 125 });
+  await cacheReaches(page, { Archive: 125 });
   await page
     .getByRole("navigation", { name: "Workspace", exact: true })
     .getByRole("button", { name: "Archive", exact: true })
@@ -1034,9 +1079,7 @@ test("group Undo after the scope and page changed restores the original rows and
   await archive
     .getByRole("button", { name: "Undo group", exact: true })
     .click();
-  await expect(archive.locator(".group-progress")).toContainText(
-    "125 restored",
-  );
+  await progressReaches(archive, "125 restored");
   await archive.getByRole("button", { name: "Close", exact: true }).click();
   // The Archive scope empties while the unread count follows the Inbox.
   await expect(page.locator("main > header")).toContainText(
@@ -1094,7 +1137,7 @@ test("Undo of a group approved behind an earlier group cancels its unsent work w
   );
   await expect(d.locator(".group-progress")).toContainText("0 restored");
   await d.getByRole("button", { name: /^Flag 125 messages/ }).click();
-  await expect(d.locator(".group-progress")).toContainText("125 changed");
+  await progressReaches(d, "125 changed");
   const calls = await groupCalls(page);
   expect(calls).toHaveLength(125);
   expect(calls.every((call) => call.endsWith(":flags"))).toBe(true);
@@ -1127,13 +1170,13 @@ test("Undo after a partial failure restores only acknowledged messages and never
     .click();
   await approve(page, "Archive 125 messages");
   const d = await history(page);
-  await expect(d.locator(".group-progress")).toContainText("124 changed");
+  await progressReaches(d, "124 changed");
   await expect(d.locator(".group-progress")).toContainText("1 failed");
   await expect(
     d.getByRole("button", { name: "Retry message 4", exact: true }),
   ).toBeVisible();
   await d.getByRole("button", { name: "Undo group", exact: true }).click();
-  await expect(d.locator(".group-progress")).toContainText("124 restored");
+  await progressReaches(d, "124 restored");
   await expect(d.locator(".group-progress")).toContainText("1 failed");
   await expect(
     d.getByRole("button", { name: "Retry message 4", exact: true }),
@@ -1159,7 +1202,7 @@ test("overlapping groups keep the newer per-field choice through Undo and each r
     .getByRole("button", { name: "Flag selected messages", exact: true })
     .click();
   await approve(page, "Flag 125 messages");
-  await expect.poll(async () => (await starred(page)).length).toBe(125);
+  await starredReaches(page, 125);
   await page.getByRole("button", { name: "Select", exact: true }).click();
   await page.locator(".mail-row").first().getByRole("checkbox").check();
   await page
@@ -1169,7 +1212,7 @@ test("overlapping groups keep the newer per-field choice through Undo and each r
   await expect.poll(async () => (await starred(page)).length).toBe(124);
   const flag = await openGroup(page, /^Flag 125 messages/);
   await flag.getByRole("button", { name: "Undo group", exact: true }).click();
-  await expect(flag.locator(".group-progress")).toContainText("124 restored");
+  await progressReaches(flag, "124 restored");
   await expect(flag.locator(".group-progress")).toContainText(
     "1 unavailable or skipped",
   );

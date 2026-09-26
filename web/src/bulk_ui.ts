@@ -78,8 +78,12 @@ export class GroupUI {
   private preparing = false;
   private applying = false;
   private undoQueued = false;
+  /** Group whose Undo decision is being saved from the notification. */
+  private undoing?: string;
   private historyDialog?: HTMLDialogElement;
-  private historyRefresh?: () => void;
+  private historyRefresh?: () => Promise<void> | undefined;
+  /** History reads started by the latest progress round. */
+  private historyRound?: Promise<void>;
   private disposed = false;
   private recovery: GroupRecovery = { entries: [] };
   private recoveryExpanded = false;
@@ -100,10 +104,15 @@ export class GroupUI {
       const job = (event as CustomEvent<BulkJob>).detail;
       if (this.disposed) return;
       if (this.current?.id === job.id && job.revision >= this.current.revision)
-        this.current = job;
+        // Progress saved before a pending Undo decision cannot reoffer Undo.
+        this.current =
+          this.undoing === job.id && !job.undo ? { ...job, undo: true } : job;
       this.w.groupChanged();
-      this.historyRefresh?.();
+      this.historyRound = this.historyRefresh?.();
     });
+    this.groups.addProgressConsumer(() =>
+      Promise.all([this.w.pageSettled(), this.historyRound]),
+    );
     this.groups.addEventListener("failure", (event) => {
       if (this.disposed) return;
       this.error = (event as CustomEvent<string>).detail;
@@ -308,6 +317,7 @@ export class GroupUI {
     }
     try {
       this.w.beginGroupUndo(job.id);
+      this.undoing = job.id;
       const operation = this.groups.decide(job, "undo");
       this.notify({ ...job, undo: true });
       this.w.groupChanged();
@@ -318,6 +328,8 @@ export class GroupUI {
       this.w.finishGroupUndo(job.id, false);
       this.current = job;
       this.error = message(error);
+    } finally {
+      this.undoing = undefined;
     }
     this.w.groupChanged();
   }
@@ -707,21 +719,21 @@ export class GroupUI {
           status.textContent = message(error);
       }
     };
-    let refreshing = false;
-    const refresh = () => {
+    let refreshing: Promise<void> | undefined;
+    const refresh = (): Promise<void> | undefined => {
       if (!d.isConnected) return;
       if (refreshing) {
         refreshAgain = true;
-        return;
+        return refreshing;
       }
-      refreshing = true;
-      void loadView().finally(() => {
-        refreshing = false;
+      refreshing = loadView().finally(() => {
+        refreshing = undefined;
         if (refreshAgain) {
           refreshAgain = false;
-          refresh();
+          void refresh();
         }
       });
+      return refreshing;
     };
     this.historyRefresh = refresh;
     const load = async () => {
