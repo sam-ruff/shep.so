@@ -175,7 +175,14 @@ impl App {
     }
 
     pub(in crate::ui) fn new_composer(&mut self) {
-        let draft = Draft {
+        self.load_draft(self.blank_draft());
+        // A completely empty composer need not become a saved draft.
+        self.composer.current.dirty = None;
+    }
+
+    /// A new draft from the current account, or the first one.
+    pub(in crate::ui) fn blank_draft(&self) -> Draft {
+        Draft {
             id: uuid::Uuid::new_v4().to_string(),
             account_id: self
                 .query
@@ -184,10 +191,7 @@ impl App {
                 .or_else(|| self.workspace.accounts.first().map(|a| a.id.clone()))
                 .unwrap_or_default(),
             ..Default::default()
-        };
-        self.load_draft(draft);
-        // A completely empty composer need not become a saved draft.
-        self.composer.current.dirty = None;
+        }
     }
 
     pub(in crate::ui) fn restore_reply(&mut self) {

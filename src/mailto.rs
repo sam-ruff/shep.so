@@ -5,13 +5,15 @@ use std::ffi::OsString;
 /// Longest link accepted from a launcher.
 pub const MAX_LEN: usize = 8 * 1024;
 
-/// The visible fields a link may prefill. Hidden recipients, other headers,
-/// bodies and attachments are ignored.
+/// The draft fields a link may prefill, all shown before sending. Other
+/// headers and attachments are ignored.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Mailto {
     pub to: String,
     pub cc: String,
+    pub bcc: String,
     pub subject: String,
+    pub body: String,
 }
 
 impl Mailto {
@@ -25,7 +27,9 @@ impl Mailto {
         }
         let mut to = vec![decode(url.path())];
         let mut cc = Vec::new();
+        let mut bcc = Vec::new();
         let mut subject = None;
+        let mut body = None;
         for pair in url.query().unwrap_or_default().split('&') {
             let Some((key, value)) = pair.split_once('=') else {
                 continue;
@@ -33,14 +37,18 @@ impl Mailto {
             match key.to_ascii_lowercase().as_str() {
                 "to" => to.push(decode(value)),
                 "cc" => cc.push(decode(value)),
+                "bcc" => bcc.push(decode(value)),
                 "subject" if subject.is_none() => subject = Some(decode(value)),
+                "body" if body.is_none() => body = Some(decode_body(value)),
                 _ => {}
             }
         }
         Some(Self {
             to: join(to),
             cc: join(cc),
+            bcc: join(bcc),
             subject: subject.unwrap_or_default(),
+            body: body.unwrap_or_default(),
         })
     }
 }
@@ -63,6 +71,16 @@ fn decode(value: &str) -> String {
         .to_owned()
 }
 
+/// Bodies keep their line breaks and tabs; other control characters go.
+fn decode_body(value: &str) -> String {
+    percent_decode_str(value)
+        .decode_utf8_lossy()
+        .replace("\r\n", "\n")
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+        .collect()
+}
+
 fn join(values: Vec<String>) -> String {
     values
         .into_iter()
@@ -76,16 +94,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prefills_recipients_and_subject_but_not_hidden_fields() {
+    fn prefills_draft_fields_but_not_other_headers() {
         let link = "MAILTO:a%40example.test?to=b@example.test&cc=c@example.test\
                     &subject=Hello%20there+friend&bcc=hidden@example.test\
-                    &body=text&attachment=/etc/passwd";
+                    &body=This%20is%20the%20body.&attachment=/etc/passwd&from=x@example.test";
         assert_eq!(
             Mailto::parse(link),
             Some(Mailto {
                 to: "a@example.test, b@example.test".into(),
                 cc: "c@example.test".into(),
+                bcc: "hidden@example.test".into(),
                 subject: "Hello there+friend".into(),
+                body: "This is the body.".into(),
             })
         );
     }
@@ -95,6 +115,13 @@ mod tests {
         let parsed = Mailto::parse("mailto:a@example.test?subject=Hi%0D%0ABcc:%20x@example.test")
             .expect("valid link");
         assert_eq!(parsed.subject, "Hi  Bcc: x@example.test");
+    }
+
+    #[test]
+    fn body_keeps_line_breaks_and_drops_other_control_characters() {
+        let parsed = Mailto::parse("mailto:a@example.test?body=First%0D%0ASecond%0A%09Third%00%1B")
+            .expect("valid link");
+        assert_eq!(parsed.body, "First\nSecond\n\tThird");
     }
 
     #[test]
