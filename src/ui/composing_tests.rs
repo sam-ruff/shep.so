@@ -845,6 +845,56 @@ fn mailto_opens_an_owned_inline_draft_and_ignores_supplied_headers() {
 }
 
 #[test]
+fn desktop_mailto_prefills_visible_fields_only() {
+    let (mut app, _) = App::new();
+    let _ = app.compose_mailto(
+        "mailto:friend@example.test?cc=copy@example.test&subject=Hello&bcc=hidden@example.test&body=text",
+    );
+    assert!(app.compose_visible());
+    assert_eq!(app.compose_field("to"), "friend@example.test");
+    assert_eq!(app.compose_field("cc"), "copy@example.test");
+    assert_eq!(app.compose_field("subject"), "Hello");
+    assert!(app.compose_field("bcc").is_empty());
+    assert!(app.current_draft().body.is_empty());
+    assert!(app.composer.current.dirty.is_some());
+}
+
+#[test]
+fn desktop_mailto_ignores_other_links() {
+    let (mut app, _) = App::new();
+    let _ = app.compose_mailto("https://example.test");
+    assert!(!app.compose_visible());
+}
+
+#[test]
+fn activation_opens_a_draft_for_each_queued_mailto() {
+    let (mut app, _) = App::new();
+    let signal = crate::activation::Signal::default();
+    app.activation = Some(signal.clone());
+    let generation = signal
+        .request_compose("mailto:friend@example.test".into())
+        .expect("open accepted");
+    let _ = app.activate(generation);
+    assert!(app.compose_visible());
+    assert_eq!(app.compose_field("to"), "friend@example.test");
+    assert!(signal.take_compositions().is_empty());
+    assert!(signal.try_close(), "the Open was acknowledged");
+}
+
+#[test]
+fn launch_mailto_waits_for_the_workspace() {
+    let (mut app, _) = App::new();
+    app.pending_mailto = Some("mailto:friend@example.test".into());
+    assert!(!app.compose_visible());
+    let _ = app.handle(Message::Backend(Event::Workspace(Arc::new(
+        app.workspace.as_ref().clone(),
+    ))));
+    assert!(app.pending_mailto.is_none());
+    assert!(app.compose_visible());
+    assert_eq!(app.compose_field("to"), "friend@example.test");
+}
+
+#[test]
 fn explicit_save_waits_for_the_current_revision_and_does_not_acknowledge_other_drafts() {
     let (mut app, _) = App::new();
     let (tx, mut rx) = crate::engine::CommandSender::persistence_test_channel();

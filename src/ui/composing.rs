@@ -619,6 +619,18 @@ impl App {
         }
     }
 
+    /// Opens a new draft prefilled from a `mailto` link the desktop sent.
+    pub(super) fn compose_mailto(&mut self, link: &str) -> Task<Message> {
+        let Some(mailto) = crate::mailto::Mailto::parse(link) else {
+            return Task::none();
+        };
+        let task = self.handle(Message::NewMessage);
+        self.edit_compose_field("to", mailto.to);
+        self.edit_compose_field("cc", mailto.cc);
+        self.edit_compose_field("subject", mailto.subject);
+        task
+    }
+
     pub(super) fn edit_compose_field(&mut self, key: &str, value: String) {
         if !self.compose_visible() || self.dialog.is_some() || self.compose_locked() {
             return;

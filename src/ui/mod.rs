@@ -397,6 +397,8 @@ pub struct App {
     pending_close: Option<iced::window::Id>,
     tray: tray::State,
     activation: Option<crate::activation::Signal>,
+    /// A launch `mailto` link held until the workspace has loaded.
+    pending_mailto: Option<String>,
     database_transfer: database_transfers::State,
     database_import: database_import::State,
     profiles: profiles::State,
@@ -550,9 +552,9 @@ pub struct App {
     test_revision: u64,
 }
 
-pub fn run(activation: Option<crate::activation::Signal>) -> iced::Result {
+pub fn run(activation: Option<crate::activation::Signal>, mailto: Option<String>) -> iced::Result {
     iced::daemon(
-        move || App::boot(activation.clone()),
+        move || App::boot(activation.clone(), mailto.clone()),
         App::update,
         App::window_view,
     )
@@ -598,6 +600,7 @@ impl App {
                 pending_close: None,
                 tray: Default::default(),
                 activation: None,
+                pending_mailto: None,
                 database_transfer: Default::default(),
                 database_import: Default::default(),
                 profiles: Default::default(),
@@ -1463,6 +1466,9 @@ impl App {
                     }
                     self.observe_draft_files();
                     self.update_saved_preferences();
+                    if let Some(link) = self.pending_mailto.take() {
+                        return self.compose_mailto(&link);
+                    }
                 }
                 Event::Conversation(generation, anchor, result) => {
                     return self.conversation_result(generation, anchor, result);
