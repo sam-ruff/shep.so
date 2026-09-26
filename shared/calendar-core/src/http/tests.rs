@@ -100,6 +100,264 @@ fn saved(id: &str, etag: &str) -> String {
     .to_string()
 }
 
+fn restorable(status: &str, etag: &str) -> Value {
+    let mut value: Value = serde_json::from_str(&saved("remote/id", etag)).expect("fixture");
+    value["status"] = json!(status);
+    value["iCalUID"] = json!("owned-uid@example.test");
+    value["organizer"] = json!({"self":true,"email":"owner@example.test"});
+    value["attendees"] = json!([{"email":"guest@example.test","responseStatus":"accepted"}]);
+    value["conferenceData"] = json!({"conferenceId":"retained"});
+    value["attachments"] = json!([{"fileUrl":"https://example.test/file"}]);
+    value
+}
+
+#[tokio::test]
+#[ignore = "owned loopback HTTP contract"]
+async fn google_status_only_cancellation_and_restore_preserve_original_status() -> Result<()> {
+    for status in ["confirmed", "tentative"] {
+        let (provider, server) = fixture(vec![
+            reply(200, &restorable(status, "\"v1\"").to_string()),
+            reply(200, &restorable("cancelled", "\"v2\"").to_string()),
+            reply(200, &restorable(status, "\"v3\"").to_string()),
+        ])
+        .await?;
+        let plan = provider.prepare_delete("token", &event()?).await?;
+        let plan = serde_json::from_str(&serde_json::to_string(&plan)?)?;
+        let receipt = provider.cancel_event("token", &plan).await?;
+        let request = receipt.restore_request();
+        let request = serde_json::from_str(&serde_json::to_string(&request)?)?;
+        let restored = provider.restore_event("token", &request).await?;
+        assert_eq!(restored.etag.as_deref(), Some("\"v3\""));
+        let requests = server.await??;
+        assert!(requests[0].headers.starts_with("GET "));
+        for (index, expected, version) in [(1, "cancelled", "v1"), (2, status, "v2")] {
+            assert!(requests[index].headers.starts_with("PATCH "));
+            assert!(requests[index].headers.contains("conferenceDataVersion=1"));
+            assert!(requests[index].headers.contains("supportsAttachments=true"));
+            assert!(
+                requests[index]
+                    .headers
+                    .to_lowercase()
+                    .contains(&format!("if-match: \"{version}\""))
+            );
+            assert_eq!(
+                serde_json::from_slice::<Value>(&requests[index].body)?,
+                json!({"status":expected})
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "owned loopback HTTP contract"]
+async fn google_restore_refuses_unowned_recurring_stale_or_sparse_events() -> Result<()> {
+    let mut cases = Vec::new();
+    for (key, value) in [
+        (
+            "organizer",
+            json!({"self":false,"email":"owner@example.test"}),
+        ),
+        ("recurrence", json!(["RRULE:FREQ=DAILY"])),
+        ("recurringEventId", json!("series")),
+        ("originalStartTime", json!({"date":"2026-09-20"})),
+        ("etag", json!("\"changed\"")),
+        ("id", json!("another")),
+        ("status", json!("cancelled")),
+        ("start", Value::Null),
+        ("iCalUID", Value::Null),
+    ] {
+        let mut value_body = restorable("confirmed", "\"v1\"");
+        value_body[key] = value;
+        cases.push(value_body);
+    }
+    for value in cases {
+        let (provider, server) = fixture(vec![reply(200, &value.to_string())]).await?;
+        assert_eq!(
+            provider
+                .prepare_delete("token", &event()?)
+                .await
+                .expect_err("unsafe plan")
+                .kind,
+            FailureKind::Rejected
+        );
+        assert_eq!(server.await??.len(), 1);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "owned loopback HTTP contract"]
+async fn google_cancellation_unknown_is_not_recovered_as_an_acknowledgement() -> Result<()> {
+    let (provider, server) = fixture(vec![
+        reply(200, &restorable("confirmed", "\"v1\"").to_string()),
+        reply(200, "{}"),
+        reply(200, &restorable("cancelled", "\"v2\"").to_string()),
+        reply(404, "{}"),
+    ])
+    .await?;
+    let plan = provider.prepare_delete("token", &event()?).await?;
+    assert_eq!(
+        provider
+            .cancel_event("token", &plan)
+            .await
+            .expect_err("unknown")
+            .kind,
+        FailureKind::Uncertain
+    );
+    assert_eq!(
+        provider.inspect_deletion("token", &plan).await?,
+        crate::restoration::Inspection::Cancelled {
+            etag: "\"v2\"".into()
+        }
+    );
+    assert_eq!(
+        provider.inspect_deletion("token", &plan).await?,
+        crate::restoration::Inspection::Missing
+    );
+    let requests = server.await??;
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.headers.starts_with("PATCH "))
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "owned loopback HTTP contract"]
+async fn google_restore_preserves_conflict_and_unknown_boundaries() -> Result<()> {
+    for (code, body, expected) in [
+        (412, "{}", FailureKind::Rejected),
+        (401, "{}", FailureKind::Waiting),
+        (500, "{}", FailureKind::Uncertain),
+        (200, "{}", FailureKind::Uncertain),
+    ] {
+        let (provider, server) = fixture(vec![
+            reply(200, &restorable("tentative", "\"v1\"").to_string()),
+            reply(200, &restorable("cancelled", "\"v2\"").to_string()),
+            reply(code, body),
+        ])
+        .await?;
+        let plan = provider.prepare_delete("token", &event()?).await?;
+        let receipt = provider.cancel_event("token", &plan).await?;
+        assert_eq!(
+            provider
+                .restore_event("token", &receipt.restore_request())
+                .await
+                .expect_err("failure")
+                .kind,
+            expected
+        );
+        assert_eq!(server.await??.len(), 3);
+    }
+    Ok(())
+}
+
+#[test]
+fn restoration_deserialisation_rejects_invalid_versions_and_unknown_fields() -> Result<()> {
+    let plan = crate::restoration::DeletePlan::new(
+        event()?,
+        crate::restoration::LiveStatus::Tentative,
+        "uid".into(),
+        "owner@example.test".into(),
+    )?;
+    for etag in ["", "*", "W/\"v1\"", "\"v1\", \"v2\"", "\"\r\n\""] {
+        let mut value = serde_json::to_value(&plan)?;
+        value["before"]["etag"] = json!(etag);
+        assert!(serde_json::from_value::<crate::restoration::DeletePlan>(value).is_err());
+    }
+    let mut value = serde_json::to_value(&plan)?;
+    value["unknown"] = json!(true);
+    assert!(serde_json::from_value::<crate::restoration::DeletePlan>(value).is_err());
+    let receipt = crate::restoration::DeleteReceipt::acknowledged(plan, "\"v2\"".into())?;
+    let mut value = serde_json::to_value(receipt.restore_request())?;
+    value["receipt"]["cancelled_etag"] = json!("\"v1\"");
+    assert!(serde_json::from_value::<crate::restoration::RestoreRequest>(value).is_err());
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "owned loopback HTTP contract"]
+async fn google_restoration_lost_wire_reply_never_retries_or_creates() -> Result<()> {
+    for restoring in [false, true] {
+        let mut replies = vec![reply(200, &restorable("confirmed", "\"v1\"").to_string())];
+        if restoring {
+            replies.push(reply(200, &restorable("cancelled", "\"v2\"").to_string()));
+        }
+        replies.push(String::new());
+        let (provider, server) = fixture(replies).await?;
+        let plan = provider.prepare_delete("token", &event()?).await?;
+        let failure = if restoring {
+            let receipt = provider.cancel_event("token", &plan).await?;
+            let request = receipt.restore_request();
+            let saved = serde_json::to_string(&request)?;
+            let failure = provider
+                .restore_event("token", &request)
+                .await
+                .expect_err("lost reply");
+            assert_eq!(serde_json::to_string(&request)?, saved);
+            failure
+        } else {
+            provider
+                .cancel_event("token", &plan)
+                .await
+                .expect_err("lost reply")
+        };
+        assert_eq!(failure.kind, FailureKind::Uncertain);
+        let requests = server.await??;
+        assert_eq!(requests.len(), if restoring { 3 } else { 2 });
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.headers.starts_with("POST "))
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "owned loopback HTTP contract"]
+async fn google_cancelled_inspection_requires_owned_full_identity() -> Result<()> {
+    for (key, value) in [
+        ("id", json!("replacement")),
+        ("iCalUID", json!("replacement-uid")),
+        (
+            "organizer",
+            json!({"self":true,"email":"replacement@example.test"}),
+        ),
+        ("etag", Value::Null),
+        ("start", Value::Null),
+        ("recurringEventId", json!("series")),
+    ] {
+        let mut cancelled = restorable("cancelled", "\"v2\"");
+        cancelled[key] = value;
+        let (provider, server) = fixture(vec![
+            reply(200, &restorable("confirmed", "\"v1\"").to_string()),
+            reply(200, &cancelled.to_string()),
+        ])
+        .await?;
+        let plan = provider.prepare_delete("token", &event()?).await?;
+        assert_eq!(
+            provider
+                .inspect_deletion("token", &plan)
+                .await
+                .expect_err("unsafe observation")
+                .kind,
+            FailureKind::Rejected
+        );
+        assert!(
+            server
+                .await??
+                .iter()
+                .all(|request| request.headers.starts_with("GET "))
+        );
+    }
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "owned loopback HTTP contract"]
 async fn google_http_recovery_requires_exact_identity_and_editable_receipt() -> Result<()> {

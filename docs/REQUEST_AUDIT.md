@@ -3,8 +3,8 @@
 The next architecture continuation integrates checked Flutter folder changes and
 desktop Activity through existing owners. Mobile integrated gates pass198 Rust
 and265 Flutter tests; desktop application library passes1,076 with two ignored.
-Four actual Activity flows and six shortcut regressions pass; shipping remains
-open, as recorded in
+Four actual Activity flows and six shortcut regressions pass. Implementation
+`9dd7548` is pushed to main with normal hooks passing, as recorded in
 [Completion](COMPLETION.md). This does not complete the original app-wide request.
 
 The 21 September continuation integrates Flutter CalDAV controls, credential

@@ -101,6 +101,16 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
   next. Mobile lifecycle v1 remains unintegrated: review found a validation-to-
   probe race after releasing the credential FIFO; the lane is adding native
   attempt-bound dispatch before handoff.
+  Activity/folder checkpoint `9dd7548` is pushed to main with 1,610 normal-hook
+  Rust executions passing and15 ignored. Next integrate browser CalDAV19 and
+  shared restoration prerequisites, then lifecycle v2 after its race fixes.
+  The full architecture and final cross-client/platform gates remain active.
+  Current root integration adds browser CalDAV19, shared conditional Google
+  restoration prerequisites and corrected Flutter lifecycle v2. Review found and
+  fixed late CalDAV discovery publishing after removal: source publication and
+  activation now share one checked transaction with the pre-discovery clock.
+  Combined client, protocol and actual control gates are running. Browser Undo20,
+  bounded account removal21 and Flutter Send25 continue in isolated lanes.
 
   First migration implemented: common projection outcomes, native bulk review and
   confirmation during pending individual writes, pre-admission Undo, and calendar

@@ -555,7 +555,8 @@ trivial page without Shep. Runner confirmation remains open in TODO.
 
 ## Folder changes and desktop Activity integration, 21 September 2026
 
-This continuation is verified locally and remains under shipping verification.
+Implementation [`9dd7548`](https://github.com/sam-ruff/shep.so/commit/9dd754821939c36a2959953c03646e9b485b6e4f)
+is pushed to main. Normal hooks pass 1,610 Rust executions with 15 ignored.
 Flutter schema24 adds checked Rename, Move and Delete to the
 existing folder owner. Local confirmation precedes provider capacity and bounded
 50-row preparation/repair. Partial acknowledgements and unknown outcomes retain

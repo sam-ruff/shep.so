@@ -11,6 +11,7 @@ class ConnectionFixtureRepository extends NativeRepository {
       captureSend = false;
   Completer<void>? probeStarted, probeRelease;
   int probes = 0;
+  bool forwardProbes = false;
   Map<String, Object?>? submitted;
   final sendCaptured = Completer<void>();
   final sendRelease = Completer<void>();
@@ -23,12 +24,13 @@ class ConnectionFixtureRepository extends NativeRepository {
       await sendRelease.future;
       throw StateError('Synthetic SMTP refusal');
     }
-    if (request['op'] == 'probe') {
+    if (request['op'] == 'probe_account_connection') {
       probes++;
       if (probeStarted case final started? when !started.isCompleted) {
         started.complete();
       }
       if (probeRelease != null) await probeRelease!.future;
+      if (forwardProbes) return super.call(request);
       return {'connected': true, 'sent': false};
     }
     if (request['op'] == 'activate_account' && refuseActivation) {

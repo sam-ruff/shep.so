@@ -212,7 +212,10 @@ abstract interface class DurableCalDavRepository {
     CalDavConnection? observed,
   });
   Future<void> saveCalDavPassword(CalDavAttempt attempt, String password);
-  Future<void> activateCalDavConnection(CalDavAttempt attempt);
+  Future<void> activateCalDavConnection(
+    CalDavAttempt attempt, {
+    bool Function()? canDispatch,
+  });
   Future<List<CalDavAttempt>> calDavAttempts({bool pending = false});
   Future<CalDavAttempt?> calDavAttempt(String id);
   Future<List<CalDavConnection>> calDavConnections();
@@ -231,7 +234,11 @@ abstract interface class DurableCalDavRepository {
     CalDavConnection connection,
   );
   Future<CalDavAdmission?> calDavActionAdmission(String actionId);
-  Future<void> executeCalDavAction(String actionId, String credentialSlot);
+  Future<void> executeCalDavAction(
+    String actionId,
+    String credentialSlot, {
+    bool Function()? canDispatch,
+  });
   Future<void> inspectCalDavAction(String actionId, String credentialSlot);
 }
 

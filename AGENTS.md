@@ -1,5 +1,27 @@
 # Shep development instructions
 
+Browser CalDAV schema19 retains connection identities alongside the existing
+Calendar journal. Only administrator-configured HTTPS endpoints are available;
+pin their address with proxies and redirects disabled while retaining hostname
+validation. Passwords remain transient. Freeze connection revisions on actions
+and capture the Calendar clock before discovery. Publish sources and activate the
+checked connection atomically; removed identities and newer local changes reject
+late replies. Keep the combined 50-source bound and credential re-entry tests.
+
+Flutter connection probes carry the durable attempt identity into native code.
+Try-acquire provider capacity before account ownership, then validate saved
+configuration/removal under the short cancellation dispatch gate. Release that
+gate after the first provider poll so cancellation need not wait for a response.
+Keep credential writes on the lifecycle FIFO and retain foreground generation
+checks after admission, token and credential waits.
+
+Shared Google event restoration uses an exact read-only deletion plan, a
+conditional status-only cancellation and its acknowledged version. Persist each
+before the next provider mutation. Restore through that same event identity;
+never reconstruct omitted provider fields from display metadata. Inspection
+cannot mint a cancellation receipt. Recurring/non-organiser restoration remains
+unsupported until a complete provider contract is implemented and verified.
+
 Desktop Activity observes existing journals and opens their exact retained
 recovery targets. Keep its positive status indexes and coalesced observations;
 an older folder or backup must remain reachable outside recent loaded pages.
