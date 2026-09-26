@@ -4213,7 +4213,7 @@ class NativeFlows(unittest.TestCase):
         checkpoint=self.profile_checkpoint(started)
         self.assertEqual(len(checkpoint["accounts"]),2)
         self.assertEqual(checkpoint["local_only"],[])
-        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),9)
+        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),10)
         self.assertIsNone(checkpoint["pending"])
 
     def test_profile_sync_native_failure_retry_and_opt_out(self):
@@ -6088,7 +6088,8 @@ class NativeFlows(unittest.TestCase):
                        check("selected_id", "preview-work:INBOX:launch-2"), check("attachment_count", 1), shot("conversation-sent-message"),
                        key("r"), check("composer.visible", True), check("compose_fields.to", "maya@example.com"),
                        check("draft_in_reply_to", "<launch-1@example.com>"), shot("conversation-reply-target"),
-                       key("Escape"), check("dialog", None), click(1366, 343),
+                       key("Escape"), check("dialog", None), check("composer.visible", False), wait(80),
+                       click(1366, 343),
                        check("conversation_rows.1.starred", True), check("starred", True),
                        check("loaded_message_id", "preview-work:Sent:launch-1"), shot("conversation-flagged-message"),
                        key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
