@@ -228,9 +228,8 @@ Linux uses `[self-hosted, sophie]`, Windows `[self-hosted, Windows, X64]`. The
 existing pool registers ephemeral runners when jobs start, so an empty runner
 list does not establish missing capacity. Fork pull requests cannot run on these
 runners. Never dispatch an old workflow revision that chooses hosted runners.
-Sam paused the Windows job on 23 September while its runner clones lose contact
-mid-job; release publishing is paused with it rather than shipping Linux alone.
-Restore both together once the runner pool is fixed (TODO "Windows CI paused").
+A release needs both platform archives: if the Windows job is paused again,
+pause release publishing with it rather than shipping Linux alone.
 
 Linux quality runs inside the owned Ubuntu 24.04 image with pinned Rust, Node
 and sandboxed Chrome, matching the runner UID/GID. Preserve the restricted
