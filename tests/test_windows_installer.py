@@ -19,7 +19,10 @@ from test_release_installer import ReleaseFixture, ROOT
 PWSH = os.environ.get('SHEP_POWERSHELL') or shutil.which('pwsh') or shutil.which('powershell.exe')
 if not PWSH and (ROOT / 'artifacts/tooling/powershell/runtime/pwsh').is_file():
     PWSH = str(ROOT / 'artifacts/tooling/powershell/runtime/pwsh')
-TAR = shutil.which('tar.exe') or shutil.which('tar')
+# On Windows use the system bsdtar the installer targets; Git's GNU tar can come first on PATH
+# and reads a drive-letter archive path as a remote host.
+SYSTEM_TAR = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/tar.exe'
+TAR = str(SYSTEM_TAR) if os.name == 'nt' and SYSTEM_TAR.is_file() else shutil.which('tar.exe') or shutil.which('tar')
 
 
 def literal(value):
@@ -73,7 +76,8 @@ function New-ShepShortcut {{
  @{{ TargetPath=(Join-Path $Application 'shep.exe'); WorkingDirectory=$Application; IconLocation=(Join-Path $Application 'shep.ico')+',0' }} | ConvertTo-Json | Set-Content -LiteralPath $Path -Encoding UTF8
 }}
 function Test-ShepAdministrator {{ $false }}
-$env:SystemRoot = {literal(self.root / 'Fictional Windows')}
+# Winsock loads its providers through SystemRoot, so only a host without one gets a fictional value.
+if (!$env:SystemRoot) {{ $env:SystemRoot = {literal(self.root / 'Fictional Windows')} }}
 {setup}
 {command}
 ''')
@@ -162,6 +166,7 @@ $env:SystemRoot = {literal(self.root / 'Fictional Windows')}
         setup = '''function Start-Process {
  param($FilePath,$Verb,$ArgumentList,[switch]$Wait,[switch]$PassThru)
  if ($Verb -ne 'RunAs' -or $ArgumentList[-2] -ne '-EncodedCommand') { throw 'Wrong elevation contract' }
+ if ($FilePath -ne (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe')) { throw 'Elevation must use the system Windows PowerShell' }
  $code=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($ArgumentList[-1]))
  & ([scriptblock]::Create($code))
  [PSCustomObject]@{ ExitCode=0 }
