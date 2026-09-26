@@ -3,9 +3,6 @@ import json
 import os
 from pathlib import Path
 import plistlib
-import pty
-import fcntl
-import termios
 import shutil
 import subprocess
 import sys
@@ -172,6 +169,10 @@ os.execv({real_mv!r},[{real_mv!r}]+sys.argv[1:])
 
     def test_scope_conflict_and_terminal_cancellation_happen_before_download(self):
         self.assertIn('either --user or --system', self.run_installer(False, self.arguments[:2]+['--user','--system']).stderr)
+        # POSIX terminal modules do not exist on Windows, where this class is skipped.
+        import fcntl
+        import pty
+        import termios
         master, slave = pty.openpty()
         def attach_terminal():
             os.setsid()

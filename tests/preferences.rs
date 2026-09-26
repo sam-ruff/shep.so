@@ -156,6 +156,45 @@ async fn reconnecting_the_same_drive_account_preserves_history_but_other_account
 }
 
 #[tokio::test]
+async fn reply_quote_preference_defaults_on_survives_reopen_and_leaves_saved_drafts_alone() {
+    let older: Preferences =
+        serde_json::from_value(serde_json::json!({"sync_minutes": 5})).unwrap();
+    assert!(older.reply_include_original);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("reply.sqlite");
+    let store = Store::open(&path).unwrap();
+    let draft = shep::model::Draft {
+        id: "saved-reply".into(),
+        account_id: "account".into(),
+        body: "My answer".into(),
+        revision: 1,
+        reply_context: Some(shep::model::ReplyContext {
+            account_id: "account".into(),
+            mail_id: "original".into(),
+            quote: "\n\n> Earlier message".into(),
+            include_quote: true,
+        }),
+        ..Default::default()
+    };
+    store.save_draft(draft.clone()).await.unwrap();
+    store
+        .save_preferences(Preferences {
+            reply_include_original: false,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    let workspace = store.workspace().await.unwrap();
+    assert!(!workspace.preferences.reply_include_original);
+    let drafts = store.draft_state().await.unwrap().drafts;
+    assert_eq!(drafts.len(), 1);
+    assert_eq!(drafts[0].reply_context, draft.reply_context);
+    assert!(drafts[0].delivery_body().contains("Earlier message"));
+}
+
+#[tokio::test]
 async fn reopening_moves_the_old_default_check_interval_to_five_seconds_once() {
     let directory = tempfile::tempdir().unwrap();
     for (saved, expected) in [(15, 5), (20, 20)] {

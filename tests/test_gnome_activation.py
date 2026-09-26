@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from gnome_activation import (cleanup_all, desktop_entry, fixture_processes, notifier_items, require_stable,
-                              start_system_bus, stop_process)
+                              runtime_processes, start_system_bus, stop_process, stop_runtime_processes)
 
 
 class GnomeActivationTests(unittest.TestCase):
@@ -68,6 +68,35 @@ class GnomeActivationTests(unittest.TestCase):
                 process.mkdir()
                 (process / "cmdline").write_bytes("\0".join(arguments).encode() + b"\0")
             self.assertEqual(fixture_processes("/owned/shep", "/owned/state.json", root), [11])
+
+    def test_runtime_sweep_matches_only_this_runs_exact_runtime_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for pid, environment in {
+                21: ["DISPLAY=:0", "XDG_RUNTIME_DIR=/tmp/shep-notification-runtime-owned"],
+                22: ["XDG_RUNTIME_DIR=/run/user/1000"],
+                23: ["XDG_RUNTIME_DIR=/tmp/shep-notification-runtime-owned-other"],
+                24: ["HOME=/tmp/shep-notification-runtime-owned"],
+            }.items():
+                process = root / str(pid)
+                process.mkdir()
+                (process / "environ").write_bytes("\0".join(environment).encode() + b"\0")
+            (root / "self").mkdir()
+            self.assertEqual(runtime_processes("/tmp/shep-notification-runtime-owned", root), [21])
+
+    def test_runtime_sweep_stops_an_actual_escaped_process(self):
+        with tempfile.TemporaryDirectory(prefix="shep-sweep-runtime-") as runtime:
+            # A new session escapes process-group cleanup, like the daemonised input method.
+            escaped = subprocess.Popen(["sleep", "60"], env={"XDG_RUNTIME_DIR": runtime, "PATH": "/usr/bin:/bin"},
+                                       start_new_session=True)
+            try:
+                self.assertEqual(runtime_processes(runtime), [escaped.pid])
+                stop_runtime_processes(runtime)
+                self.assertIsNotNone(escaped.wait(timeout=5))
+                self.assertEqual(runtime_processes(runtime), [])
+            finally:
+                if escaped.poll() is None:
+                    escaped.kill()
 
     @unittest.skipUnless(shutil.which("dbus-daemon") and shutil.which("busctl"), "dbus-daemon and busctl are required")
     def test_owned_system_bus_has_no_services_and_marks_the_lock_notice_shown(self):

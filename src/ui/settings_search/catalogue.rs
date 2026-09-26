@@ -33,6 +33,13 @@ pub(super) const SETTINGS: &[Setting] = &[
         synonyms: "font scale zoom dpi cross account move conversations replies quotes quoted collapse expanded newest oldest thread threads threading foreign folders confirm",
     },
     Setting {
+        title: "Composing",
+        tab: SettingsTab::General,
+        labels: "Include the original message in new replies",
+        description: "Each reply can still change this. Forwards always include the original message.",
+        synonyms: "quote quoted quoting thread history original previous earlier reply replies include compose writing draft",
+    },
+    Setting {
         title: "Mail & performance",
         tab: SettingsTab::General,
         labels: if crate::desktop_badge::SUPPORTED {

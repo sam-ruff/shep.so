@@ -293,6 +293,27 @@ mod tests {
     }
 
     #[test]
+    fn reply_quote_reversion_survives_an_older_acknowledgement() {
+        let original = Preferences::default();
+        let mut live = original.clone();
+        let mut sync = PreferenceSync::new(snapshot(1, &original));
+        live.reply_include_original = false;
+        let first = sync.changed();
+        let first_saved = snapshot(2, &live);
+        live.reply_include_original = true;
+        let second = sync.changed();
+        let second_saved = snapshot(3, &live);
+        sync.acknowledge(first, first_saved.clone(), &mut live);
+        assert!(live.reply_include_original);
+        assert!(sync.dirty());
+        sync.acknowledge(second, second_saved, &mut live);
+        sync.acknowledge(first, first_saved, &mut live);
+        assert!(!sync.dirty());
+        assert!(live.reply_include_original);
+        assert!(sync.saved.value.reply_include_original);
+    }
+
+    #[test]
     fn dragging_between_save_and_ack_keeps_the_latest_unsaved_split() {
         let mut live = Preferences::default();
         let mut sync = PreferenceSync::default();
