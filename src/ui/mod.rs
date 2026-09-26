@@ -16,13 +16,16 @@ mod database_transfers;
 mod drag_mail;
 #[cfg(feature = "test-support")]
 mod draw_log;
+mod dropdown;
 mod ellipsis;
 mod find_message;
+mod focus_reveal;
 mod folder_controls;
 mod folder_creation;
 #[cfg(test)]
 mod google_lifecycle_tests;
 mod google_sign_in;
+mod help_tip;
 mod html_reader;
 mod layout;
 mod mail_actions;
@@ -182,7 +185,13 @@ pub enum Message {
     Move(String),
     MoveFirst,
     Focus(&'static str, u8),
+    /// A focus requested after layout, tagged with the pointer presses seen then.
+    FocusAfterLayout(&'static str, u64),
     FocusChecked(&'static str, bool),
+    /// A native mouse press, published before the pressed widget's own messages.
+    PointerPressed,
+    /// The text field holding native focus after a mouse press.
+    NativeFocus(Option<&'static str>),
     RevealSidebar(String, u8),
     ToggleStar,
     ToggleRead,
@@ -342,8 +351,13 @@ pub enum Message {
     DesktopBadge(crate::desktop_badge::Event),
     Notification(notifications::Message),
     PrefShortcutTooltips(bool),
+    PrefHelpIcons(bool),
     SettingsSearch(String),
     FindSetting(SettingsTab, &'static str),
+    RevealSetting(SettingsTab, &'static str, &'static str),
+    RevealSettingAttempt(u64, u8),
+    SettingRevealed(u64, u8, settings_search::reveal::Found),
+    DismissSettingOutline(u64),
     ShowAllSettings,
     PrefCrossAccount(bool),
     PrefForeignMoveFolders(bool),
@@ -414,6 +428,10 @@ pub struct App {
     mail_drag: drag_mail::Handle,
     last_click: Option<(String, Instant)>,
     pending_focus: Option<&'static str>,
+    /// Native mouse presses; a later press overrides an earlier focus request.
+    pointer_presses: u64,
+    /// Native text focus observed after the latest mouse press.
+    native_focus: Option<&'static str>,
     focused_input: Option<&'static str>,
     #[cfg(feature = "test-support")]
     text_context_observation: text_context::Observation,
@@ -454,8 +472,10 @@ pub struct App {
     tab: Tab,
     settings_tab: SettingsTab,
     settings_search: String,
-    settings_search_results: Vec<&'static settings_search::Setting>,
+    settings_search_results: Vec<settings_search::Match>,
     settings_group: Option<&'static str>,
+    settings_reveal: Option<settings_search::Reveal>,
+    settings_reveal_generation: u64,
     dialog: Option<Dialog>,
     fields: HashMap<&'static str, String>,
     protocol: Protocol,
@@ -514,6 +534,9 @@ pub struct App {
     initial_page_loaded: bool,
     #[cfg(feature = "test-support")]
     idle_navigation: bool,
+    /// Hides the TEST badge for AppStream screenshots.
+    #[cfg(feature = "test-support")]
+    store_capture: bool,
     /// Fixture owner that never answers a newer build's restart request.
     #[cfg(feature = "test-support")]
     hold_restart_requests: bool,
@@ -606,6 +629,8 @@ impl App {
                 mail_drag: Default::default(),
                 last_click: None,
                 pending_focus: None,
+                pointer_presses: 0,
+                native_focus: None,
                 focused_input: None,
                 #[cfg(feature = "test-support")]
                 text_context_observation: Default::default(),
@@ -646,6 +671,8 @@ impl App {
                 settings_search: String::new(),
                 settings_search_results: Vec::new(),
                 settings_group: None,
+                settings_reveal: None,
+                settings_reveal_generation: 0,
                 theme_cache: Default::default(),
                 palette_editor: Default::default(),
                 dialog: None,
@@ -712,6 +739,8 @@ impl App {
                 #[cfg(feature = "test-support")]
                 idle_navigation: demo && args.iter().any(|a| a == "--idle-navigation"),
                 #[cfg(feature = "test-support")]
+                store_capture: demo && args.iter().any(|a| a == "--store-capture"),
+                #[cfg(feature = "test-support")]
                 hold_restart_requests: demo && args.iter().any(|a| a == "--hold-restart-requests"),
                 #[cfg(feature = "test-support")]
                 store_truth: Default::default(),
@@ -725,6 +754,15 @@ impl App {
     fn theme(&self) -> Theme {
         self.theme_cache
             .get(self.preferences.palettes.get(self.dark()), self.dark())
+    }
+
+    /// Fixture builds mark their header, except in store screenshot captures.
+    fn test_badge_visible(&self) -> bool {
+        #[cfg(feature = "test-support")]
+        let hidden = self.store_capture;
+        #[cfg(not(feature = "test-support"))]
+        let hidden = false;
+        self.demo && !hidden
     }
 
     fn dark(&self) -> bool {
@@ -998,6 +1036,16 @@ impl App {
         self.load_remote_images();
         self.restore_reply();
     }
+    fn focus_after_layout(&self, id: &'static str) -> Task<Message> {
+        let presses = self.pointer_presses;
+        Task::perform(
+            async move {
+                tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+                id
+            },
+            move |id| Message::FocusAfterLayout(id, presses),
+        )
+    }
     fn open(&mut self, dialog: Dialog) {
         let target = (dialog == Dialog::Move)
             .then(|| self.move_action_mail().cloned())
@@ -1170,7 +1218,7 @@ impl App {
                 );
                 self.handle_folders(message);
                 if focus && self.folder_parent_visible() {
-                    return focus_after_layout("folder-parent-search");
+                    return self.focus_after_layout("folder-parent-search");
                 }
             }
             Message::Notification(message) => self.handle_notification(message),
@@ -1294,7 +1342,7 @@ impl App {
                     self.folder_created(serial, result);
                     if completed {
                         return if failed {
-                            focus_after_layout("new-folder-name")
+                            self.focus_after_layout("new-folder-name")
                         } else {
                             Task::batch([
                                 widget::operation::focus("unfocused"),
@@ -1495,6 +1543,7 @@ impl App {
                 | Event::BulkJobs(..)
                 | Event::BulkItems(..)) => self.bulk_event(event),
                 Event::MailAdmitted(id, result) => self.mail_admitted(id, result),
+                Event::BulkMovedLocally(source) => self.moved_on_this_device(&source),
                 Event::Selection(serial, result) => self.selection_finished(serial, result),
                 Event::Page(g, page, prefetch) if g == self.generation => {
                     if prefetch {
@@ -2196,6 +2245,19 @@ impl App {
                 self.settings_search_results = settings_search::matches(&query);
                 self.settings_search = query;
                 self.settings_group = None;
+                self.settings_reveal = None;
+            }
+            Message::RevealSetting(tab, section, control) => {
+                return self.reveal_setting(tab, section, control);
+            }
+            Message::RevealSettingAttempt(generation, attempt) => {
+                return self.reveal_setting_attempt(generation, attempt);
+            }
+            Message::SettingRevealed(generation, attempt, found) => {
+                return self.setting_revealed(generation, attempt, found);
+            }
+            Message::DismissSettingOutline(generation) => {
+                self.dismiss_setting_outline(generation);
             }
             Message::FindSetting(tab, group) => {
                 if group == "Profiles" {
@@ -2203,10 +2265,15 @@ impl App {
                 }
                 let task = self.handle(Message::SettingsTab(tab));
                 self.settings_group = Some(group);
-                return task;
+                // A section opens at its top rather than at another tab's offset.
+                return task.chain(iced::widget::operation::scroll_to(
+                    settings_search::reveal::SCROLLER,
+                    iced::widget::scrollable::AbsoluteOffset { x: 0., y: 0. },
+                ));
             }
             Message::ShowAllSettings => {
                 self.settings_group = None;
+                self.settings_reveal = None;
                 self.settings_search.clear();
                 self.settings_search_results.clear();
             }
@@ -2218,6 +2285,10 @@ impl App {
                 self.preferences.shortcut_tooltips = value;
                 self.save_preferences();
             }
+            Message::PrefHelpIcons(value) => {
+                self.preferences.help_icons = value;
+                self.save_preferences();
+            }
             Message::SettingsTab(tab) => {
                 if tab == SettingsTab::Accounts {
                     self.shared_profile_action(profile_sync::Action::Refresh);
@@ -2225,6 +2296,7 @@ impl App {
                 self.defer_draft_exit(composing::Exit::Tab(Tab::Preferences));
                 self.settings_search.clear();
                 self.settings_group = None;
+                self.settings_reveal = None;
                 self.settings_search_results.clear();
                 self.tab = Tab::Preferences;
                 self.settings_tab = tab;
@@ -2258,12 +2330,12 @@ impl App {
             }
             Message::NewMessage => {
                 self.new_composer();
-                return focus_after_layout("to");
+                return self.focus_after_layout("to");
             }
             Message::Open(dialog) => {
                 self.open(dialog);
                 if dialog == Dialog::Move {
-                    return focus_after_layout("folder-search");
+                    return self.focus_after_layout("folder-search");
                 }
             }
             Message::Close => {
@@ -2491,6 +2563,18 @@ impl App {
                     focus
                 };
             }
+            Message::FocusAfterLayout(id, presses) => {
+                // The user clicked after this request; keep the focus they chose.
+                if presses != self.pointer_presses {
+                    return Task::none();
+                }
+                return self.handle(Message::Focus(id, 0));
+            }
+            Message::NativeFocus(id) => self.native_focus = id,
+            Message::PointerPressed => {
+                self.pointer_presses += 1;
+                self.pending_focus = None;
+            }
             Message::FocusChecked(id, focused) => {
                 if focused && self.pending_focus == Some(id) {
                     self.focused_input = Some(id);
@@ -2594,7 +2678,7 @@ impl App {
                 }
                 self.move_confirm = None;
                 self.dialog = Some(Dialog::Move);
-                return focus_after_layout("folder-search");
+                return self.focus_after_layout("folder-search");
             }
             Message::Move(folder) => {
                 if self.mail_selection.mode {
@@ -2667,7 +2751,7 @@ impl App {
                         });
                         self.load_draft(draft);
                     }
-                    return focus_after_layout("compose-body");
+                    return self.focus_after_layout("compose-body");
                 }
             }
             Message::Forward => {
@@ -2691,7 +2775,7 @@ impl App {
                 return if self.composer.current.minimized {
                     widget::operation::focus("unfocused")
                 } else {
-                    focus_after_layout("compose-body")
+                    self.focus_after_layout("compose-body")
                 };
             }
             Message::IncludeOriginal(value) => {
@@ -2728,7 +2812,7 @@ impl App {
                 }
                 if let Some(draft) = self.owned_draft(&id) {
                     self.load_draft(draft);
-                    return focus_after_layout("compose-body");
+                    return self.focus_after_layout("compose-body");
                 }
             }
             Message::Field(key, value) => {
@@ -3247,7 +3331,7 @@ impl App {
             Message::NewEventOnDay(day) => {
                 self.day = day;
                 self.open(Dialog::Event);
-                return focus_after_layout("event-title");
+                return self.focus_after_layout("event-title");
             }
             Message::EditEvent(key) => {
                 if let Some(event) = self
@@ -3998,7 +4082,7 @@ impl App {
                     Key::Named(keyboard::key::Named::Enter) => {
                         self.choose_focused_folder_account();
                         if self.folder_parent_visible() {
-                            return focus_after_layout("folder-parent-search");
+                            return self.focus_after_layout("folder-parent-search");
                         }
                     }
                     Key::Character(ref value) if value.eq_ignore_ascii_case("y") => {}
@@ -4216,11 +4300,15 @@ impl App {
                 self.list_focus = !self.sidebar_focus;
                 return widget::operation::focus("unfocused");
             }
-            return if modifiers.shift() {
+            let focus = if modifiers.shift() {
                 widget::operation::focus_previous()
             } else {
                 widget::operation::focus_next()
             };
+            if self.tab == Tab::Preferences && self.dialog.is_none() {
+                return focus.chain(focus_reveal::reveal(settings_search::reveal::SCROLLER));
+            }
+            return focus;
         }
         if captured
             && (!modifiers.command()
@@ -4308,14 +4396,14 @@ impl App {
                     self.focused_input = None;
                     self.tab = Tab::Mail;
                     self.full_reader = false;
-                    focus_after_layout("search")
+                    self.focus_after_layout("search")
                 }
                 Action::Move => {
                     if (self.mail_selection.mode && self.mail_selection.count > 0)
                         || self.move_action_mail().is_some()
                     {
                         self.open(Dialog::Move);
-                        return focus_after_layout("folder-search");
+                        return self.focus_after_layout("folder-search");
                     }
                     Task::none()
                 }
@@ -4397,11 +4485,13 @@ impl App {
         #[cfg(feature = "test-support")]
         {
             data["page_loaded"] = serde_json::json!(self.initial_page_loaded);
+            data["test_badge"] = serde_json::json!(self.test_badge_visible());
             data["store_truth"] = self.store_truth_observation();
             let (frame, rows) = self.draw_log.snapshot();
             let ids: Vec<String> = self.page.rows.iter().map(|mail| mail.id.clone()).collect();
             data["drawn_rows"] =
                 serde_json::json!(draw_log::review(frame, rows, &ids, mail_list::ROW_HEIGHT));
+            data["help_tips"] = serde_json::json!(self.draw_log.help());
         }
         data["mail_selection"] = serde_json::json!({
             "mode": self.mail_selection.mode, "count": self.mail_selection.count,
@@ -4438,14 +4528,38 @@ impl App {
         data["foreign_move_folders"] = serde_json::json!(self.preferences.foreign_move_folders);
         data["tooltips"] = serde_json::json!(self.preferences.tooltips);
         data["shortcut_tooltips"] = serde_json::json!(self.preferences.shortcut_tooltips);
+        data["help_icons"] = serde_json::json!(self.preferences.help_icons);
         data["settings_search"] = serde_json::json!(self.settings_search);
         data["settings_group"] = serde_json::json!(self.settings_group);
         data["settings_matches"] = serde_json::json!(
             self.settings_matches()
                 .iter()
-                .map(|s| s.title)
+                .map(|s| s.setting.title)
                 .collect::<Vec<_>>()
         );
+        data["settings_match_controls"] = serde_json::json!(
+            self.settings_matches()
+                .iter()
+                .map(|s| s.control)
+                .collect::<Vec<_>>()
+        );
+        data["settings_reveal"] = serde_json::json!(self.settings_reveal.map(|reveal| {
+            let (state, top, focused) = match reveal.state {
+                settings_search::RevealState::Pending => ("pending", None, false),
+                settings_search::RevealState::Missing => ("missing", None, false),
+                settings_search::RevealState::Revealed { top, focused } => {
+                    ("revealed", Some(top), focused)
+                }
+            };
+            let outline = reveal.outline.map(|outline| {
+                let bounds = outline.window;
+                [bounds.x, bounds.y, bounds.width, bounds.height]
+            });
+            serde_json::json!({
+                "control": reveal.control, "section": reveal.section,
+                "state": state, "top": top, "focused": focused, "outline": outline,
+            })
+        }));
         data["page_unread"] = serde_json::json!(self.page.unread);
         data["inbox_unread"] = serde_json::json!(self.page.inbox_unread);
         data["tray"] = serde_json::json!({"available": self.tray.available,
@@ -4577,6 +4691,7 @@ impl App {
         );
         data["draft_in_reply_to"] = serde_json::json!(self.composer.current.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);
+        data["native_focus"] = serde_json::json!(self.native_focus);
         #[cfg(feature = "test-support")]
         {
             data["text_menu"] = self.text_context_observation.snapshot();
@@ -4828,16 +4943,6 @@ fn default_export(name: &str) -> String {
         .unwrap_or_else(|| std::path::PathBuf::from(name))
         .to_string_lossy()
         .to_string()
-}
-
-fn focus_after_layout(id: &'static str) -> Task<Message> {
-    Task::perform(
-        async move {
-            tokio::time::sleep(std::time::Duration::from_millis(16)).await;
-            id
-        },
-        |id| Message::Focus(id, 0),
-    )
 }
 
 #[cfg(test)]

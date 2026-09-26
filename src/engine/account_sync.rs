@@ -80,9 +80,10 @@ impl Engine {
             let account = self.account(&account.id).await?;
             let password = self.credentials.account_password(&account, false).await?;
             let known = self.store.known(account.id.clone()).await?;
-            Ok::<_, anyhow::Error>((account, password, known))
+            let resume = self.store.folder_modseqs(account.id.clone()).await?;
+            Ok::<_, anyhow::Error>((account, password, known, resume))
         };
-        let (account, password, known) = tokio::select! {
+        let (account, password, known, resume) = tokio::select! {
             biased;
             _ = stop.cancelled() => return Ok(()),
             result = setup => result?,
@@ -123,10 +124,11 @@ impl Engine {
         let Some(folders) = download(
             stop,
             |tx| {
-                provider.sync_staged(
+                provider.sync_resuming(
                     &account,
                     &password,
                     &known,
+                    &resume,
                     tx,
                     self.store.connection_key().is_none(),
                 )

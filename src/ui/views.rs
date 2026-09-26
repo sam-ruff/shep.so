@@ -1,9 +1,10 @@
 use super::*;
+use crate::ui::dropdown::pick_list;
 use iced::{
     Alignment, Border, Length,
     widget::{
-        button, checkbox, column, container, image, mouse_area, opaque, pick_list, row, scrollable,
-        space, stack, text,
+        button, checkbox, column, container, image, mouse_area, opaque, row, scrollable, space,
+        stack, text,
     },
 };
 
@@ -273,7 +274,7 @@ impl App {
             ))
             .size(12),
             space().width(Length::Fill),
-            if self.demo {
+            if self.test_badge_visible() {
                 badge("TEST")
             } else {
                 space().into()
@@ -1274,8 +1275,14 @@ impl App {
                 header,
                 tabs.wrap(),
                 line(),
-                scrollable(container(content).max_width(940).width(Length::Fill))
-                    .height(Length::Fill)
+                // The second layer keeps the tree stable while an outline comes and goes.
+                scrollable(iced::widget::stack![
+                    container(content).max_width(940).width(Length::Fill),
+                    self.settings_outline()
+                        .unwrap_or_else(|| space().width(0).height(0).into())
+                ])
+                .id(settings_search::reveal::SCROLLER)
+                .height(Length::Fill)
             ]
             .spacing(23),
         )
@@ -1397,7 +1404,10 @@ impl App {
                 column![
                     row![
                         column![
-                            text("Check for new mail").size(13),
+                            self.with_help(
+                                text("Check for new mail").size(13),
+                                &help_tip::CHECK_INTERVAL
+                            ),
                             muted("Seconds between background checks").size(11)
                         ]
                         .spacing(5),
@@ -1436,7 +1446,10 @@ impl App {
                         .on_toggle(Message::PrefTooltips),
                     checkbox(self.preferences.shortcut_tooltips)
                         .label("Show primary shortcut in tooltips")
-                        .on_toggle(Message::PrefShortcutTooltips)
+                        .on_toggle(Message::PrefShortcutTooltips),
+                    checkbox(self.preferences.help_icons)
+                        .label("Show help icons beside settings")
+                        .on_toggle(Message::PrefHelpIcons)
                 ]
                 .spacing(16)
                 .into()
@@ -1445,9 +1458,12 @@ impl App {
                 "System tray",
                 "",
                 column![
-                    checkbox(self.preferences.close_to_tray)
-                        .label("Keep Shep running in the system tray when closing the window")
-                        .on_toggle(Message::PrefCloseToTray),
+                    self.with_help(
+                        checkbox(self.preferences.close_to_tray)
+                            .label("Keep Shep running in the system tray when closing the window")
+                            .on_toggle(Message::PrefCloseToTray),
+                        &help_tip::CLOSE_TO_TRAY
+                    ),
                     muted(if self.tray.available {
                         "Open Shep or quit from the tray menu."
                     } else {
@@ -1944,14 +1960,20 @@ impl App {
         }
         form = form.push(
             row![
-                checkbox(self.preferences.backup_format.compressed())
-                    .label("Compress copies")
-                    .on_toggle(Message::BackupCompression)
-                    .text_size(12),
-                checkbox(self.preferences.backup_format.encrypted())
-                    .label("Encrypt with a passphrase")
-                    .on_toggle(Message::BackupEncryption)
-                    .text_size(12)
+                self.with_help(
+                    checkbox(self.preferences.backup_format.compressed())
+                        .label("Compress copies")
+                        .on_toggle(Message::BackupCompression)
+                        .text_size(12),
+                    &help_tip::BACKUP_COMPRESSION
+                ),
+                self.with_help(
+                    checkbox(self.preferences.backup_format.encrypted())
+                        .label("Encrypt with a passphrase")
+                        .on_toggle(Message::BackupEncryption)
+                        .text_size(12),
+                    &help_tip::BACKUP_ENCRYPTION
+                )
             ]
             .spacing(24),
         );

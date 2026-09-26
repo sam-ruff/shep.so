@@ -91,6 +91,7 @@ export function describeSetting(key: SettingKey, value: unknown): string {
     sender_pictures: "Sender pictures",
     tooltips: "Tooltips",
     foreign_move_folders: "Other accounts' folders when moving",
+    help_icons: "Help icons",
   };
   const shown =
     value === undefined

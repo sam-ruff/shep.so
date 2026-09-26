@@ -10,7 +10,8 @@ import time
 from pathlib import Path
 
 from e2e import check, click, key, type_text, wait
-from gnome_activation import OBSERVER, cleanup_all, eventually, install_shell_observer, prepare_window, require_stable, stop_process
+from gnome_activation import (OBSERVER, cleanup_all, eventually, install_shell_observer, prepare_window,
+                              require_stable, start_system_bus, stop_process)
 from install_linux import APP_ID, desktop_entry
 from mcp_harness import Desktop, ROOT
 
@@ -39,6 +40,7 @@ def run(binary, mode="details", desktop_type=Desktop):
     desktop.env["XDG_RUNTIME_DIR"] = runtime.name
     desktop.env["PULSE_SERVER"] = f"unix:{runtime.name}/no-audio-server"
     processes = []
+    system_bus = None
     receipt = {"binary": str(binary), "sha256": digest, "mode": mode, "passed": False}
     try:
         desktop.start(width=1920, height=1080, tray="missing", persistent=True,
@@ -63,6 +65,7 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "enable-animations", "false")
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "scaling-factor", "1")
         desktop.command("gsettings", "set", "org.gnome.desktop.notifications", "show-banners", "true")
+        system_bus = start_system_bus(desktop)
         for name, command in [
             ("gnome-shell", ["gnome-shell", "--x11", "--sm-disable", "--mode=ubuntu"]),
             ("gnome-notification-service", ["/usr/bin/gjs", "-m", "/usr/share/gnome-shell/org.gnome.Shell.Notifications"]),
@@ -98,8 +101,8 @@ def run(binary, mode="details", desktop_type=Desktop):
             "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
             "Shep", "0", APP_ID, "Fictional short-lived sender", "Disconnected sender baseline", "[]",
             "{'desktop-entry': <'so.shep.Shep'>, 'suppress-sound': <true>}", "--", "-1")
-        time.sleep(.7)
-        assert not observation()["notifications"], "Short-lived sender unexpectedly survived"
+        eventually(lambda: not observation()["notifications"],
+                   "GNOME removing the short-lived sender's notification")
         receipt["short_lived_sender_acknowledgment"] = baseline
         receipt["short_lived_sender_removed"] = True
         desktop.batch([check("notifications.requested", 0), check("notifications.sent", 0)])
@@ -108,10 +111,13 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.batch([{"type": "restart"}])
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
         receipt["setup_window"] = prepare_window(desktop)
-        desktop.batch([click(100, 878), check("tab", "Preferences"), wait(150)])
+        # The first click after the resize could be dropped on the runner.
+        desktop.batch([{"type": "hover", "x": 100, "y": 878}, wait(300), click(100, 878),
+                       check("tab", "Preferences"), wait(150)])
         if mode != "details":
             desktop.batch([click(690, 366), check("dark", True)])
-        desktop.batch([click(1150, 88), type_text("notifications"),
+        # GNOME Shell can deliver this press after later typed keys; wait for focus.
+        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), type_text("notifications"),
                        check("settings_matches", ["Notifications"]), click(450, 289),
                        check("settings_group", "Notifications"),
                        click(288, 413), check("notifications.settings.sound", False)])
@@ -163,7 +169,7 @@ def run(binary, mode="details", desktop_type=Desktop):
             if desktop.directory:
                 (desktop.directory / "notification-evidence.json").write_text(json.dumps(receipt, indent=2))
         tray = desktop.tray_fixture
-        processes.extend([desktop.app, desktop.clipboard, desktop.xvfb])
+        processes.extend([desktop.app, system_bus, desktop.clipboard, desktop.xvfb])
         if tray:
             processes.extend([tray.host, tray.bus])
         cleanup_all([save_receipt, desktop.stop,

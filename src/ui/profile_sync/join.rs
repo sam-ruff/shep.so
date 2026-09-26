@@ -1,6 +1,7 @@
 use super::*;
 use crate::profile_sync::join::Review;
-use iced::widget::{column, pick_list};
+use crate::ui::dropdown::pick_list;
+use iced::widget::column;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Choice {
