@@ -195,6 +195,29 @@ async fn reply_quote_preference_defaults_on_survives_reopen_and_leaves_saved_dra
 }
 
 #[tokio::test]
+async fn close_to_tray_defaults_on_for_new_and_pre_tray_settings_but_keeps_a_saved_off() {
+    // Settings saved before the tray existed never offered the choice.
+    let pre_tray: Preferences =
+        serde_json::from_value(serde_json::json!({"sync_minutes": 5})).unwrap();
+    assert!(pre_tray.close_to_tray);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("tray.sqlite");
+    let store = Store::open(&path).unwrap();
+    assert!(store.workspace().await.unwrap().preferences.close_to_tray);
+    // Every save writes the whole record, so a saved off is kept as a choice.
+    store
+        .save_preferences(Preferences {
+            close_to_tray: false,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    assert!(!store.workspace().await.unwrap().preferences.close_to_tray);
+}
+
+#[tokio::test]
 async fn reopening_moves_the_old_default_check_interval_to_five_seconds_once() {
     let directory = tempfile::tempdir().unwrap();
     for (saved, expected) in [(15, 5), (20, 20)] {
