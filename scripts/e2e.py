@@ -4732,14 +4732,13 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
                        wait(100), click(650, 88), wait(80))
         # General draws these three help icons in this order; Tab reaches each
-        # in turn and scrolls it into view.
-        for index, topic in enumerate(("help-cross-account-moves", "help-foreign-move-folders",
-                                       "help-check-interval")):
-            self.mcp.batch(key("Tab"), check(f"help_tips.{index}.id", topic),
-                           check(f"help_tips.{index}.focused", True),
-                           check(f"help_tips.{index}.tip", None, "ne"), wait(100),
-                           shot(f"{topic}-focus-compact-dark"))
+        # in turn and scrolls it into view. Earlier icons may scroll out of the
+        # drawn list, so look each one up by its id.
+        for topic in ("help-cross-account-moves", "help-foreign-move-folders", "help-check-interval"):
+            self.mcp.batch(key("Tab"))
+            self.help_tip(topic, focused=True)
             self.assert_help_tip_inside(topic, 900, 640)
+            self.mcp.batch(wait(100), shot(f"{topic}-focus-compact-dark"))
         self.mcp.batch(key("Escape"))
         self.assertIsNone(self.help_tip("help-check-interval", focused=False)["tip"])
         self.open_settings_group("system tray", "System tray", search_x=650)
