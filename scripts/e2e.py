@@ -4732,14 +4732,13 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
                        wait(100), click(650, 88), wait(80))
         # General draws these three help icons in this order; Tab reaches each
-        # in turn and scrolls it into view.
-        for index, topic in enumerate(("help-cross-account-moves", "help-foreign-move-folders",
-                                       "help-check-interval")):
-            self.mcp.batch(key("Tab"), check(f"help_tips.{index}.id", topic),
-                           check(f"help_tips.{index}.focused", True),
-                           check(f"help_tips.{index}.tip", None, "ne"), wait(100),
-                           shot(f"{topic}-focus-compact-dark"))
+        # in turn and scrolls it into view. Earlier icons may scroll out of the
+        # drawn list, so look each one up by its id.
+        for topic in ("help-cross-account-moves", "help-foreign-move-folders", "help-check-interval"):
+            self.mcp.batch(key("Tab"))
+            self.help_tip(topic, focused=True)
             self.assert_help_tip_inside(topic, 900, 640)
+            self.mcp.batch(wait(100), shot(f"{topic}-focus-compact-dark"))
         self.mcp.batch(key("Escape"))
         self.assertIsNone(self.help_tip("help-check-interval", focused=False)["tip"])
         self.open_settings_group("system tray", "System tray", search_x=650)
@@ -5719,6 +5718,49 @@ class NativeFlows(unittest.TestCase):
                        check("composer.visible", False), key("r"), check("composer.visible", True),
                        check("composer.reply.mail_id", None, "ne"), check("dialog", None),
                        check("editor", ""), wait(100), shot("inline-reply-original-below"))
+
+    def test_reply_include_original_preference_override_and_restart(self):
+        started = self.mcp.call("desktop.start", persistent=True)
+        print(f"Reply quote preference: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(1150, 88), type_text("include original"),
+                       check("settings_matches.0", "Composing"), click(500, 289),
+                       check("settings_group", "Composing"), check("reply_include_original", True),
+                       wait(100), shot("reply-quote-preference-default"),
+                       click(288, 342), check("reply_include_original", False),
+                       check("saved_reply_include_original", False), check("preferences_saved", True),
+                       wait(100), shot("reply-quote-preference-off"),
+                       key("ctrl+1"), check("tab", "Mail"), wait(80),
+                       key("r"), check("composer.visible", True), check("focused_input", "compose-body"),
+                       check("composer.reply.include_quote", False), wait(100),
+                       shot("reply-quote-starts-unchecked"),
+                       click(652, 525), check("composer.reply.include_quote", True),
+                       check("reply_include_original", False), wait(100),
+                       shot("reply-quote-overridden-for-this-reply"))
+        overridden = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(key("Escape"), check("composer.visible", False), check("draft_count", 1),
+                       {"type": "restart"}, check("reply_include_original", False),
+                       check("saved_reply_include_original", False),
+                       key("r"), check("composer.visible", True), check("composer.id", overridden),
+                       check("composer.reply.include_quote", True), wait(100),
+                       shot("reply-quote-saved-draft-kept-after-restart"),
+                       key("Escape"), check("composer.visible", False),
+                       click(400, mail_row_y(1)), check("selected_id", "preview-work:INBOX:1.0", "ne"),
+                       key("r"), check("composer.visible", True), check("composer.id", overridden, "ne"),
+                       check("composer.reply.include_quote", False), wait(100),
+                       shot("reply-quote-new-reply-after-restart"), key("Escape"),
+                       check("composer.visible", False),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(690, 366), check("dark", True),
+                       {"type": "resize", "width": 900, "height": 640}, wait(150),
+                       click(650, 88), key("ctrl+a"), type_text("quote"),
+                       check("settings_matches.0", "Composing"), click(450, 289),
+                       check("settings_group", "Composing"), wait(150),
+                       shot("reply-quote-preference-compact-dark"),
+                       key("ctrl+1"), check("tab", "Mail"), wait(150),
+                       click(400, mail_row_y(2)), key("r"), check("composer.visible", True),
+                       check("composer.reply.include_quote", False), wait(150),
+                       shot("reply-quote-composer-compact-dark"))
 
     def test_inline_composer_switches_two_replies_with_attachments_and_restarts(self):
         started = self.mcp.call("desktop.start", persistent=True)

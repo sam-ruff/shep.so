@@ -41,6 +41,56 @@ account column in the mailbox query was dropped after it measurably slowed
 5,000-row paging. Limitations: no live IMAP transfer run; Flutter's Move flow
 still ignores the preference (Flutter work deferred by the owner).
 
+## R97 reply quote preference, 22 September 2026
+
+Branch `feat/reply-include-original-preference` adds Preferences → General →
+Composing: **Include the original message in new replies**, on by default. It
+sets only the starting state of the per-reply **Include original message**
+checkbox when Reply or Reply all creates a new draft. Parked, saved and
+restarted drafts keep their own choice, and forwards always carry the original
+because they have no separate quote to leave out. The value saves through the
+ordinary revisioned preference write, so reversions and stale acknowledgements
+follow the existing per-generation rules. Preferences search finds it by
+original, quote, thread, history and previous.
+
+Tests: `ui::composing` default/Reply all, per-reply override and
+parked/restarted-draft cases; `ui::preference_sync` reversion with an older
+acknowledgement; `tests/preferences.rs` legacy default, reopen and untouched
+saved draft; settings-search coverage. The native
+`test_reply_include_original_preference_override_and_restart` flow toggles the
+real checkbox, overrides one reply, restarts and checks the saved draft and a
+new reply, with light and compact dark captures reviewed. After merging the
+native baseline fixes from main, all 157 native scenarios that open Preferences
+pass (one live scenario skips), apart from an intermittent title double-click
+after a resize in `reader_standard_word_selection_and_copyable_titles`, which
+this change does not touch.
+
+Limitations: not yet a portable profile key (recorded in the preference sync
+audit); browser and Flutter composers have no per-reply control, recorded as
+parity gaps. Live-provider and other-platform execution are not claimed.
+
+## Windows CI installer and harness contracts, 23 September 2026
+
+The Windows job's "Installer and harness contracts" step failed on main with
+ten installer failures and four harness/import errors. The installer fixture
+set `SystemRoot` to a fictional folder, which stops Winsock loading its
+providers, so every loopback download failed; it now keeps the host value and
+the elevation stub checks the system Windows PowerShell path. On Windows the
+fixture uses the system bsdtar. Harness tests compare canonical temp paths, run
+the print launcher through its interpreter where shebangs do not apply, and use
+an existing file as the browser stand-in; the macOS test imports its POSIX
+terminal modules only inside its Linux-only test. Test-only change.
+
+Evidence: 178 Python tests pass on Linux, the nine Windows installer tests pass
+with PowerShell 7.6.6 for Linux, and the pre-commit hook passes 1,610 Rust
+tests. Windows confirmation is still outstanding: since 22 September every
+Windows clone is lost before the step runs. Commit-status probes on PR #9
+showed the cause: Windows OOBE (`CloudExperienceHostBroker.exe`, event 1074,
+"Reconfiguration (Unplanned)") restarts the clone about four minutes after its
+post-specialise boot, after the runner has registered and taken the job. The
+fix belongs in the infrastructure template's `runner.ps1` and the pool's
+registration timeout; it is recorded in TODO for Sam's approval.
+
 ## Settings help icons (R98), 23 September 2026
 
 Desktop Preferences now shows a small **?** beside seven easily misunderstood
