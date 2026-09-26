@@ -14,6 +14,8 @@ import {
   type ShortcutKey,
 } from "./shortcut_keys";
 import { renderReaderTree } from "./reader_actions";
+import { openMoveChooser } from "./move_ui";
+import { knownFolders } from "./move_candidates";
 import { PrintController } from "./printing_controller";
 import { MessageFind, SearchWorker } from "./message_find";
 import { FormattedFrame } from "./formatted_frame";
@@ -87,7 +89,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   if (text !== undefined) node.textContent = text;
   return node;
 }
-function icon(name: string) {
+export function icon(name: string) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
@@ -170,6 +172,21 @@ function select(
   }
   input.onchange = () => onChange(input.value);
   wrap.append(input);
+  return wrap;
+}
+function checkbox(
+  label: string,
+  checked: boolean,
+  onChange: (checked: boolean) => void,
+  disabled = false,
+) {
+  const wrap = el("label", "checkbox-field");
+  const input = el("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  input.disabled = disabled;
+  input.onchange = () => onChange(input.checked);
+  wrap.append(input, el("span", "", label));
   return wrap;
 }
 export function modal(title: string) {
@@ -548,7 +565,10 @@ export function mount(
         if (!page.rows.length) content.append(el("p", "empty", completed ? "No recent completed changes." : "No individual mail changes need attention."));
         for (const entry of page.rows) {
           const card = el("section", "settings-card");
-          const operation = entry.lease.fields.folder ? `Move to ${entry.lease.fields.folder}` : "Update message flags";
+          const other = entry.lease.fields.accountId && entry.lease.fields.accountId !== entry.account
+            ? gateway!.accounts.find(a => a.id === entry.lease.fields.accountId)?.email ?? entry.lease.fields.accountId
+            : undefined;
+          const operation = entry.lease.fields.folder ? `Move to ${entry.lease.fields.folder}${other ? ` in ${other}` : ""}` : "Update message flags";
           const labels = { Queued: "Saved, not yet confirmed", Waiting: "Waiting for reconnect", Running: "Started, awaiting confirmation", Rejected: "Not applied", Uncertain: "Needs checking", Repair: "Change acknowledged, local progress needs repair", Succeeded: "Change confirmed" };
           card.append(el("h3", "", operation), el("p", "", labels[entry.status]));
           const target = el("p", "", "Loading message details…");
@@ -774,18 +794,6 @@ export function mount(
         }
       });
   }
-  function folders() {
-    return [
-      ...new Set([
-        "Inbox",
-        "Archive",
-        "Sent",
-        "Trash",
-        "Spam",
-        ...[...(gateway?.folders.values() ?? [])].flat(),
-      ]),
-    ];
-  }
   function go(folder: string) {
     tab = "Mail";
     fullReader = false;
@@ -795,35 +803,18 @@ export function mount(
   function act(action: Action, id = w.selected) {
     if (!id) return;
     if (action === "move") {
-      const d = modal("Move message");
-      const list = el("div", "folder-choices");
-      const render = (query = "") => {
-        list.replaceChildren();
-        for (const f of folders().filter((f) =>
-          f.toLowerCase().includes(query.toLowerCase()),
-        ))
-          list.append(
-            button(
-              f,
-              () => {
-                void w.action(id!, action, f);
-                d.close();
-              },
-              "move",
-            ),
-          );
-      };
-      const search = field("Find a folder", "", render);
-      const input = search.querySelector("input")!;
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          list.querySelector("button")?.click();
-        }
+      openMoveChooser({
+        group: false,
+        accounts: () => w.moveAccounts(),
+        home: { source: { kind: "message", account: w.accountOf(id) } },
+        fallback: knownFolders(w.moveAccounts()),
+        crossAccount: () => w.crossAccountMovesEnabled(),
+        foreignEnabled: () => w.foreignMovesEnabled(),
+        shortcuts: () => w.preferences.shortcuts,
+        move: (folder) => void w.action(id!, action, folder),
+        transfer: (account, folder, foreign) =>
+          void w.transfer(id!, account, folder, foreign),
       });
-      d.append(search, list);
-      render();
-      input.focus();
     } else void w.action(id, action);
   }
   async function outbox() {
@@ -2598,6 +2589,20 @@ export function mount(
         "p",
         "muted",
         "External images are blocked. Messages use selectable text.",
+      ),
+      checkbox("Allow moving mail between accounts", p.crossAccountMoves, (v) =>
+        w.savePreferences({ ...w.preferences, crossAccountMoves: v }),
+      ),
+      checkbox(
+        "Search other accounts' folders when moving",
+        p.foreignMoveFolders,
+        (v) => w.savePreferences({ ...w.preferences, foreignMoveFolders: v }),
+        !p.crossAccountMoves,
+      ),
+      el(
+        "p",
+        "muted",
+        "Matches in other IMAP accounts show the account and ask before moving.",
       ),
     );
     const shortcuts = el("div", "shortcut-list");

@@ -24,6 +24,7 @@ mod staging_tests;
 #[cfg(any(test, feature = "staged-receive"))]
 mod streaming;
 mod sync_queries;
+pub mod transfer;
 use super::MailProvider;
 use crate::model::*;
 use anyhow::Context;

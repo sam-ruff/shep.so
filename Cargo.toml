@@ -71,11 +71,10 @@ tempfile = "3"
 rapidfuzz = "0.5"
 regex = "1"
 cosmic-text = "0.15"
-unicode-normalization = "0.1"
 fs2 = "0.4.3"
-nucleo-matcher = "0.3.1"
 interprocess = { version = "2.4.4", features = ["tokio"] }
 shep-action-core = { path = "shared/action-core" }
+shep-mail-content = { path = "shared/mail-content", features = ["fuzzy"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "=0.3.6"

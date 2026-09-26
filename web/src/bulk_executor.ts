@@ -1,11 +1,12 @@
 import {
   BulkJournal,
+  stepFields,
   type BulkJob,
   type BulkItem,
   type BulkSweep,
 } from "./bulk_journal";
 import { intentValues, type IntentLease } from "./mail_intents";
-import { MutationFailure, type Fields } from "./model";
+import { MutationFailure } from "./model";
 import {
   MutationSuperseded,
   type GatewayRepository,
@@ -20,6 +21,7 @@ type Operations = Pick<
   | "repairMutation"
   | "bulkCacheEpoch"
   | "bulkUnavailable"
+  | "releaseTransfer"
 >;
 type Decision = Parameters<BulkJournal["decide"]>[2];
 export interface BulkRun {
@@ -94,7 +96,10 @@ export class BulkExecutor {
       // Retire only this unresolved local ownership before accepting the review.
       // This does not classify the provider result as a rejection. A failed
       // cleanup leaves the uncertain item available for another explicit try.
-      if (lease) await this.operations.bulkIntents.finish(lease, "failed");
+      if (lease) {
+        await this.operations.bulkIntents.finish(lease, "failed");
+        await this.operations.releaseTransfer(lease);
+      }
       return journal.resolveUncertain(id, expected, position);
     };
     return this.journal
@@ -281,31 +286,13 @@ export class BulkExecutor {
         });
         return;
       }
-      if (
-        job.action.kind === "move" &&
-        job.action.account !== null &&
-        job.action.account !== item.account
-      )
-        throw Error(
-          "Cross-account group moves are not connected yet. Choose a folder in the original account.",
-        );
       const expected =
         item.phase === "forward" ? item.original : item.receipt?.after;
       if (!expected)
         throw Error(
           "This message has no acknowledged source identity. Reopen its review.",
         );
-      const fields: Fields =
-        item.phase === "forward"
-          ? job.action.kind === "move"
-            ? { folder: job.action.folder }
-            : job.action
-          : Object.fromEntries(
-              Object.keys(item.intent?.fields ?? {}).map((key) => [
-                key,
-                item.receipt!.before[key as keyof Fields],
-              ]),
-            );
+      const fields = stepFields(job, item);
       lease = await this.operations.bulkIntents.claim(
         item.id,
         item.phase === "forward" ? job.forwardIntent! : job.undoIntent!,

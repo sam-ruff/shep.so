@@ -436,6 +436,13 @@ work, and keep failures in Activity across reload. A tab-liveness Web Lock fence
 orphan queued recovery; Running and Uncertain cannot be replayed. Account removal
 reviews and removes these records atomically. Preserve the Activity Chromium
 controls and separate remaining adoption in the browser lifecycle inventory.
+Browser cross-account moves (`accountId` with `folder`, owned as a pair) hold
+both account locks in sorted order, save `pendingTransfer` before
+`/api/mail/transfer` and the destination receipt before
+`/api/mail/transfer/finish` removes the original UID. Only a 409 refusal is
+not applied; a listed original never clears an unconfirmed upload, only a
+checked review does. The intent record follows the message into its new account
+in the cache transaction. Keep transfer.test.ts and foreign-move.spec.ts.
 Send saves the draft and queued Outbox record atomically before provider
 reservation; only Queued may automatically continue. Account connection attempts
 save nonsecret progress before probes and recheck their attempt identity before
@@ -866,7 +873,7 @@ Virtual-time Rust tests exercise the actual scheduler with object-scoped listing
 
 ## Search relevance and library matching
 
-`fuzzy.rs` uses RapidFuzz 0.5 (OSA edits, LCS subsequences and ratio) instead of the handwritten edit matrix. Exact folder/leaf names, prefixes, words, typos and abbreviations have deterministic ordering; Enter still resolves the latest field text. Normalize Latin accents while preserving Japanese marks and recomposing Hangul. Keep Unicode regression coverage when changing token normalization. `ui/move_candidates.rs` gathers and ranks Move destinations: foreign rows (other IMAP accounts, only while the query is non-empty, never for an explicit pick-list account or a POP3 source) add `FOREIGN_PENALTY` (15) to the label score, above the exact-leaf step so a home leaf still wins and below the prefix band so a foreign exact or prefix match beats home substring, abbreviation and typo matches; ties break on the normalised label, the wire name and then account order, so home-only results keep their previous order byte for byte.
+The label matcher lives in `shared/mail-content/src/fuzzy.rs` (feature `fuzzy`, re-exported by `src/fuzzy.rs` and compiled into the browser WASM) and uses RapidFuzz 0.5 (OSA edits, LCS subsequences and ratio) instead of the handwritten edit matrix. Exact folder/leaf names, prefixes, words, typos and abbreviations have deterministic ordering; Enter still resolves the latest field text. Normalize Latin accents while preserving Japanese marks and recomposing Hangul. Keep Unicode regression coverage when changing token normalization. `ui/move_candidates.rs` and the browser's `web/src/move_candidates.ts` gather Move destinations and rank them with the shared `rank_moves`; keep `shared/move-ranking-cases.json` passing in both. Foreign rows (other IMAP accounts, only while the query is non-empty, never for an explicit pick-list account or a POP3 source) add the shared `FOREIGN_PENALTY` (15) to the label score, above the exact-leaf step so a home leaf still wins and below the prefix band so a foreign exact or prefix match beats home substring, abbreviation and typo matches; ties break on the normalised label, the wire name and then account order, so home-only results keep their previous order byte for byte.
 
 New inbox searches select Best match; explicit search sorting is temporary. Clearing search or using Mail to return to Inbox restores the saved browsing sort. SQLite performs ranked selection and paging off-thread. Separate exact-term BM25 from expanded-term BM25 so a rare typo does not inflate an exact hit. Sender weight is lower than subject/body. A short whole-body equality check takes priority over keyword repetition; guard it with `octet_length` metadata and CASE before reading text. The guard allows normal surrounding line endings; longer bodies remain eligible through indexed ranking. Stable timestamp/ID ties, filtered counts, folder scopes and stale-page rejection must remain correct.
 

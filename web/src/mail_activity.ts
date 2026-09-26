@@ -58,7 +58,7 @@ export async function queuedActionFields(tx: IDBTransaction): Promise<Map<string
     const intent = await read<MailIntent | undefined>(tx.objectStore("mailIntents").get(id));
     if (intent?.account !== action.account) continue;
     const fields = result.get(id) ?? {};
-    for (const key of ["folder", "unread", "starred"] as const) {
+    for (const key of ["folder", "unread", "starred", "accountId"] as const) {
       const field = intent.fields[key];
       if (field?.revision !== action.lease.revision || field.status !== "pending" || (intent.applied?.[key] ?? 0) >= field.revision) continue;
       Object.assign(fields, { [key]: field.value });

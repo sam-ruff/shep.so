@@ -295,7 +295,8 @@ describe("publication", () => {
     expect(discovery.page[0]).toMatchObject({
       name: "Browser profile",
       accounts: 2,
-      settings: 3,
+      // Six portable browser settings, one deselected in the review.
+      settings: 5,
       initialized: true,
     });
     // Reopened, the same review and receipts are visible.

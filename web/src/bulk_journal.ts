@@ -2,7 +2,12 @@ import { sameReviewedSource } from "./mail_lineage";
 import { openMailDatabase } from "./storage";
 import { assertFolderAvailable } from "./folder_fences";
 import { selectionToken } from "./selection_types";
-import { intentValues, type IntentLease } from "./mail_intents";
+import {
+  identityField,
+  intentValues,
+  type IntentField,
+  type IntentLease,
+} from "./mail_intents";
 import type { Fields } from "./model";
 
 // Durable metadata only. The runner must revalidate current identities, order
@@ -1250,24 +1255,14 @@ export class BulkJournal {
           (!item.original?.lineage ||
             lease.alias?.id !== item.id ||
             lease.alias.lineage !== item.original.lineage)) ||
-        lease.account !== item.account ||
+        lease.account !== stepAccount(item) ||
         lease.revision !==
           (item.phase === "forward" ? job.forwardIntent : job.undoIntent)
       )
         throw changed();
       const fields = intentValues(lease.fields);
       if (!Object.keys(fields).length) throw changed();
-      const expected: Fields =
-        item.phase === "forward"
-          ? job.action.kind === "flags"
-            ? job.action
-            : { folder: job.action.folder }
-          : Object.fromEntries(
-              Object.keys(item.intent?.fields ?? {}).map((key) => [
-                key,
-                item.receipt?.before[key as keyof BulkIdentity],
-              ]),
-            );
+      const expected = stepFields(job, item);
       if (
         Object.entries(fields).some(
           ([key, value]) =>
@@ -1338,7 +1333,7 @@ export class BulkJournal {
             Object.entries(applied).some(
               ([key, value]) =>
                 lease.fields[key as keyof Fields] !== value ||
-                receipt.after[key as keyof BulkIdentity] !== value,
+                identityField(receipt.after, key as IntentField) !== value,
             )
           )
             throw changed();
@@ -1447,6 +1442,32 @@ export class BulkJournal {
       return this.save(tx, job);
     });
   }
+}
+/** The account holding the message when this item's step starts: an Undo
+ * starts wherever the acknowledged forward step left it. */
+export function stepAccount(item: BulkItem) {
+  return item.phase === "undo"
+    ? (item.receipt?.after.account ?? item.account)
+    : item.account;
+}
+/** Fields one item's step requests: the group action, or the values its
+ * forward receipt recorded before the change. */
+export function stepFields(job: BulkJob, item: BulkItem): Fields {
+  if (item.phase === "undo")
+    return Object.fromEntries(
+      Object.keys(item.intent?.fields ?? {}).flatMap((key) =>
+        item.receipt
+          ? [[key, identityField(item.receipt.before, key as IntentField)]]
+          : [],
+      ),
+    );
+  if (job.action.kind === "flags") return job.action;
+  return {
+    folder: job.action.folder,
+    ...(job.action.account && job.action.account !== item.account
+      ? { accountId: job.action.account }
+      : {}),
+  };
 }
 function runnable(job: BulkJob) {
   return +(

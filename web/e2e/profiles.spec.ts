@@ -276,8 +276,9 @@ test("publication review, lost upload reply, retry, pause with mail browsing and
     .getByRole("region", { name: "Synced profiles" })
     .getByRole("listitem");
   await expect(list.first()).toContainText("Browser profile");
+  // Six portable browser settings, with Preview lines left out above.
   await expect(list.first()).toContainText(
-    "1 account · 3 settings · 3 files · Ready",
+    "1 account · 5 settings · 3 files · Ready",
   );
   await page
     .getByRole("button", { name: "Find profiles", exact: true })

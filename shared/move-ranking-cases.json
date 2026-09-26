@@ -1,0 +1,87 @@
+[
+  {
+    "name": "identical names rank the home account first",
+    "query": "archive",
+    "candidates": [
+      { "label": "Inbox", "folder": "INBOX" },
+      { "label": "Archive", "folder": "Archive" },
+      { "label": "Archives", "folder": "Archives" },
+      { "label": "Projects/Archive", "folder": "Projects/Archive" },
+      { "label": "Inbox", "folder": "INBOX", "foreign": true, "order": 1 },
+      { "label": "Archive", "folder": "Archive", "foreign": true, "order": 1 },
+      { "label": "Home.Plans", "folder": "Home.Plans", "foreign": true, "order": 1 },
+      { "label": "Inbox", "folder": "INBOX", "foreign": true, "order": 2 },
+      { "label": "Home.Plans", "folder": "Home.Plans", "foreign": true, "order": 2 }
+    ],
+    "expected": [1, 3, 5, 2]
+  },
+  {
+    "name": "a foreign exact match outranks home abbreviations",
+    "query": "arch",
+    "candidates": [
+      { "label": "Inbox", "folder": "INBOX" },
+      { "label": "Archive", "folder": "Archive" },
+      { "label": "Archives", "folder": "Archives" },
+      { "label": "Projects/Archive", "folder": "Projects/Archive" },
+      { "label": "Inbox", "folder": "INBOX", "foreign": true, "order": 1 },
+      { "label": "Archive", "folder": "Archive", "foreign": true, "order": 1 },
+      { "label": "Home.Plans", "folder": "Home.Plans", "foreign": true, "order": 1 },
+      { "label": "Inbox", "folder": "INBOX", "foreign": true, "order": 2 },
+      { "label": "Home.Plans", "folder": "Home.Plans", "foreign": true, "order": 2 }
+    ],
+    "expected": [1, 2, 5, 3]
+  },
+  {
+    "name": "equal foreign matches fall back to account order",
+    "query": "plans",
+    "candidates": [
+      { "label": "Inbox", "folder": "INBOX" },
+      { "label": "Archive", "folder": "Archive" },
+      { "label": "Home.Plans", "folder": "Home.Plans", "foreign": true, "order": 2 },
+      { "label": "Home.Plans", "folder": "Home.Plans", "foreign": true, "order": 1 }
+    ],
+    "expected": [3, 2]
+  },
+  {
+    "name": "a home typo match outranks the same foreign folder",
+    "query": "archvie",
+    "candidates": [
+      { "label": "Inbox", "folder": "INBOX", "order": 1 },
+      { "label": "Archive", "folder": "Archive", "order": 1 },
+      { "label": "Home.Plans", "folder": "Home.Plans", "order": 1 },
+      { "label": "Inbox", "folder": "INBOX", "foreign": true, "order": 0 },
+      { "label": "Archive", "folder": "Archive", "foreign": true, "order": 0 },
+      { "label": "Archives", "folder": "Archives", "foreign": true, "order": 0 }
+    ],
+    "expected": [1, 4, 5]
+  },
+  {
+    "name": "an empty query lists home folders by label",
+    "query": "",
+    "candidates": [
+      { "label": "Inbox", "folder": "INBOX" },
+      { "label": "Archive", "folder": "Archive" },
+      { "label": "Archives", "folder": "Archives" },
+      { "label": "Projects/Archive", "folder": "Projects/Archive" }
+    ],
+    "expected": [1, 2, 0, 3]
+  },
+  {
+    "name": "accents fold for Latin labels",
+    "query": "cafe",
+    "candidates": [
+      { "label": "Inbox", "folder": "INBOX" },
+      { "label": "Café", "folder": "Caf&AOk-" }
+    ],
+    "expected": [1]
+  },
+  {
+    "name": "unmatched queries return nothing",
+    "query": "zxqwv",
+    "candidates": [
+      { "label": "Archive", "folder": "Archive" },
+      { "label": "Archive", "folder": "Archive", "foreign": true, "order": 1 }
+    ],
+    "expected": []
+  }
+]

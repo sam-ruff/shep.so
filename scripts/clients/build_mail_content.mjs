@@ -25,7 +25,9 @@ if (
 const target = path.join(root, "artifacts/mail-content-target");
 const output = path.join(root, "web/src/wasm");
 mkdirSync(output, { recursive: true });
-// The browser also runs the shared profile codec and in-memory history.
+// The browser also runs the shared profile codec and in-memory history, and
+// ranks Move destinations with the desktop's folder matcher.
+const features = { "shep-mail-content": ["--features", "fuzzy"] };
 for (const crate of ["shep-mail-content", "shep-profile-core"]) {
   execFileSync(
     "cargo",
@@ -34,6 +36,7 @@ for (const crate of ["shep-mail-content", "shep-profile-core"]) {
       "--locked",
       "-p",
       crate,
+      ...(features[crate] ?? []),
       "--target",
       "wasm32-unknown-unknown",
       "--release",
