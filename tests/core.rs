@@ -361,6 +361,40 @@ async fn drafts_and_preferences_survive_reopen() {
 }
 
 #[tokio::test]
+async fn unchanged_server_flags_do_not_rewrite_the_cache() {
+    let store = Store::memory().unwrap();
+    let a = mail(1);
+    let id = a.summary.id.clone();
+    let (unread, starred) = (a.summary.unread, a.summary.starred);
+    store.upsert(vec![a]).await.unwrap();
+    let writes = || store.run(|c| Ok(c.total_changes()));
+
+    let before = writes().await.unwrap();
+    store
+        .apply_sync(MailSyncItem::Flags(vec![(id.clone(), unread, starred)]))
+        .await
+        .unwrap();
+    assert_eq!(writes().await.unwrap(), before);
+
+    store
+        .apply_sync(MailSyncItem::Flags(vec![(id.clone(), !unread, true)]))
+        .await
+        .unwrap();
+    assert_eq!(writes().await.unwrap(), before + 1);
+    let flags = store
+        .run(move |c| {
+            Ok(c.query_row(
+                "SELECT unread,starred FROM messages WHERE id=?",
+                [id],
+                |r| Ok((r.get::<_, bool>(0)?, r.get::<_, bool>(1)?)),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(flags, (!unread, true));
+}
+
+#[tokio::test]
 async fn filtering_sorting_and_server_flag_reconciliation() {
     let store = Store::memory().unwrap();
     let mut a = mail(1);
