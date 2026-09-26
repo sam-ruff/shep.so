@@ -50,6 +50,33 @@ fails on main on a duplicate alert; and the POP3 group scenario in
 `foreign-move.spec.ts` occasionally stays in INBOX under full-suite load on
 main too.
 
+## Close to tray on by default (R86 follow-up), 26 September 2026
+
+Branch `feat/close-to-tray-default` does what Sam asked on 11 September: the
+desktop's "Keep Shep running in the system tray when closing the window" now
+starts on. New installs and settings saved before the tray existed (the field
+is absent from their stored record) get it on. Every preference save writes the
+whole record, so a stored off cannot be told apart from a value nobody touched;
+it is kept as the user's choice rather than guessed at. Where no tray host is
+available, closing the window now quits normally through the ordinary close
+path, which still waits for required saves and receipts; before, an enabled
+preference with no tray refused to close and pointed at Quit Shep. The
+Preferences caption, its search entry, the help icon and `docs/mail.md` say so.
+
+Evidence: the new store test (pre-tray record defaults on, saved off survives
+reopen), two new tray controller tests (default on hides when a host exists; no
+host quits when idle and waits for a pending send), the ten temporary-tray
+controller tests now set the preference off explicitly, 433 `ui::` unit tests
+and 16 preference tests pass. Sixteen tray and hidden-owner activation native
+scenarios pass on the test-ui build: they now rely on the default instead of
+clicking it on, turn it off with the real checkbox where the temporary saving
+tray is under test, check an explicit off survives restart and then quits on
+close, and check a closed window quits once the tray host is lost. Five
+ordinary close/restart scenarios without a tray host also pass. Reviewed
+light, compact-dark, no-host and explicit-off WebPs. Limits: close-to-tray is
+still a device-local setting (the coordinated "sync every preference" change is
+separate), and Windows/macOS tray execution remains unverified.
+
 ## Browser foreign folders when moving (R108), 22 September 2026
 
 Branch `feat/web-foreign-move-folders` brings the desktop Move behaviour to the

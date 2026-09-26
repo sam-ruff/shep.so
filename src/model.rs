@@ -391,7 +391,7 @@ impl Default for Preferences {
             shortcut_tooltips: true,
             help_icons: true,
             unread_badge: true,
-            close_to_tray: false,
+            close_to_tray: true,
             notifications: Default::default(),
             image_policy: ImagePolicy::BlockAll,
             reply_display: ReplyDisplay::Collapsed,
