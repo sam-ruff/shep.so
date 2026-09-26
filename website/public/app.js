@@ -92,20 +92,14 @@ for (const button of document.querySelectorAll('.copy-button')) {
   });
 }
 
-// The demo downloads several megabytes of WebAssembly, so it loads on request.
-const demoStart = document.querySelector('#demo-start');
-const demoSource = () => `demo/?appearance=${appearance.value}`;
-let demoFrame = null;
-demoStart.hidden = false;
-demoStart.addEventListener('click', () => {
-  demoFrame = document.createElement('iframe');
-  demoFrame.src = demoSource();
-  demoFrame.title = 'Shep live demo with fictional mail';
-  const stage = document.querySelector('#demo-stage');
-  stage.replaceChildren(demoFrame);
-  stage.classList.add('running');
-  demoFrame.focus();
-});
-appearance.addEventListener('change', () => {
-  if (demoFrame) demoFrame.src = demoSource();
-});
+// The embedded and full-screen demos follow the page's appearance. The frame
+// starts on System, so it only reloads when another choice is saved or made.
+const demoFrame = document.querySelector('#demo-frame');
+function syncDemoAppearance() {
+  const query = appearance.value === 'system' ? '' : `?appearance=${appearance.value}`;
+  for (const link of document.querySelectorAll('.demo-open')) link.href = `demo/${query}`;
+  const source = `demo/app/${query}`;
+  if (demoFrame.getAttribute('src') !== source) demoFrame.src = source;
+}
+syncDemoAppearance();
+appearance.addEventListener('change', syncDemoAppearance);

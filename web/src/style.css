@@ -406,18 +406,6 @@ header {
   padding: 4px 8px;
   border-radius: var(--radius-badge);
 }
-.preview-home {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent);
-  text-decoration: none;
-}
-.preview-home:hover {
-  text-decoration: underline;
-}
 .mail-shell {
   display: grid;
   grid-template-columns: minmax(280px, var(--list)) 5px minmax(0, 1fr);

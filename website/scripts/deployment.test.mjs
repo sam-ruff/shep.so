@@ -66,6 +66,6 @@ test('CI builds the demo through the image stage and serves it with a trailing s
   assert.match(workflow, /--target demo-files --output type=local,dest=web\/dist-preview/);
   for (const path of ['web/**', 'shared/**', 'Cargo.lock']) assert.ok(workflow.includes(`- "${path}"`), path);
   const nginx = read('website/nginx.conf');
-  assert.match(nginx, /location = \/demo \{\n\s+return 301 \/demo\/;/);
+  assert.match(nginx, /location ~ \^\/demo\(\/app\)\?\$ \{\n\s+return 301 \$uri\/;/);
   assert.match(nginx, /absolute_redirect off;/);
 });

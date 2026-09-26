@@ -148,34 +148,55 @@ test('install command copy success and denied-clipboard recovery', async ({ page
   await expect(page.locator('#linux').getByRole('status')).toHaveText('Copy is unavailable. Select the command above and copy it.');
 });
 
-test('the live demo starts on request and runs the browser client with fictional mail', async ({ page }, testInfo) => {
+test('the live demo runs in the hero on page load and follows the appearance', async ({ page }, testInfo) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.goto('/#demo');
-  await expect(page.locator('iframe')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Start the live demo' }).click();
-  const demo = page.frameLocator('iframe[title="Shep live demo with fictional mail"]');
+  await page.goto('/');
+  const frame = page.locator('#demo-frame');
+  await expect(frame).toBeVisible();
+  await expect(frame).toHaveAttribute('src', 'demo/app/');
+  const demo = page.frameLocator('#demo-frame');
   await demo.getByText('Coffee on Thursday?').click();
   await expect(demo.getByRole('heading', { name: 'Coffee on Thursday?' })).toBeVisible();
+  await expect(demo.getByRole('link', { name: 'Get Shep' })).toHaveCount(0);
   await screenshot(page, testInfo, 'demo-running', false);
-  const frame = page.locator('iframe');
-  await expect(frame).toHaveAttribute('src', 'demo/?appearance=system');
   await page.getByLabel('Appearance').selectOption('dark');
-  await expect(frame).toHaveAttribute('src', 'demo/?appearance=dark');
-  await expect(demo.locator('.preview-badge')).toBeVisible();
+  await expect(frame).toHaveAttribute('src', 'demo/app/?appearance=dark');
   await expect(demo.locator('html')).toHaveAttribute('data-theme', 'dark');
+  for (const link of await page.locator('.demo-open').all()) await expect(link).toHaveAttribute('href', 'demo/?appearance=dark');
+  await page.reload();
+  await expect(frame).toHaveAttribute('src', 'demo/app/?appearance=dark');
   expect(errors).toEqual([]);
 });
 
-test('the demo opens full screen, links back to installation and keeps its preferences apart', async ({ page, request }) => {
-  expect((await request.get('/demo/assets/', { maxRedirects: 0 })).status()).toBe(404);
-  await page.goto('/demo/');
-  await expect(page).toHaveTitle('Shep live demo');
-  await page.getByText('A little room for good ideas').click();
-  await expect(page.getByRole('heading', { name: 'A little room for good ideas' })).toBeVisible();
-  expect(await page.evaluate(() => localStorage.getItem('shep.preferences.v1'))).toBeNull();
-  await page.getByRole('link', { name: 'Get Shep' }).click();
-  await expect(page).toHaveURL(`${origin}/#download`);
+test('loading the demo does not take focus or scroll the page', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.frameLocator('#demo-frame').getByText('Coffee on Thursday?')).toBeVisible();
+  expect(await page.evaluate(() => [window.scrollY, document.activeElement === document.body])).toEqual([0, true]);
+});
+
+test('full screen opens a new tab with the demo filling the window', async ({ page, context, request }, testInfo) => {
+  expect((await request.get('/demo/app/assets/', { maxRedirects: 0 })).status()).toBe(404);
+  await page.goto('/');
+  await page.getByLabel('Appearance').selectOption('dark');
+  const [tab] = await Promise.all([context.waitForEvent('page'), page.getByRole('link', { name: /^Full screen/ }).click()]);
+  await expect(tab).toHaveURL(`${origin}/demo/?appearance=dark`);
+  await expect(tab).toHaveTitle('Shep live demo');
+  const frame = tab.locator('#demo-frame');
+  await expect(frame).toHaveAttribute('src', 'app/?appearance=dark');
+  const size = await tab.evaluate(() => {
+    const box = document.querySelector('#demo-frame').getBoundingClientRect();
+    return [box.x, box.y, box.width === innerWidth, box.height === innerHeight];
+  });
+  expect(size).toEqual([0, 0, true, true]);
+  const demo = tab.frameLocator('#demo-frame');
+  await demo.getByText('A little room for good ideas').click();
+  await expect(demo.getByRole('heading', { name: 'A little room for good ideas' })).toBeVisible();
+  await expect(demo.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await screenshot(tab, testInfo, 'demo-full-screen', false);
+  expect(await tab.evaluate(() => localStorage.getItem('shep.preferences.v1'))).toBeNull();
+  const [heroTab] = await Promise.all([context.waitForEvent('page'), page.getByRole('link', { name: 'Open the demo full screen' }).click()]);
+  await expect(heroTab).toHaveURL(`${origin}/demo/?appearance=dark`);
 });
 
 test('keyboard skip link, install navigation and appearance control', async ({ page }, testInfo) => {
@@ -243,11 +264,11 @@ for (const [name, width, height, theme] of [
     await expect(page.locator('.install-panel:visible')).toHaveCount(1);
     const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
     expect(results.violations).toEqual([]);
-    await expect(page.getByRole('link', { name: /Open full screen/ })).toBeVisible();
-    await expect(page.locator(theme === 'dark' ? '.poster-dark' : '.poster-light')).toBeVisible();
-    await expect(page.locator(theme === 'dark' ? '.poster-light' : '.poster-dark')).toBeHidden();
-    await expect(page.getByRole('button', { name: 'Start the live demo' })).toBeVisible({ visible: width > 720 });
     await page.getByRole('link', { name: 'Shep home' }).first().click();
+    await expect(page.getByRole('link', { name: 'Open the demo full screen' })).toBeVisible();
+    await expect(page.getByRole('link', { name: /^Full screen/ })).toBeVisible();
+    await expect(page.frameLocator('#demo-frame').locator('html')).toHaveAttribute('data-theme', theme);
+    await checkNoOverflow(page);
     await screenshot(page, testInfo, name);
     await screenshot(page, testInfo, `${name}-hero`, false);
   });
@@ -263,6 +284,7 @@ test('installation and content remain usable with JavaScript disabled', async ({
   await expect(page.locator('#command-linux')).toHaveText(commands.linux);
   await expect(page.getByRole('button', { name: 'Copy' })).toHaveCount(0);
   await expect(page.getByRole('tab')).toHaveCount(0);
-  await expect(page.getByRole('link', { name: /Open full screen/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open the demo full screen' })).toHaveAttribute('href', 'demo/');
+  await expect(page.locator('#demo-frame')).toHaveAttribute('src', 'demo/app/');
   await context.close();
 });

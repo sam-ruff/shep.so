@@ -23,6 +23,7 @@ for (const [source, name] of [
 ]) {
   await cp(new URL(source, root), new URL(`assets/${name}`, output));
 }
-await cp(demo, new URL('demo/', output), { recursive: true });
-await rename(new URL('demo/preview.html', output), new URL('demo/index.html', output));
+// public/demo/ is the full-screen page that frames the client served from demo/app/.
+await cp(demo, new URL('demo/app/', output), { recursive: true });
+await rename(new URL('demo/app/preview.html', output), new URL('demo/app/index.html', output));
 console.log('Built website/dist with the launcher logo, native screenshots and the browser demo.');

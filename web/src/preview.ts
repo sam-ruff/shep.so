@@ -29,7 +29,6 @@ class PreviewSettings extends BrowserSettings {
 
 class PreviewRepository implements Repository {
   preview = true;
-  homeLink = location.pathname.endsWith("/demo/") ? "../#download" : undefined;
   private selections = new PreviewSelection(() => this.cached);
   selection(command: SelectionCommand, observed: string[] = []) {
     return this.selections.selection(command, observed);

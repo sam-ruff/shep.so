@@ -6,7 +6,7 @@ The page picks the visitor's platform from the user agent and shows that install
 
 ## The live demo
 
-`/demo/` is the browser client from `web/` built in its preview mode, with the fictional mailbox from `shared/preview.json`. Its MIME and profile code is the shared Rust compiled to WebAssembly, and it runs entirely in the visitor's browser: it cannot send mail or reach a server. The home page only loads it when someone presses Start, because the WebAssembly is a few megabytes.
+`/demo/app/` is the browser client from `web/` built in its preview mode, with the fictional mailbox from `shared/preview.json`. Its MIME and profile code is the shared Rust compiled to WebAssembly, and it runs entirely in the visitor's browser: it cannot send mail or reach a server. The home page runs it in the hero as soon as the page loads, and `/demo/` shows it in a window-sized frame for the Full screen links, which open in a new tab. Both pass the page's appearance through `?appearance=`.
 
 ## Building
 

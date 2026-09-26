@@ -43,12 +43,16 @@
           <p class="hero-description">Shep brings your mail accounts and calendars into one calm, fast workspace. Open source, comfortable with a mouse or a keyboard, and yours to arrange.</p>
           <div class="hero-actions">
             <a class="button button-primary button-large" id="suggested-install" href="#download"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg><span id="suggested-label">Get Shep</span></a>
-            <a class="button button-large" href="#demo"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m10 9 5 3-5 3Z"/></svg>Try the live demo</a>
+            <a class="button button-large demo-open" href="demo/" target="_blank"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>Open the demo full screen</a>
           </div>
           <p class="hero-meta">Free and open source <span aria-hidden="true">·</span> Linux, macOS and Windows <span aria-hidden="true">·</span> MIT licensed</p>
         </div>
-        <figure class="hero-preview">
-          <div class="preview-frame"><img src="assets/mail-light.webp" alt="Shep's mail view in light mode, with a unified inbox, message previews and an open conversation." width="1440" height="920" fetchpriority="high"></div>
+        <figure class="hero-preview" id="demo">
+          <div class="demo-window">
+            <div class="demo-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Live demo with a fictional inbox</em><a class="demo-bar-link demo-open" href="demo/" target="_blank">Full screen <span aria-hidden="true">↗</span></a></div>
+            <iframe id="demo-frame" src="demo/app/" title="Shep live demo with fictional mail"></iframe>
+          </div>
+          <figcaption>This is Shep running in your browser. Read, search, flag, move and undo; nothing is sent and nothing leaves your browser.</figcaption>
         </figure>
       </section>
 
@@ -80,26 +84,6 @@
               <div class="feature-icon"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg></div>
               <h3>Private by default</h3><p>Remote images stay blocked until you allow them. Encrypted backups go to a folder, Google Drive, S3, SFTP or FTP.</p>
             </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="demo-section section" id="demo" aria-labelledby="demo-title">
-        <div class="container">
-          <div class="section-heading demo-heading">
-            <div><p class="eyebrow">No install needed</p><h2 id="demo-title">Try Shep in your browser.</h2></div>
-            <p>A working copy of Shep with a fictional inbox and calendar. Read, search, flag, move and undo. Nothing is sent and nothing leaves your browser.</p>
-          </div>
-          <div class="demo-window">
-            <div class="demo-bar" aria-hidden="true"><span></span><span></span><span></span><em>shep.so/demo</em></div>
-            <div class="demo-stage" id="demo-stage">
-              <img class="poster-light" src="assets/demo-light.webp" alt="" width="1440" height="900" loading="lazy">
-              <img class="poster-dark" src="assets/demo-dark.webp" alt="" width="1440" height="900" loading="lazy">
-              <div class="demo-start">
-                <button class="button button-primary button-large" id="demo-start" type="button" hidden><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"/></svg>Start the live demo</button>
-                <a class="button button-large demo-open" href="demo/">Open full screen <span aria-hidden="true">↗</span></a>
-              </div>
-            </div>
           </div>
         </div>
       </section>
@@ -151,7 +135,7 @@
                 <div class="panel-title"><svg class="platform-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 18h4"/></svg><h3>Shep for Android</h3></div>
                 <p>Shep for Android is coming to Google Play, with configurable swipes and the same calm design. Until then, try Shep in your browser.</p>
               </div>
-              <a class="button button-primary" href="demo/">Open the live demo <span aria-hidden="true">↗</span></a>
+              <a class="button button-primary demo-open" href="demo/" target="_blank">Open the live demo <span aria-hidden="true">↗</span></a>
             </article>
 
             <article class="install-panel" id="ios">
@@ -159,7 +143,7 @@
                 <div class="panel-title"><svg class="platform-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4M10 19h4"/></svg><h3>Shep for iPhone and iPad</h3></div>
                 <p>Shep for iPhone and iPad is coming to the App Store, made for touch. Until then, try Shep in your browser.</p>
               </div>
-              <a class="button button-primary" href="demo/">Open the live demo <span aria-hidden="true">↗</span></a>
+              <a class="button button-primary demo-open" href="demo/" target="_blank">Open the live demo <span aria-hidden="true">↗</span></a>
             </article>
           </div>
 
