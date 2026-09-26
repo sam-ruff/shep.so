@@ -694,6 +694,7 @@ input[type="checkbox"]:focus-visible {
 .formatted-viewport {
   height: clamp(320px, 65vh, 900px);
   min-width: 0;
+  border-radius: 8px;
 }
 .formatted-frame {
   position: fixed;

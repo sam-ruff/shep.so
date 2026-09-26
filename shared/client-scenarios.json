@@ -291,6 +291,13 @@
       "browser": "formatted_content.test.ts native/WASM contract; formatted-reader.spec.ts actual controls, sandbox/CSP/network isolation, Copy, quotes, Find and fallback, cancellation/retry, compact light/dark evidence; provider-flows.mjs actual Rust HTTPS inherited CSP/runtime and plain choice. Remote-image policy and large-document/performance parity OPEN."
     },
     {
+      "id": "transparent-html-canvas",
+      "contract": "An email's own opaque root background is kept in both themes. A document whose root is transparent gets a canvas chosen once from the visible text it lays out, weighted by character count: white paper with dark default text for mostly dark text, a dark canvas with light default text for mostly light text. Scrolling, resizing and quote toggles never switch it. The chosen background is reported to the host, whose reader surround follows it.",
+      "desktop": "a985c8b: container.rs TextTone/finish_draw renderer tests and test_html_transparent_newsletter_gets_readable_paper_in_both_themes native light/dark flow.",
+      "mobile": "The shared runtime.js makes the same choice in the native WebView and reports a canvas message; formatted_message_test.dart validates and generation-binds it; formatted_android_test.dart checks the kept authored body and the reader surround colour; formatted.mjs checks the reported canvas in light and dark. Apple execution OPEN; Flutter has no transparent-body fixture beyond the shared runtime's browser evidence.",
+      "browser": "formatted_frame.test.ts validates the reported canvas; formatted-canvas.spec.ts uses fictional transparent dark-text, authored dark, transparent light-text and unstyled mail in light and dark at 1440 and 390 wide, asserting backgrounds, contrast, quote/scroll stability, theme re-choice and the frame/viewport surround."
+    },
+    {
       "id": "reader-action-footer",
       "contract": "Reply, Reply all, Forward and Print remain outside reader scrolling, with space reserved so the last body line remains readable; disabled controls retain their space while current detail loads, and enabled actions target the expanded physical message even when collapsed or HTML is preparing.",
       "desktop": "scripts/e2e.py conversation_footer scenarios cover real bottom clicks after scrolling in light/dark, preview/compact/full layouts, older collapsed Reply all/Forward/Print, renderer preparation and the last HTML line.",

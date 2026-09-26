@@ -56,9 +56,42 @@ documents plus text-tone counting; the new native flow
 `test_html_transparent_newsletter_gets_readable_paper_in_both_themes` uses a
 fictional message in the Junk fixture folder and checks the white surround and
 text contrast in light and dark; `test_html_background_matches_document_surround_in_both_themes`
-still passes. Limitations: the browser and Flutter clients keep the parity gap
-recorded in TODO R38, and transparent cells over authored dark rows are not
+still passes. Limitations: transparent cells over authored dark rows are not
 analysed separately.
+
+### Browser and Flutter parity
+
+Branch `fix/client-dark-canvas`. The shared frame runtime
+(`shared/mail-content/src/document/runtime.js`) used by the browser iframe and
+the Flutter WebView makes the same choice once the document is laid out: it
+clears the reader default, keeps an opaque `html`/`body` background the email
+set itself, and otherwise weighs visible non-whitespace text by character count
+and relative luminance to choose white paper (`#ffffff`, default text
+`#18181b`) or the dark canvas (`#18181b`, default text `#f4f4f5`). The choice is
+repeated only when the app theme changes, which alters unstyled text; quote
+toggles, resizing and scrolling keep it. The runtime reports a `canvas` message
+with the background and scheme; the browser colours the frame and its viewport,
+and Flutter colours the reader box behind the WebView and the platform view's
+own background. The reader defaults in `document.rs` are now `:where()` rules,
+so an email's plain `body{background;color}` CSS wins instead of being replaced
+by the theme, as it already did on desktop. The runtime hash changes; the
+backend CSP and preparation derive it from the source, and the Flutter fixture
+was regenerated.
+
+Tests: shared Rust `document` tests (zero-specificity defaults, authored body
+rules retained); `formatted_frame.test.ts`; new `formatted-canvas.spec.ts` with
+fictional transparent dark-text, authored-dark, transparent light-text and
+unstyled mail in light and dark at 1440 and 390 wide (backgrounds, contrast
+above 7:1, quote/scroll stability, theme re-choice, frame and viewport
+surround), plus the existing formatted-reader, Find, printing and visual-parity
+specs; `formatted_message_test.dart`; `flutter_web_e2e.py --formatted` checks
+the reported authored canvas in light and dark (one earlier run failed at the
+existing Move-dialog Escape step and passed on rerun);
+`android_e2e.py --formatted-only` on the `shep-e2e` API 36 emulator passed,
+including the new check that the kept authored body colour reaches the reader
+surround, and its Appium selection/link/dark stages.
+Limitations: Apple execution, and Flutter has no transparent-body fixture of its
+own; that rule is exercised through the shared runtime in Chromium.
 
 ## Browser group progress pacing (R42), 26 September 2026
 

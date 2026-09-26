@@ -13,8 +13,36 @@ fn legacy_body_background_and_text_are_retained_without_theme_override() {
     let html = prepared.document.unwrap();
     assert!(html.contains("bgcolor=\"white\""));
     assert!(html.contains("text=\"purple\""));
-    assert!(html.contains("body:not([bgcolor]):not([background])"));
-    assert!(html.contains("body:not([text])"));
+    assert!(html.contains(":where(body:not([bgcolor]):not([background]))"));
+    assert!(html.contains(":where(body:not([text]))"));
+}
+
+#[test]
+fn reader_defaults_yield_to_authored_body_rules_and_the_runtime_chooses_the_canvas() {
+    let prepared = document::prepare(
+        b"Content-Type: text/html\r\n\r\n<style>body{background-color:transparent;color:#242424}</style><p>Dark text</p>",
+        &Options {
+            dark: true,
+            ..options()
+        },
+    )
+    .unwrap();
+    let html = prepared.document.unwrap();
+    let base = html
+        .split("<style>")
+        .nth(1)
+        .and_then(|css| css.split("</style>").next())
+        .unwrap();
+    // Every rule touching the body colours has zero specificity, so a plain
+    // `body{}` rule in the email wins and the runtime can observe it.
+    for rule in base.split('}') {
+        if rule.contains("--shep-") {
+            assert!(rule.starts_with(":where(body"), "{rule}");
+        }
+    }
+    assert!(!base.contains("#19191d"));
+    assert!(html.contains("body{background-color:transparent;color:#242424}"));
+    assert!(html.contains("send(\"canvas\""));
 }
 
 #[test]

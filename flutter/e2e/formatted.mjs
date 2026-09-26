@@ -87,6 +87,19 @@ async function query(value, status) {
   await page.keyboard.type(value);
   await waitText(status);
 }
+// The fixture paints its own dark body, which the runtime keeps in either
+// theme and reports; the Flutter view then paints that canvas behind it.
+async function authoredCanvas() {
+  const body = await frame
+    .locator("body")
+    .evaluate((node) => getComputedStyle(node).backgroundColor);
+  assert.equal(body, "rgb(16, 16, 20)");
+  await page.waitForFunction(
+    () =>
+      document.querySelector('iframe[title="Formatted message"]')?.style
+        .backgroundColor === "rgb(16, 16, 20)",
+  );
+}
 try {
   await page.goto(process.env.SHEP_FLUTTER_URL);
   await page.waitForSelector("flt-semantics-placeholder", {
@@ -103,6 +116,7 @@ try {
   await reveal("Retry formatted message");
   await click("Retry formatted message");
   await frame.getByRole("heading", { name: "Verification needed" }).waitFor();
+  await authoredCanvas();
   await reveal("Formatted");
   await page.screenshot({ path: path.join(out, "formatted-light.png") });
   await click("Find in message");
@@ -184,6 +198,7 @@ try {
     .getByRole("group", { name: /A little room for good ideas/ })
     .click();
   await frame.getByRole("heading", { name: "Verification needed" }).waitFor();
+  await authoredCanvas();
   await click("Find in message");
   await query("Café", "1 of 3");
   await page.screenshot({ path: path.join(out, "formatted-dark.png") });
@@ -233,6 +248,7 @@ try {
         scenarios: [
           "preparation-retry",
           "authored-HTML",
+          "authored-canvas-reported",
           "inline-Find",
           "quote-scope",
           "next-and-scroll",

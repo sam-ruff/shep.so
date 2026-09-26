@@ -18,7 +18,7 @@ import { openMoveChooser } from "./move_ui";
 import { knownFolders } from "./move_candidates";
 import { PrintController } from "./printing_controller";
 import { MessageFind, SearchWorker } from "./message_find";
-import { FormattedFrame } from "./formatted_frame";
+import { FormattedFrame, type Canvas } from "./formatted_frame";
 import type { PreparedMessage } from "./formatted_content";
 import type { ReceivedAttachment } from "./attachments";
 import {
@@ -681,6 +681,7 @@ export function mount(
         error?: string;
         blocks: string[];
         hasQuotes: boolean;
+        canvas?: Canvas;
       }
     | undefined;
   const systemAppearance = matchMedia("(prefers-color-scheme: dark)");
@@ -773,6 +774,11 @@ export function mount(
                 if (formattedState !== state) return;
                 state.blocks = blocks;
                 state.hasQuotes = hasQuotes;
+                w.changed();
+              },
+              canvas: (canvas) => {
+                if (formattedState !== state) return;
+                state.canvas = canvas;
                 w.changed();
               },
               link: reviewLink,
@@ -2473,6 +2479,11 @@ export function mount(
       for (const issue of state.prepared!.issues)
         content.append(el("p", "muted", issue));
       const viewport = el("div", "formatted-viewport");
+      // The area under the frame follows the document's own canvas.
+      if (state.canvas) {
+        viewport.style.backgroundColor = state.canvas.background;
+        viewport.dataset.canvas = state.canvas.scheme;
+      }
       content.append(viewport);
     } else content.append(foundText(latest, 0));
     if (!html && quote.length && w.preferences.quoteMode !== "Latest only") {

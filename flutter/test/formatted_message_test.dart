@@ -133,4 +133,59 @@ void main() {
       model.dispose();
     },
   );
+  test(
+    'the reported canvas is validated, bound to its generation and reset on reload',
+    () async {
+      final repository = Repository();
+      final model = FormattedMessage(repository, 'message');
+      final load = model.load(dark: true, quotes: false);
+      repository.requests.single.complete(prepared);
+      await load;
+      final old = model.generation;
+      for (final invalid in [
+        {'background': 'white', 'scheme': 'light'},
+        {'background': '#FFFFFF', 'scheme': 'light'},
+        {'background': '#ffffff', 'scheme': 'sepia'},
+        {'scheme': 'dark'},
+      ]) {
+        expect(
+          model.receive({'type': 'canvas', 'generation': old, ...invalid}),
+          isFalse,
+        );
+      }
+      expect(model.canvas, isNull);
+      model.receive({
+        'type': 'canvas',
+        'generation': old,
+        'background': '#ffffff',
+        'scheme': 'light',
+        'authored': false,
+      });
+      expect(model.canvas, 0xffffffff);
+      expect(model.canvasDark, isFalse);
+      model.receive({
+        'type': 'canvas',
+        'generation': old,
+        'background': '#18181b',
+        'scheme': 'dark',
+      });
+      expect(model.canvas, 0xff18181b);
+      expect(model.canvasDark, isTrue);
+      final next = model.load(dark: false, quotes: false);
+      expect(model.canvas, isNull);
+      expect(
+        model.receive({
+          'type': 'canvas',
+          'generation': old,
+          'background': '#ffffff',
+          'scheme': 'light',
+        }),
+        isFalse,
+      );
+      expect(model.canvas, isNull);
+      repository.requests.last.complete(prepared);
+      await next;
+      model.dispose();
+    },
+  );
 }
