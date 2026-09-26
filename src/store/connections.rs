@@ -282,6 +282,7 @@ impl Store {
                     tx.execute("DELETE FROM draft_sent WHERE id IN (SELECT draft FROM outgoing WHERE account=?)",[&target.id])?;
                     tx.execute("DELETE FROM outgoing WHERE account=?",[&target.id])?;
                     tx.execute("DELETE FROM sent_folders WHERE account=?",[&target.id])?;
+                    super::folder_modseqs::forget(&tx, &target.id)?;
                     outgoing::changed(&tx)?;
                     bulk::remove_account(&tx,&target.id)?;
                     tx.execute("DELETE FROM mail_identity_history WHERE account=?", [&target.id])?;

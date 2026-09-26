@@ -4213,7 +4213,7 @@ class NativeFlows(unittest.TestCase):
         checkpoint=self.profile_checkpoint(started)
         self.assertEqual(len(checkpoint["accounts"]),2)
         self.assertEqual(checkpoint["local_only"],[])
-        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),9)
+        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),10)
         self.assertIsNone(checkpoint["pending"])
 
     def test_profile_sync_native_failure_retry_and_opt_out(self):
@@ -4659,6 +4659,135 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
                        click(650, 88), type_text("font"), check("settings_matches", ["Reading and layout"]), shot("settings-search-compact-dark"),
                        click(450, 289), check("settings_group", "Reading and layout"), shot("settings-font-search-destination"))
+
+    def help_tip(self, topic, **expected):
+        """The drawn help icon for `topic`, once the observed frame matches `expected`."""
+        deadline = time.monotonic() + 5
+        while True:
+            drawn = self.mcp.call("desktop.state").get("help_tips") or []
+            entry = next((entry for entry in drawn if entry["id"] == topic), None)
+            if entry and all(entry.get(field) == value for field, value in expected.items()):
+                return entry
+            if time.monotonic() > deadline:
+                self.fail(f"{topic} never matched {expected}: {entry}")
+            time.sleep(0.05)
+
+    def help_icon_centre(self, topic):
+        """Icon bounds are content coordinates, equal to window ones before scrolling."""
+        entry = self.help_tip(topic)
+        self.assertIsNotNone(entry, f"{topic} is not drawn")
+        x, y, width, height = entry["icon"]
+        return round(x + width / 2), round(y + height / 2)
+
+    def assert_help_tip_inside(self, topic, width, height):
+        entry = self.help_tip(topic)
+        if entry["tip"] is None:
+            deadline = time.monotonic() + 5
+            while entry["tip"] is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+                entry = self.help_tip(topic)
+        self.assertIsNotNone(entry["tip"], f"{topic} tip is not drawn")
+        x, y, tip_width, tip_height = entry["tip"]
+        self.assertGreaterEqual(x, 0)
+        self.assertGreaterEqual(y, 0)
+        self.assertLessEqual(x + tip_width, width)
+        self.assertLessEqual(y + tip_height, height)
+
+    def open_settings_group(self, query, group, search_x=1150):
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
+                       click(search_x, 88), key("ctrl+a"), type_text(query),
+                       check("settings_matches.0", group), click(450, 289),
+                       check("settings_group", group), wait(100))
+
+    def test_settings_help_mouse_hover_click_and_keyboard_focus_light(self):
+        self.open_settings_group("system tray", "System tray")
+        self.mcp.batch(check("help_tips.0.id", "help-close-to-tray"), check("help_tips.0.tip", None))
+        x, y = self.help_icon_centre("help-close-to-tray")
+        self.mcp.batch({"type": "hover", "x": x, "y": y}, check("help_tips.0.hovered", True),
+                       check("help_tips.0.tip", None, "ne"), wait(100), shot("help-close-to-tray-hover-light"))
+        self.assert_help_tip_inside("help-close-to-tray", 1440, 920)
+        self.mcp.batch({"type": "hover", "x": 1300, "y": 820}, check("help_tips.0.tip", None),
+                       check("tray.enabled", False),
+                       # Clicking pins the help without toggling the setting beside it.
+                       click(x, y), {"type": "hover", "x": 1300, "y": 820},
+                       check("help_tips.0.focused", True), check("help_tips.0.tip", None, "ne"),
+                       check("tray.enabled", False), shot("help-close-to-tray-pinned-light"),
+                       click(1300, 820), check("help_tips.0.focused", False), check("help_tips.0.tip", None),
+                       # Keyboard: Tab from the settings search reaches the help icon.
+                       click(1150, 88), wait(80), key("Tab"),
+                       check("help_tips.0.focused", True), check("help_tips.0.tip", None, "ne"),
+                       wait(100), shot("help-close-to-tray-keyboard-light"),
+                       key("Escape"), check("help_tips.0.focused", False), check("help_tips.0.tip", None))
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(559, 156),
+                       check("settings_tab", "Backups"), wait(100))
+        for topic in ("help-backup-compression", "help-backup-encryption"):
+            x, y = self.help_icon_centre(topic)
+            self.mcp.batch({"type": "hover", "x": x, "y": y})
+            self.help_tip(topic, hovered=True)
+            self.assert_help_tip_inside(topic, 1440, 920)
+            self.mcp.batch(shot(f"{topic}-hover-light"))
+
+    def test_settings_help_keyboard_reveal_in_compact_dark_general(self):
+        self.mcp.call("desktop.start", width=900, height=640)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                       wait(100), click(650, 88), wait(80))
+        # General draws these three help icons in this order; Tab reaches each
+        # in turn and scrolls it into view.
+        for index, topic in enumerate(("help-cross-account-moves", "help-foreign-move-folders",
+                                       "help-check-interval")):
+            self.mcp.batch(key("Tab"), check(f"help_tips.{index}.id", topic),
+                           check(f"help_tips.{index}.focused", True),
+                           check(f"help_tips.{index}.tip", None, "ne"), wait(100),
+                           shot(f"{topic}-focus-compact-dark"))
+            self.assert_help_tip_inside(topic, 900, 640)
+        self.mcp.batch(key("Escape"))
+        self.assertIsNone(self.help_tip("help-check-interval", focused=False)["tip"])
+        self.open_settings_group("system tray", "System tray", search_x=650)
+        x, y = self.help_icon_centre("help-close-to-tray")
+        self.mcp.batch({"type": "hover", "x": x, "y": y}, check("help_tips.0.hovered", True),
+                       wait(100), shot("help-close-to-tray-hover-compact-dark"))
+        self.assert_help_tip_inside("help-close-to-tray", 900, 640)
+
+    def test_settings_help_icons_have_their_own_setting_separate_from_tooltips(self):
+        self.mcp.call("desktop.start", persistent=True)
+        self.open_settings_group("system tray", "System tray")
+        x, y = self.help_icon_centre("help-close-to-tray")
+        self.open_settings_group("help icons", "Tooltips")
+        self.mcp.batch(check("help_icons", True), shot("help-icons-setting-light"),
+                       click(288, 416), check("help_icons", False), check("tooltips", True),
+                       check("preferences_saved", True))
+        self.open_settings_group("system tray", "System tray")
+        self.mcp.batch(check("help_tips", []), {"type": "hover", "x": x, "y": y}, wait(150),
+                       check("help_tips", []), click(1150, 88), wait(80), key("Tab"), wait(120),
+                       check("help_tips", []), shot("help-hidden-with-help-icons-off"))
+        self.mcp.call("desktop.restart")
+        self.open_settings_group("system tray", "System tray")
+        self.mcp.batch(check("help_icons", False), check("help_tips", []))
+        # Turning icon tooltips off leaves the help icons working.
+        self.open_settings_group("question mark", "Tooltips")
+        self.mcp.batch(click(288, 416), check("help_icons", True), click(288, 342),
+                       check("tooltips", False), check("preferences_saved", True))
+        self.mcp.call("desktop.restart")
+        self.open_settings_group("system tray", "System tray")
+        self.mcp.batch(check("tooltips", False), check("help_icons", True),
+                       check("help_tips.0.id", "help-close-to-tray"))
+        x, y = self.help_icon_centre("help-close-to-tray")
+        self.mcp.batch({"type": "hover", "x": x, "y": y})
+        self.help_tip("help-close-to-tray", hovered=True)
+        self.assert_help_tip_inside("help-close-to-tray", 1440, 920)
+        self.mcp.batch(shot("help-shown-with-tooltips-off"))
+
+    def test_settings_help_synced_passwords_hover(self):
+        self.mcp.call("desktop.start", profile_sync="empty", profile_passwords="ready")
+        self.open_shared_profiles()
+        self.mcp.batch(click(370, 442), check("profile_sync.review", 0), click(540, 482), key("ctrl+a"),
+                       type_text("Personal"), click(360, 570), check("profile_sync.enrollment.selection.ready", True),
+                       check("profile_sync.working", False), wait(150))
+        x, y = self.help_icon_centre("help-synced-passwords")
+        self.mcp.batch({"type": "hover", "x": x, "y": y})
+        self.help_tip("help-synced-passwords", hovered=True)
+        self.assert_help_tip_inside("help-synced-passwords", 1440, 920)
+        self.mcp.batch(shot("help-synced-passwords-hover-light"), check("profile_sync.options.passwords", False))
 
     def test_inbox_context_menu_targets_clicked_message(self):
         self.mcp.batch({"type": "click", "x": 403, "y": mail_row_y(2), "button": 3},
@@ -5959,7 +6088,8 @@ class NativeFlows(unittest.TestCase):
                        check("selected_id", "preview-work:INBOX:launch-2"), check("attachment_count", 1), shot("conversation-sent-message"),
                        key("r"), check("composer.visible", True), check("compose_fields.to", "maya@example.com"),
                        check("draft_in_reply_to", "<launch-1@example.com>"), shot("conversation-reply-target"),
-                       key("Escape"), check("dialog", None), click(1366, 343),
+                       key("Escape"), check("dialog", None), check("composer.visible", False), wait(80),
+                       click(1366, 343),
                        check("conversation_rows.1.starred", True), check("starred", True),
                        check("loaded_message_id", "preview-work:Sent:launch-1"), shot("conversation-flagged-message"),
                        key("m"), check("dialog", "Move"), check("focused_input", "folder-search"),
@@ -7095,7 +7225,7 @@ class NativeFlows(unittest.TestCase):
                        {"type": "hover", "x": 1000, "y": 750}, {"type": "scroll", "amount": 4},
                        wait(100), shot("backup-format-options"),
                        click(288, 370), check("backup_accounts", True),
-                       click(432, 336), check("backup_format.protection", "None"),
+                       click(456, 336), check("backup_format.protection", "None"),
                        check("backup_accounts", False), shot("backup-format-unencrypted"),
                        click(288, 336), check("backup_format.compression", "None"),
                        click(525, 471), check("notice", "Unencrypted backup saved.", "contains"),
@@ -7104,7 +7234,7 @@ class NativeFlows(unittest.TestCase):
                        click(1130, 724), check("dialog", "Restore"), shot("backup-format-plain-restore"),
                        click(605, 570), check("dialog", None),
                        check("notice", "Backup restored:", "contains"), check("account_count", 2),
-                       click(432, 336), check("backup_format.protection", "Passphrase"),
+                       click(456, 336), check("backup_format.protection", "Passphrase"),
                        click(288, 336), check("backup_format.compression", "Zstd"),
                        click(520, 440), type_text("a native format passphrase"),
                        click(525, 560), check("notice", "Encrypted backup saved.", "contains"),
@@ -7122,7 +7252,7 @@ class NativeFlows(unittest.TestCase):
                        click(520, 434), key("ctrl+a"), type_text("a native format passphrase"),
                        click(605, 542), check("dialog", None),
                        check("notice", "Backup restored:", "contains"), check("account_count", 2),
-                       click(432, 336), check("backup_format.protection", "None"),
+                       click(456, 336), check("backup_format.protection", "None"),
                        click(288, 336), check("backup_format.compression", "None"),
                        click(1340, 87), check("preferences_saved", True), check("backup_ready", False),
                        click(525, 471), check("notice", "Unencrypted backup saved.", "contains"),
@@ -7144,7 +7274,7 @@ class NativeFlows(unittest.TestCase):
                        {"type": "hover", "x": 760, "y": 515}, {"type": "scroll", "amount": 4},
                        wait(100), shot("backup-format-compact-dark"),
                        {"type": "scroll", "amount": 1}, wait(100), shot("backup-format-compact-dark-actions"),
-                       click(410, 296), check("backup_format.protection", "Passphrase"),
+                       click(434, 296), check("backup_format.protection", "Passphrase"),
                        shot("backup-format-compact-dark-passphrase"),
                        click(820, 87), check("preferences_saved", True), check("backup_ready", False))
 

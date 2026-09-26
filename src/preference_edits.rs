@@ -59,6 +59,7 @@ portable! {
     unread_badge: bool,
     tooltips: bool,
     foreign_move_folders: bool,
+    help_icons: bool,
 }
 
 #[derive(Clone, Debug)]

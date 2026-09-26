@@ -59,9 +59,15 @@ pub async fn watch_session<T>(
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
 {
-    if !session.capabilities().await?.has_str("IDLE") {
+    let capabilities = session.capabilities().await?;
+    if !capabilities.has_str("IDLE") {
         let _ = session.logout().await;
         return Ok(WatchEnd::Unsupported);
+    }
+    // Expunges then arrive as VANISHED, which IDLE reports as new data like
+    // EXPUNGE; a refusal only keeps EXPUNGE.
+    if capabilities.has_str("QRESYNC") && !super::qresync::enable(&mut session).await? {
+        tracing::debug!("The mail server refused QRESYNC for IDLE");
     }
     session.select("INBOX").await?;
     let mut stop = std::pin::pin!(stop);
