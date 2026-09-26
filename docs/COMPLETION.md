@@ -1,5 +1,27 @@
 # Completion audit
 
+## Windows CI installer and harness contracts, 23 September 2026
+
+The Windows job's "Installer and harness contracts" step failed on main with
+ten installer failures and four harness/import errors. The installer fixture
+set `SystemRoot` to a fictional folder, which stops Winsock loading its
+providers, so every loopback download failed; it now keeps the host value and
+the elevation stub checks the system Windows PowerShell path. On Windows the
+fixture uses the system bsdtar. Harness tests compare canonical temp paths, run
+the print launcher through its interpreter where shebangs do not apply, and use
+an existing file as the browser stand-in; the macOS test imports its POSIX
+terminal modules only inside its Linux-only test. Test-only change.
+
+Evidence: 178 Python tests pass on Linux, the nine Windows installer tests pass
+with PowerShell 7.6.6 for Linux, and the pre-commit hook passes 1,610 Rust
+tests. Windows confirmation is still outstanding: since 22 September every
+Windows clone is lost before the step runs. Commit-status probes on PR #9
+showed the cause: Windows OOBE (`CloudExperienceHostBroker.exe`, event 1074,
+"Reconfiguration (Unplanned)") restarts the clone about four minutes after its
+post-specialise boot, after the runner has registered and taken the job. The
+fix belongs in the infrastructure template's `runner.ps1` and the pool's
+registration timeout; it is recorded in TODO for Sam's approval.
+
 ## Settings help icons (R98), 23 September 2026
 
 Desktop Preferences now shows a small **?** beside seven easily misunderstood

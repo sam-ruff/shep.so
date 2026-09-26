@@ -565,7 +565,9 @@ class HarnessTests(unittest.TestCase):
                 launch.assert_not_called()
             launcher = desktop.env["SHEP_TEST_PRINT_BROWSER"]
             self.assertEqual(Path(launcher).parent, desktop.directory)
-            self.assertEqual(subprocess.run([launcher, "http://127.0.0.1:1/fixture"]).returncode, 1)
+            # Windows ignores the shebang, so run the launcher through the interpreter it names.
+            command = [launcher] if os.name == "posix" else [sys.executable, launcher]
+            self.assertEqual(subprocess.run([*command, "http://127.0.0.1:1/fixture"]).returncode, 1)
             desktop.stop()
             self.assertNotIn("SHEP_TEST_PRINT_BROWSER", desktop.env)
 
@@ -595,7 +597,8 @@ class HarnessTests(unittest.TestCase):
             browser = Mock(pid=12345)
             browser.poll.return_value = 0  # Cleanup must never signal a real PID, even if this test fails.
             desktop.command = Mock(return_value="456")
-            with patch.object(harness.shutil, "which", return_value="/bin/true"), patch.object(harness.subprocess, "Popen", return_value=browser) as launch:
+            # Any existing file stands in for the browser and PDF tools; Popen is mocked.
+            with patch.object(harness.shutil, "which", return_value=sys.executable), patch.object(harness.subprocess, "Popen", return_value=browser) as launch:
                 desktop.start_print_browser("pdf")
                 args = launch.call_args.args[0]
                 self.assertIn("--ozone-platform=x11", args)
@@ -662,7 +665,7 @@ class HarnessTests(unittest.TestCase):
     def test_native_file_picker_uses_real_input_and_restricts_files_to_the_run(self):
         with tempfile.TemporaryDirectory() as directory:
             desktop = harness.Desktop()
-            desktop.directory = Path(directory)
+            desktop.directory = Path(directory).resolve()
             fixture = desktop.directory / "a file.txt"
             fixture.write_text("Fixture")
             windows = iter(["123", "", "123", ""])
@@ -689,7 +692,8 @@ class HarnessTests(unittest.TestCase):
     def test_save_picker_accepts_only_new_files_inside_the_owned_run(self):
         with tempfile.TemporaryDirectory() as directory:
             desktop = harness.Desktop()
-            desktop.directory = Path(directory)
+            # The harness compares canonical paths, which differ in case from TEMP on Windows.
+            desktop.directory = Path(directory).resolve()
             desktop.window = "main"
             target = desktop.directory / "new export.sqlite"
             # The path is entered through the same native input helper used for
