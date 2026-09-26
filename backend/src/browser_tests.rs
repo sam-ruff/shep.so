@@ -457,6 +457,7 @@ async fn real_browser_beta_gate() {
                 address: "127.0.0.1:1465".parse().unwrap(),
             },
         ],
+        caldav_endpoints: Vec::new(),
         profile_namespace: Some("so.shep.browser-fixture".into()),
     });
     config.validate().unwrap();

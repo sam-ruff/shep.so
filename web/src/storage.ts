@@ -22,7 +22,7 @@ import {
 // Mail and drafts stay on this browser. Passwords and OAuth grants never enter
 // this database. A committed transaction is required before any SMTP request.
 export const stores = [
-  "calendarSources", "calendarEvents", "calendarActions", "calendarState",
+  "calendarSources", "calendarEvents", "calendarActions", "calendarState", "calendarConnections",
   "accounts",
   "accountConnections",
   "folderActions",
@@ -82,7 +82,7 @@ export async function openMailDatabase(user: string): Promise<IDBDatabase> {
     // Version 9 binds the derived persistent index to this source incarnation.
     // Version 8 fences older tabs that remove accounts without group ownership.
     // Version 7 fenced writes lacking atomic cache-applied intent revisions.
-    const request = indexedDB.open(`shep.mail.v1.${user}`, 18);
+    const request = indexedDB.open(`shep.mail.v1.${user}`, 19);
     request.onupgradeneeded = (event) => {
       for (const store of stores)
         if (!request.result.objectStoreNames.contains(store))

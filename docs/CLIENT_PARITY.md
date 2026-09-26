@@ -1,5 +1,13 @@
 # Client parity
 
+Browser CalDAV schema19 and Flutter connection lifecycle v2 are integrated for
+combined verification. Browser setup retains local identity before discovery,
+keeps passwords in tab memory and rejects late activation after removal or newer
+Calendar changes. Flutter binds each native probe to its durable attempt and
+orders cancellation against provider start. Shared Google conditional restoration
+is a prerequisite; browser delete Undo integration, mobile Undo and live provider
+and Apple verification remain active work.
+
 Desktop Activity schema11 is integrated for combined verification. Its fixed
 visible control and remappable shortcut observe existing journal owners, retain
 review targets through refresh and open exact folder/backup recovery records.
