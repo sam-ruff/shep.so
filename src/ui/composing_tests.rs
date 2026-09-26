@@ -845,17 +845,25 @@ fn mailto_opens_an_owned_inline_draft_and_ignores_supplied_headers() {
 }
 
 #[test]
-fn desktop_mailto_prefills_visible_fields_only() {
+fn desktop_mailto_prefills_every_draft_field() {
     let (mut app, _) = App::new();
+    app.load_draft(draft("already-open"));
     let _ = app.compose_mailto(
-        "mailto:friend@example.test?cc=copy@example.test&subject=Hello&bcc=hidden@example.test&body=text",
+        "mailto:friend@example.test?cc=copy@example.test&subject=Hello&bcc=hidden@example.test\
+         &body=This%20is%20the%20body.%0D%0ASecond%20line&attachment=/private/file",
     );
     assert!(app.compose_visible());
+    assert!(app.composer.parked.contains_key("already-open"));
     assert_eq!(app.compose_field("to"), "friend@example.test");
     assert_eq!(app.compose_field("cc"), "copy@example.test");
+    assert_eq!(app.compose_field("bcc"), "hidden@example.test");
+    assert!(
+        app.composer.current.show_recipients,
+        "Bcc is shown before sending"
+    );
     assert_eq!(app.compose_field("subject"), "Hello");
-    assert!(app.compose_field("bcc").is_empty());
-    assert!(app.current_draft().body.is_empty());
+    assert_eq!(app.current_draft().body, "This is the body.\nSecond line");
+    assert!(app.composer.current.draft.attachments.is_empty());
     assert!(app.composer.current.dirty.is_some());
 }
 

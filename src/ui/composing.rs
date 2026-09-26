@@ -624,11 +624,15 @@ impl App {
         let Some(mailto) = crate::mailto::Mailto::parse(link) else {
             return Task::none();
         };
-        let task = self.handle(Message::NewMessage);
-        self.edit_compose_field("to", mailto.to);
-        self.edit_compose_field("cc", mailto.cc);
-        self.edit_compose_field("subject", mailto.subject);
-        task
+        self.load_draft(Draft {
+            to: mailto.to,
+            cc: mailto.cc,
+            bcc: mailto.bcc,
+            subject: mailto.subject,
+            body: mailto.body,
+            ..self.blank_draft()
+        });
+        self.focus_after_layout("to")
     }
 
     pub(super) fn edit_compose_field(&mut self, key: &str, value: String) {
