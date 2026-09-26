@@ -1895,7 +1895,9 @@ Incremental change-token pulls and conflict/link/removal controls remain TODO.
 Native tray/window lifecycle uses an iced daemon: destroying the visible native
 window must leave engine subscriptions running, while final Quit uses
 `iced::exit()` only after required saves/receipts acknowledge. Close-to-tray is a
-local preference, off by default. With it off, pending writes can temporarily hide
+local preference, on by default (Sam, 11 September); a saved off is kept, since
+whole-record saves cannot tell it from an untouched value. Without a tray host,
+closing quits normally with pending saves protected. With it off, pending writes can temporarily hide
 behind the tray with a saving notification; failure, Open or tray loss restores
 an accessible window and cancels close intent. Do not wait for optional read-only
 sync or notify for an idle bulk-stop handshake. Preserve per-operation error

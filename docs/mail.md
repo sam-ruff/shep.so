@@ -40,6 +40,8 @@ Choose appearance, text size and quoted-history display in **Preferences → Gen
 
 New-mail popups and sound are enabled by default. Search Preferences for **Notifications** to turn either off, hide sender/subject details, or try a test notification. Alerts cover newly received unread Inbox mail across your accounts; the first import and repeated syncs stay quiet. Shep must be running, and your operating system’s notification permissions and sound settings still apply.
 
+Closing the window keeps Shep running in the system tray, so mail checks and notifications continue; open or quit it from the tray icon. Search Preferences for **System tray** to turn this off. On a desktop without a tray, closing the window quits.
+
 See [current limits](limits.md) for provider restrictions and size limits.
 
 Select email text with the mouse and copy it normally. Search Preferences to jump to a settings section. Icon tooltips can show the primary shortcut; both tooltips and their key hints can be turned off. A small **?** beside a few easily misunderstood settings (background checks, moves between accounts, close to tray, backup compression and encryption, synced passwords) explains them when you point at it or reach it with Tab; clicking it keeps the help open. Turn off **Show help icons beside settings** to hide them; this is separate from icon tooltips.
