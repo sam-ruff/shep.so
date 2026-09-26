@@ -88,6 +88,8 @@ export class MutationFailure extends Error {
 }
 export interface Repository {
   preview: boolean;
+  /** Where a hosted preview links back to for installation. */
+  homeLink?: string;
   cached: Mail[];
   events: CalendarEntry[];
   drafts?: Draft[];
