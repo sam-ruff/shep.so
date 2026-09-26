@@ -1,5 +1,41 @@
 # Completion audit
 
+## Fast headless UI tests with iced_test (R110), 26 September 2026
+
+Branch `test/iced-simulator` adds `iced_test` 0.14.0 as a dev-dependency, which
+matches the locked iced 0.14 crates and uses the vendored tiny-skia renderer
+unchanged. `src/ui/simulator_tests/` holds a harness that runs the real `App`
+against the demo engine on an in-memory fixture store and feeds input through
+the widget tree; [the simulator guide](agents/simulator-tests.md) explains the
+design. `write_test_state` is split so the native state file and the simulator
+read the same `test_observation`; the written JSON is unchanged.
+
+Ported scenarios, each named after and following its native batch at the same
+coordinates: Move mouse/keyboard/typing protection, delete/archive defaults,
+search focus guarding default and remapped delete chords, drafts collapse and
+context discard, dropdown Escape with Find and in the composer, shortcut
+remapping, secondary conflict and disable, clear and cancel capture,
+preferences search and tooltip options (full size and compact dark), the
+settings catalogue ranking, settings search reveal and focus, and preferences
+with divider resize: fourteen tests from thirteen native scenarios. A fifteenth
+test checks that switching appearance back restores identical `Simulator`
+snapshot pixels.
+
+Timing on the development host: the fifteen simulator tests finish in 8.5 to
+8.7 seconds in six consecutive runs of the debug test binary, running in
+parallel; individually most take 0.4 to 0.8 seconds, with drafts (6.2 s) and
+the snapshot round trip (2.5 s) bounded by one-second autosave ticks, the
+fixture sync delay and debug rasterising. The thirteen equivalent native
+scenarios take 43 seconds on an otherwise idle host, after a ten-minute
+`test-ui` build, and need Xvfb. The native versions also take screenshots and,
+for the catalogue and tooltip flows, extra dark and compact variants.
+
+Limits: HTML rendering, tray, badges, pickers, printing, presented pixels and
+timing remain native only; fixture options passed as process arguments
+(`mail_actions`, `long_folders`, `search_mail`) cannot be used yet; pixel
+hashes are not committed because iced's font system loads host fallback fonts.
+The native scenarios are unchanged and still required.
+
 ## Readable canvas for transparent HTML email (R38), 26 September 2026
 
 Branch `fix/html-dark-canvas`. Sam reported a real newsletter whose near-black

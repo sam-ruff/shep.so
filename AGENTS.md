@@ -281,6 +281,16 @@ oracle enabled and require agreement after Undo. A disabled oracle must report
 that state and never report agreement. Preserve changed-foreground references,
 binary fingerprint, sample cardinality and metadata/body bounds in timing gates.
 
+Fast headless UI tests live in `src/ui/simulator_tests/` (`iced_test`, behind
+`test-support`, run by `cargo test --all-features`). They drive the real App
+and demo engine through the widget tree and reuse the native state observation,
+so a scenario reads like its `scripts/e2e.py` batch. Add one for UI logic such as
+preferences, shortcuts, focus guards and dialogs; it adds to the native scenario
+and never replaces it. X11 input, focus, presented pixels, HTML rendering,
+pickers, tray, badges, printing and timing stay native. Do not commit pixel
+hashes: iced loads host fallback fonts. See
+[the simulator guide](docs/agents/simulator-tests.md).
+
 Read the repository skill [`.agents/skills/shep-e2e/SKILL.md`](.agents/skills/shep-e2e/SKILL.md) for UI work. `scripts/mcp_harness.py` is a stdio MCP server using JSON-RPC and real X11 input. Tools: `desktop.start`, `desktop.batch`, `desktop.state`, `desktop.screenshot`, `desktop.stop`.
 
 Prefer batches of related clicks, drags, typing, shortcuts, short waits, state assertions and screenshots. Batches stop at the first error and save a failure screenshot. Use `wait_for` for asynchronous state transitions; fixed waits are only for visual settling or explicitly timing a scenario. A wait is at most 2 seconds, with at most 10 seconds of explicit waits in a batch.
