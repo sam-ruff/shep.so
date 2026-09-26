@@ -99,6 +99,8 @@ impl Store {
                 if added > 0 {
                     conversations::index_message(&tx, &m.id)?;
                     tx.execute("INSERT INTO restored_messages(id) VALUES(?)", [&m.id])?;
+                    // Backup flags are not server state; the next check lists every flag.
+                    super::folder_modseqs::forget(&tx, &m.account_id)?;
                     messages += added;
                 }
             }

@@ -149,17 +149,16 @@ impl Store {
             Ok(())
         }).await
     }
+}
 
-    pub(crate) async fn accounts_ready_to_sync(&self) -> anyhow::Result<Vec<Account>> {
-        self.run(|c| {
-            let pending: Reconnect = get(c, join::RECONNECT_KEY)?;
-            Ok(get::<Vec<Account>>(c, "accounts")?
-                .into_iter()
-                .filter(|a| !pending.contains(&a.id))
-                .collect())
-        })
-        .await
-    }
+/// Accounts whose device credentials are in place, excluding imported accounts
+/// still waiting for Reconnect.
+pub(in crate::store) fn ready_to_sync(c: &Connection) -> anyhow::Result<Vec<Account>> {
+    let pending: Reconnect = get(c, join::RECONNECT_KEY)?;
+    Ok(get::<Vec<Account>>(c, "accounts")?
+        .into_iter()
+        .filter(|a| !pending.contains(&a.id))
+        .collect())
 }
 
 /// Only called after SaveAccount has persisted the supplied device credential,

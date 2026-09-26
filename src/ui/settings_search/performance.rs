@@ -17,7 +17,7 @@ fn settings_catalogue_ranking_timings() -> anyhow::Result<()> {
     let mut metrics = Vec::new();
     for (query, expected) in queries {
         assert_eq!(
-            matches(query).first().map(|setting| setting.title),
+            matches(query).first().map(|found| found.setting.title),
             expected
         );
         let mut samples = Vec::with_capacity(60);
@@ -25,7 +25,7 @@ fn settings_catalogue_ranking_timings() -> anyhow::Result<()> {
             let start = Instant::now();
             let results = std::hint::black_box(matches(std::hint::black_box(query)));
             samples.push(start.elapsed().as_secs_f64() * 1000.);
-            assert_eq!(results.first().map(|setting| setting.title), expected);
+            assert_eq!(results.first().map(|found| found.setting.title), expected);
         }
         samples.sort_by(f64::total_cmp);
         println!(

@@ -144,6 +144,11 @@ impl State {
             .map(|s| s.enrollment.options)
             .unwrap_or_default()
     }
+    /// Shows a loaded enrollment without a store round trip.
+    #[cfg(test)]
+    pub(super) fn show_snapshot(&mut self, snapshot: Arc<Snapshot>) {
+        self.snapshot = Some(snapshot);
+    }
     fn options(&self) -> Options {
         self.desired
             .apply(self.sent.unwrap_or_default().apply(self.saved_options()))
@@ -766,6 +771,8 @@ impl App {
         } else if !failed {
             self.save_profile_options();
         }
+        // Discovery after login starts once this status allows it, not on a later tick.
+        self.advance_profile_login();
         if !self.profile_sync.pending()
             && let Some(window) = self.pending_close.take()
         {
@@ -1102,13 +1109,16 @@ impl App {
         let state = &self.profile_sync;
         let mut controls = column![
             text("Account passwords").size(14).font(BOLD),
-            checkbox(options.passwords)
-                .label("Sync account passwords through your Google account")
-                .on_toggle_maybe(
-                    (state.snapshot.is_some() && options.accounts)
-                        .then_some(|v| Message::ProfileSync(Action::Passwords(v)))
-                )
-                .text_size(13),
+            self.with_help(
+                checkbox(options.passwords)
+                    .label("Sync account passwords through your Google account")
+                    .on_toggle_maybe(
+                        (state.snapshot.is_some() && options.accounts)
+                            .then_some(|v| Message::ProfileSync(Action::Passwords(v)))
+                    )
+                    .text_size(13),
+                &super::help_tip::SYNCED_PASSWORDS
+            ),
             muted("Anyone with access to this Google account's Drive app data could read them.")
                 .size(12),
             muted(password_status(options, state.passwords.as_ref())).size(12),
@@ -1412,6 +1422,27 @@ mod tests {
         app.pending_close = Some(iced::window::Id::unique());
         app.advance_profile_login();
         assert!(app.profile_sync.login_pending.is_none() && queue.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn profile_login_discovery_starts_when_the_status_arrives() {
+        let (mut app, mut queue, original) = app().await;
+        let mut saved = (*original).clone();
+        saved.available = true;
+        app.google_connected = true;
+        app.profile_google_status(0, true);
+        app.shared_profile_action(Action::Refresh);
+        let Some(Command::ProfileSync(Request::Status(status))) = queue.recv().await else {
+            panic!("expected status refresh");
+        };
+        let _ = app.shared_profile_update(status, Update::Status(Arc::new(saved)));
+        assert!(
+            matches!(
+                queue.try_recv(),
+                Ok(Command::ProfileSync(Request::AfterLogin(_)))
+            ),
+            "discovery must not wait for the next tick"
+        );
     }
 
     #[tokio::test]

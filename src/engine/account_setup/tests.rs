@@ -5,6 +5,17 @@ use std::{
     sync::mpsc::{self, Receiver, SyncSender},
 };
 
+/// Accounts a check would list, without their watcher identities.
+async fn ready(store: &Store) -> Vec<Account> {
+    store
+        .accounts_ready_to_watch()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(account, _)| account)
+        .collect()
+}
+
 struct Secrets {
     values: BTreeMap<String, SecretString>,
     events: SyncSender<(char, String)>,
@@ -381,7 +392,7 @@ async fn shared_account_setup_blank_save_and_failed_write_retain_reconnection_ac
                 .await
                 .is_err()
         );
-        assert!(reopened.accounts_ready_to_sync().await.unwrap().is_empty());
+        assert!(ready(&reopened).await.is_empty());
     }
 }
 
@@ -498,10 +509,7 @@ async fn shared_account_setup_explicit_save_reconnects_without_losing_cached_mai
             .require_account_reconnected(account.id.clone())
             .await
             .unwrap();
-        assert_eq!(
-            engine.store.accounts_ready_to_sync().await.unwrap(),
-            vec![account]
-        );
+        assert_eq!(ready(&engine.store).await, vec![account]);
         assert_eq!(
             engine.store.detail(id).await.unwrap().summary.subject,
             "Retained"

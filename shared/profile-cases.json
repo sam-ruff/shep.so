@@ -439,6 +439,38 @@
       "error": "Upgrade"
     },
     {
+      "name": "desktop-help-icons",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "help_icons",
+              "value": false
+            }
+          ]
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "invalid-help-icons",
+      "patches": [
+        {
+          "path": "/changes",
+          "value": [
+            {
+              "kind": "setting",
+              "key": "help_icons",
+              "value": "off"
+            }
+          ]
+        }
+      ],
+      "error": "Upgrade"
+    },
+    {
       "name": "invalid-mobile-swipe",
       "patches": [
         {

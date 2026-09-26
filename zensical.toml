@@ -20,6 +20,7 @@ nav = [
     { "Start here" = "agents/index.md" },
     { "Development and architecture" = "agents/development.md" },
     { "Installation reference" = "agents/installation.md" },
+    { "Flatpak and Linux stores" = "agents/flatpak.md" },
     { "Mail contracts" = "agents/mail.md" },
     { "Calendar contracts" = "agents/calendar.md" },
     { "Google and backup contracts" = "agents/backups.md" },

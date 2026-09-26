@@ -28,3 +28,9 @@ __pycache__/
 
 # Per-workstation tool permissions are not project configuration.
 /.claude/
+
+# Generated Flatpak sources and flatpak-builder state.
+/packaging/flatpak/cargo-sources.json
+/.flatpak-builder/
+/build-dir/
+/repo/
