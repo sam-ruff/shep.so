@@ -1,6 +1,7 @@
 use super::*;
+use crate::ui::dropdown::pick_list;
 use crate::{model::Account, profile_sync::account_reviews::Choice};
-use iced::widget::{column, pick_list};
+use iced::widget::column;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

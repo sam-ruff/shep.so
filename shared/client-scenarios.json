@@ -333,6 +333,13 @@
       "mobile": "OPEN (mobile session): Flutter publication, staged secure-storage import and toggle UI. The shared Rust codec compiles for native and WASM with the vault feature; golden fixtures and an independent Python AES-GCM check exist.",
       "browser": "OPEN (mobile session): the browser keeps passwords in tab memory only; vault import would need secure remembered credentials first.",
       "desktop": "profile_sync/vault publishes, merges, rotates, removes and imports through the production Drive session. profile_vault_* Rust tests cover publish/import with staged activation, failed tests keeping the active pair, rotation on local and shared-history removal, toggle-off while paused, restart, concurrent first-key creation, wrong keys, other endpoints, newer minor versions and a SQLite/log/Drive plaintext scan over the loopback Drive; saved test_profile_passwords_* native flows cover enabling, importing on a second device and a rejected import. OPEN: live Google verification and atomic two-slot keychain activation."
+    },
+    {
+      "id": "dropdown-keyboard-dismissal",
+      "contract": "While a dropdown menu is open it owns the keyboard: Escape (and Tab on desktop) closes only that menu, never the dialog, composer, reader or Find behind it, and no mail shortcut runs. The next click reaches the control the menu covered.",
+      "desktop": "ui::dropdown wraps every iced pick list (Clippy disallows the plain constructor); ui::dropdown runtime-routing tests and the saved test_dropdown_* native flows cover the event dialog in light and compact dark, the mail filter with Find open and the composer From list.",
+      "mobile": "OPEN: Flutter dropdown menus were not reviewed in this wave; confirm hardware Escape/back dismisses only the menu and does not reach shortcuts.",
+      "browser": "Native <select> elements; the browser owns the open popup and keyConsumed ignores keys targeted at a select, so no change was needed. No saved Playwright evidence of the native popup, which headless Chromium does not render."
     }
   ]
 }

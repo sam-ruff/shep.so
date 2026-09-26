@@ -454,7 +454,7 @@ mod tests {
             .run(|c| {
                 assert_eq!(
                     c.query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))?,
-                    11
+                    crate::store::DATABASE_VERSION
                 );
                 assert_eq!(
                     c.query_row(

@@ -10,10 +10,21 @@ pub(super) struct DrawnRow {
     pub height: f32,
 }
 
+/// A help icon drawn in the latest frame and, when open, its tip's bounds.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub(super) struct DrawnHelp {
+    pub id: &'static str,
+    pub focused: bool,
+    pub hovered: bool,
+    pub icon: [f32; 4],
+    pub tip: Option<[f32; 4]>,
+}
+
 #[derive(Default)]
 struct Frames {
     frame: u64,
     rows: Vec<DrawnRow>,
+    help: Vec<DrawnHelp>,
 }
 
 /// Shared between the view tree and the controller; the root widget opens a
@@ -30,6 +41,7 @@ impl Log {
         };
         frames.frame += 1;
         frames.rows.clear();
+        frames.help.clear();
     }
     pub fn row(&self, id: &str, bounds: iced::Rectangle) {
         let Ok(mut frames) = self.frames.lock() else {
@@ -40,6 +52,39 @@ impl Log {
             y: bounds.y,
             height: bounds.height,
         });
+    }
+    pub fn help_icon(
+        &self,
+        id: &'static str,
+        focused: bool,
+        hovered: bool,
+        bounds: iced::Rectangle,
+    ) {
+        let Ok(mut frames) = self.frames.lock() else {
+            return;
+        };
+        frames.help.push(DrawnHelp {
+            id,
+            focused,
+            hovered,
+            icon: [bounds.x, bounds.y, bounds.width, bounds.height],
+            tip: None,
+        });
+    }
+    /// Overlays draw after the base tree, so the icon is already recorded.
+    pub fn help_tip(&self, id: &'static str, bounds: iced::Rectangle) {
+        let Ok(mut frames) = self.frames.lock() else {
+            return;
+        };
+        if let Some(icon) = frames.help.iter_mut().rev().find(|icon| icon.id == id) {
+            icon.tip = Some([bounds.x, bounds.y, bounds.width, bounds.height]);
+        }
+    }
+    pub fn help(&self) -> Vec<DrawnHelp> {
+        self.frames
+            .lock()
+            .map(|frames| frames.help.clone())
+            .unwrap_or_default()
     }
     /// The last frame's counter and rows; draw and update share one thread, so
     /// a frame observed from the controller is complete.

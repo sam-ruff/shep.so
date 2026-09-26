@@ -101,8 +101,8 @@ def run(binary, mode="details", desktop_type=Desktop):
             "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
             "Shep", "0", APP_ID, "Fictional short-lived sender", "Disconnected sender baseline", "[]",
             "{'desktop-entry': <'so.shep.Shep'>, 'suppress-sound': <true>}", "--", "-1")
-        time.sleep(.7)
-        assert not observation()["notifications"], "Short-lived sender unexpectedly survived"
+        eventually(lambda: not observation()["notifications"],
+                   "GNOME removing the short-lived sender's notification")
         receipt["short_lived_sender_acknowledgment"] = baseline
         receipt["short_lived_sender_removed"] = True
         desktop.batch([check("notifications.requested", 0), check("notifications.sent", 0)])
@@ -111,7 +111,9 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.batch([{"type": "restart"}])
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
         receipt["setup_window"] = prepare_window(desktop)
-        desktop.batch([click(100, 878), check("tab", "Preferences"), wait(150)])
+        # The first click after the resize could be dropped on the runner.
+        desktop.batch([{"type": "hover", "x": 100, "y": 878}, wait(300), click(100, 878),
+                       check("tab", "Preferences"), wait(150)])
         if mode != "details":
             desktop.batch([click(690, 366), check("dark", True)])
         # GNOME Shell can deliver this press after later typed keys; wait for focus.

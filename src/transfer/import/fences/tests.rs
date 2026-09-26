@@ -7,8 +7,10 @@ use crate::{
     store::MailSelectionId,
 };
 
-fn drop_activity_indexes(c: &Connection) -> anyhow::Result<()> {
-    c.execute_batch("DROP INDEX IF EXISTS activity_bulk_status; DROP INDEX IF EXISTS activity_folder_status; DROP INDEX IF EXISTS activity_folder_open; DROP INDEX IF EXISTS activity_backup_status; DROP INDEX IF EXISTS activity_move_status; DROP INDEX IF EXISTS activity_outgoing_error;")?;
+/// Removes schema added after version 10: activity indexes (11) and saved
+/// CONDSTORE folder states (12).
+fn drop_after_version_ten(c: &Connection) -> anyhow::Result<()> {
+    c.execute_batch("DROP TABLE IF EXISTS folder_modseqs; DROP INDEX IF EXISTS activity_bulk_status; DROP INDEX IF EXISTS activity_folder_status; DROP INDEX IF EXISTS activity_folder_open; DROP INDEX IF EXISTS activity_backup_status; DROP INDEX IF EXISTS activity_move_status; DROP INDEX IF EXISTS activity_outgoing_error;")?;
     Ok(())
 }
 
@@ -19,7 +21,7 @@ async fn version_ten_activity_upgrade_is_private_to_the_imported_copy() -> anyho
     let source = super::super::tests::workspace(&path).await;
     source
         .run(|c| {
-            drop_activity_indexes(c)?;
+            drop_after_version_ten(c)?;
             c.pragma_update(None, "user_version", 10)?;
             Ok(())
         })
@@ -737,7 +739,7 @@ async fn version_two_exports_migrate_privately_and_future_stores_are_not_modifie
     let source = super::super::tests::workspace(&path).await;
     source
         .run(|c| {
-            drop_activity_indexes(c)?;
+            drop_after_version_ten(c)?;
             c.execute_batch("DROP INDEX connection_removal_request; DROP INDEX connection_removal_pending; ALTER TABLE connection_tombstones DROP COLUMN pending;")?;
             c.execute_batch("ALTER TABLE outgoing DROP COLUMN preparation; DROP INDEX folder_creation_id; DROP INDEX folder_creation_ready; ALTER TABLE folder_creations DROP COLUMN data;")?;
             c.execute_batch(
@@ -869,7 +871,7 @@ async fn backup_history_version_three_exports_migrate_without_changing_the_sourc
     let source = super::super::tests::workspace(&path).await;
     source
         .run(|c| {
-            drop_activity_indexes(c)?;
+            drop_after_version_ten(c)?;
             c.execute_batch("DROP INDEX connection_removal_request; DROP INDEX connection_removal_pending; ALTER TABLE connection_tombstones DROP COLUMN pending;")?;
             c.execute_batch("ALTER TABLE outgoing DROP COLUMN preparation; DROP INDEX folder_creation_id; DROP INDEX folder_creation_ready; ALTER TABLE folder_creations DROP COLUMN data;")?;
             c.execute_batch("DROP TABLE account_setup_attempts; DROP TABLE account_setup_current; DROP TABLE account_credential_slots; DROP TABLE backup_history; DROP TABLE calendar_actions; DROP TABLE IF EXISTS bulk_flag_receipts; DROP TABLE bulk_field_owners; DROP TABLE bulk_admissions; DROP INDEX bulk_item_unconfirmed_identity; DROP INDEX bulk_ready_seek; DROP TRIGGER mail_lineage_insert; DROP TRIGGER mail_lineage_replace; DROP TRIGGER mail_lineage_delete; DROP TABLE mail_lineage; DROP TABLE mail_lineage_alias; DROP TABLE mail_identity_history; PRAGMA user_version=3;")?;
@@ -947,7 +949,7 @@ async fn backup_history_old_import_marker_recovery_migrates_without_repeating_pr
     .unwrap();
     let c = Connection::open(prepared.path()).unwrap();
     let archived = count(&c, "SELECT count(*) FROM imported_operations").unwrap();
-    drop_activity_indexes(&c).expect("old activity schema");
+    drop_after_version_ten(&c).expect("old activity schema");
     c.execute_batch("DROP INDEX connection_removal_request; DROP INDEX connection_removal_pending; ALTER TABLE connection_tombstones DROP COLUMN pending;").expect("old removal schema");
     c.execute_batch("ALTER TABLE outgoing DROP COLUMN preparation; DROP INDEX folder_creation_id; DROP INDEX folder_creation_ready; ALTER TABLE folder_creations DROP COLUMN data;")
         .unwrap();
