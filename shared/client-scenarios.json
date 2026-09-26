@@ -202,6 +202,13 @@
       "browser": "reply.test.ts / provider.test.ts / provider-flows.mjs"
     },
     {
+      "id": "reply-quote-preference",
+      "contract": "A preference sets only the starting state of Include original message for newly created Reply and Reply all drafts (default include). Each reply can override it, drafts already saved or parked keep their own choice across restart, and Forward always carries the original.",
+      "desktop": "Preferences → General → Composing checkbox, searchable by original/quote/thread/history, saved through the ordinary revisioned preference write. Unit tests cover default, override, parked and restarted drafts and reopen; the saved native flow toggles it, overrides one reply and restarts. Not yet a portable profile key.",
+      "mobile": "OPEN: the Flutter composer has no per-reply Include original control or preference.",
+      "browser": "OPEN: the browser composer has no per-reply Include original control or preference."
+    },
+    {
       "id": "draft-attachments",
       "contract": "real file picker, multi-file import/cancel, durable binary blobs independent of text saves, removal/reopen and immutable submitted MIME",
       "mobile": "Rust draft-file tests / attachments_android_test.dart + android_compose_fixture.py; Apple picker OPEN",

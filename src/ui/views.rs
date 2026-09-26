@@ -1399,6 +1399,19 @@ impl App {
                 space().into()
             },
             self.settings_card(
+                "Composing",
+                "",
+                column![
+                    checkbox(self.preferences.reply_include_original)
+                        .label("Include the original message in new replies")
+                        .on_toggle(Message::PrefReplyIncludeOriginal),
+                    muted("Each reply can still change this. Forwards always include the original message.")
+                        .size(11)
+                ]
+                .spacing(8)
+                .into()
+            ),
+            self.settings_card(
                 "Mail & performance",
                 "Choose how often to check for new messages.",
                 column![

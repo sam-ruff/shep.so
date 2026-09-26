@@ -336,6 +336,8 @@ pub struct Preferences {
     pub notifications: crate::notifications::Settings,
     pub image_policy: ImagePolicy,
     pub reply_display: ReplyDisplay,
+    /// Starting state of Include original message for newly created replies.
+    pub reply_include_original: bool,
     pub group_conversations: bool,
     pub contacts: Vec<String>,
     pub image_senders: Vec<String>,
@@ -393,6 +395,7 @@ impl Default for Preferences {
             notifications: Default::default(),
             image_policy: ImagePolicy::BlockAll,
             reply_display: ReplyDisplay::Collapsed,
+            reply_include_original: true,
             group_conversations: true,
             contacts: Vec::new(),
             image_senders: Vec::new(),
