@@ -12,6 +12,7 @@ import { MailSelection } from "./mail_selection";
 import type { SelectionRepository, SelectionScope } from "./selection_types";
 import type { BulkReceipt } from "./bulk_journal";
 import type { IntentLease } from "./mail_intents";
+import type { MoveAccount } from "./move_candidates";
 export interface Mail {
   id: string;
   sender: string;
@@ -67,7 +68,11 @@ export interface Draft {
   subject: string;
   body: string;
 }
-export type Fields = Partial<Pick<Mail, "unread" | "starred" | "folder">>;
+/** Message changes. `accountId` names another IMAP account and always travels
+ * with `folder`: together they move the message between accounts. */
+export type Fields = Partial<
+  Pick<Mail, "unread" | "starred" | "folder" | "accountId">
+>;
 export type Action = "archive" | "trash" | "read" | "star" | "move";
 export class MutationWaiting extends Error {}
 export class MutationFailure extends Error {
@@ -93,6 +98,10 @@ export interface Repository {
   accountIds?: Map<string, string>;
   selection?: SelectionRepository["selection"];
   closeSelections?(): Promise<void>;
+  /** Connected accounts in listing order with their known folders. */
+  moveAccounts?(): MoveAccount[];
+  /** Messages can move between two IMAP accounts. */
+  transfers?: boolean;
   mailbox?: MailboxRepository;
   refresh(folder?: string, account?: string | null): Promise<Mail[]>;
   registerMutation?(
@@ -117,6 +126,10 @@ export interface Preferences {
   quoteMode: "Collapsed" | "Expanded" | "Latest only";
   sidebarWidth: number;
   listWidth: number;
+  /** Allow moving mail between accounts. */
+  crossAccountMoves: boolean;
+  /** Offer other IMAP accounts' folders in the Move chooser while typing. */
+  foreignMoveFolders: boolean;
   shortcuts: Record<
     | "archive"
     | "trash"
@@ -140,6 +153,8 @@ export const defaults: Preferences = {
   quoteMode: "Collapsed",
   sidebarWidth: 218,
   listWidth: 370,
+  crossAccountMoves: false,
+  foreignMoveFolders: false,
   shortcuts: {
     archive: "Backspace",
     trash: "Control+d",
@@ -183,6 +198,10 @@ export class BrowserSettings implements SettingsStore {
       listWidth: Number.isFinite(p.listWidth)
         ? Math.max(280, Math.min(560, p.listWidth))
         : 370,
+      crossAccountMoves:
+        typeof p.crossAccountMoves === "boolean" ? p.crossAccountMoves : false,
+      foreignMoveFolders:
+        typeof p.foreignMoveFolders === "boolean" ? p.foreignMoveFolders : false,
       shortcuts: Object.fromEntries(
         Object.entries(defaults.shortcuts).map(([key, value]) => [
           key,
@@ -386,12 +405,12 @@ export class Workspace extends EventTarget {
       if (!mail) continue;
       const before = { ...mail, ...base, id },
         fields: Fields = {};
-      for (const key of ["folder", "unread", "starred"] as const)
+      for (const key of ["folder", "unread", "starred", "accountId"] as const)
         if ((this.versions.get(`${id}:${key}`) ?? 0) > since)
           Object.assign(fields, {
             [key]: current.get(id)?.[key] ?? before[key],
           });
-      const after = { ...before, ...fields };
+      const after = this.withAccount(before, fields);
       if (page.undo?.textMatches[oldId] !== false)
         total += +this.matchesMetadata(after) - +this.matchesMetadata(before);
       unread +=
@@ -441,7 +460,12 @@ export class Workspace extends EventTarget {
   optimisticGroup(review: GroupReview) {
     const fields: Fields =
       review.job.action.kind === "move"
-        ? { folder: review.job.action.folder }
+        ? {
+            folder: review.job.action.folder,
+            ...(review.job.action.account
+              ? { accountId: review.job.action.account }
+              : {}),
+          }
         : Object.fromEntries(
             Object.entries(review.job.action).filter(([key]) => key !== "kind"),
           );
@@ -479,7 +503,7 @@ export class Workspace extends EventTarget {
         unread: true,
         starred: true,
       } as Mail;
-      const after = { ...before, ...fields };
+      const after = this.withAccount(before, fields);
       const beforeInbox = before.folder.toLowerCase() === "inbox",
         afterInbox = after.folder.toLowerCase() === "inbox";
       const afterUnread =
@@ -940,7 +964,7 @@ export class Workspace extends EventTarget {
     for (const record of this.moves.restore(expected))
       void this.change(
         record.id,
-        { folder: record.originalFolder },
+        record.restoreFields,
         false,
         true,
         record,
@@ -959,7 +983,7 @@ export class Workspace extends EventTarget {
       this.moves.retryRestore(record);
       void this.change(
         record.id,
-        { folder: record.originalFolder },
+        record.restoreFields,
         false,
         true,
         record,
@@ -1016,7 +1040,7 @@ export class Workspace extends EventTarget {
   private paint(id: string, fields: Fields) {
     const before = this.message(id) ?? this.confirmed.get(id);
     if (before && this.paging) {
-      const after = { ...before, ...fields };
+      const after = this.withAccount(before, fields);
       this.painted.set(id, this.metadataOnly(after));
       this.pageUnread +=
         +(after.folder === "Inbox" && after.unread) -
@@ -1033,9 +1057,9 @@ export class Workspace extends EventTarget {
             +this.matchesMetadata(after) - +this.matchesMetadata(before);
       }
     }
-    this.mail = this.mail.map((m) => (m.id === id ? { ...m, ...fields } : m));
+    this.mail = this.mail.map((m) => (m.id === id ? this.withAccount(m, fields) : m));
     if (this.retainedReader?.id === id)
-      this.retainedReader = { ...this.retainedReader, ...fields };
+      this.retainedReader = this.withAccount(this.retainedReader, fields);
   }
   private acceptAliases(messages: Mail[], since: number) {
     const incomingAliases =
@@ -1409,6 +1433,56 @@ export class Workspace extends EventTarget {
         this.pendingFields.delete(revision);
     }
   }
+  accountOf(id: string) {
+    return this.message(this.canonical(id))?.accountId ?? null;
+  }
+  moveAccounts(): MoveAccount[] {
+    return (this.repository.moveAccounts?.() ?? []).filter(
+      (a) => !this.removedAccountIds.has(a.id),
+    );
+  }
+  crossAccountMovesEnabled() {
+    return this.preferences.crossAccountMoves && !!this.repository.transfers;
+  }
+  foreignMovesEnabled() {
+    return this.crossAccountMovesEnabled() && this.preferences.foreignMoveFolders;
+  }
+  /** Move one message to a folder in another IMAP account. The chosen account,
+   * message and preferences are checked again when the choice arrives. */
+  transfer(id: string, account: string, folder: string, foreign: boolean) {
+    id = this.canonical(id);
+    const source = this.message(id)?.accountId;
+    const imap = (key?: string) =>
+      this.moveAccounts().some((a) => a.id === key && a.imap);
+    if (
+      !source ||
+      source === account ||
+      !imap(source) ||
+      !imap(account) ||
+      !(foreign ? this.foreignMovesEnabled() : this.crossAccountMovesEnabled())
+    ) {
+      this.error = "The message or account changed. Check it and try again.";
+      this.retry = null;
+      this.changed();
+      return Promise.resolve();
+    }
+    return this.change(id, { folder, accountId: account });
+  }
+  private accountEmail(id: string) {
+    return (
+      [...(this.repository.accountIds ?? [])].find(
+        ([, value]) => value === id,
+      )?.[0] ?? id
+    );
+  }
+  /** Fields with the displayed account kept beside an account change. */
+  private withAccount(mail: Mail, fields: Fields): Mail {
+    return {
+      ...mail,
+      ...fields,
+      ...(fields.accountId ? { account: this.accountEmail(fields.accountId) } : {}),
+    };
+  }
   action(id: string, action: Action, destination?: string) {
     id = this.canonical(id);
     const m = this.message(id);
@@ -1510,6 +1584,9 @@ export class Workspace extends EventTarget {
             current.accountId || current.account,
             current.folder,
             fields.folder,
+            fields.accountId && fields.accountId !== current.accountId
+              ? fields.accountId
+              : undefined,
           )
         : undefined;
     const previous = Object.fromEntries(
@@ -1627,11 +1704,13 @@ export class Workspace extends EventTarget {
           .filter((field) => !(field in applied) && saved)
           .map((field) => [field, saved![field as keyof Mail]]),
       ) as Fields;
-      this.confirmed.set(key, {
-        ...this.confirmed.get(key)!,
-        ...superseded,
-        ...applied,
-      });
+      this.confirmed.set(
+        key,
+        this.withAccount(this.confirmed.get(key)!, {
+          ...superseded,
+          ...applied,
+        }),
+      );
       this.paint(
         key,
         Object.fromEntries(

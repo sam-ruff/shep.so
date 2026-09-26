@@ -1,5 +1,46 @@
 # Completion audit
 
+## Browser foreign folders when moving (R108), 22 September 2026
+
+Branch `feat/web-foreign-move-folders` brings the desktop Move behaviour to the
+browser. Preferences gains the synced "Allow moving mail between accounts" and
+"Search other accounts' folders when moving" toggles, now portable browser
+settings. The Move chooser gathers the acted account's folders and, only while
+typing, other IMAP accounts' folders, ranked by the desktop matcher itself: the
+label matcher and `rank_moves` moved to `shep_mail_content::fuzzy` (feature
+`fuzzy`), the desktop re-exports it and the browser calls it through WASM.
+`shared/move-ranking-cases.json` runs in both. Badged rows ask "Move to
+<folder>?" with Enter/Y or Move confirming and Escape/N or Cancel returning to
+the list with the query and focus; a destination-account list moves at once;
+a group choice opens the review naming the account. As Sam asked, the group
+dialog no longer has a free-text "Review move" button: Enter picks the first
+listed row and an unknown name opens nothing. POP3 accounts and accounts whose
+folder list has not loaded get the standard folders plus every known folder,
+in group moves as well as single ones.
+
+The gateway adds `/api/mail/transfer` (source UIDVALIDITY/UIDPLUS check, then
+APPEND to the other account) and `/api/mail/transfer/finish` (exact UID STORE
+and EXPUNGE), behind a mockall-tested `HostedTransfer` trait. The browser's
+individual action owner and the bulk executor send `accountId` with `folder`:
+both account locks, `pendingTransfer` before upload, destination receipt before
+cleanup, Activity repair after a failed cleanup, checked review for a lost
+upload, and Undo through the same path. A 409 refusal restores the source.
+
+Evidence: 285 web unit tests (move ranking cases, gateway transfer paths, group
+transfer and Undo), 72 backend tests including four transfer route tests, the
+shared ranking and two IMAP transcript tests, desktop ranking/foreign chooser
+tests, and the six-scenario `foreign-move.spec.ts` in Chromium with light,
+dark, 900×640 and phone-width captures reviewed. The saved desktop native
+`test_move_foreign_folder_badge_confirmation_keyboard_and_mouse` and accent/typo
+Move flows pass on the shared matcher; the foreign-folder flow's sidebar clicks
+were corrected for main's Activity entry, which had broken them. The full
+Playwright suite passes 209 of 216 with two workers; four timing-sensitive
+group Undo flows and a draft-conflict flow pass when rerun alone, and the failing account-removal alert
+and Xvfb printing flows fail identically on an origin/main copy. A projected
+account column in the mailbox query was dropped after it measurably slowed
+5,000-row paging. Limitations: no live IMAP transfer run; Flutter's Move flow
+still ignores the preference (Flutter work deferred by the owner).
+
 ## R97 reply quote preference, 22 September 2026
 
 Branch `feat/reply-include-original-preference` adds Preferences → General →

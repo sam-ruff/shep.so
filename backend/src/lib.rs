@@ -372,8 +372,13 @@ async fn capabilities(State(state): State<AppState>) -> Json<serde_json::Value> 
         .iter()
         .map(|e| serde_json::json!({"host":e.host,"port":e.port,"service":e.service}))
         .collect();
+    let imap = state
+        .config
+        .mail_endpoints
+        .iter()
+        .any(|e| e.service == mail::policy::Service::Imap);
     Json(
-        serde_json::json!({"beta":true,"mail":!endpoints.is_empty(),"endpoints":endpoints,"calendar":state.calendar.is_some(),"backups":false,"sent_copy":state.config.mail_endpoints.iter().any(|e| e.service == mail::policy::Service::Imap)}),
+        serde_json::json!({"beta":true,"mail":!endpoints.is_empty(),"endpoints":endpoints,"calendar":state.calendar.is_some(),"backups":false,"sent_copy":imap,"transfer":imap}),
     )
 }
 async fn security_headers(request: Request, next: Next) -> Response {

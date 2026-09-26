@@ -877,12 +877,20 @@ test("Y/N/Enter/Escape decline, close and approve reviews; a text field keeps En
     name: "Move selected messages",
     exact: true,
   });
-  await move.getByLabel("Destination folder", { exact: true }).fill("Notes");
+  const folder = move.getByLabel("Destination folder", { exact: true });
+  // Only listed folders are destinations: an unknown name opens nothing.
+  await folder.fill("Notes");
+  await expect(move.locator(".move-choice")).toHaveCount(0);
+  await expect(move.getByRole("button", { name: "Review move" })).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(move).toBeVisible();
+  await expect(review).toBeHidden();
+  await folder.fill("Spam");
   // Enter in the folder field opens the review without approving it.
   await page.keyboard.press("Enter");
   await expect(move).toBeHidden();
   const moveApply = review.getByRole("button", {
-    name: "Move to Notes 125 messages",
+    name: "Move to Spam 125 messages",
     exact: true,
   });
   await expect(moveApply).toBeFocused();
@@ -891,11 +899,11 @@ test("Y/N/Enter/Escape decline, close and approve reviews; a text field keeps En
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.keyboard.press("y");
   await expect(review).toBeHidden();
-  await expect.poll(() => cached(page)).toEqual({ Notes: 125 });
+  await expect.poll(() => cached(page)).toEqual({ Spam: 125 });
   await expect
     .poll(() => journal(page))
     .toEqual([{ state: "ready", rows: 50 }]);
-  const d = await openGroup(page, /^Move to Notes 125 messages/);
+  const d = await openGroup(page, /^Move to Spam 125 messages/);
   await d.getByRole("button", { name: "Undo group", exact: true }).click();
   await expect(d.locator(".group-progress")).toContainText("125 restored");
   // Decline closes History when nothing is checked.

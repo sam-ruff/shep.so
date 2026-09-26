@@ -46,7 +46,7 @@ import { recoverSent, type SentWork } from "./sent";
 import { envelope, replyDraft, type ReplyEnvelope } from "./reply";
 import type { Session } from "./auth";
 import { MutationFailure, MutationWaiting } from "./model";
-import { intentValues, type IntentLease } from "./mail_intents";
+import { intentValues, transferTarget, type IntentLease } from "./mail_intents";
 import type {
   Repository,
   Mail,
@@ -140,6 +140,9 @@ export interface RecordMail {
   moved?: boolean;
   localId?: string;
   pendingMove?: string;
+  /** The other account an unconfirmed upload was sent to. Only an explicit
+   * review clears it; a source listing cannot prove the copy is absent. */
+  pendingTransfer?: string;
   receipt?: {
     account: string;
     folder: string;
@@ -158,6 +161,12 @@ export class MutationSuperseded extends MutationFailure {
       "A newer choice replaced this change. Refresh the folder to display it.",
     );
   }
+}
+/** Cached message fields; an account is part of the identity, not a field. */
+function coreFields(fields: Fields) {
+  const core = { ...fields };
+  delete core.accountId;
+  return core;
 }
 const displayFields = (fields: Fields): Fields => ({
   ...fields,
@@ -211,6 +220,37 @@ async function guardSource(
       "This message changed since the group review. Refresh the review before changing it.",
     );
   return physical(mail, expected);
+}
+type Proof = Awaited<ReturnType<typeof fingerprint>>;
+/** The cached message as it exists in the destination account. Without an
+ * APPENDUID its identity stays unresolved, never the old source UID. */
+function transferred(
+  latest: RecordMail,
+  id: string,
+  account: string,
+  folder: string,
+  remote: string | null,
+  proof: Proof,
+): RecordMail {
+  const moved: RecordMail = {
+    ...latest,
+    core: {
+      ...latest.core,
+      account_id: account,
+      folder,
+      remote_id: remote ?? latest.core.remote_id,
+    },
+    localId: id,
+    moved: !remote,
+    receipt: { account, folder, current: null, fingerprint: proof },
+  };
+  delete moved.pendingMove;
+  delete moved.pendingTransfer;
+  if (remote) {
+    moved.core.id = serverId(moved.core);
+    moved.receipt!.current = { ...moved.core };
+  }
+  return moved;
 }
 interface PreparedWire {
   envelope: { from: string; to: string[] };
@@ -634,6 +674,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
     const accept = () => this.exclusive(`account.${expected.account}`, async () => {
       if (this.activeActions.has(expected.id)) throw Error("This action is still running. Wait for its result.");
       await this.actionActivity?.acceptReviewed(expected);
+      await this.releaseTransfer(expected.lease);
     }, false);
     if (expected.owner && expected.owner !== this.actionOwner)
       await this.exclusive(`actions.tab.${expected.owner}`, accept, false);
@@ -641,6 +682,41 @@ export class GatewayRepository implements Repository, SelectionRepository {
     this.actionProgress?.();
     void this.resumeActions();
   }
+  /** After a checked review, release the hold an unconfirmed upload left on
+   * its original. The upload itself is never repeated automatically. */
+  async releaseTransfer(lease: IntentLease) {
+    const target = transferTarget(lease);
+    if (!target) return;
+    await this.exclusive(`cache.${lease.account}`, async () => {
+      const mail = await resolveMail(this.store, lease.id);
+      if (
+        mail?.pendingTransfer !== target ||
+        mail.core.account_id !== lease.account
+      )
+        return;
+      delete mail.pendingMove;
+      delete mail.pendingTransfer;
+      await this.store.commit([
+        { store: "mail", key: localId(mail), value: mail },
+      ]);
+    });
+  }
+  /** Accounts in listing order with their known folders, for Move. */
+  moveAccounts() {
+    return this.accounts
+      .filter((a) => !this.removedAccounts.has(a.id))
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        email: a.email,
+        imap: a.protocol === "Imap",
+        folders: this.folders.has(a.id)
+          ? [...new Set(this.folders.get(a.id)!.map(displayFolder))]
+          : undefined,
+      }));
+  }
+  /** The gateway moves mail between two connected IMAP accounts. */
+  readonly transfers = true;
   private groupClient?: BrowserGroups;
   get groups() {
     return (this.groupClient ??= new BrowserGroups(
@@ -1286,6 +1362,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
               localId: key,
               receipt: current?.receipt,
               pendingMove: current?.pendingMove,
+              pendingTransfer: current?.pendingTransfer,
               localEdited: current?.localEdited,
               reply: value.reply ? envelope(value.reply) : undefined,
               sentMessageId:
@@ -1413,8 +1490,11 @@ export class GatewayRepository implements Repository, SelectionRepository {
           if (!reconcile!.ids.has(current.core.id)) removed.add(current.key);
           else if (current.pendingMove) {
             const saved = await this.store.get<RecordMail>("mail", current.key);
+            // A listed original proves a same-account MOVE did not happen,
+            // but not that an upload to another account is absent.
             if (
               saved?.pendingMove &&
+              !saved.pendingTransfer &&
               !saved.moved &&
               saved.core.id === current.core.id
             ) {
@@ -1558,6 +1638,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
     receipt: BulkReceipt,
     lease: IntentLease,
   ): Promise<BulkIdentity> {
+    if (transferTarget(lease)) return this.repairTransfer(receipt, lease);
     const intents = this.store.intents;
     if (!intents)
       throw Error("Mail action storage is unavailable. Reopen Shep.");
@@ -1772,7 +1853,8 @@ export class GatewayRepository implements Repository, SelectionRepository {
       const saved = await activity.get(lease.action);
       const account = this.accounts.find(a => a.id === lease.account);
       const mail = await resolveMail(this.store, id);
-      if (saved && ["Queued", "Waiting"].includes(saved.status) && account?.protocol === "Imap" && mail && !mail.local && !this.connected(account.id)) {
+      const other = transferTarget(lease);
+      if (saved && ["Queued", "Waiting"].includes(saved.status) && account?.protocol === "Imap" && mail && !mail.local && (!this.connected(account.id) || (other && !this.connected(other)))) {
         const message = "Saved on this browser. Reconnect the account in Preferences to sync this change.";
         await activity.update(lease, { status: "Waiting", error: message });
         this.actionProgress?.();
@@ -1855,6 +1937,8 @@ export class GatewayRepository implements Repository, SelectionRepository {
     const account = this.accounts.find((a) => a.id === m.core.account_id);
     if (!account)
       throw new Error("This account was removed. Reopen Preferences.");
+    if (fields.accountId && fields.accountId !== account.id)
+      return this.performTransfer(id, fields, account, acknowledged, expected, lease);
     let receipt: BulkReceipt | undefined,
       cacheApplied = false;
     const checkConnection = async () => {
@@ -1880,7 +1964,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
           );
         const before = await guardSource(this.store, latest, expected);
         const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder;
-        Object.assign(latest.core, fields, folder ? { folder } : {});
+        Object.assign(latest.core, coreFields(fields), folder ? { folder } : {});
         latest.localEdited = true;
         await this.store.commit(
           [
@@ -1984,7 +2068,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
               mail: latest.core,
               ...fields,
             });
-          Object.assign(latest.core, fields, folder ? { folder } : {});
+          Object.assign(latest.core, coreFields(fields), folder ? { folder } : {});
           receipt = {
             before,
             after: physical(latest, before),
@@ -1996,7 +2080,7 @@ export class GatewayRepository implements Repository, SelectionRepository {
             applied: fields,
           });
         } else {
-          Object.assign(latest.core, fields, folder ? { folder } : {});
+          Object.assign(latest.core, coreFields(fields), folder ? { folder } : {});
           latest.localEdited = true;
         }
         await this.exclusive(`cache.${account.id}`, () =>
@@ -2047,6 +2131,312 @@ export class GatewayRepository implements Repository, SelectionRepository {
       if (error instanceof MutationFailure && error.committed)
         error.applied = fields;
       throw error;
+    }
+  }
+  /** Both account locks in one global order, so opposite transfers cannot
+   * deadlock and neither account can sync, change or be removed meanwhile. */
+  private bothAccounts<T>(a: string, b: string, fn: () => Promise<T>) {
+    const [first, second] = [a, b].sort();
+    return this.exclusive(`account.${first}`, () =>
+      this.exclusive(`account.${second}`, fn),
+    );
+  }
+  /** Move one cached IMAP message into another IMAP account. The destination
+   * receipt is saved before the original is removed, and an unconfirmed upload
+   * is never sent again automatically. */
+  private async performTransfer(
+    id: string,
+    fields: Fields,
+    source: Account,
+    acknowledged?: (result: MutationReceipt) => Promise<void>,
+    expected?: BulkIdentity,
+    lease?: IntentLease,
+  ): Promise<MutationReceipt> {
+    const destination = this.accounts.find((a) => a.id === fields.accountId);
+    if (!destination)
+      throw Error("The other account was removed. Choose a connected account.");
+    if (source.protocol !== "Imap" || destination.protocol !== "Imap")
+      throw Error(
+        "Moving between accounts needs two IMAP accounts. POP3 mail stays on this device.",
+      );
+    if (fields.unread !== undefined || fields.starred !== undefined)
+      throw Error("Move and flag changes must be separate actions.");
+    const effective = async () => {
+      if (!lease) return;
+      if (!this.store.intents)
+        throw Error("Mail action storage is unavailable. Reopen Shep.");
+      fields = await this.store.intents.effective(lease, id);
+      // Folder and account are owned together; a newer choice owns either.
+      if (fields.accountId !== destination.id || !fields.folder)
+        throw new MutationSuperseded();
+    };
+    const checkConnections = async () => {
+      for (const account of [source, destination]) {
+        if (await this.store.get("removedAccounts", account.id))
+          throw Error("This account was removed. Reopen Preferences.");
+        if (await this.folderChangeBlocks(account.id))
+          throw Error(
+            "Finish or review the saved folder change before moving this message.",
+          );
+      }
+      if (!lease?.action) return;
+      const action = await this.actionActivity?.get(lease.action);
+      if (
+        action?.connection !==
+        JSON.stringify(await this.store.get("accounts", source.id))
+      )
+        throw Error(
+          "The account changed after this action was saved. Review it before trying again.",
+        );
+    };
+    let receipt: BulkReceipt | undefined,
+      cacheApplied = false;
+    try {
+      await this.bothAccounts(source.id, destination.id, async () => {
+        await checkConnections();
+        const latest = await resolveMail(this.store, id);
+        if (!latest || latest.core.account_id !== source.id)
+          throw new Error(
+            "This message is no longer cached in its account. Refresh its folder.",
+          );
+        id = localId(latest);
+        await effective();
+        if (latest.local)
+          throw Error(
+            "This local copy stays on this device. Only server mail can move between accounts.",
+          );
+        if (latest.pendingMove)
+          throw new Error(
+            "A previous move has no saved acknowledgment. Refresh both folders and choose the current message; it was not moved again.",
+          );
+        if (latest.receipt || latest.moved)
+          await this.resolveMoved(id, latest, source);
+        await effective();
+        const before = await guardSource(this.store, latest, expected);
+        const folder = fields.folder === "Inbox" ? "INBOX" : fields.folder!;
+        const raw = await this.store.get<string>("raw", id);
+        if (!raw)
+          throw new Error(
+            "The original message is missing from this cache. Refresh before moving it.",
+          );
+        const proof = await fingerprint(raw);
+        const sourceConnection = this.connection(source),
+          destinationConnection = this.connection(destination);
+        const original = { ...latest.core };
+        latest.pendingMove = folder;
+        latest.pendingTransfer = destination.id;
+        await this.store.commit([{ store: "mail", key: id, value: latest }]);
+        const remote = await this.uploadTransfer(
+          id,
+          latest,
+          sourceConnection,
+          destinationConnection,
+          folder,
+          raw,
+        );
+        const moved = transferred(latest, id, destination.id, folder, remote, proof);
+        receipt = {
+          before,
+          after: physical(moved, before),
+          recovery: { bytes: proof.bytes, sha256: proof.sha256 },
+        };
+        // The copy exists: persist its receipt before removing the original.
+        await acknowledged?.({
+          receipt: structuredClone(receipt),
+          cacheApplied: false,
+          applied: fields,
+        });
+        await this.finishTransfer(sourceConnection, original, destination);
+        await this.exclusive(`cache.${source.id}`, () =>
+          this.exclusive(`cache.${destination.id}`, () =>
+            this.saveMoved(
+              id,
+              moved,
+              lease ? { ...lease, fields } : undefined,
+              before,
+            ),
+          ),
+        );
+        cacheApplied = true;
+        if (moved.moved) {
+          try {
+            await this.resolveMoved(id, moved, destination);
+          } catch {
+            throw new MutationFailure(
+              "The message moved, but its identity in the other account needs recovery. Refresh that folder before another action.",
+              true,
+              receipt,
+              cacheApplied,
+            );
+          }
+          receipt = { ...receipt, after: physical(moved, before) };
+        }
+      });
+      return { receipt: receipt!, cacheApplied, applied: fields };
+    } catch (error) {
+      if (error instanceof BrowserWriteFailure)
+        error = new Error(
+          "Could not save this message change on this browser. Free storage space and retry.",
+        );
+      if (receipt && !(error instanceof MutationFailure && error.committed))
+        throw new MutationFailure(
+          "The message was copied to the other account, but its local progress could not be saved. Open Activity to repair it before another action.",
+          true,
+          receipt,
+          cacheApplied,
+          fields,
+        );
+      if (error instanceof MutationFailure && error.committed) {
+        error.applied = fields;
+        error.receipt ??= receipt;
+        error.cacheApplied ||= cacheApplied;
+      }
+      throw error;
+    }
+  }
+  /** Finish an acknowledged transfer from its saved receipt: remove the
+   * original if it remains and save the destination copy. The upload itself
+   * is never repeated. */
+  private async repairTransfer(
+    receipt: BulkReceipt,
+    lease: IntentLease,
+  ): Promise<BulkIdentity> {
+    const intents = this.store.intents;
+    if (!intents)
+      throw Error("Mail action storage is unavailable. Reopen Shep.");
+    const fields = intentValues(lease.fields),
+      target = transferTarget(lease),
+      before = receipt.before,
+      after = { ...receipt.after },
+      recovery = receipt.recovery;
+    if (
+      !target ||
+      !recovery ||
+      before.id !== after.id ||
+      before.account !== lease.account ||
+      after.account !== target ||
+      after.folder !== fields.folder
+    )
+      throw Error(
+        "The saved receipt does not match this action. Reopen its history.",
+      );
+    const source = this.accounts.find((a) => a.id === lease.account),
+      destination = this.accounts.find((a) => a.id === target);
+    if (!source || !destination)
+      throw Error("This account was removed. Reopen Preferences.");
+    return this.bothAccounts(source.id, destination.id, async () => {
+      const initial = await resolveMail(this.store, lease.id);
+      if (!initial)
+        throw Error("The message identity changed. Refresh its recovery review.");
+      const id = localId(initial);
+      const raw = await this.store.get<string>("raw", id);
+      if (!raw)
+        throw Error(
+          "The original message is missing. Refresh before recovering this move.",
+        );
+      const proof = await fingerprint(raw);
+      if (
+        proof.bytes !== recovery.bytes ||
+        proof.sha256.some((n, i) => n !== recovery.sha256[i])
+      )
+        throw Error(
+          "The cached content does not match this move. Refresh its recovery review.",
+        );
+      if (initial.core.account_id === destination.id) {
+        // The cache already holds the copy; only a missing identity remains.
+        await guardSource(this.store, initial, after.lineage ? after : undefined);
+        if (initial.moved) await this.resolveMoved(id, initial, destination);
+        await intents.finish(lease, "applied");
+        return { ...after, remoteId: initial.core.remote_id };
+      }
+      if (
+        initial.core.account_id !== source.id ||
+        initial.pendingTransfer !== destination.id
+      )
+        throw Error(
+          "This message moved again. Review its current folder before recovering the saved change.",
+        );
+      await guardSource(this.store, initial, before.lineage ? before : undefined);
+      await this.finishTransfer(this.connection(source), initial.core, destination);
+      const moved = transferred(
+        initial,
+        id,
+        destination.id,
+        after.folder,
+        after.remoteId || null,
+        proof,
+      );
+      await this.exclusive(`cache.${source.id}`, () =>
+        this.exclusive(`cache.${destination.id}`, () =>
+          this.saveMoved(id, moved, { ...lease, fields }, before),
+        ),
+      );
+      if (moved.moved) await this.resolveMoved(id, moved, destination);
+      return { ...after, remoteId: moved.core.remote_id };
+    });
+  }
+  /** Upload the cached original. A definite refusal restores the source for
+   * another attempt; any other failure stays unconfirmed. */
+  private async uploadTransfer(
+    id: string,
+    latest: RecordMail,
+    source: ReturnType<GatewayRepository["connection"]>,
+    destination: ReturnType<GatewayRepository["connection"]>,
+    folder: string,
+    raw: string,
+  ) {
+    let response: Response, value: Record<string, unknown>;
+    try {
+      response = await this.response("/api/mail/transfer", {
+        source,
+        destination,
+        mail: latest.core,
+        folder,
+        raw,
+      });
+      const body: unknown = await response.json();
+      check(body);
+      value = body;
+    } catch (error) {
+      throw new MutationFailure(
+        `${error instanceof Error ? error.message : "The copy could not be confirmed."} Check the other account's folder before another action; the original was kept.`,
+      );
+    }
+    if (response.status === 409 && value.refused === true) {
+      delete latest.pendingMove;
+      delete latest.pendingTransfer;
+      await this.store.commit([{ store: "mail", key: id, value: latest }]);
+      throw new Error(
+        typeof value.error === "string"
+          ? value.error
+          : "The message was not moved. It stays in its original account.",
+      );
+    }
+    if (!response.ok || value.committed !== true)
+      throw new MutationFailure(
+        `${typeof value.error === "string" ? value.error : "The other account did not confirm the copy."} Check its folder before another action.`,
+      );
+    return typeof value.remote_id === "string" &&
+      /^[1-9]\d*\.[1-9]\d*$/.test(value.remote_id)
+      ? value.remote_id
+      : null;
+  }
+  /** Remove exactly the original UID; safe to repeat after its copy exists. */
+  private async finishTransfer(
+    source: ReturnType<GatewayRepository["connection"]>,
+    original: CoreMail,
+    destination: Account,
+  ) {
+    try {
+      await this.json("/api/mail/transfer/finish", {
+        source,
+        mail: original,
+      });
+    } catch {
+      throw new MutationFailure(
+        `The message was copied to ${destination.email}, but its original could not be removed yet. Open Activity and repair it to finish the move.`,
+        true,
+      );
     }
   }
   private async mutation(path: string, body: unknown) {

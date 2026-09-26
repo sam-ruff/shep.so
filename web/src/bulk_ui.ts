@@ -1,5 +1,7 @@
 import { button, el, modal } from "./ui";
 import { keyCombo, keyConsumed, reviewDecision } from "./shortcut_keys";
+import { accountBadge, openMoveChooser } from "./move_ui";
+import { knownFolders } from "./move_candidates";
 import type { Workspace } from "./model";
 import type { GatewayRepository } from "./provider";
 import type { BulkAction, BulkItem, BulkJob } from "./bulk_journal";
@@ -151,38 +153,24 @@ export class GroupUI {
     controls.append(move);
     return controls;
   }
+  /** Every choice, including a folder in another account, opens the review;
+   * Enter never skips it. */
   private chooseFolder() {
-    const d = modal("Move selected messages"),
-      label = el("label", "field", "Folder in each original account"),
-      input = el("input");
-    input.setAttribute("aria-label", "Destination folder");
-    input.placeholder = "Projects";
-    label.append(input);
-    const status = el("p", "form-status"),
-      apply = button("Review move", () => {
-        if (!input.value.trim()) return;
-        d.close();
-        void this.prepare({
-          kind: "move",
-          folder: input.value.trim(),
-          account: null,
-        });
-      });
-    apply.disabled = true;
-    input.oninput = () => {
-      apply.disabled = !input.value.trim();
-    };
-    // Enter opens the review; it never skips the confirmation.
-    input.onkeydown = (e) => {
-      if (e.defaultPrevented || keyCombo(e) !== "Enter" || apply.disabled)
-        return;
-      e.preventDefault();
-      apply.click();
-    };
-    status.textContent =
-      "Each message stays in its original account. Enter an existing destination folder.";
-    d.append(label, status, apply);
-    input.focus();
+    const accounts = this.w.selection.snapshot
+      ? [...new Set(this.w.selection.snapshot.groups.map((g) => g.account))]
+      : null;
+    openMoveChooser({
+      group: true,
+      accounts: () => this.w.moveAccounts(),
+      home: { source: { kind: "selection", accounts } },
+      fallback: knownFolders(this.w.moveAccounts()),
+      crossAccount: () => this.w.crossAccountMovesEnabled(),
+      foreignEnabled: () => this.w.foreignMovesEnabled(),
+      shortcuts: () => this.w.preferences.shortcuts,
+      move: (folder) => void this.prepare({ kind: "move", folder, account: null }),
+      transfer: (account, folder) =>
+        void this.prepare({ kind: "move", folder, account }),
+    });
   }
   async prepare(action: BulkAction) {
     if (!this.w.selection.ready || !this.w.selection.snapshot || this.preparing)
@@ -233,6 +221,12 @@ export class GroupUI {
             `${review.snapshot.groups.length - 20} more account/folder groups`,
           ),
         );
+      const into = el("p", "move-into");
+      if (action.kind === "move" && action.account)
+        into.append(
+          el("span", "muted", "into"),
+          accountBadge(this.w.moveAccounts(), action.account),
+        );
       const prepared = review;
       const actions = el("div", "dialog-actions"),
         cancel = button("Cancel group action", () => d.close());
@@ -274,7 +268,7 @@ export class GroupUI {
           : "primary",
       );
       actions.append(cancel, apply);
-      d.append(explanation, accounts, actions);
+      d.append(explanation, ...(into.childElementCount ? [into] : []), accounts, actions);
       // Y/Enter approve and N/Escape decline, matching the desktop review.
       // Keys consumed by their target (native Enter on a focused control) and
       // already handled events are left alone.

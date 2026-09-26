@@ -78,7 +78,8 @@ export async function seed(page: Page) {
     store.close();
   }, profile);
   await page.goto("/");
+  // A cold dev server compiles the query workers on this first load.
   await expect(
     page.getByRole("button", { name: subject(0), exact: true }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 15000 });
 }

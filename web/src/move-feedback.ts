@@ -9,7 +9,16 @@ export class MoveRecord {
     public id: string,
     readonly account: string,
     readonly originalFolder: string,
+    /** The other account a transfer moved this message to. */
+    readonly destination?: string,
   ) {}
+  /** Fields that put the message back where it was. */
+  get restoreFields(): { folder: string; accountId?: string } {
+    return {
+      folder: this.originalFolder,
+      ...(this.destination ? { accountId: this.account } : {}),
+    };
+  }
 }
 
 /** Six-second desktop move feedback. Provider completion never recreates it. */
@@ -43,17 +52,24 @@ export class MoveFeedback {
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.dismiss(), 6000);
   }
-  add(id: string, account: string, original: string, folder: string) {
+  add(
+    id: string,
+    account: string,
+    original: string,
+    folder: string,
+    destination?: string,
+  ) {
+    const target = destination ?? account;
     const standard = ["archive", "trash"].includes(folder.toLowerCase());
     const same = standard
       ? this.folder?.toLowerCase() === folder.toLowerCase()
       : this.folder === folder;
-    if (this.restored || !same || (!standard && this.account !== account))
+    if (this.restored || !same || (!standard && this.account !== target))
       this.records = [];
     this.folder = folder;
-    this.account = account;
+    this.account = target;
     this.restored = false;
-    const record = new MoveRecord(id, account, original);
+    const record = new MoveRecord(id, account, original, destination);
     this.records = [...this.records, record];
     this.schedule();
     return record;
@@ -83,8 +99,10 @@ export class MoveFeedback {
     this.schedule();
   }
   removeAccount(account: string) {
-    if (!this.records.some((r) => r.account === account)) return;
-    this.records = this.records.filter((r) => r.account !== account);
+    const involved = (r: MoveRecord) =>
+      r.account === account || r.destination === account;
+    if (!this.records.some(involved)) return;
+    this.records = this.records.filter((r) => !involved(r));
     if (!this.visible) clearTimeout(this.timer);
   }
   dismiss() {

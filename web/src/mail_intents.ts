@@ -9,7 +9,8 @@ import {
 import type { MailAlias } from "./sent_cache";
 import { BrowserActivity, actionId, type ActionActivity, type MailAction } from "./mail_activity";
 
-export type IntentField = "folder" | "unread" | "starred";
+/** `accountId` is only ever owned together with `folder` by one transfer. */
+export type IntentField = "folder" | "unread" | "starred" | "accountId";
 export type IntentStatus = "pending" | "applied" | "failed";
 export interface FieldIntent {
   revision: number;
@@ -62,7 +63,29 @@ const names = [
   "removedAccounts",
   ...cacheStores.filter((name) => name !== "mailMetadata"),
 ];
-export const intentFields: IntentField[] = ["folder", "unread", "starred"];
+export const intentFields: IntentField[] = [
+  "folder",
+  "unread",
+  "starred",
+  "accountId",
+];
+/** The account a transfer lease leaves the message in, if it moves accounts. */
+export const transferTarget = (
+  lease: Pick<IntentLease, "account" | "fields">,
+) =>
+  lease.fields.accountId && lease.fields.accountId !== lease.account
+    ? lease.fields.accountId
+    : undefined;
+/** A transfer lease also matches the message once it reached its destination. */
+const leaseAccount = (
+  lease: Pick<IntentLease, "account" | "fields">,
+  account: string,
+) => account === lease.account || account === transferTarget(lease);
+/** The receipt value matching one intent field. */
+export const identityField = (
+  identity: { account: string; folder: string; unread: boolean; starred: boolean },
+  key: IntentField,
+) => (key === "accountId" ? identity.account : identity[key]);
 const read = <T>(r: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
     r.onsuccess = () => resolve(r.result);
@@ -82,12 +105,29 @@ export function intentValues(fields: Fields): Fields {
       if (typeof value !== "string" || !value || /[\x00-\x1f\x7f]/.test(value))
         throw Error("Choose a valid mail folder.");
       result.folder = value.toLowerCase() === "inbox" ? "INBOX" : value;
+    } else if (key === "accountId") {
+      if (typeof value !== "string" || !/^[\w-]{1,64}$/.test(value))
+        throw Error("Choose a connected account.");
+      result.accountId = value;
     } else {
       if (typeof value !== "boolean") throw Error("Choose a valid mail flag.");
       result[key] = value;
     }
   }
+  if (result.accountId !== undefined && result.folder === undefined)
+    throw Error("Choose a folder in the other account.");
   return result;
+}
+/** A transfer's folder and account are owned together: when only one of them
+ * is still owned, neither may be sent. */
+function keepTransferPair(requested: Fields, accepted: Fields) {
+  if (requested.accountId === undefined) return accepted;
+  if (accepted.folder !== undefined && accepted.accountId !== undefined)
+    return accepted;
+  const rest = { ...accepted };
+  delete rest.folder;
+  delete rest.accountId;
+  return rest;
 }
 /** Field ownership is independent of provider flags. Sync cannot erase newer
  * intent, and matching boolean values never justify an older group's Undo. */
@@ -161,11 +201,14 @@ export class BrowserIntents implements IntentStore {
     const fields: Fields = {};
     for (const key of intentFields)
       if ((expected.applied ?? expected.lease.fields)[key] !== undefined)
-        Object.assign(fields, { [key]: expected.receipt.before[key] });
+        Object.assign(fields, {
+          [key]: identityField(expected.receipt.before, key),
+        });
     return this.register(expected.receipt.after.id, fields, owner, expected);
   }
   register(id: string, fields: Fields, owner?: string, undo?: MailAction) {
-    const values = intentValues(fields);
+    const requested = intentValues(fields);
+    let values = { ...requested };
     return this.transaction("readwrite", async (tx) => {
       if ((await read<MailAction[]>(tx.objectStore("mailActions").getAll(undefined, 148))).filter(action => action.status !== "Succeeded").length >= 128)
         throw Error("Review saved mail actions in Activity before starting more changes.");
@@ -177,6 +220,7 @@ export class BrowserIntents implements IntentStore {
           throw Error("This change needs a fresh review before Undo.");
         for (const key of intentFields)
           if (record.fields[key]?.revision !== undo.lease.revision) delete values[key];
+        values = keepTransferPair(requested, values);
         if (!Object.keys(values).length) throw Error("Newer changes own these fields. Nothing from this action can be undone.");
       }
       for (const key of intentFields)
@@ -222,8 +266,8 @@ export class BrowserIntents implements IntentStore {
         )) ?? 0;
       if (revision > latest || (undoOf !== undefined && undoOf >= revision))
         throw Error("Reserve this group decision before changing messages.");
-      const record = await this.record(tx, id),
-        accepted: Fields = {};
+      const record = await this.record(tx, id);
+      let accepted: Fields = {};
       for (const key of intentFields) {
         const value = values[key];
         if (value === undefined) continue;
@@ -240,14 +284,18 @@ export class BrowserIntents implements IntentStore {
           undoOf === undefined
             ? !old || old.revision < revision
             : old?.revision === undoOf;
-        if (!retry && !owned) continue;
+        if (retry || owned) Object.assign(accepted, { [key]: value });
+      }
+      accepted = keepTransferPair(values, accepted);
+      for (const key of intentFields) {
+        const value = accepted[key];
+        if (value === undefined) continue;
         record.fields[key] = {
           revision,
           value,
           status: "pending",
           ...(undoOf === undefined ? {} : { origin: undoOf }),
         };
-        Object.assign(accepted, { [key]: value });
       }
       tx.objectStore("mailIntents").put(record, record.id);
       recordCacheChanges(tx, [
@@ -284,7 +332,7 @@ export class BrowserIntents implements IntentStore {
     return this.transaction("readonly", async (tx) => {
       const current = await this.record(tx, lease.id),
         fields: Fields = {};
-      if (current.account !== lease.account)
+      if (!leaseAccount(lease, current.account))
         throw Error("This message changed account. Refresh its review.");
       if (id !== lease.id && (await this.record(tx, id)).id !== current.id)
         throw Error(
@@ -308,7 +356,7 @@ export class BrowserIntents implements IntentStore {
       return Promise.reject(Error("Invalid mail intent outcome."));
     return this.transaction("readwrite", async (tx) => {
       const current = await this.record(tx, lease.id);
-      if (current.account !== lease.account)
+      if (!leaseAccount(lease, current.account))
         throw Error("This message changed account. Refresh its review.");
       for (const key of intentFields) {
         const intent = current.fields[key];
@@ -330,7 +378,7 @@ export class BrowserIntents implements IntentStore {
     return this.transaction("readonly", async (tx) => {
       const current = await this.record(tx, lease.id),
         fields: Fields = {};
-      if (current.account !== lease.account)
+      if (!leaseAccount(lease, current.account))
         throw Error("This message changed account. Refresh its review.");
       for (const key of intentFields)
         if (
@@ -358,9 +406,10 @@ export async function acknowledgeIntentCache(
   const mail = await read<CacheMail | undefined>(
     tx.objectStore("mailMetadata").get(id),
   );
+  const target = transferTarget(lease);
   if (
     !mail ||
-    mail.core.account_id !== lease.account ||
+    mail.core.account_id !== (target ?? lease.account) ||
     !changes.some((c) => c.store === "mail" && c.key === id && c.value)
   )
     throw Error(
@@ -368,13 +417,16 @@ export async function acknowledgeIntentCache(
     );
   const store = tx.objectStore("mailIntents"),
     current = await read<MailIntent | undefined>(store.get(id));
-  if (!current || current.account !== lease.account)
+  if (!current || !leaseAccount(lease, current.account))
     throw Error("The saved action changed account. Refresh its review.");
+  // A transfer's intent record follows the message into its new account.
+  if (target) current.account = target;
   const fields = intentValues(lease.fields);
   current.applied ??= {};
   for (const key of intentFields) {
     if (fields[key] === undefined) continue;
-    if (mail.core[key] !== fields[key])
+    const saved = key === "accountId" ? mail.core.account_id : mail.core[key];
+    if (saved !== fields[key])
       throw Error("The cache did not save this action's acknowledged fields.");
     if ((current.applied[key] ?? 0) > lease.revision)
       throw Error(

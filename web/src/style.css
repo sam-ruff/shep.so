@@ -1134,6 +1134,103 @@ dialog > .field,
 .folder-choices .button {
   justify-content: flex-start;
 }
+/* Move chooser: ranked rows, account badges and the confirmation step. */
+.move-dialog .folder-choices {
+  max-height: min(50dvh, 380px);
+  overflow-y: auto;
+}
+.move-choice {
+  width: 100%;
+  min-height: 44px;
+  gap: 12px;
+  text-align: left;
+}
+.move-choice.target {
+  border-color: var(--accent);
+  background: var(--tint);
+}
+.move-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.move-choice svg {
+  flex: none;
+}
+.move-hint {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.account-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: var(--radius-badge);
+  background: var(--tint);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+}
+.move-choice.target .account-badge {
+  background: var(--surface);
+}
+.account-identity {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.account-identity .account-badge {
+  max-width: 100%;
+}
+.move-choose .select-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.move-choose .select-field,
+.move-note,
+.move-empty {
+  margin: 12px 0;
+}
+.move-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* Only a keyboard target for Enter, Escape, Y and N; its buttons keep rings. */
+.move-confirm:focus,
+.move-confirm:focus-visible {
+  outline: none;
+}
+.move-confirm h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.move-confirm-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.move-into {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
 .mobile-menu {
   display: none;
 }
