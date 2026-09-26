@@ -22,7 +22,7 @@ impl ksni::Tray for Tray {
             .iter()
             .map(|(size, rgba)| {
                 let mut argb = rgba.clone();
-                for pixel in argb.chunks_exact_mut(4) {
+                for pixel in argb.as_chunks_mut::<4>().0 {
                     pixel.rotate_right(1);
                 }
                 ksni::Icon {

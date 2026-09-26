@@ -60,7 +60,7 @@ impl Key {
             "The saved cache key is damaged. Keep the database and recover its original key."
         );
         let mut key = Box::new([0; 32]);
-        for (output, chunk) in key.iter_mut().zip(raw.as_bytes().chunks_exact(2)) {
+        for (output, chunk) in key.iter_mut().zip(raw.as_bytes().as_chunks::<2>().0) {
             let digit = |b: u8| {
                 if b.is_ascii_digit() {
                     b - b'0'

@@ -57,7 +57,7 @@ fn display(window: HWND, frame: &Frame) -> anyhow::Result<()> {
     }
     let icon = if frame.count > 0 {
         let mut bgra = frame.rgba.clone();
-        for pixel in bgra.chunks_exact_mut(4) {
+        for pixel in bgra.as_chunks_mut::<4>().0 {
             pixel.swap(0, 2);
         }
         // 1-bit AND mask rows are word-aligned. Alpha is in the 32-bit color data.
