@@ -6,8 +6,12 @@ on:
     branches: [main]
     paths:
       - "website/**"
-      - "assets/logo-light.webp"
-      - "assets/logo-dark.webp"
+      - "web/**"
+      - "shared/**"
+      - "vendor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "assets/shepherd-light.svg"
       - "docs/images/mail-light.webp"
       - "docs/images/calendar-dark.webp"
       - ".github/workflows/website.yml"
@@ -15,8 +19,12 @@ on:
   pull_request:
     paths:
       - "website/**"
-      - "assets/logo-light.webp"
-      - "assets/logo-dark.webp"
+      - "web/**"
+      - "shared/**"
+      - "vendor/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "assets/shepherd-light.svg"
       - "docs/images/mail-light.webp"
       - "docs/images/calendar-dark.webp"
       - ".github/workflows/website.yml"
@@ -35,7 +43,8 @@ jobs:
   build:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, sophie]
-    timeout-minutes: 30
+    # The image compiles the demo's WebAssembly and wasm-bindgen-cli from source.
+    timeout-minutes: 60
     env:
       # Step conditions cannot read secrets, so resolve the push decision here.
       # Until the zot account's secrets exist the image is built but not pushed.
@@ -56,6 +65,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Build browser demo
+        working-directory: .
+        # The image's Rust stage compiles the demo's WebAssembly, so the runner
+        # needs no Rust toolchain and the final image build reuses this cache.
+        run: docker build -f website/Dockerfile --target demo-files --output type=local,dest=web/dist-preview .
 
       - name: Build site
         run: npm run build

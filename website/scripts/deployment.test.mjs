@@ -37,14 +37,33 @@ test('unversioned assets revalidate and unknown paths remain unavailable', () =>
   assert.doesNotMatch(nginx, /immutable|expires 1y/);
 });
 
-test('Docker context allows only the promotional build inputs', () => {
+test('Docker context allows only the promotional and demo build inputs', () => {
   const patterns = read('website/Dockerfile.dockerignore').trim().split('\n');
   assert.deepEqual(patterns, [
     '**', '!website/', '!website/Dockerfile', '!website/package.json',
     '!website/package-lock.json', '!website/nginx.conf', '!website/public/',
     '!website/public/**', '!website/scripts/', '!website/scripts/build.mjs',
-    '!assets/', '!assets/logo-light.webp', '!assets/logo-dark.webp', '!docs/',
+    '!assets/', '!assets/shepherd-light.svg', '!docs/',
     '!docs/images/', '!docs/images/mail-light.webp', '!docs/images/calendar-dark.webp',
+    '!Cargo.toml', '!Cargo.lock', '!build.rs', '!src/', '!src/**', '!benches/', '!benches/**',
+    '!vendor/', '!vendor/**', '!shared/', '!shared/**', 'shared/**/target/',
+    '!web/', '!web/package.json', '!web/package-lock.json', '!web/index.html',
+    '!web/preview.html', '!web/print.html', '!web/tsconfig.json', '!web/vite.config.ts',
+    '!web/public/', '!web/public/**', '!web/src/', '!web/src/**', 'web/src/wasm/',
   ]);
-  assert.match(read('website/Dockerfile'), /FROM node:24\.17\.0-alpine@sha256:[a-f0-9]{64} AS build/);
+  const docker = read('website/Dockerfile');
+  for (const stage of [/FROM rust:[\d.]+-slim-bookworm@sha256:[a-f0-9]{64} AS wasm/, /FROM node:24\.17\.0-alpine@sha256:[a-f0-9]{64} AS demo/, /FROM scratch AS demo-files/, /FROM node:24\.17\.0-alpine@sha256:[a-f0-9]{64} AS build/]) {
+    assert.match(docker, stage);
+  }
+  assert.match(docker, /--version 0\.2\.128 wasm-bindgen-cli/);
+  assert.match(docker, /COPY --from=demo \/app\/web\/dist-preview \/app\/web\/dist-preview/);
+});
+
+test('CI builds the demo through the image stage and serves it with a trailing slash', () => {
+  const workflow = read('.github/workflows/website.yml');
+  assert.match(workflow, /--target demo-files --output type=local,dest=web\/dist-preview/);
+  for (const path of ['web/**', 'shared/**', 'Cargo.lock']) assert.ok(workflow.includes(`- "${path}"`), path);
+  const nginx = read('website/nginx.conf');
+  assert.match(nginx, /location = \/demo \{\n\s+return 301 \/demo\/;/);
+  assert.match(nginx, /absolute_redirect off;/);
 });

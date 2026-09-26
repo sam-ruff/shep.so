@@ -1,32 +1,48 @@
 # Shep website
 
-Static promotion for Shep, with browser-aware installation, the approved logo and native Linux screenshots containing fictional mail/events. `web/` owns the browser mail client; `flutter/` owns the mobile app. The planned browser entry is an invite-only Google beta at `/beta`, initially restricted to the owner.
+The promotional site for shep.so. It is plain HTML, CSS and a little JavaScript, with no remote fonts, analytics or runtime dependencies. The only thing it stores is the chosen appearance.
+
+The page picks the visitor's platform from the user agent and shows that install command first, with tabs for the others. The commands are the same one-liners as the [installation guide](https://sam-ruff.github.io/shep.so/installation/).
+
+## The live demo
+
+`/demo/` is the browser client from `web/` built in its preview mode, with the fictional mailbox from `shared/preview.json`. Its MIME and profile code is the shared Rust compiled to WebAssembly, and it runs entirely in the visitor's browser: it cannot send mail or reach a server. The home page only loads it when someone presses Start, because the WebAssembly is a few megabytes.
+
+## Building
+
+Build the demo once, then the site:
 
 ```sh
 cd website
 npm ci
+npm run build:demo   # needs Rust with wasm32-unknown-unknown and wasm-bindgen-cli 0.2.128
 npm run build
 npm run preview
 ```
 
-Open `http://127.0.0.1:4178`. The self-contained output is `website/dist/`. Build copies the existing WebP screenshots and logos; no duplicate source assets are maintained. There are no remote fonts, analytics or runtime dependencies. Only appearance is stored locally.
+Open `http://127.0.0.1:4178`. Without a local Rust toolchain, Docker can build the demo instead:
 
-For tests, install Python 3 with Pillow and the Playwright browsers:
+```sh
+docker build -f website/Dockerfile --target demo-files --output type=local,dest=web/dist-preview .
+```
+
+`SHEP_DEMO_DIR` points the build at a demo somewhere else.
+
+## Tests
+
+Install Python 3 with Pillow and the Playwright browsers, then:
 
 ```sh
 npx playwright install chromium firefox webkit
 npm test
 npm run test:all-browsers
+npm run test:deployment
 ```
 
-The Playwright flows use real browser controls, as in Walkie Textie's browser automation. They cover platform suggestions (including desktop-mode iPad and ChromeOS), all-platform navigation, keyboard focus, appearance persistence, blocked storage/clipboard, no-JavaScript navigation, link targets, image loading, six viewport/theme combinations and axe WCAG checks. Reports, traces and WebP screenshots go to ignored `artifacts/website/`. Automated accessibility checks complement visual/keyboard review; they do not establish full screen-reader coverage. Browser emulation does not establish native mobile verification.
+The Playwright flows drive real controls: platform detection, tabs, Copy, the embedded demo, appearance, blocked storage and clipboard, no-JavaScript fallbacks and axe checks across phone to wide desktop sizes. Screenshots and reports go to the ignored `artifacts/website/`.
 
-The site ships as a container: a pinned Node build produces `dist/` and Chainguard nginx serves it on port 8080. Build from the repository root with `docker build -f website/Dockerfile -t shep-website .`; its Dockerfile-specific ignore file limits the context to promotional build inputs. Unknown paths return 404, keeping `/beta` unavailable until its separate service is ready. Unversioned assets require cache revalidation.
+## Deployment
 
-The `Website` workflow validates pull requests on the local pool without publishing. On `main`, it publishes `registry.tail2d6fbe.ts.net/shep/website:sha-<full commit SHA>` after the Chromium suite passes, using only `ZOT_USERNAME` and `ZOT_PASSWORD`. OCI labels record that exact source revision and SHA-based image version. Infrastructure pins the resulting digest for staging and promotion. This is a website image identity, not a desktop/mobile application release; quality and application release workflows remain disabled. `npm run test:deployment` checks this publishing contract.
+The image is built from the repository root with `docker build -f website/Dockerfile .`. A Rust stage compiles the WebAssembly, a Node stage builds the demo and the site, and Chainguard nginx serves the result on port 8080. Unknown paths return 404.
 
-Distribution cards deliberately show unpublished Google Play/App Store and undeployed private-beta status. The beta is not open for login yet. Replace those labels with verified release/store destinations when available. The Linux guide currently installs from source; the release installer is mentioned but not offered as the install path until a GitHub release exists. Keep availability and product limits aligned with the root README and completion audit.
-
-`backend/` implements the Google access gate and SMTP/IMAP/POP3 transport without persistent server mail or password storage. Full client/provider parity remains in TODO.md. The VPS SSH target and exact allowlisted Google identity are pending; this promotional site does not implement or verify authentication.
-
-Deployment, DNS, store publication and release activation remain pending. Serve this output at `/` and integrate the independently built gated beta at `/beta` when verified. Keep documentation publishing at its existing destination and quality/release workflows disabled.
+The `Website` workflow tests pull requests on the local runner pool and, on `main`, pushes `registry.tail2d6fbe.ts.net/shep/website:sha-<commit>`. Infrastructure pins that digest for staging and production.

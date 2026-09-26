@@ -2969,6 +2969,12 @@ export function mount(
     }
     if (w.repository.preview)
       header.append(el("span", "preview-badge", "PREVIEW"));
+    if (w.repository.homeLink) {
+      const home = el("a", "preview-home", "Get Shep");
+      home.href = w.repository.homeLink;
+      home.target = "_top";
+      header.append(home);
+    }
     if (tab === "Mail")
       header.append(
         button(
