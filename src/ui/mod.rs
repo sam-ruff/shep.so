@@ -51,6 +51,8 @@ mod removals;
 mod selectable;
 mod settings_search;
 mod sidebar;
+#[cfg(all(test, feature = "test-support"))]
+mod simulator_tests;
 #[cfg(feature = "test-support")]
 mod store_truth;
 mod text_context;
@@ -4454,6 +4456,29 @@ impl App {
             return Task::none();
         };
         self.test_revision += 1;
+        let data = self.test_observation();
+        Task::perform(
+            async move {
+                static SNAPSHOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+                let _guard = SNAPSHOT_LOCK.lock().await;
+                if let Ok(previous) = tokio::fs::read(&path).await
+                    && let Ok(previous) = serde_json::from_slice::<serde_json::Value>(&previous)
+                    && previous["revision"].as_u64() >= data["revision"].as_u64()
+                {
+                    return;
+                }
+                let temp = path.with_extension("tmp");
+                if let Ok(json) = serde_json::to_vec(&data)
+                    && tokio::fs::write(&temp, json).await.is_ok()
+                {
+                    let _ = tokio::fs::rename(temp, path).await;
+                }
+            },
+            |_| Message::Noop,
+        )
+    }
+    /// Observation-only state read by the native harness and the simulator tests.
+    fn test_observation(&self) -> serde_json::Value {
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
         let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.displayed_mail_flags(&d.summary).1),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.composer.current.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
@@ -4882,25 +4907,7 @@ impl App {
             data["inbox_reveal_height"] = serde_json::json!(self.inbox_reveal_height);
         }
         data["inbox_scroll"] = serde_json::json!(self.inbox_scroll);
-        Task::perform(
-            async move {
-                static SNAPSHOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-                let _guard = SNAPSHOT_LOCK.lock().await;
-                if let Ok(previous) = tokio::fs::read(&path).await
-                    && let Ok(previous) = serde_json::from_slice::<serde_json::Value>(&previous)
-                    && previous["revision"].as_u64() >= data["revision"].as_u64()
-                {
-                    return;
-                }
-                let temp = path.with_extension("tmp");
-                if let Ok(json) = serde_json::to_vec(&data)
-                    && tokio::fs::write(&temp, json).await.is_ok()
-                {
-                    let _ = tokio::fs::rename(temp, path).await;
-                }
-            },
-            |_| Message::Noop,
-        )
+        data
     }
     fn view(&self) -> Element<'_, Message> {
         let root = context_menu::ContextArea::root(self.layout(), self.preferences.interface_scale);
