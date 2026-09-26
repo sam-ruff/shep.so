@@ -14,6 +14,7 @@ export interface MailRoles {
 }
 export const localId = (mail: RecordMail) => mail.localId ?? mail.core.id;
 export async function resolveMail(store: LocalStore, id: string) {
+  if (store.resolveMail) return store.resolveMail<RecordMail>(id);
   const alias = await store.get<MailAlias>("mailAliases", id);
   return store.get<RecordMail>("mail", alias?.target ?? id);
 }

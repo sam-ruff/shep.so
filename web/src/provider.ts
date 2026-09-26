@@ -1848,7 +1848,9 @@ export class GatewayRepository implements Repository, SelectionRepository {
     lease?: IntentLease,
   ): Promise<MutationReceipt> {
     let result: MutationReceipt;
-    const activity = this.store.intents?.activity;
+    // Only individual actions own an Activity record. Group steps are recorded
+    // by their journal, so they skip these writes instead of finding no row.
+    const activity = lease?.action ? this.store.intents?.activity : undefined;
     if (lease?.action && activity) {
       const saved = await activity.get(lease.action);
       const account = this.accounts.find(a => a.id === lease.account);
