@@ -102,6 +102,39 @@ def fixture_processes(binary, state_path, process_root=Path("/proc")):
     return sorted(matches)
 
 
+def runtime_processes(runtime, process_root=Path("/proc")):
+    """Processes still carrying this run's private XDG_RUNTIME_DIR, such as the input
+    method GNOME Shell starts, which outlive the tracked fixture processes."""
+    marker = b"XDG_RUNTIME_DIR=" + os.fsencode(runtime)
+    matches = []
+    for process in process_root.iterdir():
+        if not process.name.isdigit() or int(process.name) == os.getpid():
+            continue
+        try:
+            if marker in (process / "environ").read_bytes().split(b"\0"):
+                matches.append(int(process.name))
+        except OSError:
+            continue
+    return sorted(matches)
+
+
+def stop_runtime_processes(runtime, process_root=Path("/proc"), timeout=3):
+    def signal_all(pids, number):
+        for pid in pids:
+            try:
+                os.kill(pid, number)
+            except ProcessLookupError:
+                pass
+
+    remaining = runtime_processes(runtime, process_root)
+    signal_all(remaining, signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    while remaining and time.monotonic() < deadline:
+        time.sleep(.05)
+        remaining = runtime_processes(runtime, process_root)
+    signal_all(remaining, signal.SIGKILL)
+
+
 def eventually(probe, description, timeout=10):
     deadline = time.monotonic() + timeout
     error = None
@@ -373,7 +406,7 @@ def run(binary):
         actions.extend(lambda process=process: stop_process(process) for process in processes)
         if tray:
             actions.extend([tray.alias.cleanup, tray.log.close])
-        actions.append(runtime.cleanup)
+        actions.extend([lambda: stop_runtime_processes(runtime.name), runtime.cleanup])
         cleanup_all(actions)
 
 
