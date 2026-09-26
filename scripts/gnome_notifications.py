@@ -11,7 +11,7 @@ from pathlib import Path
 
 from e2e import check, click, key, type_text, wait
 from gnome_activation import (OBSERVER, cleanup_all, eventually, install_shell_observer, prepare_window,
-                              require_stable, start_system_bus, stop_process)
+                              require_stable, start_system_bus, stop_process, stop_runtime_processes)
 from install_linux import APP_ID, desktop_entry
 from mcp_harness import Desktop, ROOT
 
@@ -174,7 +174,8 @@ def run(binary, mode="details", desktop_type=Desktop):
             processes.extend([tray.host, tray.bus])
         cleanup_all([save_receipt, desktop.stop,
                      *[lambda process=process: stop_process(process) for process in reversed(processes)],
-                     *([tray.alias.cleanup, tray.log.close] if tray else []), runtime.cleanup])
+                     *([tray.alias.cleanup, tray.log.close] if tray else []),
+                     lambda: stop_runtime_processes(runtime.name), runtime.cleanup])
 
 
 if __name__ == "__main__":
