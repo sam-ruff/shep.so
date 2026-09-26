@@ -125,7 +125,9 @@ mod tests {
             assert!(
                 frame
                     .rgba
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .any(|p| p[0] > 245 && p[1] > 245 && p[2] > 245 && p[3] == 255)
             );
             assert_eq!(frame.description, format!("{count} unread emails"));

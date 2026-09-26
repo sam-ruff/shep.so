@@ -160,7 +160,7 @@ impl PixbufContainer {
 
         // tiny-skia expects premultiplied alpha
         let mut premul = rgba.into_raw();
-        for chunk in premul.chunks_exact_mut(4) {
+        for chunk in premul.as_chunks_mut::<4>().0 {
             let a = chunk[3] as u32;
             chunk[0] = ((chunk[0] as u32 * a + 127) / 255) as u8;
             chunk[1] = ((chunk[1] as u32 * a + 127) / 255) as u8;

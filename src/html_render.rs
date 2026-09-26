@@ -356,7 +356,7 @@ fn document(
                 );
                 let mut pixels = surface.0.borrow().pixels().to_vec();
                 // tiny-skia's buffer is premultiplied; iced images use straight RGBA.
-                for p in pixels.chunks_exact_mut(4) {
+                for p in pixels.as_chunks_mut::<4>().0 {
                     if p[3] > 0 && p[3] < 255 {
                         for i in 0..3 {
                             p[i] = (u16::from(p[i]) * 255 / u16::from(p[3])).min(255) as u8;

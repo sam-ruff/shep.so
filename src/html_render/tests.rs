@@ -331,12 +331,16 @@ async fn html_table_styles_render_and_long_documents_keep_viewport_sized_frames(
     assert!(first.content_height > 20000.);
     let red = first
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|p| p[0] > 240 && p[1] < 10 && p[2] < 10)
         .count();
     let blue = first
         .pixels
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|p| p[2] > 240 && p[0] < 10 && p[1] < 10)
         .count();
     assert!(
