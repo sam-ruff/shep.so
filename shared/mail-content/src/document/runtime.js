@@ -36,23 +36,18 @@
     }
     marks = [];
   }
-  function collect(notify = true) {
-    clear();
-    blocks = [];
-    chunks = [];
-    let current,
-      block = -1;
-    const visibility = new WeakMap();
-    function visible(element) {
+  function visibility() {
+    const known = new WeakMap();
+    return (element) => {
       if (!element) return true;
-      if (visibility.has(element)) return visibility.get(element);
+      if (known.has(element)) return known.get(element);
       const chain = [];
       let current = element;
-      while (current && !visibility.has(current)) {
+      while (current && !known.has(current)) {
         chain.push(current);
         current = current.parentElement;
       }
-      let value = current ? visibility.get(current) : true;
+      let value = current ? known.get(current) : true;
       for (let i = chain.length - 1; i >= 0; i--) {
         const style = getComputedStyle(chain[i]);
         value =
@@ -61,10 +56,18 @@
           style.visibility !== "hidden" &&
           style.visibility !== "collapse" &&
           style.opacity !== "0";
-        visibility.set(chain[i], value);
+        known.set(chain[i], value);
       }
-      return visibility.get(element);
-    }
+      return known.get(element);
+    };
+  }
+  function collect(notify = true) {
+    clear();
+    blocks = [];
+    chunks = [];
+    let current,
+      block = -1;
+    const visible = visibility();
     function owner(element) {
       while (element && element !== document.body) {
         const display = getComputedStyle(element).display;
@@ -127,16 +130,94 @@
       });
     }
   }
-  function theme() {
-    document.documentElement.style.setProperty(
-      "--shep-text",
-      dark ? "#f4f4f5" : "#18181b",
+  // Computed colours as sRGB channels in 0..1, or null for other spaces.
+  function colour(value) {
+    const match = /^(rgba?|color)\((.*)\)$/.exec(value.trim());
+    if (!match) return null;
+    const parts = match[2].trim().split(/[\s,/]+/);
+    let scale = 1 / 255;
+    if (match[1] === "color") {
+      if (parts.shift() !== "srgb") return null;
+      scale = 1;
+    }
+    const [r, g, b] = parts.slice(0, 3).map((part) => Number(part) * scale);
+    const alpha = parts[3] ?? "1";
+    const a = parseFloat(alpha) * (alpha.endsWith("%") ? 0.01 : 1);
+    return [r, g, b, a].every(Number.isFinite) ? { r, g, b, a } : null;
+  }
+  function luminance({ r, g, b }) {
+    const channel = (value) =>
+      value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  }
+  function hex({ r, g, b }) {
+    return `#${[r, g, b]
+      .map((value) =>
+        Math.round(Math.min(1, Math.max(0, value)) * 255)
+          .toString(16)
+          .padStart(2, "0"),
+      )
+      .join("")}`;
+  }
+  // Visible characters in dark and light text, bounded for very long mail.
+  function tone() {
+    const visible = visibility();
+    const counts = { dark: 0, light: 0 };
+    const walker = document.createTreeWalker(
+      document.body,
+      NodeFilter.SHOW_TEXT,
     );
-    document.documentElement.style.setProperty(
-      "--shep-background",
-      dark ? "#19191d" : "#ffffff",
-    );
-    document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    while (walker.nextNode() && counts.dark + counts.light < 50000) {
+      const node = walker.currentNode,
+        element = node.parentElement;
+      const characters = node.data.replace(/\s+/g, "").length;
+      if (
+        !characters ||
+        !element ||
+        element.closest("style,script,template,noscript") ||
+        !visible(element)
+      )
+        continue;
+      const value = colour(getComputedStyle(element).color);
+      if (!value || value.a === 0) continue;
+      counts[luminance(value) < 0.5 ? "dark" : "light"] += characters;
+    }
+    return counts;
+  }
+  function opaqueRoot() {
+    for (const node of [document.body, document.documentElement]) {
+      const value = colour(getComputedStyle(node).backgroundColor);
+      if (value && value.a >= 1) return value;
+    }
+    return null;
+  }
+  // An email's own opaque root background is kept. A transparent root gets a
+  // canvas chosen from its text: white paper for mostly dark text, a dark
+  // canvas for mostly light text. Decided per document and theme only.
+  function canvas() {
+    const root = document.documentElement.style;
+    root.removeProperty("background-color");
+    root.setProperty("--shep-background", "transparent");
+    root.setProperty("--shep-text", dark ? "#f4f4f5" : "#18181b");
+    const authored = opaqueRoot();
+    let light;
+    if (authored) light = luminance(authored) >= 0.5;
+    else {
+      const counts = tone();
+      light = counts.light <= counts.dark;
+    }
+    const background = authored ? hex(authored) : light ? "#ffffff" : "#18181b";
+    if (!authored) {
+      root.setProperty("--shep-background", background);
+      root.setProperty("background-color", background);
+    }
+    root.setProperty("--shep-text", light ? "#18181b" : "#f4f4f5");
+    root.colorScheme = light ? "light" : "dark";
+    send("canvas", {
+      background,
+      scheme: light ? "light" : "dark",
+      authored: !!authored,
+    });
   }
   function setQuotes() {
     for (const { node, placeholder } of quotes) {
@@ -244,15 +325,16 @@
   function command(value) {
     if (!value || value.generation !== generation) return;
     if (value.type === "configure") {
-      const changed = expanded !== !!value.quotes || dark !== !!value.dark;
+      const themed = dark !== !!value.dark;
+      const changed = expanded !== !!value.quotes || themed;
       expanded = !!value.quotes;
       dark = !!value.dark;
       shortcuts = Array.isArray(value.shortcuts)
         ? value.shortcuts.filter((v) => typeof v === "string")
         : [];
       if (booted) {
-        theme();
         setQuotes();
+        if (themed) canvas();
         if (changed) collect();
       }
     } else if (
@@ -395,13 +477,13 @@
         node,
         placeholder: document.createComment("quoted history"),
       }));
-    theme();
     document.documentElement.style.setProperty(
       "scroll-behavior",
       "auto",
       "important",
     );
     setQuotes();
+    canvas();
     booted = true;
     collect();
     send("ready");

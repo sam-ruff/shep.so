@@ -1051,7 +1051,9 @@ widget tree while frames arrive. A document that leaves its root transparent
 gets a canvas chosen once, on its first paint, from the text colours it draws:
 white paper for mostly dark text, a dark canvas for mostly light text. Never
 show the app theme behind such email, and never switch the canvas while it is
-being read. Ordinary conversation refreshes must not
+being read. The shared browser/Flutter frame runtime applies the same rule after
+layout and reports a `canvas` message to the host surround; its reader defaults
+stay `:where()` rules so an email's own body colours win. Ordinary conversation refreshes must not
 reschedule its initial scroll position; explicit new-page navigation still may.
 
 The saved native preparation flow checks cache use, rapid selection, End/Home,
