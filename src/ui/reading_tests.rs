@@ -2,6 +2,61 @@
 //! separately by the native MCP suite; these tests control result arrival order.
 use super::*;
 
+/// Sync reports changes faster than a busy database worker answers reads.
+#[tokio::test]
+async fn frequent_changes_while_reads_are_slow_still_open_the_reader() -> anyhow::Result<()> {
+    let store = crate::store::Store::memory()?;
+    let mail = crate::model::parse_mail(
+        "test",
+        "1",
+        "INBOX",
+        b"Subject: Hello\r\n\r\nBody".to_vec(),
+        false,
+        false,
+    )?;
+    let id = mail.summary.id.clone();
+    store.upsert(vec![mail]).await?;
+
+    let (mut app, _) = App::new();
+    let (sender, mut reads) = engine::CommandSender::foreground_test_channel();
+    app.tx = Some(sender);
+    app.selected = Some(id.clone());
+    app.detail = None;
+    for _ in 0..20 {
+        let _ = app.handle(Message::Backend(Event::Changed));
+    }
+    assert!(
+        app.notice
+            .as_ref()
+            .is_none_or(|(message, ..)| !message.contains("work queue is full")),
+        "background changes must not fill the reads queue: {:?}",
+        app.notice
+    );
+
+    // The worker answers the oldest queued read first.
+    let Some(revision) = std::iter::from_fn(|| reads.try_recv().ok()).find_map(|command| {
+        matches!(&command, Command::Detail { id: target, prefetch: false, .. } if *target == id)
+            .then(|| match command {
+                Command::Detail { revision, .. } => revision,
+                _ => 0,
+            })
+    }) else {
+        anyhow::bail!("no reader request was queued");
+    };
+    let _ = app.handle(Message::Backend(Event::Detail {
+        revision,
+        id: id.clone(),
+        result: Ok(Arc::new(store.detail(id.clone()).await?)),
+        prefetch: false,
+    }));
+    assert_eq!(
+        app.detail.as_ref().map(|detail| detail.summary.id.as_str()),
+        Some(id.as_str()),
+        "the reader must open from an answered request"
+    );
+    Ok(())
+}
+
 #[test]
 fn search_uses_relevance_without_overwriting_browse_sort_and_rejects_stale_pages() {
     let (mut app, _) = App::new();
