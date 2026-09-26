@@ -34,7 +34,6 @@ flutter:
     - assets/FONT-LICENSE.txt
     - assets/Roboto-LICENSE.txt
     - assets/logo-light.webp
-    - assets/logo-dark.webp
   fonts:
     # CanvasKit otherwise downloads its default fallback even with Noto Sans UI.
     - family: Roboto

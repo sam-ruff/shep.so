@@ -195,8 +195,12 @@ test('full screen opens a new tab with the demo filling the window', async ({ pa
   await expect(demo.locator('html')).toHaveAttribute('data-theme', 'dark');
   await screenshot(tab, testInfo, 'demo-full-screen', false);
   expect(await tab.evaluate(() => localStorage.getItem('shep.preferences.v1'))).toBeNull();
-  const [heroTab] = await Promise.all([context.waitForEvent('page'), page.getByRole('link', { name: 'Open the demo full screen' }).click()]);
-  await expect(heroTab).toHaveURL(`${origin}/demo/?appearance=dark`);
+  for (const name of ['Open the demo full screen', 'Live demo']) {
+    const [other] = await Promise.all([context.waitForEvent('page'), page.getByRole('link', { name, exact: true }).click()]);
+    await expect(other).toHaveURL(`${origin}/demo/?appearance=dark`);
+    await other.close();
+  }
+  await expect(page).toHaveURL(`${origin}/`);
 });
 
 test('keyboard skip link, install navigation and appearance control', async ({ page }, testInfo) => {
