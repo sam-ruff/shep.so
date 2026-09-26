@@ -9,6 +9,7 @@ mod mail_lineage;
 pub use calendar_actions::CalendarJob;
 mod folder_actions;
 pub(crate) mod folder_creation;
+mod folder_modseqs;
 pub use folder_creation::{CreationJob, CreationStage, PendingCreation};
 pub use move_journal::LOCAL_RETRY_SECONDS;
 mod folder_projection;
@@ -57,7 +58,7 @@ pub struct Store(
     Option<Arc<crate::cache_cipher::ownership::Guard>>,
 );
 
-pub(crate) const DATABASE_VERSION: u32 = 11;
+pub(crate) const DATABASE_VERSION: u32 = 12;
 /// Plain-text characters the reader loads per page of a long message.
 pub const READER_BODY_PAGE: usize = 32_000;
 
@@ -266,6 +267,7 @@ impl Store {
         calendar_actions::schema(&tx)?;
         activity::schema(&tx)?;
         mail_lineage::schema(&tx)?;
+        folder_modseqs::schema(&tx)?;
         tx.pragma_update(None, "user_version", DATABASE_VERSION)?;
         tx.commit()?;
         Ok(conn)
@@ -854,6 +856,7 @@ impl Store {
             if sent.is_some_and(|folder| !folders.contains(&folder)) {
                 c.execute("DELETE FROM sent_folders WHERE account=?", [&account])?;
             }
+            folder_modseqs::retain(c, &account, &folders)?;
             mapping.insert(account.clone(), folders);
             put(c, "account_folders", &mapping)?;
             let mut catalogs: std::collections::HashMap<String, Vec<crate::folders::Mailbox>> =
@@ -958,6 +961,47 @@ impl Store {
             }).await,
             MailSyncItem::SkippedLarge => Ok(()),
             MailSyncItem::DownloadProgress => Ok(()),
+            MailSyncItem::Vanished {
+                account,
+                folder,
+                ids,
+            } => {
+                self.run(move |c| {
+                    let tx = c.transaction()?;
+                    folder_actions::idle(&tx, &account)?;
+                    for id in ids {
+                        // The same protections as a complete listing: restored
+                        // copies, pending moves and later moved-in rows stay.
+                        let removable: bool = tx.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM messages WHERE id=?1 AND account=?2 AND folder=?3
+                               AND id NOT LIKE '%:local-sent-%' AND id NOT LIKE '%:local-recovered-%'
+                               AND NOT EXISTS(SELECT 1 FROM mail_moves WHERE cache_id=messages.id)
+                               AND NOT EXISTS(SELECT 1 FROM restored_messages WHERE restored_messages.id=messages.id))",
+                            params![id, account, folder],
+                            |r| r.get(0),
+                        )?;
+                        if removable && !row_moved_in(&tx, &id, epoch)? {
+                            tx.execute("DELETE FROM messages WHERE id=?", [id])?;
+                        }
+                    }
+                    tx.commit()?;
+                    Ok(())
+                })
+                .await
+            }
+            MailSyncItem::FolderState {
+                account,
+                folder,
+                state,
+            } => {
+                self.run(move |c| {
+                    let tx = c.transaction()?;
+                    folder_modseqs::save(&tx, &account, &folder, state, epoch)?;
+                    tx.commit()?;
+                    Ok(())
+                })
+                .await
+            }
         }
     }
     pub async fn save_source(&self, source: CalendarSource) -> anyhow::Result<()> {

@@ -17,7 +17,7 @@ default = []
 test-support = ["shep-mail-core/test-support", "shep-profile-core/test-support"]
 
 [dependencies]
-shep-mail-core = { path = "shared/mail-core", features = ["staged-receive"] }
+shep-mail-core = { path = "shared/mail-core", features = ["staged-receive", "condstore"] }
 iced = { version = "0.14", default-features = false, features = ["tiny-skia", "tokio", "svg", "image-without-codecs", "advanced", "x11", "wayland", "linux-theme-detection"] }
 image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 rfd = "0.17"
@@ -108,6 +108,7 @@ iced_tiny_skia = "=0.14.0"
 tiny-skia = "0.11"
 mockall = "0.15.0"
 rsa = "0.10.0-rc.18"
+iced_runtime = "0.14.0"
 
 [patch.crates-io]
 curl = { path = "vendor/curl" }

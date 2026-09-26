@@ -28,6 +28,267 @@ Limitations: not yet a portable profile key (recorded in the preference sync
 audit); browser and Flutter composers have no per-reply control, recorded as
 parity gaps. Live-provider and other-platform execution are not claimed.
 
+## Settings help icons (R98), 23 September 2026
+
+Desktop Preferences now shows a small **?** beside seven easily misunderstood
+settings: the background check interval, moving mail between accounts, other
+accounts' folders in Move, close to tray, backup compression, backup
+encryption and synced account passwords. `ui/help_tip.rs` is one reusable
+widget (`App::with_help`): a small 11 px mark raised at the top of the label
+line like a footnote, inside a 16 px focusable target with a 24 px pointer
+reach. It shows short plain help on hover, pins it on click, and is a native
+Tab stop with a visible focus ring whose help shows while focused. Escape or
+clicking elsewhere dismisses it. Tips open below the icon, flip above near the
+bottom edge and are clamped inside the window. Tab in Preferences now scrolls
+the newly focused control into view (`ui/focus_reveal.rs`), which also
+benefits text fields.
+
+Following Sam's review, the icons have their own **Show help icons beside
+settings** checkbox in the Tooltips card, on by default and independent of
+**Show tooltips on icons**. When off the icons are omitted entirely, leaving no
+empty Tab stop. Like every preference it syncs through the shared profile
+codec as the portable `help_icons` key, with codec fixtures and browser/Flutter
+review labels; settings search finds it by "help icons" and "question mark".
+
+Evidence: nine unit tests (help text length/spelling/dash checks, tip
+placement, hover reach, raised mark geometry, Tab focus/Escape, click pinning,
+scrolled-away hiding, the help-icon setting removing icons and Tab stops while
+icon tooltips alone do not, focus reveal offsets), plus settings search
+coverage and the shared profile fixtures. Native scenarios pass:
+`test_settings_help_mouse_hover_click_and_keyboard_focus_light`,
+`test_settings_help_keyboard_reveal_in_compact_dark_general`,
+`test_settings_help_icons_have_their_own_setting_separate_from_tooltips`
+(both directions, each across a restart) and
+`test_settings_help_synced_passwords_hover`; light, compact dark and
+setting-off captures were reviewed and every tip lies within 1440x920 or
+900x640. After merging main with the settings search coverage guard
+(`c4888ff`), Tab reveal shares that search's Preferences scroller, the new
+checkbox satisfies the coverage guard, and 75 selected Preferences, palette,
+tray, backup, notification, badge, dropdown and settings-search scenarios pass.
+
+Limitations: iced 0.14 exposes no accessibility tree, so screen readers cannot
+announce the icons or their text. Browser Preferences has none of these
+settings or a Tooltips choice and Flutter was out of scope; both parity gaps
+stay in TODO R98.
+
+## IDLE watcher restart, CONDSTORE flag refresh and QRESYNC, 22-25 September 2026
+
+Branch `feat/imap-push-condstore` (desktop only, awaiting integration).
+An IMAP IDLE watcher now restarts when the account's incoming identity changes:
+the listing carries `connection_key` plus the active credential slot, and a
+changed value tells the old supervisor to send DONE and LOGOUT before a new
+one starts on the next check. Names and outgoing settings do not restart it.
+
+CONDSTORE flag refresh saves each folder's SELECT HIGHESTMODSEQ and UIDVALIDITY
+in the new `folder_modseqs` table (schema 12) after that folder's flags and
+listing were delivered. Later checks keep `UID SEARCH ALL` for expunges but fetch
+only `UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n)` and metadata for uncached
+messages, and skip the flag fetch when HIGHESTMODSEQ is unchanged. A missing
+value, new UIDVALIDITY, NOMODSEQ, lower value, no CONDSTORE capability or a
+rejected request (including partial data before a tagged NO) uses the full flag
+listing. A ledger write in the folder that outranks the check keeps the previous
+value; restore and account removal forget an account's values; database import
+accepts version 11 exports without the table.
+
+Tests: 10 new mail-core CONDSTORE unit/transcript tests (advertised and not,
+NOMODSEQ, UIDVALIDITY change, tagged NO after partial data, failed check,
+unchanged folder), store tests for reopen persistence, ledger hold, pruning and
+schema 11 upgrade, a ledger decision test, a watch-identity store test and a
+virtual-time scheduler test for restart on edit. Targeted runs: 152 desktop and
+23 mail-core library tests pass. Mail-core also compiles without the feature, as
+Flutter and the backend use it. Native background sync, held-sync and rapid
+action scenarios pass; two graceful-restart scenarios fail identically on
+unrelated paths (see the PR).
+
+QRESYNC (Sam asked for it on the PR rather than leaving it in TODO): with a
+saved value and QRESYNC advertised, the check sends `ENABLE QRESYNC` before any
+SELECT and asks `UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n VANISHED)` instead
+of `UID SEARCH ALL`. Vanished cached rows go through the new feature-gated
+`MailSyncItem::Vanished`, which keeps restored pins, pending-move rows and rows
+an acknowledged move created after the check began. Uncached reported UIDs
+download as new mail. Cached minus vanished plus new must equal SELECT's
+EXISTS; a mismatch, a live VANISHED/EXPUNGE/EXISTS during the reply, a rejected
+request (partial VANISHED before NO is discarded), a refused ENABLE, a new
+UIDVALIDITY or no QRESYNC uses the complete listing. VANISHED ranges are merged
+for binary-search membership and bounded at 100,000. The IDLE connection
+enables QRESYNC when advertised, and a live VANISHED starts a check.
+
+QRESYNC tests: eight transcripts (vanished removal with new mail and no UID
+listing, unchanged folder sends nothing after SELECT, tagged NO after partial
+VANISHED, size disagreement finding uncached mail, live VANISHED, new
+UIDVALIDITY, refused ENABLE keeping CONDSTORE, no ENABLE without a saved
+value), four pure tests (range merging, the known-UID index, reconciliation
+and the size check), two IDLE transcripts (live VANISHED, refused ENABLE) and a
+store test for the removal protections. Mail-core still builds without the
+feature, with and without `staged-receive`, with no warnings.
+
+Limitations: fixture-verified only; live IDLE restart and CONDSTORE/QRESYNC on
+Sam's Stalwart server are tracked in #12. A restored backup copy absent from
+the server keeps the size check failing, so that folder uses the complete
+listing on every check until the copy is removed or confirmed. Flutter and
+browser clients have neither IDLE nor CONDSTORE/QRESYNC (parity gap in TODO).
+
+## Flathub packaging preparation (R72 client), 23 September 2026
+
+Linux store packaging is prepared, not published. `packaging/flatpak/` holds a
+freedesktop 26.08 manifest with the rust-stable extension, AppStream metainfo,
+the installer's launcher/icon identity and four fixture screenshots. Finish-args
+are network, IPC, Wayland with X11 fallback and the notification, tray, launcher
+badge and secret service bus names; there is no filesystem or device access.
+`cargo_sources.py` generates offline crate sources from `Cargo.lock`, matching
+flatpak-cargo-generator's crate entries. Inside Flatpak the tray registers its
+unique bus name instead of `StatusNotifierItem-PID-ID`.
+
+Evidence: the manifest's build commands ran in the `freedesktopsdk/sdk:26.08`
+image with `--network none` against the generated sources (Rust 1.96 mounted in
+place of the extension): the release build finished with no warnings and links
+only libdbus, libstdc++, libz, libgcc, libm, libc and libsystemd from the runtime.
+`appstreamcli validate --no-net` and `desktop-file-validate` pass (one pedantic
+uppercase-ID note and a multiple-category hint shared with the installer).
+`tests/test_flatpak_packaging.py` (15 tests) checks manifest structure, installer
+identity/icon parity, licence notices and permissions. The saved native
+`test_store_screenshots_tour_fixture_mail_calendar_and_reply` scenario passed in
+an offline container with the harness tools; its captures were reviewed.
+
+Integration on 25 September after merging main: `flatpak-builder` 1.4.9 (the
+`org.flatpak.Builder` Flatpak) built the manifest with the 26.08 SDK and
+rust-stable 1.98 without warnings, and the installed build reached the first-run
+screen through `flatpak run` on an owned Xvfb display. `flatpak-builder-lint
+manifest` passes; its build-dir and repo checks report only the screenshots,
+whose `main` URLs resolve after merge. Following Sam's replies, the homepage is
+https://shep.so/ with a contribute link, and `desktop.start(store_capture=true)`
+hides the TEST badge in test-support demo builds; the saved scenario asserts
+the `test_badge` observation both ways and all four screenshots were recaptured
+and reviewed.
+
+Limitations: screenshot URLs resolve only after merge; no secret is embedded, so
+Google sign-in stays disabled in the Flatpak until the build-secret TODO lands; portal-backed export/backup paths and sound-only
+notifications are unverified in the sandbox. Flathub submission stays in TODO.
+
+## Preferences search coverage and control reveal, 23 September 2026
+
+R99 desktop work on `feat/settings-search-coverage`. The catalogue now lists
+the captions Preferences actually renders; several earlier labels (Privacy
+sender/domain fields, Profiles switch/open, shortcut names) did not exist in the
+UI and are corrected, with keyboard shortcut labels generated from
+`shortcuts::Action`. A result names the control whose caption reads as the query
+and opens its section, scrolls the caption into view through a layout operation
+and focuses a text field on its row or directly below it. Missing captions
+leave the section open; sections now open at their top.
+
+The 18 September native regression is fixed in the catalogue, not the scenario:
+"Profiles" and "Profiles and sync" are distinct cards, but "shared" was read as
+a two-edit typo of "saved". A query word spelled like a real catalogue word or
+prefix is no longer corrected into another word, while unknown words keep typo
+matching. The same review removed the dock-badge meaning clash that R108's
+"badge" synonym introduced on Reading and layout.
+
+`settings_search/coverage.rs` renders every tab in eleven fixture states and
+fails when a laid-out caption has no catalogue title, control or description
+entry, or when a catalogue control never renders. Data, counts, binding values
+and palette samples are documented exclusions. Unit tests cover the guard's
+negative cases, anchored typo matching, control naming, ranking stability,
+synonyms and reveal generations; the reveal operation has geometry tests.
+
+Evidence: `cargo test --all-features --lib settings_search` (19 passed, one
+ignored timing test). New native scenarios
+`test_settings_search_reveals_and_focuses_individual_controls` and
+`test_settings_search_reveal_compact_dark_scrolls_clicks_and_reports_missing`
+reveal and operate controls in General, Shortcuts, Privacy, Backups and Accounts,
+including the missing and no-results paths; light, dark and 900x640 captures
+were reviewed. All 70 native scenarios that use Preferences search pass (the
+live IMAP one skips without credentials), as do the 17 `-k profile_sync` and
+`-k settings` scenarios; the TODO regression scenario passes unchanged. On the
+unmodified catalogue, R108's "badge" synonym and ninth portable setting had also
+broken two badge flows and the first-device review. The first-device profile scenario's portable-setting
+count is updated to nine, matching R108's synced foreign-folder preference.
+
+Follow-up for Sam's PR #7 answers (25 September 2026): broad queries now name
+the caption matching the most query words by exact, prefix or abbreviation
+(never a typo), when it covers at least half of them and more than the section
+title ("shared profile", "new mail interval", "account passwords backup"; while
+"backup", "profile workspace" and "retention" still open the section top). The
+revealed button, checkbox, shortcut row or labelled field gets a 2 px accent
+outline in its own non-capturing stack layer inside the scroller, cleared after
+1.8 s or on the next click, key or wheel. Unit tests cover the new naming rule,
+typo exclusion, control bounds, outline geometry, dismissal events and stale
+timers. The two reveal scenarios now check the outline appears and clears for a
+field (timeout), shortcut row (key), button (wheel) and compact dark checkbox
+(timeout), comparing the outline edge pixels before and after clearing; light,
+dark and 900x640 captures were reviewed. 96 selected native scenarios using
+Preferences search pass (palette, tray, notification, profile, database, badge,
+preferences, settings, mail-check, S3 and abbreviation flows), one live IMAP
+scenario skipped without credentials.
+
+Limitations: browser and Flutter have no Preferences search, so parity stays
+open. The guard does not build profile join/account reviews, SFTP host-key
+review, staged Google sign-in or failed backup runs; those captions are listed
+exclusions or held in descriptions. No timing measurement was taken.
+
+## Move destination follow-ups, 23 September 2026
+
+Branch `fix/move-destination-followups` (desktop, R101 follow-ups). Move toasts
+now name the folder the receipt reports, through the account's decoded folder
+label: a drop on unified Spam reads "Moved 1 message to Junk" while pending and
+"Junk Mail" once acknowledged. Receipts that disagree (a group across accounts)
+keep the requested name; Archive and Delete keep their verbs. `shared/mail-core`
+adds an RFC 2342 NAMESPACE parser and a raw-stream exchange, used as the last
+discovery fallback on servers advertising NAMESPACE after `LIST "" ""` and the
+reference listing report nothing. The exchange reads only up to its own tagged
+completion; tagged NO/BAD, BYE, partial data, unexpected lines and oversized
+replies are errors and retire the session. A logical Archive/Trash/Junk move
+before the first folder sync lists the server's folders through the injected
+`MoveConnections` seam and saves the listing; if the listing fails, the move uses
+the literal name as before and nothing is cached, so the next move lists again
+(Sam's decision on PR #6). Dragging onto the unified Archive/Trash/Spam rows now accepts an
+account whose folder exists only under its special-use name; it was rejected as
+unavailable. Move journal and recovery semantics are unchanged.
+
+Tests: parser cases from RFC 2342 plus literals, extensions and malformed input;
+raw exchange tests for unsolicited lines, stopping at the tagged completion,
+refusals, partial replies and size bounds; loopback IMAP transcripts for an empty
+root and reference listing falling back to NAMESPACE, an `INBOX.` personal
+prefix, NO/BAD/partial NAMESPACE never creating, and a missing personal
+namespace; engine tests for the fresh listing and a failed listing; toast and drag
+rule unit tests. The new native flow
+`test_move_toast_names_the_special_use_folder_the_server_acknowledged` uses the
+`special_use_folders` fixture; light and compact dark captures were reviewed.
+Limitations: no live server lacking a `LIST "" ""` root was tried; browser and
+Flutter parity remain open in TODO.
+
+## Native dropdown keyboard dismissal (R15/R63), 22 September 2026
+
+Branch `fix/dropdown-escape-dismissal`, awaiting integration. Every native pick
+list now comes from `ui::dropdown::pick_list`, and `clippy.toml` disallows the
+plain iced constructor. While a menu is open it takes every key press: Escape
+or Tab closes only that menu, so dialogs, the composer, Find and mail shortcuts
+never see the key. The next click reaches the control the menu covered, including
+when Escape and the click arrive in one input batch. Mouse choices are unchanged.
+
+Evidence: five `ui::dropdown` tests drive the real iced runtime routing (overlay
+first, then the root `ContextArea`); three of the first four failed on the plain
+pick list before the fix, and a fifth covers a second Escape in the same batch. The saved `test_dropdown_*` native flows pass: the event dialog in
+light and compact dark (Escape keeps the dialog, the covered All day checkbox
+takes the next click, Tab closes, a second Escape closes the dialog), the mail
+filter with Find open (`s`, Ctrl+D and Delete do nothing, Escape keeps Find, the
+covered message row is selected) and the composer From list (Escape keeps the
+composer, the covered To field takes the click and typing). Each flow compares
+the menu region before opening, while open and after Escape. All three flows
+fail on a binary built from main (Escape closed Find, the composer and the
+dialog). With the fix, 16 of 17 selected native flows pass, including filter,
+calendar, account-review, join-link and inline-composer flows. The remaining
+`test_native_keys_move_escape_and_repeated_navigation_stay_ordered` failure
+(`mail_pending` stays 2 after three `s` presses) reproduced identically on
+main and was unrelated to dropdowns. After merging the native CI baseline
+(`babd932`), 31 selected native flows pass, including that one, the three
+dropdown flows, the other `test_native_*` ordering flows, both context-menu
+flows, filter/sort, calendar, inline-composer and join-link flows.
+
+Limitations: arrow/Enter navigation inside an open menu is not implemented
+because iced 0.14 keeps the highlighted row private. The browser uses native
+`<select>` elements and needs no change; Flutter was not reviewed in this wave.
+Native evidence is Linux/Xvfb only.
+
 ## Inbox page benchmark regression, 23 September 2026
 
 `8db87f1` hid removed accounts from every page, count and launcher badge query
