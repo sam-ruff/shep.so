@@ -2334,7 +2334,7 @@ class NativeFlows(unittest.TestCase):
                        check("html_ready",True), key("ctrl+p"), check("print_pending",True),
                        click(400,mail_row_y(3)), check("selected","Long formatted letter"),
                        {"type":"print_output", "text":"Mislabeled XHTML request", "name":"print-original-target"},
-                       check("print_pending",False), check("selected","Long formatted letter"), check("notice","restored","contains"))
+                       check("print_pending",False), check("selected","Long formatted letter"), check("notice","could not be confirmed","contains"))
 
     def test_print_shortcuts_remap_disable_and_text_input_isolation(self):
         self.mcp.call("desktop.start", print_browser="fail")
