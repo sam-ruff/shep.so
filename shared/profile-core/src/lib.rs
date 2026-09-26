@@ -153,6 +153,7 @@ pub enum SettingKey {
     SenderPictures,
     Tooltips,
     ForeignMoveFolders,
+    HelpIcons,
 }
 
 impl SettingKey {

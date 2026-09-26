@@ -126,7 +126,7 @@ async fn imap_receives_small_mail_before_staging_large_source_and_protected_prof
         };
         let known = HashSet::new();
         let (result, received) = tokio::join!(
-            sync_imap_session_mode(session, &account, &known, tx, None, mode),
+            sync_imap_session_mode(session, &account, &known, tx, None, mode, None),
             consume
         );
         if mode == ReceiveMode::Protected {

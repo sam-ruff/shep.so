@@ -11,7 +11,7 @@ Menu key opens the text menu for the focused control. Passwords cannot be copied
 
 - Add and edit multiple IMAP or POP3 accounts in Preferences → Accounts. The setup wizard separates identity, incoming IMAP/POP3 and outgoing SMTP settings, with SSL/TLS or STARTTLS, authentication choices, and independent connection tests. Fastmail has a preset; use its app password and full login address. Certificate verification is always enabled.
 - Mail checks start when the cached workspace opens and repeat every 5 seconds by default. Change the interval in Preferences → General → Mail & performance (5–3600 seconds). Each account keeps its own schedule, so a slow account never holds back new mail from another. The refresh icon also works during a background check, queuing one follow-up check for each account. An account's checks never overlap; its slow check finishes before its next begins. Background activity does not put the manual refresh button into its busy state.
-- IMAP accounts whose server offers IDLE also keep a dedicated connection watching Inbox, so new mail starts a check immediately instead of waiting for the interval. The watcher re-issues IDLE every 25 minutes, reconnects after a dropped connection with delays growing from 5 seconds to 5 minutes, and stops when the account is removed or the app closes. Servers without IDLE, other folders and POP3 accounts rely on the interval checks, which keep running for every account either way.
+- IMAP accounts whose server offers IDLE also keep a dedicated connection watching Inbox, so new mail starts a check immediately instead of waiting for the interval. The watcher re-issues IDLE every 25 minutes, reconnects after a dropped connection with delays growing from 5 seconds to 5 minutes, and stops when the account is removed or the app closes. Editing the account's incoming server, port, username, security or login, or reconnecting it with new credentials, logs the old watcher out and starts a new one on the next check. Servers without IDLE, other folders and POP3 accounts rely on the interval checks, which keep running for every account either way.
 - Enable the unified inbox in General preferences, expand it to choose an account, or disable it for account-specific navigation. Custom folders appear under collapsible account headings. Ctrl+click folders to combine them in one view; an ordinary click selects just one. Search covers indexed sender, subject and body text across folders in the selected account scope, with prefixes and typo tolerance. Results show their folder; clearing search restores the browsing folder. Explicit combined folder views search the accounts represented by those folders. New searches use **Best match**: exact words rank ahead of typo expansions, with short relevant messages favored over weak matches. Choose another sort for the current search; clearing it restores the usual inbox sort. Filter All, Unread, Read, Flagged or Attachments; sort newest/oldest, sender or subject. Sorting is saved.
 - Right-click an account folder, or focus it and press Shift+F10, to move or delete it. Moving searches for a parent folder, then reviews the affected subtree before Enter/Y confirms; N/Escape cancels. Delete is permanent and includes child folders and their mail; POP3 only deletes local copies. Folder changes shows progress and recovery after restart. Retry a rejected operation there. An unconfirmed result requires checking the server before explicitly stopping remaining changes; its cached originals are kept. Inbox is protected.
 - Right-click an inbox message for open, reply, read/unread, flag, move, archive, Trash, sender copy and export actions. Shift+F10 opens the same menu, with arrows/Enter and Escape. Button tooltips show current remapped shortcuts.
@@ -72,6 +72,36 @@ first. The rules:
 - A flag entry protects both the read and flagged state of its id for that
   cycle, even when only one changed. Items applied without an epoch (fixtures,
   restores) trust the listing completely.
+
+When an IMAP server advertises CONDSTORE, each folder remembers the
+HIGHESTMODSEQ and UIDVALIDITY its SELECT reported once that folder's flags
+were delivered. The next check lists UIDs as before but asks only for flags
+changed since that value (`UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n)`) and
+fetches metadata only for messages not yet cached. A missing saved value, a new
+UIDVALIDITY, NOMODSEQ, a value lower than the saved one, a server without
+CONDSTORE or any rejected request uses the full flag listing instead. Partial
+data before a tagged NO is never used. The saved value does not advance while a
+local write to that folder outranks the check, because the ledger may have kept
+local flags over a newer server change; restoring a backup or removing the
+account forgets the account's values.
+
+When the server also advertises QRESYNC and the account has a saved value, the
+check sends `ENABLE QRESYNC` before any SELECT and asks
+`UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE n VANISHED)` instead of listing every
+UID. Cached messages in the VANISHED ranges are removed with the same
+protections as a complete listing: restored backup copies, rows owned by a
+pending move and rows an acknowledged move created after the check began stay.
+Reported UIDs that are not cached download as new mail. The result must add up:
+cached messages minus vanished plus new must equal SELECT's EXISTS. Otherwise
+(for example a message whose body never downloaded), and on a live VANISHED,
+EXPUNGE or EXISTS during the reply, any rejected request (partial VANISHED data
+before a tagged NO is discarded), a refused ENABLE, a new UIDVALIDITY or a
+server without QRESYNC, the folder uses the complete UID listing. An unchanged
+HIGHESTMODSEQ with a matching size sends nothing after SELECT. Because this
+path never sends a complete listing, a restored copy is only confirmed by the
+next full listing; restore forgets the saved values, so that is the next check.
+The IDLE connection also enables QRESYNC, and a live VANISHED starts a check
+like EXISTS or EXPUNGE.
 
 Contacts has a separate Preferences tab. Image policy and per-message/sender/domain exceptions remain under Privacy. Explicit Save buttons show a dismissible **Changes saved** toast after persistence succeeds.
 

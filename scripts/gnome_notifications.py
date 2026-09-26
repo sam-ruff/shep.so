@@ -111,7 +111,9 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.batch([{"type": "restart"}])
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
         receipt["setup_window"] = prepare_window(desktop)
-        desktop.batch([click(100, 878), check("tab", "Preferences"), wait(150)])
+        # The first click after the resize could be dropped on the runner.
+        desktop.batch([{"type": "hover", "x": 100, "y": 878}, wait(300), click(100, 878),
+                       check("tab", "Preferences"), wait(150)])
         if mode != "details":
             desktop.batch([click(690, 366), check("dark", True)])
         # GNOME Shell can deliver this press after later typed keys; wait for focus.
