@@ -22,7 +22,7 @@ pub(super) const SETTINGS: &[Setting] = &[
         title: "System tray",
         tab: SettingsTab::General,
         labels: "Keep Shep running in the system tray when closing the window|Quit Shep",
-        description: "Open Shep or quit from the tray menu. A system tray is not currently available on this desktop.",
+        description: "Open Shep or quit from the tray menu. No system tray is available on this desktop, so closing the window quits Shep.",
         synonyms: "minimize minimise to tray close exit menu bar background run saving",
     },
     Setting {

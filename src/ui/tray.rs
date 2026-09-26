@@ -128,16 +128,13 @@ impl App {
                 Task::none()
             };
         }
-        if self.preferences.close_to_tray {
+        // Without a tray host the window is the only way back, so close quits.
+        if self.preferences.close_to_tray && self.tray.available {
             if self.composer.picker.is_some() {
                 self.notice(
                     "Finish choosing attachments before closing the window.",
                     false,
                 );
-                return Task::none();
-            }
-            if !self.tray.available {
-                self.notice("The system tray is unavailable. Use Quit Shep in Preferences to close the app.", true);
                 return Task::none();
             }
             let previous_notice = self.notice.as_ref().map(|(_, _, at)| *at);
@@ -442,6 +439,7 @@ mod tests {
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
         app.tray.available = true;
+        app.preferences.close_to_tray = false;
         app.bulk.stopped = true;
         app.busy.insert("backup:held".into());
         let _ = app.update(Message::WindowCloseRequested(window));
@@ -571,6 +569,7 @@ mod tests {
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
         app.tray.available = true;
+        app.preferences.close_to_tray = false;
         app.bulk.stopped = true;
         app.busy.insert("send:one".into());
         let _ = app.update(Message::WindowCloseRequested(window));
@@ -598,6 +597,7 @@ mod tests {
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
         app.tray.available = true;
+        app.preferences.close_to_tray = false;
         app.bulk.stopped = true;
         app.composer.io = Some("draft".into());
         app.composer.picker = Some("draft".into());
@@ -652,6 +652,7 @@ mod tests {
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
         app.tray.available = true;
+        app.preferences.close_to_tray = false;
         app.bulk.stopped = true;
         app.busy.extend(["send:one".into(), "sync".into()]);
         let _ = app.update(Message::WindowCloseRequested(window));
@@ -673,6 +674,7 @@ mod tests {
             let window = iced::window::Id::unique();
             app.tray.window = Some(window);
             app.tray.available = true;
+            app.preferences.close_to_tray = false;
             app.bulk.stopped = true;
             app.busy.insert("send:one".into());
             let _ = app.update(Message::WindowCloseRequested(window));
@@ -695,17 +697,46 @@ mod tests {
     }
 
     #[test]
-    fn absent_tray_keeps_enabled_app_accessible_but_explicit_quit_still_exits() {
+    fn close_to_tray_is_on_by_default_and_hides_when_a_tray_host_exists() {
+        let (mut app, _) = App::new();
+        assert!(app.preferences.close_to_tray);
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.bulk.stopped = true;
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.hidden);
+        assert!(app.tray.window.is_none());
+        assert!(!app.tray.exiting);
+        assert!(app.pending_close.is_none());
+    }
+
+    #[test]
+    fn absent_tray_closes_normally_with_pending_saves_protected() {
+        let (mut app, _) = App::new();
+        assert!(app.preferences.close_to_tray);
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.bulk.stopped = true;
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.exiting, "an idle app quits without a tray");
+        assert!(app.notice.is_none());
+
         let (mut app, _) = App::new();
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
-        app.preferences.close_to_tray = true;
         app.bulk.stopped = true;
+        app.busy.insert("send:one".into());
         let _ = app.update(Message::WindowCloseRequested(window));
-        assert_eq!(app.tray.window, Some(window));
-        assert!(app.notice.as_ref().unwrap().0.contains("unavailable"));
-        assert!(!app.tray.exiting);
-        let _ = app.update(Message::Tray(Event::Action(Action::Quit)));
+        assert_eq!(app.tray.window, Some(window), "no tray to hide in");
+        assert!(!app.tray.hidden);
+        assert!(!app.tray.temporary);
+        assert_eq!(app.pending_close, Some(window));
+        assert!(!app.tray.exiting, "the send must finish first");
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "send:one".into(),
+            false,
+        )));
         assert!(app.tray.exiting);
     }
 
@@ -716,6 +747,7 @@ mod tests {
             let window = iced::window::Id::unique();
             app.tray.window = Some(window);
             app.tray.available = true;
+            app.preferences.close_to_tray = false;
             app.bulk.stopped = true;
             app.busy.insert(key.into());
             let _ = app.update(Message::WindowCloseRequested(window));
@@ -734,6 +766,7 @@ mod tests {
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
         app.tray.available = true;
+        app.preferences.close_to_tray = false;
         app.bulk.stopped = true;
         app.busy.extend(["send:one".into(), "backup:one".into()]);
         let _ = app.update(Message::WindowCloseRequested(window));
@@ -785,6 +818,7 @@ mod tests {
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
         app.tray.available = true;
+        app.preferences.close_to_tray = false;
         app.bulk.stopped = true;
         app.busy.insert("backup:one".into());
         let _ = app.update(Message::WindowCloseRequested(window));
@@ -805,6 +839,7 @@ mod tests {
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
         app.tray.available = true;
+        app.preferences.close_to_tray = false;
         app.bulk.stopped = true;
         app.busy.insert("backup:one".into());
         let _ = app.update(Message::WindowCloseRequested(window));
@@ -822,6 +857,7 @@ mod tests {
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
         app.tray.available = true;
+        app.preferences.close_to_tray = false;
         app.bulk.stopped = true;
         app.busy.extend(["send:one".into(), "backup:one".into()]);
         let _ = app.update(Message::WindowCloseRequested(window));
@@ -847,6 +883,7 @@ mod tests {
         let window = iced::window::Id::unique();
         app.tray.window = Some(window);
         app.tray.available = true;
+        app.preferences.close_to_tray = false;
         app.bulk.stopped = true;
         app.busy.insert("send:one".into());
         let _ = app.update(Message::WindowCloseRequested(window));
