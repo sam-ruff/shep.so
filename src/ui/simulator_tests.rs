@@ -6,6 +6,20 @@
 //! native MCP suite.
 use super::*;
 
+/// Declares each listed scenario as a test run by `harness::run`.
+macro_rules! scenarios {
+    ($($name:ident),+ $(,)?) => {
+        mod scenarios {
+            $(
+                #[test]
+                fn $name() {
+                    super::super::harness::run(super::$name);
+                }
+            )+
+        }
+    };
+}
+
 mod harness;
 mod mail;
 mod preferences;

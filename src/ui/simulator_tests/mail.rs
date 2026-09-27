@@ -4,7 +4,6 @@ use super::*;
 use serde_json::Value::Null;
 
 /// `test_move_mouse_and_keyboard_and_typing_protection`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn move_mouse_and_keyboard_and_typing_protection() {
     let mut h = Harness::start().await;
     h.key("m").await;
@@ -33,7 +32,6 @@ async fn move_mouse_and_keyboard_and_typing_protection() {
 }
 
 /// `test_delete_archive_defaults_and_mail_returns_to_inbox`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_archive_defaults_and_mail_returns_to_inbox() {
     let mut h = Harness::start().await;
     h.expect("shortcuts.Delete", "Mod+D").await;
@@ -85,7 +83,6 @@ async fn delete_archive_defaults_and_mail_returns_to_inbox() {
 }
 
 /// `test_search_mouse_focus_blocks_default_and_remapped_delete_chords`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_mouse_focus_blocks_default_and_remapped_delete_chords() {
     let mut h = Harness::start().await;
     h.click_at(415., 154.).await;
@@ -124,7 +121,6 @@ async fn search_mouse_focus_blocks_default_and_remapped_delete_chords() {
 }
 
 /// `test_drafts_collapse_context_cancel_and_discard`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn drafts_collapse_context_cancel_and_discard() {
     let mut h = Harness::start().await;
     h.key("c").await;
@@ -182,7 +178,6 @@ async fn drafts_collapse_context_cancel_and_discard() {
 }
 
 /// `test_dropdown_escape_in_mail_keeps_find_and_blocks_mail_shortcuts`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropdown_escape_in_mail_keeps_find_and_blocks_mail_shortcuts() {
     let mut h = Harness::start().await;
     h.expect("reader_text_ready", true).await;
@@ -217,7 +212,6 @@ async fn dropdown_escape_in_mail_keeps_find_and_blocks_mail_shortcuts() {
 }
 
 /// `test_dropdown_escape_keeps_composer_and_frees_the_covered_field`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropdown_escape_keeps_composer_and_frees_the_covered_field() {
     let mut h = Harness::start().await;
     h.click_at(110., 218.).await;
@@ -240,3 +234,12 @@ async fn dropdown_escape_keeps_composer_and_frees_the_covered_field() {
     h.key("Escape").await;
     h.expect("composer.visible", false).await;
 }
+
+scenarios!(
+    move_mouse_and_keyboard_and_typing_protection,
+    delete_archive_defaults_and_mail_returns_to_inbox,
+    search_mouse_focus_blocks_default_and_remapped_delete_chords,
+    drafts_collapse_context_cancel_and_discard,
+    dropdown_escape_in_mail_keeps_find_and_blocks_mail_shortcuts,
+    dropdown_escape_keeps_composer_and_frees_the_covered_field,
+);

@@ -27,6 +27,34 @@ const NOTO_SEMIBOLD: &[u8] = include_bytes!("../../../assets/NotoSans-SemiBold.t
 
 type Ui<'a> = UserInterface<'a, Message, Theme, iced::Renderer>;
 
+/// Unoptimised Windows builds overflowed Tokio's default 2 MiB worker stacks
+/// while the demo engine ran, so every thread here gets more room.
+const STACK: usize = 8 << 20;
+
+/// Runs one scenario on its own runtime and thread, both with `STACK` bytes.
+pub(super) fn run<T, F>(scenario: T)
+where
+    T: FnOnce() -> F + Send + 'static,
+    F: std::future::Future<Output = ()>,
+{
+    let thread = std::thread::Builder::new()
+        .name("simulator".into())
+        .stack_size(STACK)
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .thread_stack_size(STACK)
+                .enable_all()
+                .build()
+                .expect("simulator runtime");
+            runtime.block_on(scenario());
+        })
+        .expect("simulator thread");
+    if let Err(panic) = thread.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
 #[derive(Default)]
 struct Clipboard(Option<String>);
 

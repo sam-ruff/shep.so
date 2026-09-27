@@ -11,7 +11,6 @@ async fn open_shortcuts(h: &mut Harness) {
 }
 
 /// `test_remapping_persists_and_works`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remapping_persists_and_works() {
     let mut h = Harness::start().await;
     open_shortcuts(&mut h).await;
@@ -30,7 +29,6 @@ async fn remapping_persists_and_works() {
 }
 
 /// `test_secondary_shortcut_remap_conflict_and_disable`, full-size part.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn secondary_shortcut_remap_conflict_and_disable() {
     let mut h = Harness::start().await;
     open_shortcuts(&mut h).await;
@@ -59,7 +57,6 @@ async fn secondary_shortcut_remap_conflict_and_disable() {
 }
 
 /// `test_shortcut_clear_primary_secondary_and_cancel_capture`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shortcut_clear_primary_secondary_and_cancel_capture() {
     let mut h = Harness::start().await;
     open_shortcuts(&mut h).await;
@@ -92,3 +89,9 @@ async fn shortcut_clear_primary_secondary_and_cancel_capture() {
     h.expect("dialog", "Move").await;
     h.key("Escape").await;
 }
+
+scenarios!(
+    remapping_persists_and_works,
+    secondary_shortcut_remap_conflict_and_disable,
+    shortcut_clear_primary_secondary_and_cancel_capture,
+);
