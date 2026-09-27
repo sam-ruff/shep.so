@@ -23,7 +23,9 @@ pub fn runtime_csp_source() -> String {
         STANDARD.encode(Sha256::digest(RUNTIME.as_bytes()))
     )
 }
-const BASE_CSS: &str = "html{margin:0;min-height:100%}body{margin:0;padding:12px;font:15px/1.5 Arial,sans-serif;overflow-wrap:break-word;}body:not([text]){color:#18181b}body:not([text]):not([bgcolor]):not([background]){color:var(--shep-text,#18181b)}body:not([bgcolor]):not([background]){background:var(--shep-background,#fff)}*{box-sizing:border-box;user-select:text;-webkit-user-select:text}a[data-shep-link]{color:inherit;text-decoration:underline;cursor:pointer}::highlight(shep-matches){background:#ede3fb;color:#18181b}::highlight(shep-active){background:#b896e4;color:#18181b}shep-match{display:inline!important;padding:0!important;margin:0!important;border:0!important;font:inherit!important;color:inherit!important;background:#7754a544!important}shep-match[data-active]{background:#b896e4!important;color:#18181b!important}shep-match:before,shep-match:after{content:none!important}";
+// Reader defaults have zero specificity so an email's own body rules win; the
+// runtime chooses the default canvas and text colours once the text is laid out.
+const BASE_CSS: &str = "html{margin:0;min-height:100%}body{margin:0;padding:12px;font:15px/1.5 Arial,sans-serif;overflow-wrap:break-word;}:where(body:not([text])){color:var(--shep-text,#18181b)}:where(body:not([bgcolor]):not([background])){background:var(--shep-background,#fff)}*{box-sizing:border-box;user-select:text;-webkit-user-select:text}a[data-shep-link]{color:inherit;text-decoration:underline;cursor:pointer}::highlight(shep-matches){background:#ede3fb;color:#18181b}::highlight(shep-active){background:#b896e4;color:#18181b}shep-match{display:inline!important;padding:0!important;margin:0!important;border:0!important;font:inherit!important;color:inherit!important;background:#7754a544!important}shep-match[data-active]{background:#b896e4!important;color:#18181b!important}shep-match:before,shep-match:after{content:none!important}";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Options {

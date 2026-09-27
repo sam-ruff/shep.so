@@ -1,5 +1,27 @@
 # Shep development instructions
 
+Browser CalDAV schema19 retains connection identities alongside the existing
+Calendar journal. Only administrator-configured HTTPS endpoints are available;
+pin their address with proxies and redirects disabled while retaining hostname
+validation. Passwords remain transient. Freeze connection revisions on actions
+and capture the Calendar clock before discovery. Publish sources and activate the
+checked connection atomically; removed identities and newer local changes reject
+late replies. Keep the combined 50-source bound and credential re-entry tests.
+
+Flutter connection probes carry the durable attempt identity into native code.
+Try-acquire provider capacity before account ownership, then validate saved
+configuration/removal under the short cancellation dispatch gate. Release that
+gate after the first provider poll so cancellation need not wait for a response.
+Keep credential writes on the lifecycle FIFO and retain foreground generation
+checks after admission, token and credential waits.
+
+Shared Google event restoration uses an exact read-only deletion plan, a
+conditional status-only cancellation and its acknowledged version. Persist each
+before the next provider mutation. Restore through that same event identity;
+never reconstruct omitted provider fields from display metadata. Inspection
+cannot mint a cancellation receipt. Recurring/non-organiser restoration remains
+unsupported until a complete provider contract is implemented and verified.
+
 Desktop Activity observes existing journals and opens their exact retained
 recovery targets. Keep its positive status indexes and coalesced observations;
 an older folder or backup must remain reachable outside recent loaded pages.
@@ -279,6 +301,16 @@ test scan otherwise contends on the database worker. Correctness flows keep that
 oracle enabled and require agreement after Undo. A disabled oracle must report
 that state and never report agreement. Preserve changed-foreground references,
 binary fingerprint, sample cardinality and metadata/body bounds in timing gates.
+
+Fast headless UI tests live in `src/ui/simulator_tests/` (`iced_test`, behind
+`test-support`, run by `cargo test --all-features`). They drive the real App
+and demo engine through the widget tree and reuse the native state observation,
+so a scenario reads like its `scripts/e2e.py` batch. Add one for UI logic such as
+preferences, shortcuts, focus guards and dialogs; it adds to the native scenario
+and never replaces it. X11 input, focus, presented pixels, HTML rendering,
+pickers, tray, badges, printing and timing stay native. Do not commit pixel
+hashes: iced loads host fallback fonts. See
+[the simulator guide](docs/agents/simulator-tests.md).
 
 Read the repository skill [`.agents/skills/shep-e2e/SKILL.md`](.agents/skills/shep-e2e/SKILL.md) for UI work. `scripts/mcp_harness.py` is a stdio MCP server using JSON-RPC and real X11 input. Tools: `desktop.start`, `desktop.batch`, `desktop.state`, `desktop.screenshot`, `desktop.stop`.
 
@@ -1014,7 +1046,13 @@ before the renderer decodes them.
 
 Root document background colors are observed on the renderer worker. The
 reader surround uses that color and readable native controls, retaining the same
-widget tree while frames arrive. Ordinary conversation refreshes must not
+widget tree while frames arrive. A document that leaves its root transparent
+gets a canvas chosen once, on its first paint, from the text colours it draws:
+white paper for mostly dark text, a dark canvas for mostly light text. Never
+show the app theme behind such email, and never switch the canvas while it is
+being read. The shared browser/Flutter frame runtime applies the same rule after
+layout and reports a `canvas` message to the host surround; its reader defaults
+stay `:where()` rules so an email's own body colours win. Ordinary conversation refreshes must not
 reschedule its initial scroll position; explicit new-page navigation still may.
 
 The saved native preparation flow checks cache use, rapid selection, End/Home,

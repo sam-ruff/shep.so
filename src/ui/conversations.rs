@@ -54,7 +54,8 @@ impl App {
             .as_deref()
             .filter(|detail| detail.summary.id == id)
     }
-    pub(super) fn request_conversation(&mut self, offset: Option<usize>) {
+    /// True when a conversation read was queued.
+    pub(super) fn request_conversation(&mut self, offset: Option<usize>) -> bool {
         self.conversation.generation += 1;
         if !self.preferences.group_conversations
             || self
@@ -62,17 +63,18 @@ impl App {
                 .as_ref()
                 .is_some_and(|id| self.mail_actions.restoring(id) || self.page.is_placeholder(id))
         {
-            return;
+            return false;
         }
-        if let Some(anchor) = self.selected.clone() {
-            self.conversation.error = None;
-            self.send(Command::Conversation(
-                self.conversation.generation,
-                anchor,
-                self.reader_id().map(str::to_owned),
-                offset,
-            ));
-        }
+        let Some(anchor) = self.selected.clone() else {
+            return false;
+        };
+        self.conversation.error = None;
+        self.try_command(Command::Conversation(
+            self.conversation.generation,
+            anchor,
+            self.reader_id().map(str::to_owned),
+            offset,
+        ))
     }
     pub(super) fn focus_conversation_message(&mut self, id: String) {
         self.conversation.focus = Some(id.clone());

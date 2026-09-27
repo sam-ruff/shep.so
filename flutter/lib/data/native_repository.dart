@@ -300,17 +300,19 @@ class NativeRepository
   Future<void> executeConnection(
     AccountConnectionAttempt attempt,
     String incoming,
-    String smtp,
-  ) async {
+    String smtp, {
+    bool Function()? canDispatch,
+  }) async {
     if (_connectionExecutions[attempt.id] case final Future<void> running) {
       return running;
     }
     late final Future<void> execution;
-    execution = _executeConnection(attempt, incoming, smtp).whenComplete(() {
-      if (identical(_connectionExecutions[attempt.id], execution)) {
-        _connectionExecutions.remove(attempt.id);
-      }
-    });
+    execution = _executeConnection(attempt, incoming, smtp, canDispatch)
+        .whenComplete(() {
+          if (identical(_connectionExecutions[attempt.id], execution)) {
+            _connectionExecutions.remove(attempt.id);
+          }
+        });
     _connectionExecutions[attempt.id] = execution;
     return execution;
   }
@@ -319,12 +321,14 @@ class NativeRepository
     AccountConnectionAttempt attempt,
     String incoming,
     String smtp,
+    bool Function()? canDispatch,
   ) async {
     try {
       await _accountWrite(() async {
+        _requireDispatch(canDispatch);
         await call({'op': 'retry_account_connection', 'attempt': attempt.id});
-        await _connect(attempt, incoming, smtp);
       });
+      await _connect(attempt, incoming, smtp, canDispatch);
     } catch (_) {
       await refreshConnectionAttempts();
       try {
@@ -354,37 +358,53 @@ class NativeRepository
     AccountConnectionAttempt attempt,
     String incoming,
     String smtp,
+    bool Function()? canDispatch,
   ) async {
     final slot = 'credential-${attempt.id}';
     final savedAccount = attempt.account;
     try {
       for (final outgoing in [false, true]) {
+        _requireDispatch(canDispatch);
         await call({
           'op': 'validate_account_connection',
           'attempt': attempt.id,
         });
+        _requireDispatch(canDispatch);
         await call({
-          'op': 'probe',
-          'account': savedAccount.toJson(),
+          'op': 'probe_account_connection',
+          'attempt': attempt.id,
           'password': outgoing ? smtp : incoming,
           'smtp': outgoing,
         });
       }
-      await call({'op': 'validate_account_connection', 'attempt': attempt.id});
-      try {
-        await credentials.save(slot, incoming, smtp);
-      } catch (_) {
-        throw const MailOperationFailure(
-          'The device could not save the passwords. Unlock its credential storage and retry connecting. The previous connection is preserved.',
-        );
-      }
-      // The previous pair is untouched until this database pointer commits.
-      await call({'op': 'activate_account', 'slot': slot});
+      await _accountWrite(() async {
+        _requireDispatch(canDispatch);
+        await call({
+          'op': 'validate_account_connection',
+          'attempt': attempt.id,
+        });
+        _requireDispatch(canDispatch);
+        try {
+          await credentials.save(slot, incoming, smtp);
+        } catch (_) {
+          throw const MailOperationFailure(
+            'The device could not save the passwords. Unlock its credential storage and retry connecting. The previous connection is preserved.',
+          );
+        }
+        // The previous pair is untouched until this database pointer commits.
+        _requireDispatch(canDispatch);
+        await call({
+          'op': 'validate_account_connection',
+          'attempt': attempt.id,
+        });
+        _requireDispatch(canDispatch);
+        await call({'op': 'activate_account', 'slot': slot});
+      });
     } finally {
       // An activated slot is excluded by the durable journal. A failed probe,
       // keychain save, activation or lost response never erases the active pair.
       try {
-        await _cleanupCredentials();
+        await _accountWrite(_cleanupCredentials);
       } catch (_) {
         /* Retry in Preferences. */
       }
@@ -401,6 +421,14 @@ class NativeRepository
     } catch (_) {
       throw const MailOperationFailure(
         'The connection was saved, but the account list could not reload. Reopen Preferences or refresh mail.',
+      );
+    }
+  }
+
+  void _requireDispatch(bool Function()? canDispatch) {
+    if (canDispatch?.call() == false) {
+      throw const MailOperationFailure(
+        'Connection paused. Reopen the app and retry connecting.',
       );
     }
   }
@@ -1253,7 +1281,11 @@ class NativeRepository
       });
 
   @override
-  Future<void> activateCalDavConnection(CalDavAttempt attempt) async {
+  Future<void> activateCalDavConnection(
+    CalDavAttempt attempt, {
+    bool Function()? canDispatch,
+  }) async {
+    _requireDispatch(canDispatch);
     String? password;
     try {
       password = await credentials.read(attempt.credentialSlot, false);
@@ -1278,6 +1310,7 @@ class NativeRepository
       );
     }
     final now = DateTime.now().toUtc();
+    _requireDispatch(canDispatch);
     await call({
       'op': 'activate_calendar_connection',
       'id': attempt.id,
@@ -1420,9 +1453,11 @@ class NativeRepository
   @override
   Future<void> executeCalDavAction(
     String actionId,
-    String credentialSlot,
-  ) async {
+    String credentialSlot, {
+    bool Function()? canDispatch,
+  }) async {
     String? password;
+    if (canDispatch?.call() == false) return;
     try {
       password = await credentials.read(credentialSlot, false);
     } catch (_) {
@@ -1439,6 +1474,7 @@ class NativeRepository
       );
       return;
     }
+    if (canDispatch?.call() == false) return;
     await call({
       'op': 'execute_cal_dav_action',
       'id': actionId,

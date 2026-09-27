@@ -156,8 +156,9 @@ abstract interface class DurableAccountRepository {
   Future<void> executeConnection(
     AccountConnectionAttempt attempt,
     String incoming,
-    String smtp,
-  );
+    String smtp, {
+    bool Function()? canDispatch,
+  });
   Future<void> refreshConnectionAttempts();
   Future<void> failConnection(String attempt, String error);
   Future<void> abandonConnection(String attempt);

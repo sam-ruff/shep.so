@@ -357,13 +357,7 @@ impl App {
     }
     pub(super) fn sidebar(&self) -> Element<'_, Message> {
         let brand = row![
-            image(if self.dark() {
-                self.dark_logo.clone()
-            } else {
-                self.light_logo.clone()
-            })
-            .width(38)
-            .height(38),
+            image(self.logo.clone()).width(38).height(38),
             text("shep").size(29).font(BOLD)
         ]
         .spacing(10)

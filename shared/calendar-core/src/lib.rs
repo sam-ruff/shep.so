@@ -3,6 +3,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+pub mod restoration;
+
 #[cfg(feature = "http")]
 pub mod caldav;
 #[cfg(feature = "http")]

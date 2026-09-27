@@ -177,6 +177,7 @@ class CalDavCalendarRepository extends CalendarRepository
   final setupAttempts = <CalDavAttempt>[];
   final savedPasswords = <String>[];
   final activatedAttempts = <String>[];
+  Completer<void>? passwordRelease;
   bool failCleanup = false;
   bool failRemovalCleanup = false;
   bool refuseRemoval = false;
@@ -214,8 +215,9 @@ class CalDavCalendarRepository extends CalendarRepository
   @override
   Future<void> executeCalDavAction(
     String actionId,
-    String credentialSlot,
-  ) async {
+    String credentialSlot, {
+    bool Function()? canDispatch,
+  }) async {
     calDavExecuted.add(actionId);
   }
 
@@ -261,7 +263,10 @@ class CalDavCalendarRepository extends CalendarRepository
   }
 
   @override
-  Future<void> activateCalDavConnection(CalDavAttempt attempt) async {
+  Future<void> activateCalDavConnection(
+    CalDavAttempt attempt, {
+    bool Function()? canDispatch,
+  }) async {
     activatedAttempts.add(attempt.id);
   }
 
@@ -287,6 +292,7 @@ class CalDavCalendarRepository extends CalendarRepository
     String password,
   ) async {
     savedPasswords.add(password);
+    if (passwordRelease != null) await passwordRelease!.future;
   }
 }
 
@@ -608,6 +614,29 @@ void main() {
     expect(repository.executed, hasLength(1));
   });
 
+  test(
+    'held CalDAV credential save cannot activate after foreground changes',
+    () async {
+      final repository = CalDavCalendarRepository()
+        ..passwordRelease = Completer<void>();
+      final workspace = Workspace(repository, MemorySettings());
+      final connecting = workspace.connectCalDav(
+        url: 'https://calendar.example.test/home/',
+        username: 'sam',
+        password: 'secret',
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(repository.savedPasswords, hasLength(1));
+      workspace.setForeground(false);
+      workspace.setForeground(true);
+      repository.passwordRelease!.complete();
+      expect(await connecting, false);
+      expect(repository.activatedAttempts, isEmpty);
+      expect(repository.setupAttempts, hasLength(1));
+      workspace.dispose();
+    },
+  );
+
   test('disposed workspace leaves admitted action for restart', () async {
     final repository = CalendarRepository();
     final release = Completer<void>();
@@ -785,6 +814,57 @@ void main() {
       expect(repository.waited, repository.admitted);
     },
   );
+
+  for (final dispose in [false, true]) {
+    test(
+      'held Calendar token cannot dispatch after ${dispose ? 'dispose' : 'background'}',
+      () async {
+        const permissions = GooglePermissions(
+          calendar: GoogleCalendarPermission.edit,
+        );
+        final sdk = FixtureGoogleAuthorization()..hold = Completer<void>();
+        final google = GoogleConnection(
+          sdk,
+          MemoryGoogleStore(
+            const GoogleConnectionState(
+              requested: permissions,
+              active: GoogleConnectionRecord(
+                FixtureGoogleAuthorization.subject,
+                FixtureGoogleAuthorization.email,
+                permissions,
+                FixtureGoogleAuthorization.application,
+              ),
+            ),
+          ),
+        );
+        await google.load();
+        final repository = CalendarRepository();
+        final workspace = Workspace(
+          repository,
+          MemorySettings(),
+          google: google,
+        );
+        final running = workspace.retryCalendarActivity(
+          CalendarActivity({
+            ...activityData('waiting'),
+            'subject': FixtureGoogleAuthorization.subject,
+          }),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(sdk.tokens, 1);
+        if (dispose) {
+          workspace.dispose();
+        } else {
+          workspace.setForeground(false);
+          workspace.setForeground(true);
+        }
+        sdk.hold!.complete();
+        await running;
+        expect(repository.executed, isEmpty);
+        if (!dispose) workspace.dispose();
+      },
+    );
+  }
 
   test('retry uses its saved subject with the matching SDK grant', () async {
     const permissions = GooglePermissions(

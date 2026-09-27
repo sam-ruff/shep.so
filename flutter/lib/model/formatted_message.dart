@@ -15,6 +15,10 @@ class FormattedMessage extends ChangeNotifier {
   String? error;
   bool loading = false, plain = false, ready = false, hasQuotes = false;
   List<String> blocks = [];
+
+  /// Opaque ARGB background the document paints, once the runtime reports it.
+  int? canvas;
+  bool canvasDark = false;
   int layout = 0, _jump = -1;
   bool _disposed = false, _dark = false, _quotes = false;
   String _configuration = '', _highlight = '';
@@ -36,6 +40,8 @@ class FormattedMessage extends ChangeNotifier {
     layout = 0;
     blocks = [];
     hasQuotes = false;
+    canvas = null;
+    canvasDark = false;
     _configuration = '';
     _highlight = '';
     _jump = -1;
@@ -93,6 +99,16 @@ class FormattedMessage extends ChangeNotifier {
         blocks = text.cast<String>();
         hasQuotes = value['hasQuotes'] == true;
         _highlight = '';
+        notifyListeners();
+      case 'canvas':
+        final background = value['background'], scheme = value['scheme'];
+        if (background is! String ||
+            !RegExp(r'^#[0-9a-f]{6}$').hasMatch(background) ||
+            (scheme != 'light' && scheme != 'dark')) {
+          return false;
+        }
+        canvas = 0xff000000 | int.parse(background.substring(1), radix: 16);
+        canvasDark = scheme == 'dark';
         notifyListeners();
       case 'error':
         displayError(generation);

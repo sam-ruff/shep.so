@@ -2,6 +2,18 @@
 
 ## Current immediate-action continuation
 
+Latest pushed implementation: `9dd754821939c36a2959953c03646e9b485b6e4f`,
+Activity11 plus Flutter folder24. Normal hooks pass1,610 Rust executions,15
+ignored. All integrated gates below pass. Next root integration:
+`artifacts/browser-caldav19-full-v1.patch` SHA
+`3ddabd71e401ce95c2576d50a2e74c09a6db60fae798f109bab2982585d40453`
+(based8044f22 and includes already-present root Undo, so merge those hunks), plus
+`artifacts/worktrees/action-calendar-restore/artifacts/calendar-restore-handoff/shared-v2.applypatch`
+(plain apply_patch headers; original shared.applypatch has numeric git headers).
+review_ordering builds browser lossless Undo schema20 over CalDAV19;
+bulk_trace starts bounded account removal schema21; action_scope fixes lifecycle
+v2 native attempt-bound probes. Keep all earlier frozen artifacts intact.
+
 Root now has folder24 and native Activity11 integrated, uncommitted. Folder24
 combined Rust passes198; four folder controls/golden regeneration pass and both
 captures match frozen hashes. Full Flutter, native library and fresh native UI

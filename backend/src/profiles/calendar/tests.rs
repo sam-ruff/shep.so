@@ -220,6 +220,7 @@ async fn edit_preserves_provider_identity_and_returns_exact_receipt() {
             request_id: REQUEST.into(),
             mutation: mutation(),
         },
+        true,
     )
     .await
     .expect("saved");
@@ -244,6 +245,7 @@ async fn changed_edit_identity_never_reaches_provider() {
                 after: changed,
             },
         },
+        true,
     )
     .await
     .expect_err("identity refusal");
@@ -270,6 +272,7 @@ async fn read_only_or_failed_source_observation_never_dispatches_write() {
                 request_id: REQUEST.into(),
                 mutation: mutation(),
             },
+            true,
         )
         .await
         .expect_err("no dispatch");
@@ -302,6 +305,7 @@ async fn uncertain_save_is_not_retried_or_followed_by_cache_read() {
             request_id: REQUEST.into(),
             mutation: mutation(),
         },
+        true,
     )
     .await
     .expect_err("unknown");
@@ -330,10 +334,86 @@ async fn inspection_reads_stable_create_identity_without_mutating() {
                 after,
             },
         },
+        true,
     )
     .await
     .expect("observed");
     assert!(value["current"].is_null());
+}
+
+#[tokio::test]
+async fn caldav_inspection_uses_the_frozen_resource_identity() {
+    let mut provider = MockCalendarProvider::new();
+    let mut after = event();
+    after.id = "reserved-event.ics".into();
+    after.etag = None;
+    after.remote_url = None;
+    provider
+        .expect_read()
+        .times(1)
+        .withf(|password, event| {
+            password == "password"
+                && event.id == "reserved-event.ics"
+                && event.source_id == "calendar"
+                && event.remote_url.is_none()
+        })
+        .returning(|_, _| Box::pin(async { Ok(None) }));
+    let value = perform(
+        &provider,
+        "password",
+        Operation::Inspect {
+            request_id: REQUEST.into(),
+            mutation: Mutation::Save {
+                before: None,
+                after,
+            },
+        },
+        false,
+    )
+    .await
+    .expect("observed");
+    assert!(value["current"].is_null());
+}
+
+#[tokio::test]
+async fn unsupported_caldav_endpoint_is_rejected_without_echoing_credentials() {
+    use axum::{body::Body, http::Request as HttpRequest};
+    use tower::ServiceExt;
+    let (state, _) = crate::tests::state("owner@example.test");
+    let (cookie, csrf) = crate::tests::login(&state).await;
+    let response = crate::app(state)
+        .oneshot(
+            HttpRequest::post("/api/calendar")
+                .header("cookie", cookie)
+                .header("x-shep-csrf", csrf)
+                .header("origin", "https://shep.example.test")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "binding": hash("fixture-client\0owner-subject"),
+                        "operation": {
+                            "kind": "cal_dav",
+                            "endpoint_id": "not-configured",
+                            "connection_id": "connection",
+                            "username": "sam",
+                            "password": "never-echo-this-secret",
+                            "operation": {"kind": "sources"}
+                        }
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let text = crate::tests::body(response).await;
+    assert!(!text.contains("never-echo-this-secret"));
+    let value: Value = serde_json::from_str(&text).expect("json");
+    assert_eq!(value["state"], "rejected");
+    assert_eq!(
+        value["error"],
+        "This CalDAV endpoint is not enabled for the beta."
+    );
 }
 
 #[tokio::test]

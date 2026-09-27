@@ -10,8 +10,12 @@ class FormattedView extends StatefulWidget {
     required this.commands,
     required this.onMessage,
     required this.onError,
+    this.background,
   });
   final String document;
+
+  /// The document's reported canvas, painted by the frame itself.
+  final Color? background;
   final Stream<Map<String, Object?>> commands;
   final void Function(Map<String, dynamic>) onMessage;
   final VoidCallback onError;
@@ -42,6 +46,17 @@ class _FormattedViewState extends State<FormattedView> {
     subscription = widget.commands.listen(
       (value) => frame?.contentWindow?.postMessage(value.jsify(), '*'.toJS),
     );
+  }
+
+  @override
+  void didUpdateWidget(FormattedView old) {
+    super.didUpdateWidget(old);
+    final background = widget.background;
+    if (background != null && background != old.background) {
+      final rgb = background.toARGB32() & 0xffffff;
+      frame?.style.backgroundColor =
+          '#${rgb.toRadixString(16).padLeft(6, '0')}';
+    }
   }
 
   @override

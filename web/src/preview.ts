@@ -10,8 +10,23 @@ import {
   type Fields,
   type Draft,
   type CalendarEntry,
+  type Preferences,
 } from "./model";
 import { mount } from "./ui";
+
+// The website passes its own appearance so an embedded demo matches the page.
+class PreviewSettings extends BrowserSettings {
+  read(): Preferences {
+    const saved = super.read();
+    const appearance = new URLSearchParams(location.search).get("appearance");
+    return appearance === "light" ||
+      appearance === "dark" ||
+      appearance === "system"
+      ? { ...saved, appearance }
+      : saved;
+  }
+}
+
 class PreviewRepository implements Repository {
   preview = true;
   private selections = new PreviewSelection(() => this.cached);
@@ -52,4 +67,10 @@ class PreviewRepository implements Repository {
     this.events = [...this.events.filter((e) => e.id !== event.id), event];
   }
 }
-mount(new Workspace(new PreviewRepository(), new BrowserSettings()));
+// The public demo can share an origin with a real client; keep its settings apart.
+mount(
+  new Workspace(
+    new PreviewRepository(),
+    new PreviewSettings("shep.preview.preferences.v1"),
+  ),
+);

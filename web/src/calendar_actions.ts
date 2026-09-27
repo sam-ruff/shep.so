@@ -1,4 +1,9 @@
-export interface CalendarSource { id: string; name: string; read_only: boolean }
+export interface CalendarSource { id: string; name: string; read_only: boolean; connection_id?: string }
+export interface CalendarConnection {
+  id: string; endpoint_id: string; username: string; revision: number;
+  status: "Prepared" | "Active" | "Removed";
+}
+export interface CalendarBinding { provider: "google" | "caldav"; connectionId?: string; connectionRevision?: number; endpointId?: string }
 export interface ProviderEvent {
   id: string; source_id: string; title: string; start: string; end: string;
   location: string; description: string; all_day: boolean;
@@ -16,6 +21,7 @@ export interface CalendarAction {
   observation?: { current: ProviderEvent | null; revision: number };
   undoOf?: string;
   undoAction?: string;
+  binding?: CalendarBinding;
 }
 export interface CalendarAdmission { id: string; key: string; owner: string; mutation: CalendarMutation }
 export function calendarStatus(job: CalendarAction): string {
@@ -53,7 +59,7 @@ export class BrowserCalendar {
   constructor(private readonly db: IDBDatabase) {}
   private transaction<T>(mode: IDBTransactionMode, work: (tx: IDBTransaction) => Promise<T>) {
     return new Promise<T>((resolve, reject) => {
-      const tx = this.db.transaction(["calendarSources", "calendarEvents", "calendarActions", "calendarState"], mode, { durability: "strict" });
+      const tx = this.db.transaction(["calendarSources", "calendarEvents", "calendarActions", "calendarState", "calendarConnections"], mode, { durability: "strict" });
       let result: T, failure: unknown;
       tx.oncomplete = () => resolve(result);
       tx.onabort = () => reject(failure ?? Error("The Calendar change could not be saved on this browser. Keep your edits and retry."));
@@ -79,6 +85,53 @@ export class BrowserCalendar {
     return cursor?.value;
   }
   get(id: string) { return this.transaction("readonly", tx => request<CalendarAction | undefined>(tx.objectStore("calendarActions").get(id))); }
+  connections() { return this.transaction("readonly", tx => request<CalendarConnection[]>(tx.objectStore("calendarConnections").getAll(undefined, 33))); }
+  admitConnection(input: Omit<CalendarConnection, "revision" | "status">) {
+    if (!input.id || input.id.length > 128 || !input.endpoint_id || input.endpoint_id.length > 128 || !input.username || input.username.length > 1024) throw Error("This CalDAV connection is invalid.");
+    return this.transaction("readwrite", async tx => {
+      const store = tx.objectStore("calendarConnections");
+      const prior = await request<CalendarConnection | undefined>(store.get(input.id));
+      if (prior && (prior.endpoint_id !== input.endpoint_id || prior.username !== input.username)) throw Error("This CalDAV connection identity is already in use.");
+      if (prior?.status === "Removed") throw Error("This CalDAV connection was removed. Add a new connection.");
+      if (prior) return prior;
+      if (await request(store.count()) >= 32) throw Error("Review saved calendar connections before adding another.");
+      const next: CalendarConnection = { ...input, revision: 1, status: "Prepared" };
+      store.put(next, next.id); return next;
+    });
+  }
+  activateConnection(expected: CalendarConnection) {
+    return this.transaction("readwrite", async tx => {
+      const store = tx.objectStore("calendarConnections");
+      const current = await request<CalendarConnection | undefined>(store.get(expected.id));
+      if (!current || current.revision !== expected.revision || current.status === "Removed") throw Error("This CalDAV connection changed before activation.");
+      const next = { ...current, revision: current.revision + 1, status: "Active" as const };
+      await this.clock(tx, true);
+      store.put(next, next.id); return next;
+    });
+  }
+  removeConnection(expected: CalendarConnection) {
+    return this.transaction("readwrite", async tx => {
+      const store = tx.objectStore("calendarConnections"), actions = tx.objectStore("calendarActions");
+      const current = await request<CalendarConnection | undefined>(store.get(expected.id));
+      if (!current || current.revision !== expected.revision) throw Error("This CalDAV connection changed before removal.");
+      const active = await request<CalendarAction[]>(actions.index("activeId").getAll(IDBKeyRange.bound([1, ""], [1, "\uffff"]), 101));
+      if (active.some(action => action.binding?.connectionId === current.id)) throw Error("Review this calendar's saved changes before removing its connection.");
+      const next = { ...current, revision: current.revision + 1, status: "Removed" as const };
+      await this.clock(tx, true);
+      store.put(next, next.id); return next;
+    });
+  }
+  private async binding(tx: IDBTransaction, source: CalendarSource): Promise<CalendarBinding> {
+    if (!source.connection_id) return { provider: "google" };
+    const connection = await request<CalendarConnection | undefined>(tx.objectStore("calendarConnections").get(source.connection_id));
+    if (!connection || connection.status !== "Active") throw Error("Reconnect this CalDAV calendar before saving changes.");
+    return { provider: "caldav", connectionId: connection.id, connectionRevision: connection.revision, endpointId: connection.endpoint_id };
+  }
+  private async checkBinding(tx: IDBTransaction, action: CalendarAction) {
+    if (!action.binding || action.binding.provider === "google") return;
+    const current = await request<CalendarConnection | undefined>(tx.objectStore("calendarConnections").get(action.binding.connectionId!));
+    if (!current || current.status !== "Active" || current.revision !== action.binding.connectionRevision || current.endpoint_id !== action.binding.endpointId) throw Error("The CalDAV connection changed. Reconnect and review this saved change.");
+  }
   currentEvent(key: string) { return this.transaction("readonly", tx => request<CalendarRecord | undefined>(tx.objectStore("calendarEvents").get(key))); }
   summary() {
     return this.transaction("readonly", async tx => {
@@ -116,7 +169,8 @@ export class BrowserCalendar {
       const observed = pending ? calendarAfter(pending.requested) : cached?.event ?? null;
       if (!equal(observed, calendarBefore(input.mutation))) throw Error("The event changed after you opened it. Keep your edits and review the current event.");
       const revision = await this.clock(tx, true);
-      const next: CalendarAction = { id: input.id, key: input.key, owner: input.owner, source: source.id,
+      const binding = await this.binding(tx, source);
+      const next: CalendarAction = { id: input.id, key: input.key, owner: input.owner, source: source.id, binding,
         sequence: revision, revision, status: "Queued", active: 1, requested: structuredClone(input.mutation), dependency: pending?.id };
       if (latest?.status === "Rejected") actions.put({ ...latest, status: "Dismissed", active: 0, revision }, latest.id);
       actions.put(next, next.id);
@@ -126,6 +180,7 @@ export class BrowserCalendar {
   claim(expected: CalendarAction, owner: string) {
     return this.transaction("readwrite", async tx => {
       const job = await this.current(tx, expected);
+      await this.checkBinding(tx, job);
       if (!["Queued", "Waiting"].includes(job.status)) return undefined;
       const source = await request<CalendarSource | undefined>(tx.objectStore("calendarSources").get(job.source));
       if (!source || source.read_only) throw Error("Refresh this calendar's permissions before continuing.");
@@ -217,7 +272,7 @@ export class BrowserCalendar {
         : { delete: { before: after } };
       validate(mutation);
       const revision = await this.clock(tx, true);
-      const inverse: CalendarAction = { id, key: job.key, source: job.source, owner, sequence: revision, revision,
+      const inverse: CalendarAction = { id, key: job.key, source: job.source, binding: structuredClone(job.binding), owner, sequence: revision, revision,
         status: "Queued", active: 1, requested: mutation, undoOf: job.id };
       actions.put({ ...job, revision, undoAction: id }, job.id);
       actions.put(inverse, inverse.id);
@@ -243,6 +298,7 @@ export class BrowserCalendar {
   observe(expected: CalendarAction, current: ProviderEvent | null, observedRevision: number) {
     return this.transaction("readwrite", async tx => {
       const job = await this.current(tx, expected);
+      await this.checkBinding(tx, job);
       if (observedRevision !== await this.clock(tx)) throw Error("Calendar changed while the server was being checked. Check it again before adopting its state.");
       if (!["Uncertain", "Repair", "Rejected"].includes(job.status)) throw Error("This Calendar change is still running.");
       const mutation = job.dispatch ?? job.requested;
@@ -258,6 +314,7 @@ export class BrowserCalendar {
   adoptObserved(expected: CalendarAction) {
     return this.transaction("readwrite", async tx => {
       const job = await this.current(tx, expected);
+      await this.checkBinding(tx, job);
       if (!job.observation || job.observation.revision !== await this.clock(tx)) throw Error("Calendar changed after this review. Check the server again before adopting its state.");
       const revision = await this.clock(tx, true);
       const events = tx.objectStore("calendarEvents"), current = job.observation.current;
@@ -272,11 +329,46 @@ export class BrowserCalendar {
   sources() { return this.transaction("readonly", tx => request<CalendarSource[]>(tx.objectStore("calendarSources").getAll(undefined, 51))); }
   saveSources(sources: CalendarSource[], observedRevision?: number) {
     if (sources.length > 50 || new Set(sources.map(source => source.id)).size !== sources.length || sources.some(source => !source.id || source.id.length > 1024 || source.name.length > 1024 || typeof source.read_only !== "boolean")) throw Error("The calendar list exceeded its bound or contained invalid identities.");
+    const connectionId = sources[0]?.connection_id;
+    if (connectionId) {
+      if (sources.some(source => source.connection_id !== connectionId)) throw Error("A calendar source refresh cannot mix connection identities.");
+      return this.saveConnectionSources(connectionId, sources, observedRevision);
+    }
     return this.transaction("readwrite", async tx => {
       if (observedRevision !== undefined && observedRevision !== await this.clock(tx)) throw Error("Calendar changed while sources were loading. Refresh again to keep the current permissions.");
       const store = tx.objectStore("calendarSources");
-      store.clear(); for (const source of sources) store.put(source, source.id);
+      const existing = await request<CalendarSource[]>(store.getAll(undefined, 51));
+      if (existing.length > 50 || existing.filter(source => source.connection_id).length + sources.length > 50) throw Error("Review saved calendars before adding more than 50 sources.");
+      for (const source of existing) if (!source.connection_id) store.delete(source.id);
+      for (const source of sources) {
+        const prior = existing.find(item => item.id === source.id);
+        if (prior?.connection_id) throw Error("This calendar identity is already owned by another connection.");
+        store.put(source, source.id);
+      }
       await this.clock(tx, true);
+    });
+  }
+  saveConnectionSources(connectionId: string, sources: CalendarSource[], observedRevision?: number, expected?: CalendarConnection) {
+    if (!connectionId || sources.some(source => source.connection_id !== connectionId)) throw Error("This CalDAV source list has the wrong connection identity.");
+    if (sources.length > 50 || new Set(sources.map(source => source.id)).size !== sources.length || sources.some(source => !source.id || source.id.length > 1024 || source.name.length > 1024 || typeof source.read_only !== "boolean")) throw Error("The calendar list exceeded its bound or contained invalid identities.");
+    return this.transaction("readwrite", async tx => {
+      if (observedRevision !== undefined && observedRevision !== await this.clock(tx)) throw Error("Calendar changed while sources were loading. Refresh again to keep the current permissions.");
+      const connections = tx.objectStore("calendarConnections");
+      const connection = await request<CalendarConnection | undefined>(connections.get(connectionId));
+      if (!connection || connection.status === "Removed" || expected && (expected.id !== connectionId || expected.revision !== connection.revision)) throw Error("This CalDAV connection changed before activation.");
+      const store = tx.objectStore("calendarSources"), existing = await request<CalendarSource[]>(store.getAll(undefined, 51));
+      if (existing.length > 50 || existing.filter(source => source.connection_id !== connectionId).length + sources.length > 50) throw Error("Review saved calendars before adding more than 50 sources.");
+      for (const source of existing) if (source.connection_id === connectionId) store.delete(source.id);
+      for (const source of sources) {
+        const prior = existing.find(item => item.id === source.id);
+        if (prior && prior.connection_id !== connectionId) throw Error("This calendar identity is already owned by another connection.");
+        store.put(source, source.id);
+      }
+      const active = expected && connection.status === "Prepared"
+        ? { ...connection, status: "Active" as const, revision: connection.revision + 1 } : connection;
+      if (expected) connections.put(active, active.id);
+      await this.clock(tx, true);
+      return active;
     });
   }
   sync(source: string, start: string, end: string, events: ProviderEvent[], observedRevision: number) {
@@ -290,7 +382,7 @@ export class BrowserCalendar {
       const pending = await request<CalendarAction[]>(tx.objectStore("calendarActions").index("activeId").getAll(IDBKeyRange.bound([1, ""], [1, "\uffff"]), 101));
       const protectedKeys = new Set(pending.filter(job => !["Rejected"].includes(job.status)).map(job => job.key));
       const byId = new Map(existing.map(record => [record.event.id, record]));
-      const reserved = new Map(pending.filter(job => !calendarBefore(job.requested)).map(job => [`shep${job.id.replaceAll("-", "")}`, job.key]));
+      const reserved = new Map(pending.filter(job => !calendarBefore(job.requested)).map(job => [job.binding?.provider === "caldav" ? calendarAfter(job.requested)!.id : `shep${job.id.replaceAll("-", "")}`, job.key]));
       const arriving = new Set(events.map(event => event.id));
       const revision = await this.clock(tx, true);
       let count = existing.length;

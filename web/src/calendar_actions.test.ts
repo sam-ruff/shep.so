@@ -36,6 +36,49 @@ test("admission is durable before provider execution and exact retry returns cur
   await expect(journal.admit(admission(edit({ ...event, etag: "replaced" }, "Stale")))).rejects.toThrow("changed");
 });
 
+test("CalDAV action binding survives restart and rejects changed or removed connection", async () => {
+  const { store, journal, profile } = await fixture(false);
+  const prepared = await journal.admitConnection({ id: "home", endpoint_id: "approved-home", username: "sam" });
+  const active = await journal.activateConnection(prepared);
+  const caldavSource = { ...source, id: "caldav", connection_id: active.id };
+  const caldavEvent = { ...event, source_id: caldavSource.id };
+  await journal.saveSources([caldavSource]);
+  await journal.sync(caldavSource.id, ...window, [caldavEvent], await journal.observationRevision());
+  const caldavKey = `${caldavSource.id.length}:${caldavSource.id}${caldavEvent.id}`;
+  const job = await journal.admit(admission(edit(caldavEvent, "First"), caldavKey));
+  expect(job.binding).toEqual({ provider: "caldav", connectionId: "home", connectionRevision: active.revision, endpointId: "approved-home" });
+  store.close(); opened.splice(opened.indexOf(store), 1);
+  const reopened = await BrowserStore.open(profile); opened.push(reopened);
+  expect((await reopened.calendar.get(job.id))?.binding).toEqual(job.binding);
+  await expect(reopened.calendar.removeConnection(active)).rejects.toThrow("saved changes");
+  const changed = await reopened.calendar.activateConnection(active);
+  await expect(reopened.calendar.claim(job, "tab")).rejects.toThrow("connection changed");
+  await expect(reopened.calendar.observe(job, event, await reopened.calendar.observationRevision())).rejects.toThrow("connection changed");
+  expect(changed.revision).toBeGreaterThan(active.revision);
+});
+
+test("removed CalDAV connection cannot admit or publish a checked observation", async () => {
+  const { journal } = await fixture(false);
+  const active = await journal.activateConnection(await journal.admitConnection({ id: "home", endpoint_id: "approved-home", username: "sam" }));
+  const caldavSource = { ...source, id: "caldav", connection_id: active.id };
+  const caldavEvent = { ...event, source_id: caldavSource.id };
+  await journal.saveSources([caldavSource]);
+  await journal.sync(caldavSource.id, ...window, [caldavEvent], await journal.observationRevision());
+  await journal.removeConnection(active);
+  const caldavKey = `${caldavSource.id.length}:${caldavSource.id}${caldavEvent.id}`;
+  await expect(journal.admit(admission(edit(caldavEvent, "First"), caldavKey))).rejects.toThrow("Reconnect");
+});
+
+test("calendar source capacity applies across Google and CalDAV connections atomically", async () => {
+  const { journal } = await fixture(false);
+  const googleSources = Array.from({ length: 50 }, (_, index) => ({ ...source, id: `google-${index}` }));
+  await journal.saveSources(googleSources);
+  const prepared = await journal.admitConnection({ id: "home", endpoint_id: "approved", username: "sam" });
+  await expect(journal.saveConnectionSources(prepared.id, [{ ...source, id: "home-source", connection_id: prepared.id }], await journal.observationRevision(), prepared)).rejects.toThrow("50 sources");
+  expect(await journal.sources()).toHaveLength(50);
+  expect((await journal.connections())[0].status).toBe("Prepared");
+});
+
 test("newer edits wait for the exact prior receipt then preserve fields and actual provider version", async () => {
   const { journal } = await fixture();
   const first = await journal.admit(admission());

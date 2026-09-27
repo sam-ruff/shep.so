@@ -5,6 +5,7 @@
   "type": "module",
   "engines": { "node": ">=24" },
   "scripts": {
+    "build:demo": "npm --prefix ../web ci && npm --prefix ../web run build:preview",
     "build": "node scripts/build.mjs",
     "preview": "node scripts/serve.mjs",
     "test": "npm run build && playwright test --project=chromium",

@@ -150,6 +150,116 @@ void main() {
     return repository;
   }
 
+  test(
+    'held connection probe does not block unrelated account removal',
+    () async {
+      final first = await connection(FixtureCredentials());
+      final other = await connection(FixtureCredentials());
+      first.probeStarted = Completer<void>();
+      first.probeRelease = Completer<void>();
+      var active = true;
+      final attempt = await first.admitConnection(
+        '11223344-5566-4788-99aa-bbccddeeff01',
+        first.mailAccounts.single,
+      );
+      final execution = first.executeConnection(
+        attempt,
+        'new',
+        'new',
+        canDispatch: () => active,
+      );
+      final stopped = expectLater(
+        execution,
+        throwsA(predicate((e) => '$e'.contains('paused'))),
+      );
+      await first.probeStarted!.future;
+      final review = await other.removalPreview(other.mailAccounts.single.id);
+      await other.removeAccount(review, true);
+      expect(other.mailAccounts, isEmpty);
+      active = false;
+      first.probeRelease!.complete();
+      await stopped;
+      expect(first.probes, 1);
+      expect(await first.password(first.mailAccounts.single), 'prior-incoming');
+      await first.refreshConnectionAttempts();
+      expect(first.connectionAttempts.single.id, attempt.id);
+      active = true;
+      await first.executeConnection(
+        attempt,
+        'resumed',
+        'resumed',
+        canDispatch: () => active,
+      );
+      expect(first.probes, 3);
+      expect(await first.password(first.mailAccounts.single), 'resumed');
+    },
+  );
+
+  test(
+    'lifecycle change during credential write prevents activation',
+    () async {
+      final credentials = FixtureCredentials();
+      final repository = await connection(credentials);
+      credentials.saveStarted = Completer<void>();
+      credentials.saveGate = Completer<void>();
+      var active = true;
+      final attempt = await repository.admitConnection(
+        '11223344-5566-4788-99aa-bbccddeeff02',
+        repository.mailAccounts.single,
+      );
+      final execution = repository.executeConnection(
+        attempt,
+        'new',
+        'new',
+        canDispatch: () => active,
+      );
+      final stopped = expectLater(
+        execution,
+        throwsA(predicate((e) => '$e'.contains('paused'))),
+      );
+      await credentials.saveStarted!.future;
+      active = false;
+      credentials.saveGate!.complete();
+      await stopped;
+      expect(
+        await repository.password(repository.mailAccounts.single),
+        'prior-incoming',
+      );
+      final reopened = NativeRepository(repository.profile, credentials);
+      await reopened.refreshConnectionAttempts();
+      expect(reopened.connectionAttempts.single.id, attempt.id);
+    },
+  );
+
+  test(
+    'removal between Dart validation and native probe prevents dispatch',
+    () async {
+      final credentials = FixtureCredentials();
+      final repository = await connection(credentials);
+      repository.forwardProbes = true;
+      repository.probeStarted = Completer<void>();
+      repository.probeRelease = Completer<void>();
+      final attempt = await repository.admitConnection(
+        '11223344-5566-4788-99aa-bbccddeeff03',
+        repository.mailAccounts.single,
+      );
+      final executing = repository.executeConnection(
+        attempt,
+        'secret',
+        'secret',
+      );
+      final refused = expectLater(executing, throwsA(isA<Exception>()));
+      await repository.probeStarted!.future;
+      final review = await repository.removalPreview(attempt.account.id);
+      await repository.removeAccount(review, true);
+      repository.probeRelease!.complete();
+      await refused;
+      expect(repository.probes, 1);
+      expect(credentials.writes, 0);
+      expect(repository.mailAccounts, isEmpty);
+    },
+  );
+
   test('native mail activity exposes durable admission through FFI', () async {
     final credentials = FixtureCredentials();
     final repository = await connection(credentials);

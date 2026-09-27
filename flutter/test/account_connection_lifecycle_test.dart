@@ -38,6 +38,8 @@ class ConnectionRepository extends PagedRepository
   List<AccountConnectionAttempt> connectionAttempts = [];
   final Completer<void> execution = Completer<void>();
   Completer<void>? failStarted, failRelease;
+  Completer<void>? admissionRelease;
+  int executions = 0;
   Object? failure;
 
   @override
@@ -51,6 +53,7 @@ class ConnectionRepository extends PagedRepository
       status: 'saving',
     );
     connectionAttempts = [value];
+    if (admissionRelease != null) await admissionRelease!.future;
     return value;
   }
 
@@ -58,8 +61,10 @@ class ConnectionRepository extends PagedRepository
   Future<void> executeConnection(
     AccountConnectionAttempt attempt,
     String incoming,
-    String smtp,
-  ) async {
+    String smtp, {
+    bool Function()? canDispatch,
+  }) async {
+    executions++;
     await execution.future;
     if (failure case final failure?) throw failure;
     connectionAttempts = [];
@@ -81,6 +86,33 @@ class ConnectionRepository extends PagedRepository
 }
 
 void main() {
+  for (final dispose in [false, true]) {
+    test(
+      'held admission cannot dispatch after ${dispose ? 'dispose' : 'background'}',
+      () async {
+        final repository = ConnectionRepository()
+          ..admissionRelease = Completer<void>();
+        final workspace = Workspace(repository, MemorySettings());
+        final connecting = workspace.connectAccount(
+          account,
+          'incoming',
+          'smtp',
+        );
+        await Future<void>.delayed(Duration.zero);
+        if (dispose) {
+          workspace.dispose();
+        } else {
+          workspace.setForeground(false);
+          workspace.setForeground(true);
+        }
+        repository.admissionRelease!.complete();
+        expect(await connecting, false);
+        expect(repository.executions, 0);
+        expect(repository.connectionAttempts, hasLength(1));
+        if (!dispose) workspace.dispose();
+      },
+    );
+  }
   for (final brightness in Brightness.values) {
     testWidgets('compact connection recovery in ${brightness.name}', (
       tester,

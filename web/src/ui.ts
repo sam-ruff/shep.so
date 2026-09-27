@@ -18,7 +18,7 @@ import { openMoveChooser } from "./move_ui";
 import { knownFolders } from "./move_candidates";
 import { PrintController } from "./printing_controller";
 import { MessageFind, SearchWorker } from "./message_find";
-import { FormattedFrame } from "./formatted_frame";
+import { FormattedFrame, type Canvas } from "./formatted_frame";
 import type { PreparedMessage } from "./formatted_content";
 import type { ReceivedAttachment } from "./attachments";
 import {
@@ -681,6 +681,7 @@ export function mount(
         error?: string;
         blocks: string[];
         hasQuotes: boolean;
+        canvas?: Canvas;
       }
     | undefined;
   const systemAppearance = matchMedia("(prefers-color-scheme: dark)");
@@ -773,6 +774,11 @@ export function mount(
                 if (formattedState !== state) return;
                 state.blocks = blocks;
                 state.hasQuotes = hasQuotes;
+                w.changed();
+              },
+              canvas: (canvas) => {
+                if (formattedState !== state) return;
+                state.canvas = canvas;
                 w.changed();
               },
               link: reviewLink,
@@ -1620,12 +1626,8 @@ export function mount(
     const img = el("img");
     img.src = "./logo-light.webp";
     img.alt = "";
-    img.className = "logo light-logo";
-    const dark = el("img");
-    dark.src = "./logo-dark.webp";
-    dark.alt = "";
-    dark.className = "logo dark-logo";
-    brand.append(img, dark, el("span", "", "shep"));
+    img.className = "logo";
+    brand.append(img, el("span", "", "shep"));
     aside.append(brand);
     const nav = el("nav");
     nav.setAttribute("aria-label", "Workspace");
@@ -2477,6 +2479,11 @@ export function mount(
       for (const issue of state.prepared!.issues)
         content.append(el("p", "muted", issue));
       const viewport = el("div", "formatted-viewport");
+      // The area under the frame follows the document's own canvas.
+      if (state.canvas) {
+        viewport.style.backgroundColor = state.canvas.background;
+        viewport.dataset.canvas = state.canvas.scheme;
+      }
       content.append(viewport);
     } else content.append(foundText(latest, 0));
     if (!html && quote.length && w.preferences.quoteMode !== "Latest only") {
@@ -2712,6 +2719,52 @@ export function mount(
         }),
       );
     if (profiles) panel.append(...profiles.section());
+    const calendarConnections = el("div", "settings-actions");
+    const openCalDav = () => {
+      if (!gateway?.calendar) return;
+      const calendar = gateway.calendar;
+      const d = modal("CalDAV connections"), content = el("div", "outbox-entries"), status = el("p", "form-status");
+      d.append(content, status);
+      const draw = async () => {
+        content.replaceChildren(el("p", "muted", "Loading approved CalDAV choices…"));
+        try {
+          const [endpoints, connections] = await Promise.all([calendar.endpoints(), calendar.connections()]);
+          content.replaceChildren();
+          for (const connection of connections.filter(item => item.status !== "Removed")) {
+            const row = el("article", "outbox-entry");
+            row.append(el("h3", "", connection.username), el("p", "muted", connection.status === "Active" ? "Connection saved. Re-enter its password after reopening Shep." : "Password needed to finish connecting"));
+            const reconnect = button("Re-enter password", () => showForm(connection.id, connection.endpoint_id, connection.username));
+            const remove = button("Remove connection", () => void (async () => {
+              reconnect.disabled = remove.disabled = true;
+              try { await calendar.removeConnection(connection); status.textContent = "CalDAV connection removed from this browser."; await draw(); }
+              catch (error) { status.textContent = error instanceof Error ? error.message : "The CalDAV connection could not be removed."; reconnect.disabled = remove.disabled = false; }
+            })());
+            row.append(reconnect, remove); content.append(row);
+          }
+          const showNew = button("Add CalDAV connection", () => showForm(crypto.randomUUID(), endpoints[0]?.id ?? "", ""));
+          showNew.disabled = !endpoints.length; content.append(showNew);
+          if (!endpoints.length) content.append(el("p", "muted", "No CalDAV services are approved by this Shep server."));
+          function showForm(id: string, initialEndpoint: string, initialUsername: string) {
+            let endpoint = initialEndpoint, username = initialUsername, password = "";
+            if (!endpoint) endpoint = endpoints[0]?.id ?? "";
+            const form = el("div", "settings-form"), endpointField = select("CalDAV service", endpoint,
+              endpoints.map(item => item.id), id => { endpoint = id; });
+            for (const option of endpointField.querySelectorAll("option")) option.textContent = endpoints.find(item => item.id === option.value)!.name;
+            const usernameField = field("CalDAV username", username, value => { username = value; });
+            const passwordField = field("CalDAV password", "", value => { password = value; });
+            passwordField.querySelector("input")!.type = "password";
+            const save = button("Save CalDAV connection", () => void (async () => {
+              save.disabled = true; status.textContent = "Connection saved. Checking the calendar service…";
+              try { await calendar.connect(endpoint, username, password, id); password = ""; status.textContent = "CalDAV connection ready."; await draw(); }
+              catch (error) { password = ""; passwordField.querySelector("input")!.value = ""; status.textContent = error instanceof Error ? error.message : "The CalDAV connection needs attention."; save.disabled = false; }
+            })());
+            form.append(endpointField, usernameField, passwordField, save); content.replaceChildren(form);
+          }
+        } catch (error) { content.replaceChildren(); status.textContent = error instanceof Error ? error.message : "CalDAV choices could not be loaded."; content.append(button("Retry CalDAV choices", () => void draw())); }
+      };
+      void draw();
+    };
+    if (gateway?.calendar) calendarConnections.append(button("Manage CalDAV connections", openCalDav));
     card(
       "Calendars and backups",
       el(
@@ -2726,6 +2779,7 @@ export function mount(
           ? "Google beta sign-in grants access to Shep. Calendar and Drive permissions are requested separately under Profiles and sync."
           : "Google beta sign-in grants access to Shep. Calendar and Drive authorization will be connected separately.",
       ),
+      calendarConnections,
     );
     return panel;
   }

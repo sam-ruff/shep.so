@@ -793,13 +793,23 @@ class _ReaderState extends State<Reader> {
                               width: double.infinity,
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: FormattedView(
-                                  document: document.prepared!.document!,
-                                  commands: document.commands.stream,
-                                  onMessage: (value) =>
-                                      runtimeMessage(document, value),
-                                  onError: () => document.displayError(
-                                    document.generation,
+                                // The surround follows the document's canvas.
+                                child: ColoredBox(
+                                  key: const ValueKey('formatted-canvas'),
+                                  color: document.canvas == null
+                                      ? Colors.transparent
+                                      : Color(document.canvas!),
+                                  child: FormattedView(
+                                    background: document.canvas == null
+                                        ? null
+                                        : Color(document.canvas!),
+                                    document: document.prepared!.document!,
+                                    commands: document.commands.stream,
+                                    onMessage: (value) =>
+                                        runtimeMessage(document, value),
+                                    onError: () => document.displayError(
+                                      document.generation,
+                                    ),
                                   ),
                                 ),
                               ),

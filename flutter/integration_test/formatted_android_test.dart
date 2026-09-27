@@ -131,6 +131,21 @@ void main() {
         ),
         'rgb(27, 27, 32)',
       );
+      // The fixture's own dark body is kept and reported to the surround.
+      expect(
+        await observe('getComputedStyle(document.body).backgroundColor'),
+        'rgb(16, 16, 20)',
+      );
+      await wait(
+        () =>
+            tester
+                .widget<ColoredBox>(
+                  find.byKey(const ValueKey('formatted-canvas')),
+                )
+                .color ==
+            const Color(0xff101014),
+        'The reported canvas did not reach the reader surround',
+      );
       expect(await observe('document.images[0].naturalWidth'), greaterThan(0));
       expect(
         await observe('document.querySelectorAll("blockquote").length'),

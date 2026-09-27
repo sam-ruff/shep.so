@@ -42,6 +42,7 @@ pub(crate) fn config() -> Config {
         web_dir: "../web/dist".into(),
         bind: "127.0.0.1:3080".parse().unwrap(),
         mail_endpoints: Vec::new(),
+        caldav_endpoints: Vec::new(),
         profile_namespace: None,
     }
 }

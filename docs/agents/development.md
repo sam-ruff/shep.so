@@ -16,6 +16,8 @@ python3 scripts/performance_gate.py
 
 Linux native E2E additionally needs `xvfb`, `xdotool`, `zenity`, `xclip`, and ImageMagick with WebP support. Print tests also need Chrome/Chromium and Poppler (`pdfinfo`, `pdftotext`, `pdftoppm`); they use an isolated X11 browser profile and Save as PDF, never a physical printer. The optimized `test-ui` profile avoids measuring debug rendering. `scripts/check.sh` runs the full suite; `SHEP_SKIP_E2E=1` explicitly omits GUI tests when X11 is unavailable.
 
+[Fast headless UI tests](simulator-tests.md) run the real app through `iced_test` inside `cargo test`, in seconds rather than the native suite's hour; they add to the native scenarios rather than replace them.
+
 The native MCP server is configured in `.mcp.json`. Read [the repository E2E skill](https://github.com/sam-ruff/shep.so/blob/main/.agents/skills/shep-e2e/SKILL.md). Its batch tool performs real clicks, double-clicks, drags, typing and shortcuts, plus bounded waits, observed-state assertions and WebP screenshots. Every AI-driven scenario must have an equivalent automated test. Fixture mail exists only behind the nondefault `test-support` feature. The production application does not launch fixture workspaces.
 
 All generated logs and evidence belong under ignored `artifacts/`; never leave logs in the repository root. Performance budgets, methodology and the validated Linux baseline are in [docs/PERFORMANCE.md](../PERFORMANCE.md). The [completion audit](../COMPLETION.md) distinguishes implemented behavior, remaining work and verification that still needs live services/platforms.

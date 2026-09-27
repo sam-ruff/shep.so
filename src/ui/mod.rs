@@ -6,6 +6,7 @@ mod backups;
 mod bulk;
 mod calendar_actions;
 mod calendar_setup;
+mod change_refresh;
 mod closing;
 mod components;
 mod composing;
@@ -51,6 +52,8 @@ mod removals;
 mod selectable;
 mod settings_search;
 mod sidebar;
+#[cfg(all(test, feature = "test-support"))]
+mod simulator_tests;
 #[cfg(feature = "test-support")]
 mod store_truth;
 mod text_context;
@@ -395,6 +398,8 @@ pub struct App {
     pending_close: Option<iced::window::Id>,
     tray: tray::State,
     activation: Option<crate::activation::Signal>,
+    /// A launch `mailto` link held until the workspace has loaded.
+    pending_mailto: Option<String>,
     database_transfer: database_transfers::State,
     database_import: database_import::State,
     profiles: profiles::State,
@@ -487,6 +492,7 @@ pub struct App {
     detail: Option<Arc<MailDetail>>,
     detail_cache: VecDeque<Arc<MailDetail>>,
     detail_revision: u64,
+    change_refresh: change_refresh::State,
     prefetch_page: Option<(MailQuery, Arc<MailPage>)>,
     prefetch_query: Option<MailQuery>,
     pending_details: HashSet<String>,
@@ -516,8 +522,7 @@ pub struct App {
     google_disconnect_pending: Option<u64>,
     system_dark: bool,
     size: Size,
-    light_logo: widget::image::Handle,
-    dark_logo: widget::image::Handle,
+    logo: widget::image::Handle,
     backups: Arc<Vec<BackupCopy>>,
     backups_target: Option<BackupTarget>,
     backups_generation: u64,
@@ -548,9 +553,9 @@ pub struct App {
     test_revision: u64,
 }
 
-pub fn run(activation: Option<crate::activation::Signal>) -> iced::Result {
+pub fn run(activation: Option<crate::activation::Signal>, mailto: Option<String>) -> iced::Result {
     iced::daemon(
-        move || App::boot(activation.clone()),
+        move || App::boot(activation.clone(), mailto.clone()),
         App::update,
         App::window_view,
     )
@@ -596,6 +601,7 @@ impl App {
                 pending_close: None,
                 tray: Default::default(),
                 activation: None,
+                pending_mailto: None,
                 database_transfer: Default::default(),
                 database_import: Default::default(),
                 profiles: Default::default(),
@@ -689,6 +695,7 @@ impl App {
                 detail: None,
                 detail_cache: VecDeque::new(),
                 detail_revision: 0,
+                change_refresh: Default::default(),
                 prefetch_page: None,
                 prefetch_query: None,
                 pending_details: HashSet::new(),
@@ -716,11 +723,9 @@ impl App {
                 google_disconnect_pending: None,
                 system_dark: false,
                 size: Size::new(1440., 920.),
-                light_logo: widget::image::Handle::from_bytes(
+                // The white Shepherd, as on the website and launcher, in both appearances.
+                logo: widget::image::Handle::from_bytes(
                     include_bytes!("../../assets/logo-light.webp").as_slice(),
-                ),
-                dark_logo: widget::image::Handle::from_bytes(
-                    include_bytes!("../../assets/logo-dark.webp").as_slice(),
                 ),
                 backups: Arc::new(Vec::new()),
                 backups_target: None,
@@ -923,7 +928,38 @@ impl App {
     fn field(&self, key: &str) -> &str {
         self.fields.get(key).map(String::as_str).unwrap_or("")
     }
-    fn request_page(&mut self) {
+    /// Refreshes the list, conversation and reader after the cache changed.
+    fn refresh_after_change(&mut self) {
+        self.detail_revision += 1;
+        self.prefetch_page = None;
+        self.detail_cache.retain(|d| {
+            self.mail_actions.moving(&d.summary.id) || self.page.is_placeholder(&d.summary.id)
+        });
+        self.pending_details.clear();
+        let page = self.request_page().then_some(self.generation);
+        let conversation = self
+            .request_conversation(None)
+            .then_some(self.conversation.generation);
+        let detail = self
+            .reader_id()
+            .filter(|id| {
+                !self.mail_actions.restoring(id) && !self.page.is_transient_placeholder(id)
+            })
+            .map(str::to_owned)
+            .and_then(|id| {
+                let body_chars = self.detail_body_chars(&id);
+                self.try_command(Command::Detail {
+                    revision: self.detail_revision,
+                    id,
+                    prefetch: false,
+                    body_chars,
+                })
+                .then_some(self.detail_revision)
+            });
+        self.change_refresh
+            .started(page, conversation, detail, Instant::now());
+    }
+    fn request_page(&mut self) -> bool {
         self.query.exclude_folders = self.pending_folder_deletions();
         self.reconcile_selection_scope();
         if self.last_list_query != self.query {
@@ -944,7 +980,7 @@ impl App {
             }
         }
         query.observe_bulk = self.bulk_observed_ids();
-        self.send(Command::Query(self.generation, query, false));
+        self.try_command(Command::Query(self.generation, query, false))
     }
     fn cache_detail(&mut self, detail: Arc<MailDetail>) {
         self.mail_actions.observe_detail(&detail.summary);
@@ -1190,6 +1226,20 @@ impl App {
             )
         ) {
             self.refresh_activity(true);
+        }
+        if let Message::Backend(event) = &message {
+            match event {
+                Event::Page(generation, _, false) => self.change_refresh.page_answered(*generation),
+                Event::Conversation(generation, ..) => {
+                    self.change_refresh.conversation_answered(*generation)
+                }
+                Event::Detail {
+                    revision,
+                    prefetch: false,
+                    ..
+                } => self.change_refresh.detail_answered(*revision),
+                _ => {}
+            }
         }
         #[cfg(feature = "test-support")]
         if let Message::Backend(event) = &message
@@ -1461,12 +1511,17 @@ impl App {
                     }
                     self.observe_draft_files();
                     self.update_saved_preferences();
+                    if let Some(link) = self.pending_mailto.take() {
+                        return self.compose_mailto(&link);
+                    }
                 }
                 Event::Conversation(generation, anchor, result) => {
                     return self.conversation_result(generation, anchor, result);
                 }
                 Event::ConversationsIndexed(result) => match result {
-                    Ok(()) => self.request_conversation(None),
+                    Ok(()) => {
+                        self.request_conversation(None);
+                    }
                     Err(error) => self.notice(
                         format!(
                             "Related mail could not be indexed: {error}. Reopen Shep to retry."
@@ -1715,30 +1770,8 @@ impl App {
                 #[cfg(feature = "test-support")]
                 Event::PreviewAccountSync(waiting) => self.test_account_sync_waiting = waiting,
                 Event::Changed => {
-                    self.detail_revision += 1;
-                    self.prefetch_page = None;
-                    self.detail_cache.retain(|d| {
-                        self.mail_actions.moving(&d.summary.id)
-                            || self.page.is_placeholder(&d.summary.id)
-                    });
-                    self.pending_details.clear();
-                    self.request_page();
-                    self.request_conversation(None);
-                    if let Some(id) = self
-                        .reader_id()
-                        .filter(|id| {
-                            !self.mail_actions.restoring(id)
-                                && !self.page.is_transient_placeholder(id)
-                        })
-                        .map(str::to_owned)
-                    {
-                        let body_chars = self.detail_body_chars(&id);
-                        self.send(Command::Detail {
-                            revision: self.detail_revision,
-                            id,
-                            prefetch: false,
-                            body_chars,
-                        });
+                    if !self.change_refresh.defer(Instant::now()) {
+                        self.refresh_after_change();
                     }
                 }
                 Event::Calendar(revision, events) => {
@@ -2177,6 +2210,9 @@ impl App {
                 }
             }
             Message::Tick => {
+                if self.change_refresh.due(Instant::now()) {
+                    self.refresh_after_change();
+                }
                 self.refresh_activity(false);
                 self.advance_profile_login();
                 self.advance_profile_cycle();
@@ -2404,7 +2440,9 @@ impl App {
                     Message::SearchReady,
                 );
             }
-            Message::SearchReady(g) if g == self.generation => self.request_page(),
+            Message::SearchReady(g) if g == self.generation => {
+                self.request_page();
+            }
             Message::SearchReady(_) => {}
             Message::Folder(folder) => self.open_mail_folder(folder, false),
             Message::SentFolder => self.open_mail_folder("Sent".into(), true),
@@ -3676,7 +3714,7 @@ impl App {
             Message::ConversationViewport(y) => self.conversation.scroll = y,
             Message::ConversationScroll(generation) => return self.conversation_scroll(generation),
             Message::RetryConversation => {
-                self.request_conversation(Some(self.conversation.page.offset))
+                self.request_conversation(Some(self.conversation.page.offset));
             }
             Message::PrefReplies(mode) => {
                 self.preferences.reply_display = mode;
@@ -4454,6 +4492,29 @@ impl App {
             return Task::none();
         };
         self.test_revision += 1;
+        let data = self.test_observation();
+        Task::perform(
+            async move {
+                static SNAPSHOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+                let _guard = SNAPSHOT_LOCK.lock().await;
+                if let Ok(previous) = tokio::fs::read(&path).await
+                    && let Ok(previous) = serde_json::from_slice::<serde_json::Value>(&previous)
+                    && previous["revision"].as_u64() >= data["revision"].as_u64()
+                {
+                    return;
+                }
+                let temp = path.with_extension("tmp");
+                if let Ok(json) = serde_json::to_vec(&data)
+                    && tokio::fs::write(&temp, json).await.is_ok()
+                {
+                    let _ = tokio::fs::rename(temp, path).await;
+                }
+            },
+            |_| Message::Noop,
+        )
+    }
+    /// Observation-only state read by the native harness and the simulator tests.
+    fn test_observation(&self) -> serde_json::Value {
         let mut samples: Vec<_> = self.update_samples.iter().copied().collect();
         samples.sort_by(f64::total_cmp);
         let mut data = serde_json::json!({"revision":self.test_revision,"tab":format!("{:?}",self.tab),"settings_tab":format!("{:?}",self.settings_tab),"dialog":self.dialog.map(|d|format!("{d:?}")),"dark":self.dark(),"reader_split":self.preferences.reader_split,"saved_reader_split":self.workspace.preferences.reader_split,"sort":format!("{:?}",self.query.sort),"filter":format!("{:?}",self.mail_filter()),"offset":self.query.offset,"busy":self.busy,"query":self.query.search,"folder":self.query.folder,"total":self.page.total,"selected":self.detail.as_ref().map(|d|&d.summary.subject),"selected_id":self.selected,"starred":self.detail.as_ref().map(|d|self.displayed_mail_flags(&d.summary).1),"cache_entries":self.detail_cache.len(),"page_prefetched":self.prefetch_page.is_some(),"ready":self.tx.is_some(),"shortcuts":self.preferences.shortcuts.0,"fields":self.fields.iter().filter(|(k,_)|!k.contains("password")&&!k.contains("secret")&&!k.contains("passphrase")).collect::<HashMap<_,_>>(),"full_reader":self.full_reader,"image_policy":format!("{:?}",self.preferences.image_policy),"images_allowed":self.detail.as_ref().is_some_and(|d|crate::remote_images::allowed(&self.preferences,&d.summary)),"remote_image_count":self.detail.as_ref().map(|d|d.remote_images.len()),"reply_count":self.detail.as_ref().map(|d|d.replies.len()),"expanded_replies":self.expanded_replies,"sidebar_focus":self.sidebar_focus,"inbox_expanded":self.inbox_expanded,"unified":self.preferences.unified_inbox,"cross_account_moves":self.preferences.cross_account_moves,"reader_size":self.preferences.reader_font_size,"calendar_connected":!self.workspace.calendars.is_empty(),"draft_count":self.workspace.drafts.len(),"draft_body":self.workspace.drafts.first().map(|d|&d.body),"editor":self.composer.current.editor.text(),"notice":self.notice.as_ref().map(|n|&n.0),"update_p95_ms":samples.get(samples.len()*95/100),"uptime_ms":self.started.elapsed().as_millis(),"events":self.events.len()});
@@ -4882,25 +4943,7 @@ impl App {
             data["inbox_reveal_height"] = serde_json::json!(self.inbox_reveal_height);
         }
         data["inbox_scroll"] = serde_json::json!(self.inbox_scroll);
-        Task::perform(
-            async move {
-                static SNAPSHOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-                let _guard = SNAPSHOT_LOCK.lock().await;
-                if let Ok(previous) = tokio::fs::read(&path).await
-                    && let Ok(previous) = serde_json::from_slice::<serde_json::Value>(&previous)
-                    && previous["revision"].as_u64() >= data["revision"].as_u64()
-                {
-                    return;
-                }
-                let temp = path.with_extension("tmp");
-                if let Ok(json) = serde_json::to_vec(&data)
-                    && tokio::fs::write(&temp, json).await.is_ok()
-                {
-                    let _ = tokio::fs::rename(temp, path).await;
-                }
-            },
-            |_| Message::Noop,
-        )
+        data
     }
     fn view(&self) -> Element<'_, Message> {
         let root = context_menu::ContextArea::root(self.layout(), self.preferences.interface_scale);

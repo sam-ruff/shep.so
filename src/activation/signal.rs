@@ -1,13 +1,14 @@
 use std::{
     hash::{Hash, Hasher},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
 use tokio::sync::watch;
 
 const CLOSING: u64 = 1 << 63;
+const MAX_COMPOSITIONS: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct Signal(Arc<Inner>);
@@ -20,6 +21,8 @@ struct Inner {
     restart: AtomicU64,
     requests: watch::Sender<u64>,
     acknowledgments: watch::Sender<u64>,
+    /// `mailto` links waiting for the next Open to be handled.
+    compositions: Mutex<Vec<String>>,
 }
 
 /// What a launcher asked of the running owner.
@@ -37,6 +40,7 @@ impl Default for Signal {
             restart: AtomicU64::new(0),
             requests: watch::channel(0).0,
             acknowledgments: watch::channel(0).0,
+            compositions: Mutex::default(),
         }))
     }
 }
@@ -55,6 +59,25 @@ impl Signal {
     /// A newer build asks this process to quit so it can take over.
     pub(crate) fn request_restart(&self) -> Option<u64> {
         self.admit(true)
+    }
+
+    /// An Open that also asks for a draft from `link`. The link is queued
+    /// before the wake-up so the UI finds it when it handles the Open.
+    pub(crate) fn request_compose(&self, link: String) -> Option<u64> {
+        if let Ok(mut queue) = self.0.compositions.lock()
+            && queue.len() < MAX_COMPOSITIONS
+        {
+            queue.push(link);
+        }
+        self.admit(false)
+    }
+
+    pub(crate) fn take_compositions(&self) -> Vec<String> {
+        self.0
+            .compositions
+            .lock()
+            .map(|mut queue| std::mem::take(&mut *queue))
+            .unwrap_or_default()
     }
 
     fn admit(&self, restart: bool) -> Option<u64> {
@@ -154,6 +177,21 @@ mod tests {
         signal.acknowledge(last);
         assert!(signal.try_close());
         assert_eq!(signal.request(), None);
+    }
+
+    #[test]
+    fn compose_request_queues_its_link_until_taken() {
+        let signal = Signal::default();
+        let generation = signal
+            .request_compose("mailto:a@example.test".into())
+            .expect("open accepted");
+        assert_eq!(signal.pending(generation), Some(Request::Open(generation)));
+        assert_eq!(signal.take_compositions(), ["mailto:a@example.test"]);
+        assert!(signal.take_compositions().is_empty());
+        for _ in 0..MAX_COMPOSITIONS + 4 {
+            signal.request_compose("mailto:b@example.test".into());
+        }
+        assert_eq!(signal.take_compositions().len(), MAX_COMPOSITIONS);
     }
 
     #[test]

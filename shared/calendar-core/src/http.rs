@@ -3,6 +3,9 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
+mod restoration;
+use crate::restoration::{DeletePlan, DeleteReceipt, Inspection, RestoreRequest};
+
 #[async_trait]
 #[cfg_attr(any(test, feature = "test-support"), mockall::automock)]
 pub trait CalendarProvider: Send + Sync {
@@ -22,6 +25,42 @@ pub trait CalendarProvider: Send + Sync {
     ) -> Result<Event, ProviderFailure>;
     async fn read(&self, token: &str, event: &Event) -> Result<Option<Event>, ProviderFailure>;
     async fn delete(&self, token: &str, event: &Event) -> Result<(), ProviderFailure>;
+    async fn prepare_delete(
+        &self,
+        _token: &str,
+        _event: &Event,
+    ) -> Result<DeletePlan, ProviderFailure> {
+        Err(ProviderFailure::rejected(
+            "This calendar does not support restorable deletion.",
+        ))
+    }
+    async fn cancel_event(
+        &self,
+        _token: &str,
+        _plan: &DeletePlan,
+    ) -> Result<DeleteReceipt, ProviderFailure> {
+        Err(ProviderFailure::rejected(
+            "This calendar does not support restorable deletion.",
+        ))
+    }
+    async fn restore_event(
+        &self,
+        _token: &str,
+        _request: &RestoreRequest,
+    ) -> Result<Event, ProviderFailure> {
+        Err(ProviderFailure::rejected(
+            "This calendar does not support event restoration.",
+        ))
+    }
+    async fn inspect_deletion(
+        &self,
+        _token: &str,
+        _plan: &DeletePlan,
+    ) -> Result<Inspection, ProviderFailure> {
+        Err(ProviderFailure::rejected(
+            "This calendar does not support deletion inspection.",
+        ))
+    }
 }
 
 pub struct GoogleCalendarProvider {
@@ -145,6 +184,34 @@ async fn bounded_text(mut response: reqwest::Response) -> Result<String, Provide
 
 #[async_trait]
 impl CalendarProvider for GoogleCalendarProvider {
+    async fn prepare_delete(
+        &self,
+        token: &str,
+        event: &Event,
+    ) -> Result<DeletePlan, ProviderFailure> {
+        self.prepare_google_delete(token, event).await
+    }
+    async fn cancel_event(
+        &self,
+        token: &str,
+        plan: &DeletePlan,
+    ) -> Result<DeleteReceipt, ProviderFailure> {
+        self.cancel_google_event(token, plan).await
+    }
+    async fn restore_event(
+        &self,
+        token: &str,
+        request: &RestoreRequest,
+    ) -> Result<Event, ProviderFailure> {
+        self.restore_google_event(token, request).await
+    }
+    async fn inspect_deletion(
+        &self,
+        token: &str,
+        plan: &DeletePlan,
+    ) -> Result<Inspection, ProviderFailure> {
+        self.inspect_google_deletion(token, plan).await
+    }
     async fn sources(&self, token: &str) -> Result<Vec<Source>, ProviderFailure> {
         let mut sources = Vec::new();
         let mut page = String::new();

@@ -1,5 +1,98 @@
 # Completion audit
 
+## Fast headless UI tests with iced_test (R110), 26 September 2026
+
+Branch `test/iced-simulator` adds `iced_test` 0.14.0 as a dev-dependency, which
+matches the locked iced 0.14 crates and uses the vendored tiny-skia renderer
+unchanged. `src/ui/simulator_tests/` holds a harness that runs the real `App`
+against the demo engine on an in-memory fixture store and feeds input through
+the widget tree; [the simulator guide](agents/simulator-tests.md) explains the
+design. `write_test_state` is split so the native state file and the simulator
+read the same `test_observation`; the written JSON is unchanged.
+
+Ported scenarios, each named after and following its native batch at the same
+coordinates: Move mouse/keyboard/typing protection, delete/archive defaults,
+search focus guarding default and remapped delete chords, drafts collapse and
+context discard, dropdown Escape with Find and in the composer, shortcut
+remapping, secondary conflict and disable, clear and cancel capture,
+preferences search and tooltip options (full size and compact dark), the
+settings catalogue ranking, settings search reveal and focus, and preferences
+with divider resize: fourteen tests from thirteen native scenarios. A fifteenth
+test checks that switching appearance back restores identical `Simulator`
+snapshot pixels.
+
+Timing on the development host: the fifteen simulator tests finish in 8.5 to
+8.7 seconds in six consecutive runs of the debug test binary, running in
+parallel; individually most take 0.4 to 0.8 seconds, with drafts (6.2 s) and
+the snapshot round trip (2.5 s) bounded by one-second autosave ticks, the
+fixture sync delay and debug rasterising. The thirteen equivalent native
+scenarios take 43 seconds on an otherwise idle host, after a ten-minute
+`test-ui` build, and need Xvfb. The native versions also take screenshots and,
+for the catalogue and tooltip flows, extra dark and compact variants.
+
+Limits: HTML rendering, tray, badges, pickers, printing, presented pixels and
+timing remain native only; fixture options passed as process arguments
+(`mail_actions`, `long_folders`, `search_mail`) cannot be used yet; pixel
+hashes are not committed because iced's font system loads host fallback fonts.
+The native scenarios are unchanged and still required.
+
+## Readable canvas for transparent HTML email (R38), 26 September 2026
+
+Branch `fix/html-dark-canvas`. Sam reported a real newsletter whose near-black
+and dark green text sat on the dark reader. Its body sets
+`background-color:transparent`, overriding Shep's white default, and its only
+white background sits inside an Outlook-only conditional comment, so it relies
+on the client supplying a white canvas. The renderer now counts the characters
+it draws in dark and light text and, when the document's root background is
+transparent, chooses white paper for mostly dark text or a dark canvas for
+mostly light text. The choice is made once on the first paint and reported as
+the document background, so the reader surround and controls follow it and
+scrolling cannot switch it. Documents with their own opaque background are
+unchanged. Checked read-only against the reported message from the local
+cache; no personal content entered the repository.
+
+Tests: renderer tests for dark, light, authored-background and locked-on-scroll
+documents plus text-tone counting; the new native flow
+`test_html_transparent_newsletter_gets_readable_paper_in_both_themes` uses a
+fictional message in the Junk fixture folder and checks the white surround and
+text contrast in light and dark; `test_html_background_matches_document_surround_in_both_themes`
+still passes. Limitations: transparent cells over authored dark rows are not
+analysed separately.
+
+### Browser and Flutter parity
+
+Branch `fix/client-dark-canvas`. The shared frame runtime
+(`shared/mail-content/src/document/runtime.js`) used by the browser iframe and
+the Flutter WebView makes the same choice once the document is laid out: it
+clears the reader default, keeps an opaque `html`/`body` background the email
+set itself, and otherwise weighs visible non-whitespace text by character count
+and relative luminance to choose white paper (`#ffffff`, default text
+`#18181b`) or the dark canvas (`#18181b`, default text `#f4f4f5`). The choice is
+repeated only when the app theme changes, which alters unstyled text; quote
+toggles, resizing and scrolling keep it. The runtime reports a `canvas` message
+with the background and scheme; the browser colours the frame and its viewport,
+and Flutter colours the reader box behind the WebView and the platform view's
+own background. The reader defaults in `document.rs` are now `:where()` rules,
+so an email's plain `body{background;color}` CSS wins instead of being replaced
+by the theme, as it already did on desktop. The runtime hash changes; the
+backend CSP and preparation derive it from the source, and the Flutter fixture
+was regenerated.
+
+Tests: shared Rust `document` tests (zero-specificity defaults, authored body
+rules retained); `formatted_frame.test.ts`; new `formatted-canvas.spec.ts` with
+fictional transparent dark-text, authored-dark, transparent light-text and
+unstyled mail in light and dark at 1440 and 390 wide (backgrounds, contrast
+above 7:1, quote/scroll stability, theme re-choice, frame and viewport
+surround), plus the existing formatted-reader, Find, printing and visual-parity
+specs; `formatted_message_test.dart`; `flutter_web_e2e.py --formatted` checks
+the reported authored canvas in light and dark (one earlier run failed at the
+existing Move-dialog Escape step and passed on rerun);
+`android_e2e.py --formatted-only` on the `shep-e2e` API 36 emulator passed,
+including the new check that the kept authored body colour reaches the reader
+surround, and its Appium selection/link/dark stages.
+Limitations: Apple execution, and Flutter has no transparent-body fixture of its
+own; that rule is exercised through the shared runtime in Chromium.
+
 ## Browser group progress pacing (R42), 26 September 2026
 
 Branch `fix/web-bulk-group-execution` restores `web/e2e/bulk-controls.spec.ts`,
@@ -495,7 +588,8 @@ trivial page without Shep. Runner confirmation remains open in TODO.
 
 ## Folder changes and desktop Activity integration, 21 September 2026
 
-This continuation is verified locally and remains under shipping verification.
+Implementation [`9dd7548`](https://github.com/sam-ruff/shep.so/commit/9dd754821939c36a2959953c03646e9b485b6e4f)
+is pushed to main. Normal hooks pass 1,610 Rust executions with 15 ignored.
 Flutter schema24 adds checked Rename, Move and Delete to the
 existing folder owner. Local confirmation precedes provider capacity and bounded
 50-row preparation/repair. Partial acknowledgements and unknown outcomes retain

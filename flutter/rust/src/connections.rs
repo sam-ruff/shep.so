@@ -1,5 +1,7 @@
 //! A database pointer activates an independently saved device credential pair.
 //! Only opaque slot identifiers and account configuration enter SQLite.
+pub(crate) mod probe;
+
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};

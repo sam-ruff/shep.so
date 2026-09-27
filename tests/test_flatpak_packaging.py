@@ -150,7 +150,8 @@ class Manifest(unittest.TestCase):
     def test_launcher_matches_the_installer_entry_apart_from_exec(self):
         ours = desktop_entry(DESKTOP.read_text(encoding="utf-8"))
         theirs = desktop_entry(installer.desktop_entry(["shep"]))
-        self.assertEqual(ours.pop("Exec"), manifest()["command"])
+        # %u passes a clicked mailto link, as the installer entry does.
+        self.assertEqual(ours.pop("Exec"), f"{manifest()['command']} %u")
         theirs.pop("Exec")
         self.assertEqual(ours, theirs)
         self.assertEqual(ours["StartupWMClass"], installer.APP_ID)

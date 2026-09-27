@@ -19,6 +19,7 @@ nav = [
   { "For agents" = [
     { "Start here" = "agents/index.md" },
     { "Development and architecture" = "agents/development.md" },
+    { "Fast headless UI tests" = "agents/simulator-tests.md" },
     { "Installation reference" = "agents/installation.md" },
     { "Flatpak and Linux stores" = "agents/flatpak.md" },
     { "Mail contracts" = "agents/mail.md" },

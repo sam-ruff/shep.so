@@ -647,6 +647,111 @@ async fn fixed_width_tables_pan_without_allocating_full_document_rasters() {
 }
 
 #[tokio::test]
+async fn transparent_documents_get_a_canvas_their_text_can_be_read_on() {
+    let (tx, mut rx, thread) = start();
+    let load = |generation: u64, source: &'static str| {
+        let tx = tx.clone();
+        async move {
+            tx.send(Input::Load {
+                generation,
+                body: body(source),
+                viewport: viewport(),
+                font_size: 14,
+                hide_quotes: false,
+                images: vec![],
+            })
+            .await
+            .unwrap();
+        }
+    };
+    let frame = |event| {
+        let Event::Frame(frame) = event else {
+            panic!("expected a frame")
+        };
+        frame
+    };
+    // A newsletter that clears the body background and assumes a white client canvas.
+    load(1, "<body style='background-color:transparent'><table width='100%'><tr><td style='color:#242424'>Your tutor has booked your lesson.</td></tr><tr><td style='color:#00463a'>Confirm your lesson</td></tr></table></body>").await;
+    assert_eq!(
+        frame(next(&mut rx).await).background,
+        Some(container::PAPER)
+    );
+    load(2, "<body style='background:transparent;color:#f4f4f5'><p>Light text written for a dark client.</p></body>").await;
+    assert_eq!(
+        frame(next(&mut rx).await).background,
+        Some(container::DARK_CANVAS)
+    );
+    // The document's own opaque background always wins.
+    load(
+        3,
+        "<body style='background:#10221a;color:#e4e4e7'><p>Dark by design</p></body>",
+    )
+    .await;
+    assert_eq!(
+        frame(next(&mut rx).await).background,
+        Some([16, 34, 26, 255])
+    );
+    // The canvas chosen on the first paint survives scrolling into differently coloured text.
+    load(4, "<body style='background:transparent'><p style='color:#111'>Dark introduction</p><div style='height:3000px'></div><p style='color:#fafafa'>Light footer text that is much longer than the introduction above it, repeated to outweigh it. Light footer text that is much longer than the introduction above it.</p></body>").await;
+    assert_eq!(
+        frame(next(&mut rx).await).background,
+        Some(container::PAPER)
+    );
+    tx.send(Input::Scroll(4, 3000.)).await.unwrap();
+    assert_eq!(
+        frame(next(&mut rx).await).background,
+        Some(container::PAPER)
+    );
+    drop(tx);
+    thread.join().unwrap();
+}
+
+#[test]
+fn text_tone_counts_characters_and_ignores_invisible_text() {
+    use litehtml::Color;
+    let mut tone = container::TextTone::default();
+    assert_eq!(
+        tone.canvas(),
+        container::PAPER,
+        "no text keeps the default paper"
+    );
+    tone.add(
+        Color {
+            r: 250,
+            g: 250,
+            b: 250,
+            a: 255,
+        },
+        10,
+    );
+    assert_eq!(tone.canvas(), container::DARK_CANVAS);
+    tone.add(
+        Color {
+            r: 0,
+            g: 70,
+            b: 58,
+            a: 255,
+        },
+        11,
+    );
+    assert_eq!(tone.canvas(), container::PAPER);
+    tone.add(
+        Color {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 0,
+        },
+        100,
+    );
+    assert_eq!(
+        tone.canvas(),
+        container::PAPER,
+        "transparent text is not counted"
+    );
+}
+
+#[tokio::test]
 async fn frames_acknowledge_applied_images_and_document_background() {
     let (tx, mut rx, thread) = start();
     let bytes: Arc<[u8]> = Arc::from(include_bytes!("../../assets/logo-light.webp").as_slice());

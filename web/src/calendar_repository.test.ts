@@ -97,3 +97,79 @@ test("a late source observation cannot replace permissions after new admission",
   expect((await journal.sources()).find(item => item.id === "a")?.read_only).toBe(false);
   expect(repository.events[0].title).toBe("Newer");
 });
+
+test("CalDAV setup is saved before a held provider check and activates the same connection", async () => {
+  const store = await BrowserStore.open(`calviews${String(++serial).padStart(35, "0")}`); opened.push(store);
+  const held = deferred(), started = deferred();
+  const request = vi.fn(async (operation: any): Promise<unknown> => {
+    if (operation.kind === "endpoints") return { state: "observed", value: { endpoints: [{ id: "approved", name: "Approved" }] } };
+    started.release(); await held.promise;
+    return { state: "observed", value: { sources: [{ ...source, id: "https://calendar.test/home/" }] } };
+  });
+  const repository = new CalendarRepository(store.calendar, "tab", request, async (_scope, work) => work(), () => false, () => {});
+  expect(await repository.endpoints()).toEqual([{ id: "approved", name: "Approved" }]);
+  const connecting = repository.connect("approved", "sam", "transient-secret", "home");
+  await started.promise;
+  expect(await repository.connections()).toEqual([{ id: "home", endpoint_id: "approved", username: "sam", revision: 1, status: "Prepared" }]);
+  held.release();
+  expect(await connecting).toMatchObject({ id: "home", revision: 2, status: "Active" });
+  expect((await store.calendar.sources())[0]).toMatchObject({ id: "https://calendar.test/home/", connection_id: "home" });
+  expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "cal_dav", password: "transient-secret", operation: { kind: "sources" } }));
+});
+
+test("restart retains the bound action but waits for CalDAV credential re-entry", async () => {
+  const store = await BrowserStore.open(`calviews${String(++serial).padStart(35, "0")}`); opened.push(store);
+  const prepared = await store.calendar.admitConnection({ id: "home", endpoint_id: "approved", username: "sam" });
+  const active = await store.calendar.activateConnection(prepared);
+  const caldavSource = { ...source, connection_id: active.id };
+  await store.calendar.saveConnectionSources(active.id, [caldavSource]);
+  await store.calendar.sync(source.id, ...window, [event], await store.calendar.observationRevision());
+  const action = await store.calendar.admit({ id: crypto.randomUUID(), key: "1:aevent", owner: "old-tab", mutation: { save: { before: event, after: { ...event, title: "Queued" } } } });
+  const request = vi.fn(async (): Promise<unknown> => { throw Error("provider must not run without the transient password"); });
+  const repository = new CalendarRepository(store.calendar, "new-tab", request, async (_scope, work) => work(), () => false, () => {});
+  const work = (await repository.sourceWork().page()).rows.find(row => row.id === action.id)!;
+  await work.run();
+  expect((await store.calendar.get(action.id))?.status).toBe("Waiting");
+  expect((await store.calendar.get(action.id))?.error).toContain("Re-enter this CalDAV password");
+  expect(request).not.toHaveBeenCalled();
+});
+
+test.each(["removal", "newer sources"])("held CalDAV setup cannot publish after %s", async change => {
+  const { journal, repository, request } = await fixture(), held = deferred(), started = deferred();
+  request.mockImplementationOnce(async () => {
+    started.release(); await held.promise;
+    return { state: "observed", value: { sources: [{ ...source, id: "home-source" }] } };
+  });
+  const connecting = repository.connect("approved", "sam", "transient", "home");
+  const refused = expect(connecting).rejects.toThrow("changed");
+  await started.promise;
+  const prepared = (await journal.connections())[0];
+  if (change === "removal") await journal.removeConnection(prepared);
+  else await journal.saveSources([{ ...source, name: "Newer name" }]);
+  held.release(); await refused;
+  expect((await journal.sources()).some(item => item.id === "home-source")).toBe(false);
+  expect((await journal.connections())[0].status).toBe(change === "removal" ? "Removed" : "Prepared");
+  if (change === "removal") {
+    await expect(repository.connect("approved", "sam", "transient", "home")).rejects.toThrow("removed");
+    expect(request).toHaveBeenCalledTimes(1);
+  }
+});
+
+test("CalDAV activation and source publication roll back together on a conflicting source", async () => {
+  const { journal, repository, request } = await fixture();
+  request.mockResolvedValueOnce({ state: "observed", value: { sources: [source] } });
+  await expect(repository.connect("approved", "sam", "transient", "home")).rejects.toThrow("another connection");
+  expect((await journal.connections())[0].status).toBe("Prepared");
+  expect(await journal.sources()).toEqual([source, other]);
+});
+
+test("first Google source discovery loads its events in the same refresh", async () => {
+  const { journal, repository, request } = await fixture();
+  await journal.saveSources([]); await repository.load();
+  request.mockResolvedValueOnce({ state: "observed", value: { sources: [source] } });
+  request.mockResolvedValueOnce({ state: "observed", value: { events: [event] } });
+  await repository.refresh(...window, "");
+  expect(repository.source).toBe(source.id);
+  expect(repository.events[0].title).toBe("Original");
+  expect(request).toHaveBeenLastCalledWith({ kind: "events", source_id: source.id, start: window[0], end: window[1] });
+});

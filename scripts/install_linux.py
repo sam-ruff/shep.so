@@ -28,7 +28,8 @@ def desktop_entry(arguments):
     return (
         "[Desktop Entry]\nVersion=1.0\nType=Application\nName=Shep\n"
         "GenericName=Email and Calendar\nComment=A calm home for your mail and calendar\n"
-        f"Exec={' '.join(exec_value(argument) for argument in arguments)}\n"
+        f"Exec={' '.join(exec_value(argument) for argument in arguments)} %u\n"
+        "MimeType=x-scheme-handler/mailto;\n"
         f"Icon={APP_ID}\nTerminal=false\n"
         "Categories=Network;Email;Office;Calendar;\nKeywords=mail;email;calendar;imap;pop3;\n"
         f"StartupWMClass={APP_ID}\nStartupNotify=false\n"

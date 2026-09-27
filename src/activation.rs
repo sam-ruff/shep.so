@@ -85,7 +85,8 @@ impl Drop for Owner {
     }
 }
 
-pub fn start() -> anyhow::Result<Launch> {
+/// A `mailto` link is handed to a running owner so it opens a draft.
+pub fn start(mailto: Option<String>) -> anyhow::Result<Launch> {
     let demo = cfg!(feature = "test-support") && std::env::args_os().any(|arg| arg == "--demo");
     let root = crate::engine::workspace_location(demo)?.map(|(root, _)| root);
     #[cfg(feature = "test-support")]
@@ -108,7 +109,10 @@ pub fn start() -> anyhow::Result<Launch> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(acquire(&root, &ipc::Local, identity))
+    match mailto {
+        Some(link) => runtime.block_on(acquire(&root, &ipc::Compose(link), identity)),
+        None => runtime.block_on(acquire(&root, &ipc::Local, identity)),
+    }
 }
 
 /// Test fixtures spoof the executable through `SHEP_TEST_BINARY_IDENTITY`:
@@ -514,6 +518,44 @@ mod tests {
             Local.request(record).await.expect("closing response"),
             Reply::Closing
         );
+    }
+
+    #[tokio::test]
+    async fn local_socket_hands_a_mailto_link_to_the_owner() {
+        use iced::futures::StreamExt;
+        let root = tempfile::tempdir().expect("fixture directory");
+        let mut primary = owner(root.path()).await;
+        let record = read_record(&mut primary.publication)
+            .expect("record")
+            .expect("published");
+        let signal = primary.signal();
+        let subscription_signal = Some(signal.clone());
+        let mut events = Box::pin(subscription(&subscription_signal));
+        let link = "mailto:friend@example.test?subject=Hi";
+        let compose = ipc::Compose(link.into());
+        let request = compose.request(record.clone());
+        let handling = async {
+            let request = tokio::time::timeout(Duration::from_secs(2), events.next())
+                .await
+                .expect("activation arrives")
+                .expect("request");
+            let Request::Open(generation) = request else {
+                panic!("a compose must arrive as an Open: {request:?}");
+            };
+            assert_eq!(signal.take_compositions(), [link]);
+            signal.acknowledge(generation);
+        };
+        let (reply, ()) = tokio::join!(request, handling);
+        assert_eq!(reply.expect("acknowledged"), Reply::Accepted);
+
+        assert!(
+            ipc::Compose("https://example.test".into())
+                .request(record)
+                .await
+                .is_err(),
+            "the owner drops links that are not mailto"
+        );
+        assert!(signal.take_compositions().is_empty());
     }
 
     #[tokio::test]

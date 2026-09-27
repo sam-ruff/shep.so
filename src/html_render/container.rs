@@ -14,6 +14,54 @@ struct SeededImages {
     requested: HashSet<String>,
     loaded: HashMap<String, Arc<[u8]>>,
     background: Option<[u8; 4]>,
+    text: TextTone,
+    canvas: Option<[u8; 4]>,
+}
+
+/// Characters drawn in dark and light text, used to choose a canvas for a
+/// document that leaves its root background transparent.
+#[derive(Default, Clone, Copy)]
+pub(super) struct TextTone {
+    dark: u64,
+    light: u64,
+}
+
+impl TextTone {
+    pub fn add(&mut self, color: Color, characters: usize) {
+        if color.a == 0 {
+            return;
+        }
+        let characters = characters as u64;
+        if relative_luminance(color) < 0.5 {
+            self.dark += characters;
+        } else {
+            self.light += characters;
+        }
+    }
+    /// Mostly light text keeps a dark canvas; anything else gets white paper,
+    /// the canvas other mail clients give email that does not set its own.
+    pub fn canvas(self) -> [u8; 4] {
+        if self.light > self.dark {
+            DARK_CANVAS
+        } else {
+            PAPER
+        }
+    }
+}
+
+pub(super) const PAPER: [u8; 4] = [255, 255, 255, 255];
+pub(super) const DARK_CANVAS: [u8; 4] = [24, 24, 27, 255];
+
+fn relative_luminance(color: Color) -> f32 {
+    let channel = |value: u8| {
+        let value = f32::from(value) / 255.;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
 }
 
 #[derive(Clone)]
@@ -57,8 +105,22 @@ impl Surface {
     pub fn begin_draw(&self) {
         self.2.borrow_mut().background = None;
     }
+    /// The opaque root background the document painted, or the canvas chosen
+    /// once for a document whose root is transparent.
     pub fn background(&self) -> Option<[u8; 4]> {
-        self.2.borrow().background
+        let state = self.2.borrow();
+        state
+            .background
+            .filter(|rgba| rgba[3] == 255)
+            .or(state.canvas)
+    }
+    /// Locks the canvas after the first paint, so scrolling to differently
+    /// coloured text cannot switch it while the message is being read.
+    pub fn finish_draw(&self) {
+        let mut state = self.2.borrow_mut();
+        if state.canvas.is_none() && state.background.is_none_or(|rgba| rgba[3] < 255) {
+            state.canvas = Some(state.text.canvas());
+        }
     }
 }
 impl Surface {
@@ -92,7 +154,6 @@ impl DocumentContainer for Surface {
     delegate_mut! {
         create_font(descr: &FontDescription) -> (FontHandle, FontMetrics);
         delete_font(font: FontHandle);
-        draw_text(hdc: DrawContext, text: &str, font: FontHandle, color: Color, pos: Position);
         draw_list_marker(hdc: DrawContext, marker: &ListMarker);
         draw_linear_gradient(hdc: DrawContext, layer: &BackgroundLayer, gradient: &LinearGradient);
         draw_radial_gradient(hdc: DrawContext, layer: &BackgroundLayer, gradient: &RadialGradient);
@@ -101,6 +162,18 @@ impl DocumentContainer for Surface {
         set_cursor(cursor: &str);
         set_clip(pos: Position, radius: BorderRadiuses);
         del_clip();
+    }
+    fn draw_text(
+        &mut self,
+        hdc: DrawContext,
+        text: &str,
+        font: FontHandle,
+        color: Color,
+        pos: Position,
+    ) {
+        let characters = text.chars().filter(|c| !c.is_whitespace()).count();
+        self.2.borrow_mut().text.add(color, characters);
+        self.0.borrow_mut().draw_text(hdc, text, font, color, pos);
     }
     fn draw_solid_fill(&mut self, hdc: DrawContext, layer: &BackgroundLayer, color: Color) {
         if layer.is_root() && color.a > 0 {

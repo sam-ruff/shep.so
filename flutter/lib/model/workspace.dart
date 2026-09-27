@@ -257,6 +257,10 @@ class Workspace extends ChangeNotifier {
     String smtp, {
     AccountConnectionAttempt? retry,
   }) async {
+    final lifecycle = _lifecycleGeneration;
+    bool canDispatch() =>
+        !_disposed && _foreground && lifecycle == _lifecycleGeneration;
+    if (!canDispatch()) return false;
     final durable = repository is DurableAccountRepository
         ? repository as DurableAccountRepository
         : null;
@@ -267,6 +271,7 @@ class Workspace extends ChangeNotifier {
     final admitted =
         retry ??
         await durable.admitConnection(newConnectionAttemptId(), account);
+    if (!canDispatch()) return false;
     if (_removedAccounts.contains(account.id)) {
       await durable.abandonConnection(admitted.id);
       return false;
@@ -280,7 +285,14 @@ class Workspace extends ChangeNotifier {
     _connectionAttempts[admitted.id] = admitted.copy(status: 'waiting');
     _changed();
     unawaited(
-      _executeConnection(durable, admitted, incoming, smtp, generation),
+      _executeConnection(
+        durable,
+        admitted,
+        incoming,
+        smtp,
+        generation,
+        canDispatch,
+      ),
     );
     return true;
   }
@@ -291,9 +303,16 @@ class Workspace extends ChangeNotifier {
     String incoming,
     String smtp,
     int generation,
+    bool Function() canDispatch,
   ) async {
     try {
-      await durable.executeConnection(attempt, incoming, smtp);
+      if (!canDispatch()) return;
+      await durable.executeConnection(
+        attempt,
+        incoming,
+        smtp,
+        canDispatch: canDispatch,
+      );
       if (_connectionGenerations[attempt.id] != generation) return;
       _connectionAttempts.remove(attempt.id);
       _connectionGenerations.remove(attempt.id);
@@ -339,6 +358,7 @@ class Workspace extends ChangeNotifier {
   final Map<String, Mail> _bodies = {};
   final Map<String, String> bodyErrors = {};
   bool _foreground = true;
+  int _lifecycleGeneration = 0;
   int get resultCount => accountRepository == null ? matching.length : total;
   List<String> get folders => {
     'Inbox',
@@ -354,6 +374,7 @@ class Workspace extends ChangeNotifier {
     ),
   }.toList();
   void setForeground(bool active) {
+    if (_foreground != active) _lifecycleGeneration++;
     if (!active) unawaited(finishReading());
     _foreground = active;
     folderCreation?.foreground(active);
@@ -1994,7 +2015,8 @@ class Workspace extends ChangeNotifier {
     required String password,
     CalDavConnection? observed,
   }) async {
-    if (_disposed) return false;
+    final lifecycle = _lifecycleGeneration;
+    if (_disposed || !_foreground) return false;
     final repository = this.repository as DurableCalDavRepository;
     final key =
         '$url\u0000$username\u0000${observed?.id ?? ''}\u0000${observed?.revision ?? ''}';
@@ -2049,6 +2071,9 @@ class Workspace extends ChangeNotifier {
       await refreshCalDavConnections();
       return false;
     }
+    if (_disposed || !_foreground || lifecycle != _lifecycleGeneration) {
+      return false;
+    }
     unawaited(_activateCalDav(attempt));
     return true;
   }
@@ -2060,17 +2085,26 @@ class Workspace extends ChangeNotifier {
     CalDavAttempt attempt,
     String password,
   ) async {
+    final lifecycle = _lifecycleGeneration;
+    if (_disposed || !_foreground) return;
     final repository = this.repository as DurableCalDavRepository;
     await repository.saveCalDavPassword(attempt, password);
+    if (_disposed || !_foreground || lifecycle != _lifecycleGeneration) return;
     unawaited(_activateCalDav(attempt));
   }
 
   Future<void> _activateCalDav(CalDavAttempt attempt) async {
-    if (_disposed) return;
+    final lifecycle = _lifecycleGeneration;
+    bool canDispatch() =>
+        !_disposed && _foreground && lifecycle == _lifecycleGeneration;
+    if (!canDispatch()) return;
     final repository = this.repository as DurableCalDavRepository;
     if (!_runningCalDavAttempts.add(attempt.id)) return;
     try {
-      await repository.activateCalDavConnection(attempt);
+      await repository.activateCalDavConnection(
+        attempt,
+        canDispatch: canDispatch,
+      );
       if (_disposed) return;
       _calDavSetupReservations.removeWhere(
         (_, reservation) => reservation.attemptId == attempt.id,
@@ -2589,6 +2623,10 @@ class Workspace extends ChangeNotifier {
     bool repair = false,
     String? credentialSlot,
   }) async {
+    final lifecycle = _lifecycleGeneration;
+    bool canDispatch() =>
+        !_disposed && _foreground && lifecycle == _lifecycleGeneration;
+    if (!canDispatch()) return;
     final durable = repository as DurableCalendarRepository;
     if (!_runningCalendarActions.add(id)) return;
     try {
@@ -2600,12 +2638,14 @@ class Workspace extends ChangeNotifier {
         await (repository as DurableCalDavRepository).executeCalDavAction(
           id,
           credentialSlot,
+          canDispatch: canDispatch,
         );
         return;
       }
       final token = await _calendarToken(subject, const [
         'https://www.googleapis.com/auth/calendar.events',
       ]);
+      if (!canDispatch()) return;
       await durable.executeCalendarAction(id, token, subject: subject!);
     } catch (exception) {
       try {
@@ -2679,6 +2719,7 @@ class Workspace extends ChangeNotifier {
 
   @override
   void dispose() {
+    _lifecycleGeneration++;
     _disposed = true;
     _mailResumeSweep = false;
     profileDiscovery?.dispose();

@@ -1,4 +1,22 @@
 import type { MessageFind } from "./message_find";
+/** The background a formatted document paints, reported once it is laid out. */
+export interface Canvas {
+  background: string;
+  scheme: "light" | "dark";
+}
+export function readCanvas(value: {
+  background?: unknown;
+  scheme?: unknown;
+}): Canvas | undefined {
+  const { background, scheme } = value;
+  if (
+    typeof background !== "string" ||
+    !/^#[0-9a-f]{6}$/.test(background) ||
+    (scheme !== "light" && scheme !== "dark")
+  )
+    return undefined;
+  return { background, scheme };
+}
 // The app currently rebuilds its control tree on change. Keep the frame outside
 // that tree so typing Find, sync and toolbar updates cannot reload the document
 // or lose its selection/scroll position. A clipped portal follows the placeholder.
@@ -20,6 +38,7 @@ export class FormattedFrame {
       link: (url: string) => void;
       shortcut: (key: string) => void;
       error: () => void;
+      canvas?: (canvas: Canvas) => void;
     },
   ) {
     this.frame.title = "Formatted message";
@@ -61,6 +80,13 @@ export class FormattedFrame {
       this.layout = value.layout;
       this.highlighted = "";
       this.events.content(value.blocks, !!value.hasQuotes);
+    } else if (value.type === "canvas") {
+      const canvas = readCanvas(value);
+      if (!canvas) return;
+      this.frame.style.backgroundColor = canvas.background;
+      this.frame.style.colorScheme = canvas.scheme;
+      this.frame.dataset.canvas = canvas.scheme;
+      this.events.canvas?.(canvas);
     } else if (value.type === "error") this.events.error();
     else if (
       this.placeholder?.isConnected &&

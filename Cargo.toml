@@ -108,6 +108,7 @@ tiny-skia = "0.11"
 mockall = "0.15.0"
 rsa = "0.10.0-rc.18"
 iced_runtime = "0.14.0"
+iced_test = "0.14"
 
 [patch.crates-io]
 curl = { path = "vendor/curl" }

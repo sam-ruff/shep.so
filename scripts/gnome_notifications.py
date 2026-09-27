@@ -47,6 +47,27 @@ def run(binary, mode="details", desktop_type=Desktop):
                       notification_delivery="native")
         directory = desktop.directory
         print(f"GNOME notification evidence: {directory}", flush=True)
+        # Choose the settings with real controls before GNOME Shell starts: under
+        # the runner's GNOME Shell, clicks into Shep were dropped or reordered.
+        # The persistent workspace keeps them for the relaunches GNOME observes.
+        desktop.batch([{"type": "resize", "width": 1440, "height": 920}, check("window_size", [1440, 920]),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(150)])
+        if mode != "details":
+            desktop.batch([click(690, 366), check("dark", True)])
+        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), type_text("notifications"),
+                       check("settings_matches", ["Notifications"]), click(450, 289),
+                       check("settings_group", "Notifications"),
+                       click(288, 413), check("notifications.settings.sound", False)])
+        if mode == "private":
+            desktop.batch([click(288, 452), check("notifications.settings.show_details", False)])
+        if mode == "muted":
+            desktop.batch([click(288, 374), check("notifications.settings.popups", False)])
+        # Close to tray is on by default; a relaunch must quit, not hide.
+        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), key("ctrl+a"),
+                       type_text("system tray"), check("settings_matches", ["System tray"]),
+                       click(450, 289), check("settings_group", "System tray"),
+                       check("tray.enabled", True), click(288, 342), check("tray.saved_enabled", False),
+                       key("ctrl+1"), check("tab", "Mail")])
         env = desktop.env
         env.update(GSETTINGS_BACKEND="keyfile", XDG_CURRENT_DESKTOP="ubuntu:GNOME",
                    GNOME_SHELL_SESSION_MODE="ubuntu", LIBGL_ALWAYS_SOFTWARE="1",
@@ -60,8 +81,11 @@ def run(binary, mode="details", desktop_type=Desktop):
         (icons / f"{APP_ID}.svg").write_bytes((ROOT / "assets/shepherd-light.svg").read_bytes())
         observation = install_shell_observer(desktop)
         desktop.command("gsettings", "set", "org.gnome.shell", "enabled-extensions", f"['{OBSERVER}']")
+        # No tray: this flow runs with tray="missing", and a tray would make
+        # restarts hide Shep instead of relaunching it.
         desktop.command("gsettings", "set", "org.gnome.shell", "disabled-extensions",
-                        "['ding@rastersoft.com', 'tiling-assistant@ubuntu.com']")
+                        "['ding@rastersoft.com', 'tiling-assistant@ubuntu.com', "
+                        "'ubuntu-appindicators@ubuntu.com']")
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "enable-animations", "false")
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "scaling-factor", "1")
         desktop.command("gsettings", "set", "org.gnome.desktop.notifications", "show-banners", "true")
@@ -111,21 +135,6 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.batch([{"type": "restart"}])
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
         receipt["setup_window"] = prepare_window(desktop)
-        # The first click after the resize could be dropped on the runner.
-        desktop.batch([{"type": "hover", "x": 100, "y": 878}, wait(300), click(100, 878),
-                       check("tab", "Preferences"), wait(150)])
-        if mode != "details":
-            desktop.batch([click(690, 366), check("dark", True)])
-        # GNOME Shell can deliver this press after later typed keys; wait for focus.
-        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), type_text("notifications"),
-                       check("settings_matches", ["Notifications"]), click(450, 289),
-                       check("settings_group", "Notifications"),
-                       click(288, 413), check("notifications.settings.sound", False)])
-        if mode == "private":
-            desktop.batch([click(288, 452), check("notifications.settings.show_details", False)])
-        if mode == "muted":
-            desktop.batch([click(288, 374), check("notifications.settings.popups", False)])
-        desktop.batch([key("ctrl+1"), check("tab", "Mail")])
         if mode == "private":
             desktop.launch_size = (900, 640)
 

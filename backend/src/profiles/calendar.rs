@@ -1,5 +1,6 @@
 use super::*;
 use chrono::{DateTime, Utc};
+use shep_calendar_core::caldav::{CalDavConnection, CalDavProvider};
 use shep_calendar_core::http::CalendarProvider;
 use shep_calendar_core::{Event, FailureKind, Mutation, ProviderFailure, Receipt};
 
@@ -20,6 +21,14 @@ struct Request {
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Operation {
+    Endpoints,
+    CalDav {
+        endpoint_id: String,
+        connection_id: String,
+        username: String,
+        password: String,
+        operation: Box<Operation>,
+    },
     Sources,
     Events {
         source_id: String,
@@ -103,8 +112,12 @@ async fn perform(
     provider: &dyn CalendarProvider,
     token: &str,
     operation: Operation,
+    google: bool,
 ) -> Result<Value, ProviderFailure> {
     match operation {
+        Operation::Endpoints | Operation::CalDav { .. } => {
+            Err(reject("This nested Calendar operation is invalid."))
+        }
         Operation::Sources => Ok(serde_json::json!({"sources":provider.sources(token).await?})),
         Operation::Events {
             source_id,
@@ -175,7 +188,9 @@ async fn perform(
                     before: None,
                     mut after,
                 } => {
-                    after.id = format!("shep{}", request_id.replace('-', ""));
+                    if google {
+                        after.id = format!("shep{}", request_id.replace('-', ""));
+                    }
                     after
                 }
                 Mutation::Save {
@@ -184,13 +199,15 @@ async fn perform(
                 }
                 | Mutation::Delete { before } => before,
             };
-            expected.remote_url = Some(expected.id.clone());
+            if google {
+                expected.remote_url = Some(expected.id.clone());
+            }
             let current = provider.read(token, &expected).await?;
             if current.as_ref().is_some_and(|event| {
                 event.id != expected.id || event.source_id != expected.source_id
             }) {
                 return Err(reject(
-                    "Google returned a different event identity. Keep the saved change for review.",
+                    "The provider returned a different event identity. Keep the saved change for review.",
                 ));
             }
             Ok(serde_json::json!({"current":current}))
@@ -204,7 +221,13 @@ async fn handle(
     headers: HeaderMap,
     Json(request): Json<Request>,
 ) -> Response {
-    let mutating = matches!(&request.operation, Operation::Mutate { .. });
+    let mutating = match &request.operation {
+        Operation::Mutate { .. } => true,
+        Operation::CalDav { operation, .. } => {
+            matches!(operation.as_ref(), Operation::Mutate { .. })
+        }
+        _ => false,
+    };
     let result = async {
         let binding = hash(&format!(
             "{}\0{}",
@@ -214,6 +237,57 @@ async fn handle(
             return Err(reject(
                 "This Calendar request belongs to a different signed-in identity.",
             ));
+        }
+        if matches!(request.operation, Operation::Endpoints) {
+            let endpoints: Vec<_> = state
+                .config
+                .caldav_endpoints
+                .iter()
+                .map(|endpoint| serde_json::json!({"id":endpoint.id,"name":endpoint.name}))
+                .collect();
+            return Ok(serde_json::json!({"endpoints":endpoints}));
+        }
+        if let Operation::CalDav {
+            endpoint_id,
+            connection_id,
+            username,
+            password,
+            operation,
+        } = request.operation
+        {
+            let endpoint = state
+                .config
+                .caldav_endpoints
+                .iter()
+                .find(|endpoint| endpoint.id == endpoint_id)
+                .ok_or_else(|| reject("This CalDAV endpoint is not enabled for the beta."))?;
+            if connection_id.is_empty()
+                || connection_id.len() > 128
+                || username.is_empty()
+                || username.len() > 1024
+            {
+                return Err(reject("This CalDAV connection identity is invalid."));
+            }
+            if matches!(
+                operation.as_ref(),
+                Operation::Endpoints | Operation::CalDav { .. }
+            ) {
+                return Err(reject("This nested Calendar operation is invalid."));
+            }
+            let provider = CalDavProvider::new_pinned(
+                CalDavConnection {
+                    id: connection_id,
+                    url: endpoint.url.clone(),
+                    username,
+                },
+                endpoint.address,
+            )
+            .map_err(|_| reject("This CalDAV endpoint is unavailable."))?;
+            let _slot = state.calendar_slots.try_acquire().map_err(|_| {
+                ProviderFailure::waiting("Calendar is busy. The saved change can wait.")
+            })?;
+            let password = Zeroizing::new(password);
+            return perform(&provider, password.as_str(), *operation, false).await;
         }
         if let Operation::Mutate {
             request_id,
@@ -235,7 +309,7 @@ async fn handle(
         })?;
         let write = matches!(&request.operation, Operation::Mutate { .. });
         let token = access_token(&state, &session, &headers, write).await?;
-        perform(provider.as_ref(), &token, request.operation).await
+        perform(provider.as_ref(), &token, request.operation, true).await
     }
     .await;
     match result {

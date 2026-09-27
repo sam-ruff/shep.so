@@ -68,13 +68,34 @@ pub struct CalDavProvider {
 #[cfg(feature = "http")]
 impl CalDavProvider {
     pub fn new(connection: CalDavConnection) -> anyhow::Result<Self> {
+        Self::with_client(connection, reqwest::Client::builder())
+    }
+
+    pub fn new_pinned(
+        connection: CalDavConnection,
+        address: std::net::SocketAddr,
+    ) -> anyhow::Result<Self> {
+        let url = validate_url(&connection.url)?;
+        let host = url
+            .host_str()
+            .context("This CalDAV connection has no host.")?;
+        Self::with_client(
+            connection,
+            reqwest::Client::builder().no_proxy().resolve(host, address),
+        )
+    }
+
+    fn with_client(
+        connection: CalDavConnection,
+        client: reqwest::ClientBuilder,
+    ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             connection.is_bounded(),
             "This CalDAV connection is invalid."
         );
         validate_url(&connection.url)?;
         Ok(Self {
-            client: reqwest::Client::builder()
+            client: client
                 .timeout(std::time::Duration::from_secs(45))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,

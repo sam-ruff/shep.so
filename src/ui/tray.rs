@@ -49,9 +49,13 @@ impl App {
         }
     }
 
-    pub(super) fn boot(activation: Option<crate::activation::Signal>) -> (Self, Task<Message>) {
+    pub(super) fn boot(
+        activation: Option<crate::activation::Signal>,
+        mailto: Option<String>,
+    ) -> (Self, Task<Message>) {
         let (mut app, initial) = Self::new();
         app.activation = activation;
+        app.pending_mailto = mailto;
         let opening = app.open_main_window();
         (app, Task::batch([initial, opening]))
     }
@@ -268,11 +272,17 @@ impl App {
         if self.tray.exiting {
             return Task::none();
         }
-        let task = self.restore_main_window();
-        if let Some(signal) = &self.activation {
-            signal.acknowledge(generation);
-        }
-        task
+        let restore = self.restore_main_window();
+        let Some(signal) = self.activation.clone() else {
+            return restore;
+        };
+        let composing: Vec<_> = signal
+            .take_compositions()
+            .iter()
+            .map(|link| self.compose_mailto(link))
+            .collect();
+        signal.acknowledge(generation);
+        Task::batch(std::iter::once(restore).chain(composing))
     }
 
     /// A newer build asked this process to quit for it: acknowledge, then

@@ -14,6 +14,8 @@ use tokio::{
 const MAGIC: &[u8; 8] = b"SHEPOP01";
 /// An owner built before this request reads only the first magic and drops it.
 const RESTART_MAGIC: &[u8; 8] = b"SHEPRS01";
+/// An Open followed by a length-prefixed `mailto` link.
+const COMPOSE_MAGIC: &[u8; 8] = b"SHEPMT01";
 const HANDSHAKE: Duration = Duration::from_millis(250);
 const ACKNOWLEDGMENT: Duration = Duration::from_secs(2);
 
@@ -37,21 +39,48 @@ pub(super) struct Local;
 #[async_trait::async_trait]
 impl Transport for Local {
     async fn request(&self, record: Record) -> anyhow::Result<Reply> {
-        exchange(record, MAGIC).await
+        exchange(record, MAGIC, None).await
     }
 
     async fn restart(&self, record: Record) -> anyhow::Result<Reply> {
-        exchange(record, RESTART_MAGIC).await
+        exchange(record, RESTART_MAGIC, None).await
     }
 }
 
-async fn exchange(record: Record, magic: &'static [u8; 8]) -> anyhow::Result<Reply> {
+/// Opens the owner with a draft for the held `mailto` link.
+pub(super) struct Compose(pub(super) String);
+
+#[async_trait::async_trait]
+impl Transport for Compose {
+    async fn request(&self, record: Record) -> anyhow::Result<Reply> {
+        exchange(record, COMPOSE_MAGIC, Some(self.0.as_bytes())).await
+    }
+
+    async fn restart(&self, record: Record) -> anyhow::Result<Reply> {
+        Local.restart(record).await
+    }
+}
+
+async fn exchange(
+    record: Record,
+    magic: &'static [u8; 8],
+    payload: Option<&[u8]>,
+) -> anyhow::Result<Reply> {
     timeout(ACKNOWLEDGMENT + HANDSHAKE, async move {
         let name = record.endpoint.as_str().to_ns_name::<GenericNamespaced>()?;
         let connection = Stream::connect(name).await?;
         let mut connection = &connection;
         connection.write_all(magic).await?;
         connection.write_all(record.secret.as_bytes()).await?;
+        if let Some(payload) = payload {
+            let length = u16::try_from(payload.len())?;
+            anyhow::ensure!(
+                usize::from(length) <= crate::mailto::MAX_LEN,
+                "The mailto link is too long"
+            );
+            connection.write_u16(length).await?;
+            connection.write_all(payload).await?;
+        }
         match connection.read_u8().await? {
             1 => Ok(Reply::Accepted),
             2 => Ok(Reply::Closing),
@@ -143,6 +172,12 @@ async fn serve(connection: Stream, record: Record, signal: Signal) {
     let (admitted, accepted) = match &request[..8] {
         magic if magic == MAGIC => (signal.request(), 1),
         magic if magic == RESTART_MAGIC => (signal.request_restart(), 3),
+        magic if magic == COMPOSE_MAGIC => {
+            let Ok(Some(link)) = timeout(HANDSHAKE, read_link(connection)).await else {
+                return;
+            };
+            (signal.request_compose(link), 1)
+        }
         _ => return,
     };
     let reply = match admitted {
@@ -158,4 +193,15 @@ async fn serve(connection: Stream, record: Record, signal: Signal) {
         }
     };
     let _ = timeout(HANDSHAKE, connection.write_u8(reply)).await;
+}
+
+async fn read_link(mut connection: &Stream) -> Option<String> {
+    let length = usize::from(connection.read_u16().await.ok()?);
+    if length > crate::mailto::MAX_LEN {
+        return None;
+    }
+    let mut link = vec![0_u8; length];
+    connection.read_exact(&mut link).await.ok()?;
+    let link = String::from_utf8(link).ok()?;
+    crate::mailto::Mailto::parse(&link).map(|_| link)
 }

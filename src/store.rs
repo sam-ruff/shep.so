@@ -911,10 +911,12 @@ impl Store {
                         if flags_written_locally(&tx, &id, epoch)? {
                             continue;
                         }
-                        tx.execute(
-                            "UPDATE messages SET unread=?,starred=? WHERE id=?",
-                            params![unread, starred, id],
-                        )?;
+                        // Unchanged flags must not rewrite the unread and flag indexes.
+                        tx.prepare_cached(
+                            "UPDATE messages SET unread=?1,starred=?2 WHERE id=?3
+                                AND (unread IS NOT ?1 OR starred IS NOT ?2)",
+                        )?
+                        .execute(params![unread, starred, id])?;
                     }
                     tx.commit()?;
                     Ok(())

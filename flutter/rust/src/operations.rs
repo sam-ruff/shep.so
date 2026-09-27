@@ -31,6 +31,7 @@ pub struct Operations {
     printing: Arc<Semaphore>,
     profile_records: Arc<Semaphore>,
     accounts: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    pub(crate) connection_dispatch: Mutex<()>,
     /// One owned group step at a time; account removal takes it as a fence.
     pub(crate) groups: Arc<Mutex<()>>,
     pub(crate) outgoing: crate::outgoing::Runtime,
@@ -72,6 +73,24 @@ mod calendar_capacity_tests {
     }
 }
 impl Operations {
+    pub(crate) fn try_connection_capacity(
+        &self,
+    ) -> Result<(
+        tokio::sync::OwnedSemaphorePermit,
+        tokio::sync::OwnedSemaphorePermit,
+    )> {
+        let admission = self
+            .admitted
+            .clone()
+            .try_acquire_owned()
+            .context("Connection checks are busy. Retry this saved connection shortly.")?;
+        let provider = self
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .context("Connection checks are busy. Retry this saved connection shortly.")?;
+        Ok((admission, provider))
+    }
     #[cfg(test)]
     pub(crate) async fn hold_render_capacity(&self) -> tokio::sync::OwnedSemaphorePermit {
         self.rendering.clone().acquire_many_owned(2).await.unwrap()
@@ -88,6 +107,7 @@ impl Operations {
             printing: Arc::new(Semaphore::new(2)),
             profile_records: Arc::new(Semaphore::new(1)),
             accounts: Mutex::new(HashMap::new()),
+            connection_dispatch: Mutex::new(()),
             groups: Arc::new(Mutex::new(())),
             outgoing: crate::outgoing::Runtime::default(),
             sent: crate::sent::Runtime::default(),
@@ -401,6 +421,11 @@ pub enum Request {
     },
     Probe {
         account: Account,
+        password: SecretString,
+        smtp: bool,
+    },
+    ProbeAccountConnection {
+        attempt: String,
         password: SecretString,
         smtp: bool,
     },
@@ -885,6 +910,10 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             db.write(move|db|crate::connections::prepare(db,attempt.as_deref(),account,expected)).await
         }
         Request::PendingAccountConnections => db.read(crate::connections::pending).await,
+        Request::ProbeAccountConnection{attempt,password,smtp} => {
+            crate::connections::probe::run(profile, &crate::connections::probe::ProviderProbe, attempt, password, smtp).await?;
+            Ok(json!({"connected":true,"sent":false}))
+        }
         Request::RetryAccountConnection{attempt} => db.write(move |db| {
             crate::connections::retry(db,&attempt)?;
             Ok(json!({"retrying":true}))
@@ -897,10 +926,13 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             crate::connections::fail(db,&attempt,&error)?;
             Ok(json!({"failed":true}))
         }).await,
-        Request::AbandonAccountConnection{attempt} => db.write(move |db| {
-            crate::connections::abandon(db,&attempt)?;
-            Ok(json!({"abandoned":true}))
-        }).await,
+        Request::AbandonAccountConnection{attempt} => {
+            let _dispatch = profile.operations.connection_dispatch.lock().await;
+            db.write(move |db| {
+                crate::connections::abandon(db,&attempt)?;
+                Ok(json!({"abandoned":true}))
+            }).await
+        }
         Request::ActivateAccount{slot} => {
             let lookup=slot.clone();
             let id=db.read(move|db|crate::connections::owner(db,&lookup)).await?;
