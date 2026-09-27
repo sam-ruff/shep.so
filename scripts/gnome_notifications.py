@@ -10,10 +10,14 @@ import time
 from pathlib import Path
 
 from e2e import check, click, key, type_text, wait
-from gnome_activation import (OBSERVER, cleanup_all, eventually, install_shell_observer, prepare_window,
-                              require_stable, start_system_bus, stop_process, stop_runtime_processes)
+from gnome_activation import (OBSERVER, SHELL_START_SECONDS, cleanup_all, eventually, install_shell_observer,
+                              prepare_window, require_stable, start_system_bus, stop_process,
+                              stop_runtime_processes)
 from install_linux import APP_ID, desktop_entry
 from mcp_harness import Desktop, ROOT
+
+# A background or manual mail check over the persistent fixture workspace.
+MAIL_ROUND_SECONDS = 30
 
 def validate_notification(items, mode):
     if mode == "muted":
@@ -97,12 +101,15 @@ def run(binary, mode="details", desktop_type=Desktop):
             with (directory / f"{name}.log").open("w") as output:
                 processes.append(subprocess.Popen(command, env=env, stdout=output, stderr=output))
             if name == "gnome-shell":
-                eventually(lambda: observation()["shell_ready"], "GNOME startup complete", 20)
+                shell_started = time.monotonic()
+                eventually(lambda: observation()["shell_ready"], "GNOME startup complete", SHELL_START_SECONDS)
+                receipt["shell_start_seconds"] = round(time.monotonic() - shell_started, 1)
 
+        # The service is another cold GJS start beside the shell.
         eventually(lambda: desktop.command("gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
                                            "--object-path", "/org/freedesktop/Notifications", "--method",
                                            "org.freedesktop.Notifications.GetServerInformation"),
-                   "actual GNOME notification service", 20)
+                   "actual GNOME notification service", SHELL_START_SECONDS)
 
         def bus_pid(name):
             value = json.loads(desktop.command(
@@ -142,7 +149,9 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.launch_args.append("--background-sync")
         desktop.batch([{"type": "restart"}])
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
-        desktop.batch([check("total", 121), check("notifications.requested", 1),
+        # The first background check delivers it and commits it to disk.
+        eventually(lambda: desktop.state()["total"] == 121, "background arrival cached", MAIL_ROUND_SECONDS)
+        desktop.batch([check("notifications.requested", 1),
                        check("notifications.sent", 0 if mode == "muted" else 1)])
         if mode != "muted":
             eventually(lambda: observation()["notifications"] and observation()["banner"],
@@ -152,8 +161,16 @@ def run(binary, mode="details", desktop_type=Desktop):
         validate_notification(observation()["notifications"], mode)
         desktop.command("import", "-window", "root", "-quality", "95", str(directory / "new-mail-banner.webp"))
         receipt["arrival"] = observation()
-        desktop.batch([key("ctrl+r"), {**check("sync_round", 2), "timeout_ms": 5000},
-                       check("refreshing", False), check("notifications.sent", 0 if mode == "muted" else 1)])
+        desktop.batch([key("ctrl+r")])
+
+        def round_finished():
+            state = desktop.state()
+            return state["sync_round"] >= 2 and not state["refreshing"]
+
+        # Each account's check commits the fictional cache on disk before the
+        # manual round ends, which slow storage stretches beyond a 3 s wait.
+        eventually(round_finished, "manual refresh round finished", MAIL_ROUND_SECONDS)
+        desktop.batch([check("notifications.sent", 0 if mode == "muted" else 1)])
         validate_notification(observation()["notifications"], mode)
         desktop.command("xdotool", "key", "--clearmodifiers", "super+v")
         eventually(lambda: observation()["centre_open"] and observation()["centre_mapped"],

@@ -85,6 +85,10 @@ pub(super) struct State {
     saving: Option<u64>,
     loading: Option<u64>,
     job: Option<u64>,
+    /// Finished background jobs: native tests wait on this rather than on a
+    /// working flag that is still false before a click is processed.
+    #[cfg(any(test, feature = "test-support"))]
+    finished: u64,
     stopping: Option<u64>,
     serial: u64,
     review: Option<Arc<Discovery>>,
@@ -170,7 +174,7 @@ impl State {
     #[cfg(any(test, feature = "test-support"))]
     pub fn observation(&self) -> serde_json::Value {
         serde_json::json!({"loaded":self.snapshot.is_some(),"available":self.snapshot.as_ref().is_some_and(|s|s.available),"empty_workspace":self.snapshot.as_ref().is_some_and(|s|s.empty_workspace),
-            "options":self.options(),"offer":self.offer,"login_pending":self.login_pending.is_some(),"saving":self.saving.is_some(),"working":self.job.is_some(),"stopping":self.stopping.is_some(),
+            "options":self.options(),"offer":self.offer,"login_pending":self.login_pending.is_some(),"saving":self.saving.is_some(),"working":self.job.is_some(),"finished":self.finished,"stopping":self.stopping.is_some(),
             "account_reviews": self.account_reviews.as_ref().map(|r| r.iter().map(|r|serde_json::json!({"id":r.local().id,"name":r.local().name,"host":r.local().host,"removed":r.removed(),"versions":r.versions().iter().map(|v|&v.account.host).collect::<Vec<_>>(),
                 "link":r.link().map(|l|serde_json::json!({"name":l.account.name,"email":l.account.email,"host":l.account.host,"linkable":l.linkable(),"matches":l.matches.iter().map(|m|serde_json::json!({"id":m.account.id,"exact":m.exact})).collect::<Vec<_>>()}))})).collect::<Vec<_>>()),
             "account_after": self.account_after,
@@ -598,6 +602,10 @@ impl App {
         }
         if job && !pending {
             state.job = None;
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                state.finished += 1;
+            }
         }
         if stopping {
             state.stopping = None;
@@ -1647,6 +1655,7 @@ mod tests {
         pending.enrollment.options.enabled = true;
         let _ = app.shared_profile_update(900, Update::Pending(Arc::new(pending.clone())));
         assert_eq!(app.profile_sync.job, Some(900));
+        assert_eq!(app.profile_sync.observation()["finished"], 0);
         assert!(app.profile_sync.options().enabled);
         assert!(!app.profile_sync.options().accounts);
         assert!(app.notice.is_none());
@@ -1654,6 +1663,7 @@ mod tests {
         pending.enrollment.revision = 2;
         let _ = app.shared_profile_update(request, Update::Status(Arc::new(pending)));
         let _ = app.shared_profile_update(900, Update::Stopped);
+        assert_eq!(app.profile_sync.observation()["finished"], 1);
         let Command::ProfileSync(Request::Status(refresh)) = queue.try_recv().unwrap() else {
             panic!("refresh")
         };

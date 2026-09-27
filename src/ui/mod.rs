@@ -551,6 +551,35 @@ pub struct App {
     #[cfg(feature = "test-support")]
     draw_log: Arc<draw_log::Log>,
     test_revision: u64,
+    /// The newest observation queued for the state file.
+    test_queued: Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// Replace the observation file unless a newer snapshot is already queued:
+/// writing stale ones on a slow disk only delays the one the harness awaits.
+async fn write_observation(
+    path: std::path::PathBuf,
+    revision: u64,
+    queued: Arc<std::sync::atomic::AtomicU64>,
+    data: serde_json::Value,
+) {
+    static SNAPSHOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _guard = SNAPSHOT_LOCK.lock().await;
+    if revision < queued.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    if let Ok(previous) = tokio::fs::read(&path).await
+        && let Ok(previous) = serde_json::from_slice::<serde_json::Value>(&previous)
+        && previous["revision"].as_u64() >= data["revision"].as_u64()
+    {
+        return;
+    }
+    let temp = path.with_extension("tmp");
+    if let Ok(json) = serde_json::to_vec(&data)
+        && tokio::fs::write(&temp, json).await.is_ok()
+    {
+        let _ = tokio::fs::rename(temp, path).await;
+    }
 }
 
 pub fn run(activation: Option<crate::activation::Signal>, mailto: Option<String>) -> iced::Result {
@@ -753,6 +782,7 @@ impl App {
                 #[cfg(feature = "test-support")]
                 draw_log: Default::default(),
                 test_revision: 0,
+                test_queued: Default::default(),
             },
             iced::system::theme().map(Message::SystemTheme),
         )
@@ -4492,26 +4522,13 @@ impl App {
             return Task::none();
         };
         self.test_revision += 1;
+        let revision = self.test_revision;
+        let queued = self.test_queued.clone();
+        queued.store(revision, std::sync::atomic::Ordering::Relaxed);
         let data = self.test_observation();
-        Task::perform(
-            async move {
-                static SNAPSHOT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-                let _guard = SNAPSHOT_LOCK.lock().await;
-                if let Ok(previous) = tokio::fs::read(&path).await
-                    && let Ok(previous) = serde_json::from_slice::<serde_json::Value>(&previous)
-                    && previous["revision"].as_u64() >= data["revision"].as_u64()
-                {
-                    return;
-                }
-                let temp = path.with_extension("tmp");
-                if let Ok(json) = serde_json::to_vec(&data)
-                    && tokio::fs::write(&temp, json).await.is_ok()
-                {
-                    let _ = tokio::fs::rename(temp, path).await;
-                }
-            },
-            |_| Message::Noop,
-        )
+        Task::perform(write_observation(path, revision, queued, data), |_| {
+            Message::Noop
+        })
     }
     /// Observation-only state read by the native harness and the simulator tests.
     fn test_observation(&self) -> serde_json::Value {
@@ -4998,3 +5015,39 @@ fn default_export(name: &str) -> String {
 
 #[cfg(test)]
 mod folder_tests;
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn queued_newer_observation_skips_the_stale_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        let queued = Arc::new(std::sync::atomic::AtomicU64::new(2));
+        write_observation(
+            path.clone(),
+            1,
+            queued.clone(),
+            serde_json::json!({"revision": 1}),
+        )
+        .await;
+        assert!(!path.exists());
+        write_observation(
+            path.clone(),
+            2,
+            queued.clone(),
+            serde_json::json!({"revision": 2}),
+        )
+        .await;
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(written["revision"], 2);
+        // A file already at a higher revision is kept.
+        queued.store(1, std::sync::atomic::Ordering::Relaxed);
+        write_observation(path.clone(), 1, queued, serde_json::json!({"revision": 1})).await;
+        let kept: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(kept["revision"], 2);
+    }
+}

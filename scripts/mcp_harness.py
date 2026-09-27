@@ -31,6 +31,14 @@ _tray_spec = importlib.util.spec_from_file_location("tray_fixture", ROOT / "scri
 _tray_fixture = importlib.util.module_from_spec(_tray_spec)
 _tray_spec.loader.exec_module(_tray_fixture)
 
+# In-memory fixtures start without disk writes. A file-backed workspace
+# (--persist-demo) first commits a fresh schema with full syncs, about 150 of
+# them before the first page: 6.4 s at 40 and 25.4 s at 15 write IOPS in the
+# CI image, against 0.5 s on an idle NVMe host.
+MEMORY_START_SECONDS = 20
+FILE_WORKSPACE_START_SECONDS = 60
+KILLED_EXIT_SECONDS = 30
+
 
 LIVE_VARIABLES = ("SHEP_LIVE_IMAP_HOST", "SHEP_LIVE_IMAP_PORT", "SHEP_LIVE_IMAP_USER",
                   "SHEP_LIVE_IMAP_PASSWORD", "SHEP_LIVE_SMTP_HOST", "SHEP_LIVE_SMTP_PORT")
@@ -234,7 +242,8 @@ class Desktop:
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.wait(timeout=3)
+                    # A killed process still finishes a sync already in the kernel.
+                    process.wait(timeout=KILLED_EXIT_SECONDS)
         self.app = self.xvfb = self.second = None
         if self.second_log:
             self.second_log.close()
@@ -503,7 +512,8 @@ class Desktop:
     def wait_ready(self, process, log, deadline=None):
         """The owned process must show the main window and write its own state."""
         width, height = self.launch_size
-        deadline = deadline or time.monotonic() + 20
+        seconds = FILE_WORKSPACE_START_SECONDS if "--persist-demo" in self.launch_args else MEMORY_START_SECONDS
+        deadline = deadline or time.monotonic() + seconds
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise RuntimeError(f"Shep exited. See {log}")
@@ -522,7 +532,7 @@ class Desktop:
             except (subprocess.SubprocessError, FileNotFoundError, json.JSONDecodeError):
                 pass
             time.sleep(0.05)
-        raise RuntimeError("Shep was not ready within 20 seconds; check the app log and test-support feature.")
+        raise RuntimeError("Shep was not ready before its start deadline; check the app log and test-support feature.")
 
     def launch_second(self, identity=None):
         """Launch the same fixture again, as a launcher click would, and report what the two processes did.

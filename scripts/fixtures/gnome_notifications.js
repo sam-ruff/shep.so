@@ -19,7 +19,14 @@ export default class NotificationObserver {
                 centre_open: Main.panel.statusArea.dateMenu.menu.isOpen,
                 centre_mapped: Main.panel.statusArea.dateMenu.menu.actor.mapped,
             };
-            GLib.file_set_contents(path, JSON.stringify(state));
+            // Write only changes, atomically but without fsync: this runs on
+            // the shell's main loop, which a sync on slow storage would stall.
+            const text = JSON.stringify(state);
+            if (text !== this._written) {
+                GLib.file_set_contents_full(path, new TextEncoder().encode(text),
+                    GLib.FileSetContentsFlags.CONSISTENT, 0o644);
+                this._written = text;
+            }
             return GLib.SOURCE_CONTINUE;
         });
     }

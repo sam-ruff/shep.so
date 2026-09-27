@@ -379,6 +379,22 @@ class HarnessTests(unittest.TestCase):
                 desktop.restart()
             launch.assert_not_called()
 
+    def test_start_deadline_allows_file_backed_schema_commits_only(self):
+        for arguments, seconds in ((["owned-fixture"], harness.MEMORY_START_SECONDS),
+                                   (["owned-fixture", "--persist-demo"], harness.FILE_WORKSPACE_START_SECONDS)):
+            desktop = harness.Desktop()
+            desktop.launch_args, desktop.launch_size = arguments, (1440, 920)
+            process = Mock()
+            process.poll.return_value = None
+            clock = iter([0, 0, seconds - 1, seconds])
+            with (patch.object(harness.time, "monotonic", side_effect=lambda: next(clock)),
+                  patch.object(harness.time, "sleep"),
+                  patch.object(desktop, "command", return_value="")):
+                with self.assertRaisesRegex(RuntimeError, "not ready before its start deadline"):
+                    desktop.wait_ready(process, "app.log")
+            self.assertIsNone(next(clock, None))
+        self.assertGreater(harness.FILE_WORKSPACE_START_SECONDS, harness.MEMORY_START_SECONDS)
+
     def test_graceful_close_timeout_keeps_the_owned_process_and_never_relaunches(self):
         desktop = harness.Desktop()
         desktop.persistent, desktop.launch_args = True, ["owned-fixture"]
