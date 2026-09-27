@@ -4,6 +4,8 @@ use crate::{model::parse_mail, store::Store};
 use base64::Engine;
 
 pub async fn seed(store: &Store) -> anyhow::Result<()> {
+    // One clock reading keeps the intended order across slow awaited inserts.
+    let now = chrono::Utc::now().timestamp();
     let logo = base64::engine::general_purpose::STANDARD
         .encode(include_bytes!("../../assets/logo-light.webp"));
     let styled = format!(r##"Content-Type: multipart/related; boundary=htmlfixture
@@ -76,7 +78,7 @@ Content-Transfer-Encoding: base64
             true,
             false,
         )?;
-        mail.summary.timestamp = chrono::Utc::now().timestamp() + 100 - index;
+        mail.summary.timestamp = now + 100 - index;
         store.upsert(vec![mail]).await?;
     }
     let raw = b"From: Reports <reports@example.test>\r\nTo: alex@studio.example\r\nSubject: Wide HTML report\r\nContent-Type: text/html\r\n\r\n<html><body><table style=\"width:1000px;border-collapse:collapse\"><tr><td style=\"width:500px;background:#c5d8f5;padding:20px\">Left report column</td><td style=\"width:500px;background:#f3dab0;padding:20px\">Right report column</td></tr></table></body></html>";
@@ -152,7 +154,7 @@ Content-Transfer-Encoding: base64
             false,
             false,
         )?;
-        mail.summary.timestamp = chrono::Utc::now().timestamp() + 100 - index;
+        mail.summary.timestamp = now + 100 - index;
         store.upsert(vec![mail]).await?;
     }
     // Keep deep layouts outside the initially selected message's neighbors.
@@ -176,7 +178,7 @@ Content-Transfer-Encoding: base64
             false,
             false,
         )?;
-        mail.summary.timestamp = chrono::Utc::now().timestamp() + 100 - index;
+        mail.summary.timestamp = now + 100 - index;
         store.upsert(vec![mail]).await?;
     }
     Ok(())

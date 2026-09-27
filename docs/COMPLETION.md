@@ -1,5 +1,43 @@
 # Completion audit
 
+## Native scenarios on a starved runner, 27 September 2026
+
+Main run `36306277168` (sharing its Proxmox host with another full suite) and
+PR #14 run `36316026621` failed the Activity Outbox order, both GNOME flows and
+up to eleven profile scenarios. The CI image reproduced every signature under a
+docker limit of 40 disk IOPS; CPU limits alone (down to a quarter of a CPU with
+busy loops) did not. Runner clones sit on the shared `tank-vm` ZFS datastore.
+
+Root causes and fixes on `fix/native-ci-starvation`:
+
+- **Outbox order:** the fixture read the clock per record, so a second
+  boundary during slow seeding tied both `created` values and the random
+  attempt IDs chose the order. One reading now, as in the HTML fixture.
+- **Profile waits:** discovery, joins, check passes and review choices are
+  durable background work (about 215/IOPS seconds for the automatic join) that
+  the scenarios gave 3 s. `profile_batch` now waits on a test-support
+  `profile_sync.finished` job counter or the awaited state, within
+  `PROFILE_SYNC_SECONDS` (30). The counter also removes a race where
+  `working == false` passed before a click was processed.
+- **File-backed start:** a fresh on-disk fixture commits about 150 synced schema
+  statements before its first page (6.4 s at 40 IOPS, 25 s at 15);
+  `FILE_WORKSPACE_START_SECONDS` is 60, in-memory fixtures keep 20.
+- **GNOME:** the observer extension fsynced its file every 50 ms on the shell's
+  main loop, stalling input and compositing; it now writes changes only,
+  without fsync. The shell's first start reads its libraries cold (40 to 52 s
+  at 40 IOPS), so startup waits use `SHELL_START_SECONDS` (90). A slow
+  `gnome-shell --version` probe no longer skips the scenarios silently.
+- **Observation backlog:** every UI update queued a full state-file write
+  behind one lock, so on a slow disk the harness saw seconds-old state. Queued
+  writes now skip once a newer snapshot exists.
+
+Evidence: `test_start_deadline_allows_file_backed_schema_commits_only`,
+`queued_newer_observation_skips_the_stale_write` and the profile pending-receipt
+test cover the harness and counter. At 40 IOPS the 48 profile, Activity and
+related scenarios passed four consecutive runs (four of seven failed before the
+change) and the GNOME group passed three consecutive runs; the same groups pass
+unthrottled. Runner confirmation remains open.
+
 ## Fast headless UI tests with iced_test (R110), 26 September 2026
 
 Branch `test/iced-simulator` adds `iced_test` 0.14.0 as a dev-dependency, which

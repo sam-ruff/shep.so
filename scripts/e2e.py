@@ -72,6 +72,9 @@ def paste_text(value): return {"type": "paste", "text": value}
 def wait(ms=150): return {"type": "wait", "ms": ms}
 def check(path, value, op="eq"): return {"type": "wait_for", "path": path, "value": value, "op": op}
 def shot(name): return {"type": "screenshot", "name": name}
+# Markers for NativeFlows.profile_batch; they never reach the harness.
+def job(action): return {**action, "profile_job": True}
+def background(action): return {**action, "background": True}
 
 
 @functools.cache
@@ -99,9 +102,13 @@ def require_gnome_x11_session(test):
     if not shutil.which("gnome-shell"):
         test.skipTest("Actual GNOME Shell is required")
     try:
-        probe = subprocess.run(["gnome-shell", "--x11", "--version"], capture_output=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired) as error:
+        # Slow storage delays the first load of the shell's libraries; that is
+        # not evidence of a missing X11 session, so a timeout fails instead.
+        probe = subprocess.run(["gnome-shell", "--x11", "--version"], capture_output=True, timeout=60)
+    except OSError as error:
         test.skipTest(f"GNOME Shell could not be probed: {error}")
+    except subprocess.TimeoutExpired as error:
+        test.fail(f"GNOME Shell did not report its version: {error}")
     if probe.returncode != 0:
         test.skipTest("This GNOME Shell has no X11 session for the owned Xvfb display")
 
@@ -115,6 +122,11 @@ GROUP_ARCHIVE_SECONDS = 30
 # A Shift range rebases a 100,000-message selection in SQLite: 0.9 s at load 3
 # and 2.6 s at load 9 on the lane host, and more than 3 s on the runner.
 LARGE_SELECTION_SECONDS = 20
+# Profile discovery, joins, check passes and review choices sync several SQLite
+# journals through the owned loopback Drive. The automatic join after login took
+# 2.5 s at 40 and 14.5 s at 15 write IOPS in the CI image (0.06 s here), and the
+# runner's shared VM storage passed the 3 s wait_for (PR #14 run 36316026621).
+PROFILE_SYNC_SECONDS = 30
 
 
 def state_value(state, path):
@@ -128,6 +140,20 @@ def state_value(state, path):
         else:
             return None
     return value
+
+
+def state_matches(state, action):
+    """The harness wait_for comparison, applied to an observed state."""
+    value, expected = state_value(state, action["path"]), action.get("value")
+    op = action.get("op", "eq")
+    if op == "eq":
+        return value == expected
+    if op == "ne":
+        return value != expected
+    if value is None:
+        return False
+    return {"contains": lambda: expected in value, "gte": lambda: value >= expected,
+            "lte": lambda: value <= expected}[op]()
 
 
 def mail_row_y(index, state=None):
@@ -3451,19 +3477,20 @@ class NativeFlows(unittest.TestCase):
     def open_removed_shared_account(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-removal", profile_login=True, empty_profile=True)
         print(f"Shared account removal evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)), check("account_count", 1),
+                           background(check("profile_sync.working", False)))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1, "gte"), check("profile_sync.working", False),
-                       click(375, 665), check("profile_sync.account_reviews.0.removed", True), check("profile_sync.working", False),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.cycle.review", 1, "gte"), check("profile_sync.working", False),
+                       job(click(375, 665)), check("profile_sync.account_reviews.0.removed", True), check("profile_sync.working", False),
                        {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":12}, wait(100), shot("profile-account-removed-review"))
         return started
 
     def test_profile_account_removal_native_keep_is_durable_and_stops_repeated_reviews(self):
         started = self.open_removed_shared_account()
-        self.mcp.batch(click(350, 698), check("profile_sync.account_reviews", []), check("account_count", 1),
+        self.profile_batch(job(click(350, 698)), check("profile_sync.account_reviews", []), check("account_count", 1),
                        check("profile_sync.working", False), shot("profile-removed-account-kept"), {"type":"restart"})
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_sync.cycle.review", 0), check("account_count", 1), shot("profile-removed-account-restarted"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         checkpoint = self.profile_checkpoint(started)
@@ -3483,7 +3510,7 @@ class NativeFlows(unittest.TestCase):
                        click(890, 562), check("account_count", 0), check("dialog", None), check("profile_sync.account_reviews", None),
                        shot("profile-removed-account-local-removed"), {"type":"restart"}, check("account_count", 0))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_sync.cycle.review", 0), check("account_count", 0), shot("profile-removed-account-stays-removed"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         self.assertEqual(self.profile_checkpoint(started)["suppressed"], ["50000000-0000-4000-8000-000000000001"])
@@ -3491,12 +3518,13 @@ class NativeFlows(unittest.TestCase):
     def duplicate_address_account_setup(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
         print(f"Duplicate-address sidebar evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)), check("account_count", 1),
+                           background(check("profile_sync.working", False)))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
-                       click(375, 665), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       job(click(375, 665)), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
                        {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":8}, wait(100),
-                       click(368, 698), check("account_count", 2), check("profile_sync.account_reviews", []),
+                       job(click(368, 698)), check("account_count", 2), check("profile_sync.account_reviews", []),
                        check("profile_sync.working", False), key("ctrl+1"), check("tab", "Mail"),
                        check("sidebar_labels", "Cloud account (previous setup)", "contains"),
                        check("sidebar_labels", "Cloud account", "contains"), wait(100))
@@ -3526,16 +3554,17 @@ class NativeFlows(unittest.TestCase):
     def test_profile_account_review_native_adds_shared_connection_and_preserves_previous_setup(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
         print(f"Account connection review evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)), check("account_count", 1),
+                           background(check("profile_sync.working", False)))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
-                       click(375, 665), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       job(click(375, 665)), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
                        {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":8}, wait(100), shot("profile-account-review-choices"),
-                       click(368, 698), check("account_count", 2), check("profile_sync.account_reviews", []),
+                       job(click(368, 698)), check("account_count", 2), check("profile_sync.account_reviews", []),
                        check("profile_sync.working", False), shot("profile-account-review-added"),
                        {"type":"restart"}, check("account_count", 2))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_sync.cycle.review", 0), check("profile_sync.cycle.remaining", False), shot("profile-account-review-reopened"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         checkpoint = self.profile_checkpoint(started)
@@ -3552,16 +3581,17 @@ class NativeFlows(unittest.TestCase):
     def test_profile_account_review_native_keeps_local_connection_in_compact_window(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-connections", profile_login=True, empty_profile=True)
         print(f"Compact account connection review evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1), check("profile_sync.working", False))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)), check("account_count", 1),
+                           background(check("profile_sync.working", False)))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
-                       click(375, 665), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       job(click(375, 665)), check("profile_sync.account_reviews.0.name", "Cloud account"), check("profile_sync.working", False),
                        {"type":"resize", "width":900, "height":640}, wait(100),
                        {"type":"hover", "x":780, "y":500}, {"type":"scroll", "amount":14}, wait(100), shot("profile-account-review-compact-dark"),
                        {"type":"scroll", "amount":-2}, wait(100), shot("profile-account-review-compact-current"),
                        click(550, 490), wait(80), shot("profile-account-review-compact-versions"),
                        click(470, 452), wait(80), shot("profile-account-review-second-version"),
-                       click(365, 445), check("profile_sync.account_reviews", []), check("account_count", 1),
+                       job(click(365, 445)), check("profile_sync.account_reviews", []), check("account_count", 1),
                        check("profile_sync.working", False), shot("profile-account-review-local-saved"),
                        {"type":"restart"}, check("account_count", 1))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
@@ -3579,9 +3609,9 @@ class NativeFlows(unittest.TestCase):
         started = self.mcp.call("desktop.start", profile_sync="existing-link")
         print(f"Post-enrollment account link evidence: {started['artifacts']}", flush=True)
         self.open_shared_profiles()
-        self.mcp.batch(click(370, 442), check("profile_sync.profiles.0.name", "Home"),
-                       click(1130, 494), check("profile_sync.join_review.name", "Home"),
-                       check("profile_sync.join_review.page.0.matches", []), click(340, 603),
+        self.profile_batch(job(click(370, 442)), check("profile_sync.profiles.0.name", "Home"),
+                       job(click(1130, 494)), check("profile_sync.join_review.name", "Home"),
+                       check("profile_sync.join_review.page.0.matches", []), job(click(340, 603)),
                        check("profile_sync.enrollment.selection.ready", True), check("account_count", 3),
                        check("account_reconnect_count", 1), check("profile_sync.working", False), check("dark", False))
         if dark:
@@ -3589,8 +3619,8 @@ class NativeFlows(unittest.TestCase):
             self.mcp.batch(click(292, 156), check("settings_tab", "General"), click(725, 360), check("dark", True),
                            check("preferences_saved", True))
             self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 2), check("profile_sync.working", False),
-                       check("account_count", 3), click(375, 665),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.cycle.review", 2), check("profile_sync.working", False),
+                       check("account_count", 3), job(click(375, 665)),
                        check("profile_sync.account_reviews.0.link.linkable", True),
                        check("profile_sync.account_reviews.0.link.matches.0.id", "preview-work"),
                        check("profile_sync.account_reviews.1.link.linkable", False),
@@ -3602,16 +3632,16 @@ class NativeFlows(unittest.TestCase):
     def test_profile_account_link_native_links_existing_account_and_keeps_mail(self):
         started = self.open_link_reviews()
         total = self.mcp.call("desktop.state")["total"]
-        self.mcp.batch(shot("profile-account-link-choices"), click(365, 456),
+        self.profile_batch(shot("profile-account-link-choices"), job(click(365, 456)),
                        check("profile_sync.account_reviews.0.link.matches.0.id", "preview-personal"),
                        check("profile_sync.working", False), check("account_count", 3), check("account_reconnect_count", 1),
                        shot("profile-account-link-linked"), {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":12},
-                       wait(100), shot("profile-account-link-address-only"), click(389, 697),
+                       wait(100), shot("profile-account-link-address-only"), job(click(389, 697)),
                        check("profile_sync.account_reviews", []), check("profile_sync.working", False),
                        check("account_count", 3), shot("profile-account-link-kept-local"), {"type":"restart"},
                        check("account_count", 3), key("ctrl+1"), check("tab", "Mail"), check("total", total))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_sync.cycle.review", 0), check("profile_sync.cycle.published", 1),
                        check("account_count", 3), check("account_reconnect_count", 1), shot("profile-account-link-restarted"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
@@ -3624,12 +3654,12 @@ class NativeFlows(unittest.TestCase):
 
     def test_profile_account_link_native_adds_new_account_once_across_restart(self):
         started = self.open_link_reviews()
-        self.mcp.batch(click(360, 501), check("profile_sync.account_reviews.0.link.matches.0.id", "preview-personal"),
+        self.profile_batch(job(click(360, 501)), check("profile_sync.account_reviews.0.link.matches.0.id", "preview-personal"),
                        check("profile_sync.working", False), check("account_count", 4), check("account_reconnect_count", 2),
                        shot("profile-account-link-added"), {"type":"restart"}, check("account_count", 4),
                        check("account_reconnect_count", 2))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_sync.cycle.review", 1), check("account_count", 4), shot("profile-account-link-added-restarted"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         checkpoint = self.profile_checkpoint(started)
@@ -3643,14 +3673,14 @@ class NativeFlows(unittest.TestCase):
 
     def test_profile_account_link_native_keep_local_in_compact_dark_window(self):
         started = self.open_link_reviews(dark=True)
-        self.mcp.batch(check("profile_sync.cycle.published", 1), {"type":"resize", "width":900, "height":640}, wait(100), {"type":"hover", "x":780, "y":500},
+        self.profile_batch(check("profile_sync.cycle.published", 1), {"type":"resize", "width":900, "height":640}, wait(100), {"type":"hover", "x":780, "y":500},
                        {"type":"scroll", "amount":-20}, wait(100), {"type":"scroll", "amount":7}, wait(100),
                        shot("profile-account-link-compact-dark"), {"type":"scroll", "amount":1}, wait(100),
-                       click(367, 306), check("profile_sync.working", False),
+                       job(click(367, 306)), check("profile_sync.working", False),
                        check("profile_sync.account_reviews.0.link.matches.0.id", "preview-personal"), check("account_count", 3),
                        shot("profile-account-link-compact-kept"), {"type":"restart"}, check("account_count", 3))
         self.open_shared_profiles(search_x=650)
-        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_sync.cycle.review", 1), check("account_count", 3), check("account_reconnect_count", 1))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
         checkpoint = self.profile_checkpoint(started)
@@ -3662,19 +3692,19 @@ class NativeFlows(unittest.TestCase):
     def test_profile_setting_review_native_chooses_shared_conflict_and_keeps_choice_after_restart(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-conflict", profile_login=True, empty_profile=True)
         print(f"Profile setting review evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("dark", True),
-                       check("profile_sync.working", False))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)), check("dark", True),
+                           background(check("profile_sync.working", False)))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
-                       click(370, 607), check("profile_sync.setting_reviews.0.label", "Appearance"),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       job(click(370, 607)), check("profile_sync.setting_reviews.0.label", "Appearance"),
                        check("profile_sync.working", False), shot("profile-setting-review-dark"))
-        self.mcp.batch({"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":4}, wait(100),
-                       shot("profile-setting-review-choices"), click(355, 643),
+        self.profile_batch({"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":4}, wait(100),
+                       shot("profile-setting-review-choices"), job(click(355, 643)),
                        check("profile_sync.setting_reviews", []), check("dark", False),
                        check("profile_sync.working", False), shot("profile-setting-review-saved-light"),
                        {"type":"restart"}, check("dark", False), check("account_count", 1))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.working", False), check("profile_sync.error", None),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_sync.cycle.review", 0), check("profile_sync.cycle.remaining", False),
                        shot("profile-setting-review-reopened"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
@@ -3687,15 +3717,16 @@ class NativeFlows(unittest.TestCase):
     def test_profile_setting_review_native_keeps_local_choice_in_compact_window(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-conflict", profile_login=True, empty_profile=True)
         print(f"Compact profile setting evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("dark", True), check("profile_sync.working", False))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)), check("dark", True),
+                           background(check("profile_sync.working", False)))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
-                       click(370, 607), check("profile_sync.setting_reviews.0.label", "Appearance"), check("profile_sync.working", False),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       job(click(370, 607)), check("profile_sync.setting_reviews.0.label", "Appearance"), check("profile_sync.working", False),
                        {"type":"resize", "width":900, "height":640}, wait(100),
                        {"type":"hover", "x":780, "y":500}, {"type":"scroll", "amount":12}, wait(100),
                        shot("profile-setting-review-compact-dark"),
                        click(530, 317), wait(80), click(510, 243), shot("profile-setting-review-dropdown"),
-                       click(350, 273), check("profile_sync.setting_reviews", []), check("dark", True),
+                       job(click(350, 273)), check("profile_sync.setting_reviews", []), check("dark", True),
                        check("profile_sync.working", False), shot("profile-setting-review-local-saved"),
                        {"type":"restart"}, check("dark", True))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"], 0)
@@ -3706,44 +3737,45 @@ class NativeFlows(unittest.TestCase):
     def test_profile_setting_review_native_rejects_a_newer_local_preference(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-conflict", profile_login=True, empty_profile=True)
         print(f"Stale native profile review evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("dark", True), check("profile_sync.working", False))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)), check("dark", True),
+                           background(check("profile_sync.working", False)))
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
-                       click(370, 607), check("profile_sync.setting_reviews.0.label", "Appearance"), check("profile_sync.working", False),
+        self.profile_batch(job(click(340, 548)), check("profile_sync.cycle.review", 1), check("profile_sync.working", False),
+                       job(click(370, 607)), check("profile_sync.setting_reviews.0.label", "Appearance"), check("profile_sync.working", False),
                        click(1150, 88), type_text("appearance"), check("settings_matches.0", "Appearance"),
                        click(480, 289), check("settings_group", "Appearance"), wait(100),
                        click(410, 410), check("dark", False), check("preferences_saved", True))
         self.open_shared_profiles()
-        self.mcp.batch(check("profile_sync.setting_reviews.0.local", "Dark"),
+        self.profile_batch(check("profile_sync.setting_reviews.0.local", "Dark"),
                        {"type":"hover", "x":1000, "y":780}, {"type":"scroll", "amount":4}, wait(100),
-                       click(355, 643), check("profile_sync.error", None, "ne"), check("profile_sync.working", False),
+                       job(click(355, 643)), check("profile_sync.error", None, "ne"), check("profile_sync.working", False),
                        check("dark", False), check("notice", "This preference changed while the review was open. Refresh it to keep your newer choice."),
                        shot("profile-setting-review-newer-local-kept"))
         self.assertIn("changed while the review was open", self.mcp.call("desktop.state")["profile_sync"]["error"])
-        self.mcp.batch(click(370, 387), check("profile_sync.setting_reviews.0.local", "Light"),
+        self.profile_batch(job(click(370, 387)), check("profile_sync.setting_reviews.0.local", "Light"),
                        check("profile_sync.working", False), shot("profile-setting-review-refreshed"),
-                       click(355, 643), check("profile_sync.setting_reviews", []),
+                       job(click(355, 643)), check("profile_sync.setting_reviews", []),
                        check("profile_sync.error", None), check("dark", False))
 
     def test_profile_continuous_native_reuses_verified_downloads_after_restart(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-single", profile_login=True, empty_profile=True)
         print(f"Profile cache evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True),
-                       check("profile_sync.working", False), check("account_count", 1))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)),
+                           background(check("profile_sync.working", False)), check("account_count", 1))
         self.open_shared_profiles()
         before = self.mcp.call("desktop.state")["profile_drive_requests"]
         self.assertGreater(before["media"], 0)
         # Enrolled checks poll the saved change token: no listing, no downloads.
-        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", before["changes"] + 1, "gte"),
+        self.profile_batch(job(click(340, 548)), check("profile_drive_requests.changes", before["changes"] + 1, "gte"),
                        check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_drive_requests.lists", before["lists"]),
                        check("profile_drive_requests.media", before["media"]),
                        check("profile_drive_requests.metadata", before["metadata"]),
                        shot("profile-cache-manual-check"), {"type": "restart"},
-                       check("profile_sync.enrollment.selection.ready", True), check("account_count", 1))
+                       background(check("profile_sync.enrollment.selection.ready", True)), check("account_count", 1))
         self.open_shared_profiles()
         reopened = self.mcp.call("desktop.state")["profile_drive_requests"]
-        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", reopened["changes"] + 1, "gte"),
+        self.profile_batch(job(click(340, 548)), check("profile_drive_requests.changes", reopened["changes"] + 1, "gte"),
                        check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_drive_requests.lists", before["lists"]),
                        check("profile_drive_requests.media", before["media"]),
@@ -3753,26 +3785,26 @@ class NativeFlows(unittest.TestCase):
     def test_profile_continuous_native_expired_change_token_falls_back_to_one_full_listing(self):
         started = self.mcp.call("desktop.start", profile_sync="existing-token-expired", profile_login=True, empty_profile=True)
         print(f"Incremental fallback evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("account_count", 1),
-                       check("tab", "Mail"), {**check("account_count", 2), "timeout_ms": 5000},
-                       check("account_reconnect_count", 2), check("tooltips", True),
-                       check("profile_sync.working", False), check("profile_sync.error", None))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)), check("account_count", 1),
+                           check("tab", "Mail"), background(check("account_count", 2)),
+                           check("account_reconnect_count", 2), check("tooltips", True),
+                           background(check("profile_sync.working", False)), check("profile_sync.error", None))
         recovered = self.mcp.call("desktop.state")["profile_drive_requests"]
         # Discovery listed once; the rejected token forced exactly one more.
         self.assertEqual(recovered["lists"] - recovered["scoped_lists"], 2)
         self.assertEqual(recovered["scoped_lists"], 1)
         self.assertGreaterEqual(recovered["changes"], 3)
         self.open_shared_profiles()
-        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", recovered["changes"] + 1, "gte"),
+        self.profile_batch(job(click(340, 548)), check("profile_drive_requests.changes", recovered["changes"] + 1, "gte"),
                        check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_drive_requests.lists", recovered["lists"]),
                        check("profile_drive_requests.media", recovered["media"]),
                        check("profile_drive_requests.metadata", recovered["metadata"]),
                        check("account_count", 2), shot("profile-incremental-fallback-check"), {"type": "restart"},
-                       check("profile_sync.enrollment.selection.ready", True), check("account_count", 2))
+                       background(check("profile_sync.enrollment.selection.ready", True)), check("account_count", 2))
         self.open_shared_profiles()
         reopened = self.mcp.call("desktop.state")["profile_drive_requests"]
-        self.mcp.batch(click(340, 548), check("profile_drive_requests.changes", reopened["changes"] + 1, "gte"),
+        self.profile_batch(job(click(340, 548)), check("profile_drive_requests.changes", reopened["changes"] + 1, "gte"),
                        check("profile_sync.working", False), check("profile_sync.error", None),
                        check("profile_drive_requests.lists", recovered["lists"]),
                        check("profile_drive_requests.media", recovered["media"]),
@@ -3785,12 +3817,12 @@ class NativeFlows(unittest.TestCase):
     def test_profile_continuous_native_receives_new_account_and_preferences_in_background(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-updates",profile_login=True,empty_profile=True)
         print(f"Continuous remote evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready",True),check("dark",True),
-                       check("account_count",1),check("tab","Mail"),shot("profile-continuous-before"))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready",True)),check("dark",True),
+                           check("account_count",1),check("tab","Mail"),shot("profile-continuous-before"))
         self.open_shared_profiles()
-        self.mcp.batch(shot("profile-continuous-controls"),key("ctrl+1"),check("tab","Mail"),
-                       {**check("account_count",2),"timeout_ms":5000},check("account_reconnect_count",2),check("tooltips",True),
-                       check("profile_sync.working",False),check("profile_sync.error",None),
+        self.profile_batch(shot("profile-continuous-controls"),key("ctrl+1"),check("tab","Mail"),
+                       background(check("account_count",2)),check("account_reconnect_count",2),check("tooltips",True),
+                       background(check("profile_sync.working",False)),check("profile_sync.error",None),
                        check("profile_sync.cycle.review",0),check("tab","Mail"),shot("profile-continuous-received"),{"type":"restart"})
         self.open_shared_profiles()
         self.mcp.batch(check("account_count",2),check("tooltips",True),shot("profile-continuous-reopened"))
@@ -3802,13 +3834,13 @@ class NativeFlows(unittest.TestCase):
     def test_profile_continuous_native_publishes_local_settings_and_retains_them_on_restart(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-single",profile_login=True,empty_profile=True)
         print(f"Continuous local evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready",True),check("tooltips",False),
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready",True)),check("tooltips",False),
                        key("ctrl+comma"),check("tab","Preferences"),wait(80),click(1150,88),
                        type_text("tooltip"),check("settings_matches",["Tooltips"]),click(500,289),
                        check("settings_group","Tooltips"),wait(100),click(288,342),
                        check("tooltips",True),check("preferences_saved",True))
         self.open_shared_profiles()
-        self.mcp.batch(click(340,548),check("profile_sync.cycle.published",1),
+        self.profile_batch(job(click(340,548)),check("profile_sync.cycle.published",1),
                        check("profile_sync.working",False),check("profile_sync.cycle.review",0),
                        shot("profile-continuous-local-published"),{"type":"restart"},check("tooltips",True))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
@@ -3820,12 +3852,12 @@ class NativeFlows(unittest.TestCase):
     def test_profile_continuous_native_received_changes_remain_visible_when_local_upload_fails(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-upload-failure",profile_login=True,empty_profile=True)
         print(f"Continuous partial-failure evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready",True),key("ctrl+comma"),
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready",True)),key("ctrl+comma"),
                        check("tab","Preferences"),wait(80),click(1150,88),type_text("tooltip"),
                        check("settings_matches",["Tooltips"]),click(500,289),check("settings_group","Tooltips"),
                        wait(100),click(288,342),check("tooltips",True),check("preferences_saved",True))
         self.open_shared_profiles()
-        self.mcp.batch(click(340,548),check("profile_sync.error",None,"ne"),
+        self.profile_batch(job(click(340,548)),check("profile_sync.error",None,"ne"),
                        check("profile_sync.working",False),check("account_count",2),
                        check("account_reconnect_count",2),shot("profile-continuous-partial-failure"),
                        key("ctrl+1"),check("tab","Mail"),check("account_count",2),{"type":"restart"},
@@ -3842,14 +3874,14 @@ class NativeFlows(unittest.TestCase):
     def test_profile_continuous_native_offline_check_can_retry_without_losing_local_accounts(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-update-failure",profile_login=True,empty_profile=True)
         print(f"Continuous retry evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready",True),check("account_count",1))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready",True)),check("account_count",1))
         self.open_shared_profiles()
-        self.mcp.batch(click(340,548),check("profile_sync.working",False))
+        self.profile_batch(job(click(340,548)),check("profile_sync.working",False))
         self.mcp.batch(shot("profile-continuous-offline"),check("account_count",1))
         self.assertIsNotNone(self.mcp.call("desktop.state")["profile_sync"]["error"])
         self.mcp.batch(key("ctrl+1"),check("tab","Mail"))
         self.open_shared_profiles()
-        self.mcp.batch(click(340,548),check("profile_sync.error",None),check("account_count",2),
+        self.profile_batch(job(click(340,548)),check("profile_sync.error",None),check("account_count",2),
                        check("profile_sync.working",False),shot("profile-continuous-retry"))
 
     def open_synced_passwords(self, search_x=1150):
@@ -3881,19 +3913,19 @@ class NativeFlows(unittest.TestCase):
         started = self.mcp.call("desktop.start", profile_sync="empty", profile_passwords="ready")
         print(f"Password publication evidence: {started['artifacts']}", flush=True)
         self.open_shared_profiles()
-        self.mcp.batch(click(370, 442), check("profile_sync.review", 0), click(540, 482), key("ctrl+a"),
-                       type_text("Personal"), click(360, 570), check("profile_sync.enrollment.selection.ready", True),
+        self.profile_batch(job(click(370, 442)), check("profile_sync.review", 0), click(540, 482), key("ctrl+a"),
+                       type_text("Personal"), job(click(360, 570)), check("profile_sync.enrollment.selection.ready", True),
                        check("profile_sync.working", False), check("profile_sync.options.passwords", False),
                        check("profile_drive_credentials.vaults", 0), wait(150), shot("profile-passwords-off-light"),
                        click(288, 735), check("profile_sync.options.passwords", True),
                        # Drive state is durable; a later periodic pass only confirms it.
-                       {**check("profile_drive_credentials.vaults", 1), "timeout_ms": 5000},
-                       check("profile_sync.working", False), check("profile_drive_credentials.keys", 1),
+                       background(check("profile_drive_credentials.vaults", 1)),
+                       background(check("profile_sync.working", False)), check("profile_drive_credentials.keys", 1),
                        check("profile_drive_credentials.plaintext", False),
                        check("profile_sync.passwords.failed", 0), wait(150), shot("profile-passwords-published-light"),
                        click(288, 735), check("profile_sync.options.passwords", False),
-                       {**check("profile_drive_credentials.vaults", 0), "timeout_ms": 5000},
-                       check("profile_sync.working", False), check("profile_drive_credentials.keys", 0),
+                       background(check("profile_drive_credentials.vaults", 0)),
+                       background(check("profile_sync.working", False)), check("profile_drive_credentials.keys", 0),
                        check("notice", "Passwords from this device were removed from your Google account"),
                        wait(150), shot("profile-passwords-withdrawn-light"), {"type": "restart"})
         self.open_synced_passwords()
@@ -3906,17 +3938,18 @@ class NativeFlows(unittest.TestCase):
         started = self.mcp.call("desktop.start", profile_sync="existing-passwords", profile_login=True,
                                 empty_profile=True, profile_passwords="ready")
         print(f"Password import evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("profile_sync.working", False),
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)),
+                       background(check("profile_sync.working", False)),
                        check("account_count", 1), check("account_reconnect_count", 1), check("dark", True),
                        key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(1150, 88), key("ctrl+a"),
                        type_text("appearance"), check("settings_matches.0", "Appearance"), click(480, 289),
                        check("settings_group", "Appearance"), wait(100), click(423, 410), check("dark", False),
                        check("preferences_saved", True))
         self.open_synced_passwords()
-        self.mcp.batch(check("profile_sync.options.passwords", False), wait(100), shot("profile-passwords-import-before-light"),
+        self.profile_batch(check("profile_sync.options.passwords", False), wait(100), shot("profile-passwords-import-before-light"),
                        click(288, 788), check("profile_sync.options.passwords", True),
-                       {**check("account_reconnect_count", 0), "timeout_ms": 5000},
-                       check("profile_sync.working", False),
+                       background(check("account_reconnect_count", 0)),
+                       background(check("profile_sync.working", False)),
                        check("profile_drive_credentials.keys", 1), check("profile_drive_credentials.vaults", 1),
                        check("profile_drive_credentials.plaintext", False),
                        check("notice", "Synced passwords saved for 1 account"),
@@ -3926,9 +3959,9 @@ class NativeFlows(unittest.TestCase):
                        click(480, 289), check("settings_group", "Appearance"), wait(100), click(555, 410),
                        check("dark", True), check("preferences_saved", True))
         self.open_synced_passwords(650)
-        self.mcp.batch({"type": "hover", "x": 600, "y": 400}, {"type": "scroll", "amount": 12}, wait(150),
+        self.profile_batch({"type": "hover", "x": 600, "y": 400}, {"type": "scroll", "amount": 12}, wait(150),
                        shot("profile-passwords-imported-compact-dark"), {"type": "restart"},
-                       check("profile_sync.enrollment.selection.ready", True), check("account_reconnect_count", 0))
+                       background(check("profile_sync.enrollment.selection.ready", True)), check("account_reconnect_count", 0))
         self.open_synced_passwords(650)
         self.mcp.batch(check("profile_sync.options.passwords", True), check("account_reconnect_count", 0),
                        {"type": "hover", "x": 600, "y": 400}, {"type": "scroll", "amount": 12}, wait(150),
@@ -3940,26 +3973,26 @@ class NativeFlows(unittest.TestCase):
         started = self.mcp.call("desktop.start", profile_sync="existing-passwords", profile_login=True,
                                 empty_profile=True, profile_passwords="reject")
         print(f"Rejected password import evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", True), check("profile_sync.working", False),
-                       check("account_reconnect_count", 1))
+        self.profile_batch(background(check("profile_sync.enrollment.selection.ready", True)),
+                       background(check("profile_sync.working", False)), check("account_reconnect_count", 1))
         self.open_synced_passwords()
         failed = "A synced password did not connect, so nothing was changed on this device."
-        self.mcp.batch(click(288, 788), check("profile_sync.options.passwords", True),
-                       {**check("notice", failed), "timeout_ms": 5000},
-                       check("profile_sync.working", False), check("account_reconnect_count", 1),
+        self.profile_batch(click(288, 788), check("profile_sync.options.passwords", True),
+                       background(check("notice", failed)),
+                       background(check("profile_sync.working", False)), check("account_reconnect_count", 1),
                        # Sync now holds the failed revision instead of testing it again.
-                       click(340, 548), {**check("profile_sync.passwords.held", 2), "timeout_ms": 5000},
+                       job(click(340, 548)), check("profile_sync.passwords.held", 2),
                        check("profile_sync.working", False), check("account_reconnect_count", 1),
                        {"type": "hover", "x": 700, "y": 600}, {"type": "scroll", "amount": 12}, wait(150),
                        shot("profile-passwords-rejected"))
         # Only the explicit retry tests the pair again.
-        self.mcp.batch(click(380, 799), check("profile_sync.working", True),
-                       {**check("profile_sync.working", False), "timeout_ms": 5000},
+        self.profile_batch(click(380, 799), check("profile_sync.working", True),
+                       background(check("profile_sync.working", False)),
                        check("profile_sync.passwords.failed", 1), check("account_reconnect_count", 1),
                        check("notice", failed), {"type": "restart"},
-                       check("profile_sync.enrollment.selection.ready", True))
+                       background(check("profile_sync.enrollment.selection.ready", True)))
         self.open_synced_passwords()
-        self.mcp.batch(click(340, 548), {**check("profile_sync.passwords.held", 2), "timeout_ms": 5000},
+        self.profile_batch(job(click(340, 548)), check("profile_sync.passwords.held", 2),
                        check("profile_sync.working", False), check("account_reconnect_count", 1),
                        {"type": "hover", "x": 700, "y": 600}, {"type": "scroll", "amount": 12}, wait(150),
                        shot("profile-passwords-rejected-reopened"))
@@ -3969,8 +4002,9 @@ class NativeFlows(unittest.TestCase):
     def test_profile_login_native_new_device_automatically_imports_one_complete_profile(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-single",profile_login=True,empty_profile=True)
         print(f"Automatic profile evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.enrollment.selection.name","Home"),
-                       check("profile_sync.enrollment.selection.ready",True),check("profile_sync.working",False),
+        self.profile_batch(background(check("profile_sync.enrollment.selection.name","Home")),
+                       background(check("profile_sync.enrollment.selection.ready",True)),
+                       background(check("profile_sync.working",False)),
                        check("account_count",1),check("account_reconnect_count",1),check("dark",True),
                        check("tab","Mail"),check("notice","Home imported · 1 account · 2 preferences · reconnect accounts in Preferences"),
                        shot("profile-login-auto-imported"),{"type":"restart"})
@@ -3983,8 +4017,8 @@ class NativeFlows(unittest.TestCase):
     def test_profile_login_native_first_setup_can_be_declined_and_enabled_later(self):
         started=self.mcp.call("desktop.start",profile_sync="empty",profile_login=True)
         print(f"Profile login opt-out evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.offer",True),check("profile_sync.review",0),
-                       check("tab","Mail"),shot("profile-login-offer"))
+        self.profile_batch(background(check("profile_sync.offer",True)),check("profile_sync.review",0),
+                           check("tab","Mail"),shot("profile-login-offer"))
         self.mcp.batch(click(1104,866),check("tab","Preferences"),check("settings_group","Profiles and sync"),wait(100))
         self.mcp.batch(check("profile_sync.review",0),click(490,570),
                        check("profile_sync.options.discover_on_login",False),check("profile_sync.saving",False),
@@ -3999,31 +4033,31 @@ class NativeFlows(unittest.TestCase):
     def test_profile_login_native_multiple_profiles_require_a_choice_on_empty_device(self):
         started=self.mcp.call("desktop.start",profile_sync="existing",profile_login=True,empty_profile=True)
         print(f"Profile login picker evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.offer",True),check("profile_sync.profiles.1.name","Work"),
-                       check("profile_sync.enrollment.selection",None),check("account_count",0),
-                       check("tab","Mail"),shot("profile-login-multiple-offer"))
+        self.profile_batch(background(check("profile_sync.offer",True)),check("profile_sync.profiles.1.name","Work"),
+                           check("profile_sync.enrollment.selection",None),check("account_count",0),
+                           check("tab","Mail"),shot("profile-login-multiple-offer"))
         self.mcp.batch(click(1240,866),check("tab","Preferences"),check("settings_group","Profiles and sync"),wait(100))
-        self.mcp.batch(click(1130,545),check("profile_sync.join_review.name","Work"),
-                       shot("profile-login-choice-review"),click(340,566),
+        self.profile_batch(job(click(1130,545)),check("profile_sync.join_review.name","Work"),
+                       shot("profile-login-choice-review"),job(click(340,566)),
                        check("profile_sync.enrollment.selection.name","Work"),
                        check("profile_sync.enrollment.selection.ready",True),check("profile_sync.offer",False))
 
     def test_profile_login_native_existing_workspace_keeps_accounts_until_review(self):
         started=self.mcp.call("desktop.start",profile_sync="existing-single",profile_login=True)
         print(f"Populated profile login evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.offer",True),check("profile_sync.profiles.0.name","Home"),
-                       check("profile_sync.enrollment.selection",None),check("account_count",2),
-                       check("dark",False),check("tab","Mail"),shot("profile-login-existing-workspace"))
+        self.profile_batch(background(check("profile_sync.offer",True)),check("profile_sync.profiles.0.name","Home"),
+                           check("profile_sync.enrollment.selection",None),check("account_count",2),
+                           check("dark",False),check("tab","Mail"),shot("profile-login-existing-workspace"))
         self.open_shared_profiles()
-        self.mcp.batch(click(1130,494),check("profile_sync.join_review.name","Home"),
-                       click(340,606),check("profile_sync.enrollment.selection.ready",True),
+        self.profile_batch(job(click(1130,494)),check("profile_sync.join_review.name","Home"),
+                       job(click(340,606)),check("profile_sync.enrollment.selection.ready",True),
                        check("account_count",3),check("account_reconnect_count",1),
                        shot("profile-login-reviewed-import"))
 
     def test_profile_login_native_compact_dark_prompt_dismissal_does_not_interrupt_mail(self):
         started=self.mcp.call("desktop.start",profile_sync="empty",profile_login=True,width=900,height=640)
         print(f"Compact login evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.offer",True),key("ctrl+comma"),check("tab","Preferences"),
+        self.profile_batch(background(check("profile_sync.offer",True)),key("ctrl+comma"),check("tab","Preferences"),
                        click(563,366),check("dark",True),check("preferences_saved",True),
                        key("ctrl+1"),check("tab","Mail"),shot("profile-login-compact-dark"),
                        click(668,586),check("profile_sync.offer",False),
@@ -4033,15 +4067,15 @@ class NativeFlows(unittest.TestCase):
 
     def test_profile_login_native_failure_retry_and_close_during_discovery(self):
         self.mcp.call("desktop.start",profile_sync="fail-once",profile_login=True)
-        self.mcp.batch(check("profile_sync.error","503","contains"),check("profile_sync.working",False),
-                       check("profile_sync.offer",True),check("profile_sync.enrollment.selection",None),
-                       shot("profile-login-failed"))
+        self.profile_batch(background(check("profile_sync.error","503","contains")),check("profile_sync.working",False),
+                           check("profile_sync.offer",True),check("profile_sync.enrollment.selection",None),
+                           shot("profile-login-failed"))
         self.open_shared_profiles()
-        self.mcp.batch(click(370,442),check("profile_sync.review",0),check("profile_sync.error",None),
-                       shot("profile-login-retried"))
+        self.profile_batch(job(click(370,442)),check("profile_sync.review",0),check("profile_sync.error",None),
+                           shot("profile-login-retried"))
         started=self.mcp.call("desktop.start",profile_sync="hold-list",profile_login=True)
         print(f"Held login discovery evidence: {started['artifacts']}",flush=True)
-        self.mcp.batch(check("profile_sync.working",True),click(400,mail_row_y(1)),
+        self.profile_batch(background(check("profile_sync.working",True)),click(400,mail_row_y(1)),
                        check("selected","Your weekly workspace digest"),shot("profile-login-held-navigation"))
         self.assertEqual(self.mcp.call("desktop.close")["returncode"],0)
 
@@ -4049,13 +4083,13 @@ class NativeFlows(unittest.TestCase):
         started=self.mcp.call("desktop.start",profile_sync="existing-matching")
         print(f"Profile account linking evidence: {started['artifacts']}",flush=True)
         self.open_shared_profiles()
-        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
-                       click(1130,494),check("profile_sync.join_review.name","Home"),
+        self.profile_batch(job(click(370,442)),check("profile_sync.profiles.0.name","Home"),
+                       job(click(1130,494)),check("profile_sync.join_review.name","Home"),
                        check("profile_sync.join_review.page.0.matches.0.id","preview-work"),
                        check("account_count",2),shot("profile-account-link-review"),
                        click(580,558),wait(80),shot("profile-account-link-options"),click(580,520),
                        check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
-                       shot("profile-account-link-chosen"),click(340,664),
+                       shot("profile-account-link-chosen"),job(click(340,664)),
                        check("profile_sync.enrollment.selection.ready",True),check("account_count",2),
                        check("account_reconnect_count",0),check("profile_sync.error",None),
                        check("dark",True),key("ctrl+1"),check("tab","Mail"),
@@ -4072,10 +4106,10 @@ class NativeFlows(unittest.TestCase):
         started=self.mcp.call("desktop.start",profile_sync="existing-matching")
         print(f"Separate matching account evidence: {started['artifacts']}",flush=True)
         self.open_shared_profiles()
-        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
-                       click(1130,494),check("profile_sync.join_review.page.0.matches.0.id","preview-work"),
+        self.profile_batch(job(click(370,442)),check("profile_sync.profiles.0.name","Home"),
+                       job(click(1130,494)),check("profile_sync.join_review.page.0.matches.0.id","preview-work"),
                        check("profile_sync.join_review.links",{}),shot("profile-matching-add-separately"),
-                       click(340,664),check("profile_sync.enrollment.selection.ready",True),
+                       job(click(340,664)),check("profile_sync.enrollment.selection.ready",True),
                        check("account_count",3),check("account_reconnect_count",1),
                        check("profile_sync.error",None),{"type":"restart"},check("account_count",3),
                        check("account_reconnect_count",1))
@@ -4091,13 +4125,13 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(80),click(563,366),
                        check("dark",True),check("preferences_saved",True))
         self.open_shared_profiles(search_x=650)
-        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
-                       click(800,494),check("profile_sync.join_review.name","Home"),
+        self.profile_batch(job(click(370,442)),check("profile_sync.profiles.0.name","Home"),
+                       job(click(800,494)),check("profile_sync.join_review.name","Home"),
                        {"type":"hover","x":780,"y":500},{"type":"scroll","amount":12},wait(100),
                        shot("profile-account-link-compact-dark"),click(580,414),wait(80),
                        shot("profile-account-link-compact-options"),click(580,376),
                        check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
-                       wait(80),shot("profile-account-link-compact-chosen"),click(310,518),
+                       wait(80),shot("profile-account-link-compact-chosen"),job(click(310,518)),
                        check("profile_sync.enrollment.selection.ready",True),check("account_count",2),
                        check("account_reconnect_count",0),check("profile_sync.error",None),
                        shot("profile-account-link-compact-applied"))
@@ -4106,8 +4140,8 @@ class NativeFlows(unittest.TestCase):
         started=self.mcp.call("desktop.start",profile_sync="existing-many")
         print(f"Account review pages evidence: {started['artifacts']}",flush=True)
         self.open_shared_profiles()
-        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
-                       click(1130,494),check("profile_sync.join_review.accounts",12),
+        self.profile_batch(job(click(370,442)),check("profile_sync.profiles.0.name","Home"),
+                       job(click(1130,494)),check("profile_sync.join_review.accounts",12),
                        click(580,558),wait(80),click(580,520),
                        check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
                        {"type":"hover","x":1050,"y":780},{"type":"scroll","amount":24},wait(100),
@@ -4119,7 +4153,7 @@ class NativeFlows(unittest.TestCase):
                        check("profile_sync.join_review.offset",0),check("profile_sync.join_review.page.0.name","Cloud account"),
                        check("profile_sync.join_review.links.50000000-0000-4000-8000-000000000001","preview-work"),
                        {"type":"hover","x":1050,"y":780},{"type":"scroll","amount":24},wait(100),
-                       shot("profile-account-pages-choice-retained"),click(340,814),
+                       shot("profile-account-pages-choice-retained"),job(click(340,814)),
                        check("profile_sync.enrollment.selection.ready",True),check("account_count",13),
                        check("account_reconnect_count",11),check("profile_sync.error",None),{"type":"restart"},
                        check("account_count",13),check("account_reconnect_count",11))
@@ -4133,11 +4167,11 @@ class NativeFlows(unittest.TestCase):
         started=self.mcp.call("desktop.start",profile_sync="existing")
         print(f"Existing profile evidence: {started['artifacts']}",flush=True)
         self.open_shared_profiles()
-        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+        self.profile_batch(job(click(370,442)),check("profile_sync.profiles.0.name","Home"),
                        check("profile_sync.profiles.1.name","Work"),shot("profile-existing-choices"),
-                       click(1130,494),check("profile_sync.join_review.name","Home"),
+                       job(click(1130,494)),check("profile_sync.join_review.name","Home"),
                        check("profile_sync.join_review.accounts",1),check("account_count",2),
-                       shot("profile-existing-review"),click(340,619),
+                       shot("profile-existing-review"),job(click(340,619)),
                        check("profile_sync.enrollment.selection.name","Home"),
                        check("profile_sync.enrollment.selection.ready",True),check("account_count",3),
                        check("account_reconnect_count",1),check("dark",True),check("tooltips",False),check("profile_sync.error",None),
@@ -4168,13 +4202,13 @@ class NativeFlows(unittest.TestCase):
         started=self.mcp.call("desktop.start",profile_sync="existing-unsupported")
         print(f"Unsupported profile evidence: {started['artifacts']}",flush=True)
         self.open_shared_profiles()
-        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
-                       click(1130,494),check("profile_sync.error","additional connection fields","contains"),
+        self.profile_batch(job(click(370,442)),check("profile_sync.profiles.0.name","Home"),
+                       job(click(1130,494)),check("profile_sync.error","additional connection fields","contains"),
                        check("profile_sync.working",False),check("profile_sync.join_review",None),
                        check("profile_sync.enrollment.selection",None),check("account_count",2),check("dark",False),
                        shot("profile-unsupported-account"),key("ctrl+1"),check("tab","Mail"))
         self.open_shared_profiles()
-        self.mcp.batch(click(1130,545),check("profile_sync.join_review.name","Work"),
+        self.profile_batch(job(click(1130,545)),check("profile_sync.join_review.name","Work"),
                        check("profile_sync.join_review.accounts",0),check("profile_sync.error",None),
                        shot("profile-unsupported-recovery"))
 
@@ -4182,14 +4216,14 @@ class NativeFlows(unittest.TestCase):
         started=self.mcp.call("desktop.start",profile_sync=mode)
         print(f"Profile initialization evidence: {started['artifacts']}",flush=True)
         self.open_shared_profiles()
-        self.mcp.batch(click(370,442),check("profile_sync.profiles.0.name","Home"),
+        self.profile_batch(job(click(370,442)),check("profile_sync.profiles.0.name","Home"),
                        check("profile_sync.profiles.0.initialized",False),
                        check("profile_sync.profiles.1.initialized",True),
                        shot("profile-initialization-required"),click(1130,494),wait(80),
                        check("profile_sync.join_review",None),check("profile_sync.enrollment.selection",None),
                        check("account_count",2),check("dark",False),
-                       click(1130,545),check("profile_sync.join_review.name","Work"),
-                       shot("profile-complete-alternative"),click(340,566),
+                       job(click(1130,545)),check("profile_sync.join_review.name","Work"),
+                       shot("profile-complete-alternative"),job(click(340,566)),
                        check("profile_sync.enrollment.selection.name","Work"),
                        check("profile_sync.enrollment.selection.ready",True),check("account_count",2),
                        check("profile_sync.error",None),shot("profile-complete-imported"))
@@ -4206,15 +4240,15 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),click(563,366),
                        check("dark",True),check("preferences_saved",True))
         self.open_shared_profiles(650)
-        self.mcp.batch(click(288,371),check("profile_sync.options.accounts",False),check("profile_sync.saving",False),
-                       click(370,442),check("profile_sync.profiles.1.name","Work"),shot("profile-existing-compact-choices"),
-                       click(802,545),check("profile_sync.join_review.name","Work"),check("profile_sync.join_review.accounts",0),
+        self.profile_batch(click(288,371),check("profile_sync.options.accounts",False),check("profile_sync.saving",False),
+                       job(click(370,442)),check("profile_sync.profiles.1.name","Work"),shot("profile-existing-compact-choices"),
+                       job(click(802,545)),check("profile_sync.join_review.name","Work"),check("profile_sync.join_review.accounts",0),
                        shot("profile-existing-compact-review"),click(421,566),
                        check("profile_sync.join_review",None),check("profile_sync.enrollment.selection",None),
                        check("account_count",2),check("dark",True),
-                       click(370,442),check("profile_sync.profiles.1.name","Work"),
-                       click(802,545),check("profile_sync.join_review.name","Work"),
-                       click(318,566),check("profile_sync.enrollment.selection.name","Work"),
+                       job(click(370,442)),check("profile_sync.profiles.1.name","Work"),
+                       job(click(802,545)),check("profile_sync.join_review.name","Work"),
+                       job(click(318,566)),check("profile_sync.enrollment.selection.name","Work"),
                        check("profile_sync.enrollment.selection.ready",True),check("dark",False),
                        check("account_count",2),check("account_reconnect_count",0),shot("profile-existing-settings-imported"),
                        click(266,408),check("profile_sync.options.enabled",False),check("profile_sync.saving",False),
@@ -4228,8 +4262,8 @@ class NativeFlows(unittest.TestCase):
         started=self.mcp.call("desktop.start", profile_sync="held-upload")
         print(f"First profile checkpoint evidence: {started['artifacts']}",flush=True)
         self.open_shared_profiles()
-        self.mcp.batch(check("profile_sync.available", True), shot("profile-sync-controls-light"),
-                       click(370, 442), check("profile_sync.review", 0),
+        self.profile_batch(check("profile_sync.available", True), shot("profile-sync-controls-light"),
+                       job(click(370, 442)), check("profile_sync.review", 0),
                        shot("profile-sync-create-review"), click(540, 482), key("ctrl+a"),
                        type_text("Personal M"), check("dialog", None), click(360, 570),
                        check("profile_sync.working", True), check("profile_upload_held", True),
@@ -4255,9 +4289,9 @@ class NativeFlows(unittest.TestCase):
     def test_profile_sync_native_failure_retry_and_opt_out(self):
         self.mcp.call("desktop.start", profile_sync="fail-once")
         self.open_shared_profiles()
-        self.mcp.batch(click(370, 442), check("profile_sync.error", "503", "contains"),
+        self.profile_batch(job(click(370, 442)), check("profile_sync.error", "503", "contains"),
                        check("profile_sync.working", False), shot("profile-sync-discovery-failed"),
-                       click(370, 442), check("profile_sync.review", 0), check("profile_sync.error", None),
+                       job(click(370, 442)), check("profile_sync.review", 0), check("profile_sync.error", None),
                        click(490, 570), check("profile_sync.review", None),
                        check("profile_sync.enrollment.selection", None), shot("profile-sync-opted-out"))
 
@@ -4296,13 +4330,13 @@ class NativeFlows(unittest.TestCase):
     def test_profile_sync_native_close_during_upload_resumes_original_profile(self):
         self.mcp.call("desktop.start", profile_sync="slow-upload")
         self.open_shared_profiles()
-        self.mcp.batch(click(370, 442), check("profile_sync.review", 0),
+        self.profile_batch(job(click(370, 442)), check("profile_sync.review", 0),
                        click(360, 570), check("profile_sync.enrollment.options.enabled", True),
                        check("profile_sync.working", True), {"type":"restart"})
         self.open_shared_profiles()
-        self.mcp.batch(check("profile_sync.enrollment.selection.ready", False),
+        self.profile_batch(check("profile_sync.enrollment.selection.ready", False),
                        check("profile_sync.working", False), shot("profile-sync-resume-after-close"),
-                       click(345, 545), check("profile_sync.enrollment.selection.ready", True),
+                       job(click(345, 545)), check("profile_sync.enrollment.selection.ready", True),
                        check("profile_sync.error", None), shot("profile-sync-resumed-receipt"),
                        click(288, 408), check("profile_sync.options.enabled", False),
                        check("profile_sync.saving", False), {"type":"restart"})
@@ -4317,10 +4351,10 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366),
                        check("dark", True), check("preferences_saved", True))
         self.open_shared_profiles(650)
-        self.mcp.batch(shot("profile-sync-compact-dark"),
+        self.profile_batch(shot("profile-sync-compact-dark"),
                        click(288, 371), click(288, 371), click(288, 371),
-                       check("profile_sync.options.accounts", False), check("profile_sync.saving", False),
-                       click(370, 442), check("profile_sync.review", 0),
+                       check("profile_sync.options.accounts", False), background(check("profile_sync.saving", False)),
+                       job(click(370, 442)), check("profile_sync.review", 0),
                        shot("profile-sync-compact-review"), key("ctrl+1"), check("tab", "Mail"),
                        {"type":"restart"})
         self.open_shared_profiles(650)
@@ -4815,9 +4849,9 @@ class NativeFlows(unittest.TestCase):
     def test_settings_help_synced_passwords_hover(self):
         self.mcp.call("desktop.start", profile_sync="empty", profile_passwords="ready")
         self.open_shared_profiles()
-        self.mcp.batch(click(370, 442), check("profile_sync.review", 0), click(540, 482), key("ctrl+a"),
-                       type_text("Personal"), click(360, 570), check("profile_sync.enrollment.selection.ready", True),
-                       check("profile_sync.working", False), wait(150))
+        self.profile_batch(job(click(370, 442)), check("profile_sync.review", 0), click(540, 482), key("ctrl+a"),
+                           type_text("Personal"), job(click(360, 570)), check("profile_sync.enrollment.selection.ready", True),
+                           check("profile_sync.working", False), wait(150))
         x, y = self.help_icon_centre("help-synced-passwords")
         self.mcp.batch({"type": "hover", "x": x, "y": y})
         self.help_tip("help-synced-passwords", hovered=True)
@@ -7507,6 +7541,37 @@ class NativeFlows(unittest.TestCase):
             if predicate(state) or time.monotonic() >= deadline:
                 return state
             time.sleep(0.02)
+
+    def profile_batch(self, *actions):
+        """Run a batch, waiting with PROFILE_SYNC_SECONDS where profile work runs.
+
+        job(input) waits until that input's profile job has finished, counted by
+        the app, so a working flag read before the input landed cannot pass.
+        background(check) waits for background profile work to reach a state."""
+        pending = []
+
+        def flush():
+            if pending:
+                self.mcp.batch(*pending)
+                pending.clear()
+
+        for action in actions:
+            if action.get("profile_job"):
+                flush()
+                before = self.mcp.call("desktop.state")["profile_sync"]["finished"]
+                self.mcp.batch({k: v for k, v in action.items() if k != "profile_job"})
+                self.wait_for_background(f"profile work after {action['type']} at ({action.get('x')}, {action.get('y')})",
+                                         lambda state: state["profile_sync"]["finished"] > before,
+                                         PROFILE_SYNC_SECONDS)
+            elif action.get("background"):
+                flush()
+                expected = {k: v for k, v in action.items() if k != "background"}
+                self.wait_for_background(
+                    f"{expected['path']} {expected.get('op', 'eq')} {expected.get('value')!r}",
+                    lambda state: state_matches(state, expected), PROFILE_SYNC_SECONDS)
+            else:
+                pending.append(action)
+        flush()
 
     def assert_store_matches(self, total=None, folder=None):
         """The list, counts, reader, sidebar count and badge equal what the store holds."""

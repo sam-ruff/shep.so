@@ -17,6 +17,10 @@ from mcp_harness import Desktop, ROOT
 
 DRAFT = "Keep this fictional draft through launcher activation."
 OBSERVER = "shep-notification-observer@example.test"
+# GNOME Shell's first start reads its libraries and software renderer, which
+# only these flows use, from a cold cache: under 1 s on an idle host, over 20 s
+# at 40 IOPS and one CPU in the CI image, as on the runner.
+SHELL_START_SECONDS = 90
 
 
 def install_shell_observer(desktop):
@@ -234,6 +238,7 @@ def run(binary):
         with (directory / "gnome-shell.log").open("w") as output:
             shell = subprocess.Popen(["gnome-shell", "--x11", "--sm-disable", "--mode=ubuntu"],
                                      env=env, stdout=output, stderr=output)
+        shell_started = time.monotonic()
 
         def registrations():
             return notifier_items(desktop.command(
@@ -255,7 +260,8 @@ def run(binary):
 
         eventually(lambda: shell_observation()["shell_ready"] and
                    desktop.state()["tray"]["available"] and registrations(),
-                   "GNOME startup complete and StatusNotifier registration", 20)
+                   "GNOME startup complete and StatusNotifier registration", SHELL_START_SECONDS)
+        receipt["shell_start_seconds"] = round(time.monotonic() - shell_started, 1)
         primary = desktop.app.pid
 
         def visible_window():
