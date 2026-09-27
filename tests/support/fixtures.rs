@@ -583,6 +583,9 @@ async fn seed_outgoing(store: &Store) -> anyhow::Result<()> {
         .into_iter()
         .find(|a| a.id == "preview-work")
         .unwrap();
+    // One clock reading: a second boundary between records would tie their
+    // times and leave the Outbox order to the random attempt IDs.
+    let now = chrono::Utc::now().timestamp();
     for (index, subject) in ["Delivery needs review", "Sent copy needs review"]
         .into_iter()
         .enumerate()
@@ -602,7 +605,7 @@ async fn seed_outgoing(store: &Store) -> anyhow::Result<()> {
             &draft,
             crate::compose::build(&account, &draft, vec![])?,
         )?;
-        submission.info.created = chrono::Utc::now().timestamp() + (1 - index) as i64;
+        submission.info.created = now + (1 - index) as i64;
         let info = store.begin_outgoing(submission, draft).await?;
         if index == 0 {
             store
