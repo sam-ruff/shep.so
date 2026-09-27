@@ -60,8 +60,11 @@ def run(binary, mode="details", desktop_type=Desktop):
         (icons / f"{APP_ID}.svg").write_bytes((ROOT / "assets/shepherd-light.svg").read_bytes())
         observation = install_shell_observer(desktop)
         desktop.command("gsettings", "set", "org.gnome.shell", "enabled-extensions", f"['{OBSERVER}']")
+        # No tray: this flow runs with tray="missing", and a tray would make
+        # restarts hide Shep instead of relaunching it.
         desktop.command("gsettings", "set", "org.gnome.shell", "disabled-extensions",
-                        "['ding@rastersoft.com', 'tiling-assistant@ubuntu.com']")
+                        "['ding@rastersoft.com', 'tiling-assistant@ubuntu.com', "
+                        "'ubuntu-appindicators@ubuntu.com']")
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "enable-animations", "false")
         desktop.command("gsettings", "set", "org.gnome.desktop.interface", "scaling-factor", "1")
         desktop.command("gsettings", "set", "org.gnome.desktop.notifications", "show-banners", "true")
