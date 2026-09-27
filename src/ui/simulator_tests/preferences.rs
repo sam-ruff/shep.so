@@ -19,7 +19,6 @@ async fn search_setting(h: &mut Harness, query: &str, section: &str, control: Op
 }
 
 /// `test_preferences_search_and_tooltip_options`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preferences_search_and_tooltip_options() {
     let mut h = Harness::start().await;
     open_preferences(&mut h).await;
@@ -49,7 +48,6 @@ async fn preferences_search_and_tooltip_options() {
 }
 
 /// The compact dark half of `test_preferences_search_and_tooltip_options`.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preferences_search_compact_dark() {
     let mut h = Harness::with_size(900., 640.).await;
     open_preferences(&mut h).await;
@@ -67,7 +65,6 @@ async fn preferences_search_compact_dark() {
 }
 
 /// `test_preferences_catalogue_ranking_and_cross_tab_navigation`, full-size light.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preferences_catalogue_ranking_and_cross_tab_navigation() {
     let mut h = Harness::start().await;
     open_preferences(&mut h).await;
@@ -105,7 +102,6 @@ async fn preferences_catalogue_ranking_and_cross_tab_navigation() {
 
 /// `test_settings_search_reveals_and_focuses_individual_controls`, without the
 /// outline pixel checks, which stay native.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn settings_search_reveals_and_focuses_individual_controls() {
     let mut h = Harness::start().await;
     open_preferences(&mut h).await;
@@ -177,7 +173,6 @@ async fn settings_search_reveals_and_focuses_individual_controls() {
 }
 
 /// `test_preferences_and_resize_keep_latest_changes`
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preferences_and_resize_keep_latest_changes() {
     let mut h = Harness::start().await;
     open_preferences(&mut h).await;
@@ -206,7 +201,6 @@ async fn preferences_and_resize_keep_latest_changes() {
 
 /// Appearance changes repaint the window and switching back restores identical
 /// pixels. Compares compact `Simulator` snapshots from this run only.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn appearance_round_trip_restores_identical_pixels() {
     let directory = tempfile::tempdir().expect("snapshot directory");
     let light = directory.path().join("preferences-light");
@@ -236,3 +230,12 @@ async fn appearance_round_trip_restores_identical_pixels() {
             .expect("second light snapshot")
     );
 }
+
+scenarios!(
+    preferences_search_and_tooltip_options,
+    preferences_search_compact_dark,
+    preferences_catalogue_ranking_and_cross_tab_navigation,
+    settings_search_reveals_and_focuses_individual_controls,
+    preferences_and_resize_keep_latest_changes,
+    appearance_round_trip_restores_identical_pixels,
+);

@@ -54,8 +54,12 @@ back restores identical pixels.
 
 ## Adding a scenario
 
-Put it in the matching module (`mail.rs`, `preferences.rs` or `shortcuts.rs`),
-start from `Harness::start()` or `Harness::with_size(900., 640.)`, and follow the
-native batch step by step. Fixture options that the native harness passes as
+Put it in the matching module (`mail.rs`, `preferences.rs` or `shortcuts.rs`)
+as a plain `async fn`, add its name to that module's `scenarios!` list, start
+from `Harness::start()` or `Harness::with_size(900., 640.)`, and follow the
+native batch step by step. `scenarios!` runs each one through `harness::run`,
+whose runtime and thread have 8 MiB stacks: under `#[tokio::test]` the demo
+engine overflowed Tokio's default 2 MiB worker stack in unoptimised Windows
+builds. Fixture options that the native harness passes as
 command-line flags (`mail_actions`, `long_folders` and similar) are not
 available here yet; scenarios needing them stay native only.
