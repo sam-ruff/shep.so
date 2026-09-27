@@ -111,9 +111,9 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.batch([{"type": "restart"}])
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
         receipt["setup_window"] = prepare_window(desktop)
-        # The first click after the resize could be dropped on the runner.
-        desktop.batch([{"type": "hover", "x": 100, "y": 878}, wait(300), click(100, 878),
-                       check("tab", "Preferences"), wait(150)])
+        # The runner's GNOME Shell dropped the first click after the resize even
+        # after a hover; this flow tests notifications, so use the shortcut.
+        desktop.batch([key("ctrl+comma"), check("tab", "Preferences"), wait(150)])
         if mode != "details":
             desktop.batch([click(690, 366), check("dark", True)])
         # GNOME Shell can deliver this press after later typed keys; wait for focus.
@@ -125,6 +125,12 @@ def run(binary, mode="details", desktop_type=Desktop):
             desktop.batch([click(288, 452), check("notifications.settings.show_details", False)])
         if mode == "muted":
             desktop.batch([click(288, 374), check("notifications.settings.popups", False)])
+        # GNOME Shell provides a tray and close to tray is on by default, so the
+        # restart below would hide Shep instead of relaunching it.
+        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), key("ctrl+a"),
+                       type_text("system tray"), check("settings_matches", ["System tray"]),
+                       click(450, 289), check("settings_group", "System tray"),
+                       check("tray.enabled", True), click(288, 342), check("tray.saved_enabled", False)])
         desktop.batch([key("ctrl+1"), check("tab", "Mail")])
         if mode == "private":
             desktop.launch_size = (900, 640)

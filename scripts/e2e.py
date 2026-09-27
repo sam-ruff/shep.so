@@ -4743,11 +4743,11 @@ class NativeFlows(unittest.TestCase):
                        check("help_tips.0.tip", None, "ne"), wait(100), shot("help-close-to-tray-hover-light"))
         self.assert_help_tip_inside("help-close-to-tray", 1440, 920)
         self.mcp.batch({"type": "hover", "x": 1300, "y": 820}, check("help_tips.0.tip", None),
-                       check("tray.enabled", False),
+                       check("tray.enabled", True),
                        # Clicking pins the help without toggling the setting beside it.
                        click(x, y), {"type": "hover", "x": 1300, "y": 820},
                        check("help_tips.0.focused", True), check("help_tips.0.tip", None, "ne"),
-                       check("tray.enabled", False), shot("help-close-to-tray-pinned-light"),
+                       check("tray.enabled", True), shot("help-close-to-tray-pinned-light"),
                        click(1300, 820), check("help_tips.0.focused", False), check("help_tips.0.tip", None),
                        # Keyboard: Tab from the settings search reaches the help icon.
                        click(1150, 88), wait(80), key("Tab"),
