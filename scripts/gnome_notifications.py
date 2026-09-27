@@ -47,6 +47,27 @@ def run(binary, mode="details", desktop_type=Desktop):
                       notification_delivery="native")
         directory = desktop.directory
         print(f"GNOME notification evidence: {directory}", flush=True)
+        # Choose the settings with real controls before GNOME Shell starts: under
+        # the runner's GNOME Shell, clicks into Shep were dropped or reordered.
+        # The persistent workspace keeps them for the relaunches GNOME observes.
+        desktop.batch([{"type": "resize", "width": 1440, "height": 920}, check("window_size", [1440, 920]),
+                       key("ctrl+comma"), check("tab", "Preferences"), wait(150)])
+        if mode != "details":
+            desktop.batch([click(690, 366), check("dark", True)])
+        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), type_text("notifications"),
+                       check("settings_matches", ["Notifications"]), click(450, 289),
+                       check("settings_group", "Notifications"),
+                       click(288, 413), check("notifications.settings.sound", False)])
+        if mode == "private":
+            desktop.batch([click(288, 452), check("notifications.settings.show_details", False)])
+        if mode == "muted":
+            desktop.batch([click(288, 374), check("notifications.settings.popups", False)])
+        # Close to tray is on by default; a relaunch must quit, not hide.
+        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), key("ctrl+a"),
+                       type_text("system tray"), check("settings_matches", ["System tray"]),
+                       click(450, 289), check("settings_group", "System tray"),
+                       check("tray.enabled", True), click(288, 342), check("tray.saved_enabled", False),
+                       key("ctrl+1"), check("tab", "Mail")])
         env = desktop.env
         env.update(GSETTINGS_BACKEND="keyfile", XDG_CURRENT_DESKTOP="ubuntu:GNOME",
                    GNOME_SHELL_SESSION_MODE="ubuntu", LIBGL_ALWAYS_SOFTWARE="1",
@@ -114,27 +135,6 @@ def run(binary, mode="details", desktop_type=Desktop):
         desktop.batch([{"type": "restart"}])
         desktop.command("xdotool", "windowactivate", "--sync", desktop.window)
         receipt["setup_window"] = prepare_window(desktop)
-        # The runner's GNOME Shell dropped the first click after the resize even
-        # after a hover; this flow tests notifications, so use the shortcut.
-        desktop.batch([key("ctrl+comma"), check("tab", "Preferences"), wait(150)])
-        if mode != "details":
-            desktop.batch([click(690, 366), check("dark", True)])
-        # GNOME Shell can deliver this press after later typed keys; wait for focus.
-        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), type_text("notifications"),
-                       check("settings_matches", ["Notifications"]), click(450, 289),
-                       check("settings_group", "Notifications"),
-                       click(288, 413), check("notifications.settings.sound", False)])
-        if mode == "private":
-            desktop.batch([click(288, 452), check("notifications.settings.show_details", False)])
-        if mode == "muted":
-            desktop.batch([click(288, 374), check("notifications.settings.popups", False)])
-        # GNOME Shell provides a tray and close to tray is on by default, so the
-        # restart below would hide Shep instead of relaunching it.
-        desktop.batch([click(1150, 88), check("native_focus", "settings-search"), key("ctrl+a"),
-                       type_text("system tray"), check("settings_matches", ["System tray"]),
-                       click(450, 289), check("settings_group", "System tray"),
-                       check("tray.enabled", True), click(288, 342), check("tray.saved_enabled", False)])
-        desktop.batch([key("ctrl+1"), check("tab", "Mail")])
         if mode == "private":
             desktop.launch_size = (900, 640)
 
