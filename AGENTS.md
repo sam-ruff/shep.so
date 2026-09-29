@@ -1966,7 +1966,10 @@ Automatic move recovery keeps its `pending-move-recovery` close dependency: Quit
 still waits for the pass, and the journaled record and cached message remain for
 the next retry. Explicit `RecoverMailMove` from Activity keeps `Event::Error` and
 reopens. A failed profile-sync status read or continuous cycle keeps a pending
-Quit; other failed profile work still cancels it. The engine marks them
+Quit; other failed profile work still cancels it. A failed automatic
+profile-sync cycle also leaves a tray-hidden window closed, including while a
+setting or account review list is open; rejected review choices keep the
+ordinary notice. The engine marks them
 with typed provenance (`MailSyncFinished` with its `SyncOrigin`, and
 `Event::BackgroundError` from the network dispatcher's relay), never by matching
 error text; the UI records such notices with `background_notice`. The failure

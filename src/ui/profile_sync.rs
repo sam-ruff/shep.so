@@ -768,8 +768,14 @@ impl App {
                 }
                 // A review may be scrolled below the inline error. A rejected
                 // choice must remain visible at the current viewport as well.
+                // An automatic cycle failure is background work and must not
+                // reopen a window hidden in the tray.
                 if job && (state.setting_reviews.is_some() || state.account_reviews.is_some()) {
-                    self.notice(error, true);
+                    if cycle {
+                        self.background_notice(error);
+                    } else {
+                        self.notice(error, true);
+                    }
                 }
                 // A failed status read or continuous cycle, typically offline,
                 // is retried later; Quit may continue. Other profile work keeps
@@ -1300,6 +1306,67 @@ mod tests {
             Update::Failed("Discovery failed".into()),
         )));
         assert_eq!(other.pending_close, None);
+    }
+
+    /// Hides the window to the tray while an automatic cycle runs, optionally
+    /// with a review list open and Quit chosen from the tray, then fails the
+    /// cycle as if offline. The window must stay hidden and any close intent
+    /// must survive.
+    async fn fail_cycle_while_hidden(review: bool, quit: bool) -> App {
+        use crate::desktop_tray::{Action as TrayAction, Event as TrayEvent};
+        use crate::engine::Event;
+        let (mut app, mut queue, _) = app().await;
+        app.bulk.stopped = true;
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        if review {
+            app.profile_sync.account_reviews = Some(vec![Arc::new(
+                crate::profile_sync::account_reviews::Review::fixture("Shared account"),
+            )]);
+        }
+        app.shared_profile_action(Action::Sync);
+        let Ok(Command::ProfileSync(Request::Sync(cycle))) = queue.try_recv() else {
+            panic!("expected a cycle");
+        };
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.hidden);
+        assert!(app.tray.window.is_none());
+        if quit {
+            let _ = app.update(Message::Tray(TrayEvent::Action(TrayAction::Quit)));
+            assert!(app.pending_close.is_some(), "Quit waits for the cycle");
+        }
+        let close = app.pending_close;
+        let _ = app.update(Message::Backend(Event::ProfileSync(
+            cycle,
+            Update::Failed("Could not reach Google Drive".into()),
+        )));
+        assert!(app.tray.window.is_none(), "an offline cycle stays hidden");
+        assert!(app.tray.hidden);
+        assert_eq!(app.pending_close, close, "close intent is kept");
+        assert_eq!(
+            app.profile_sync.activity_error(),
+            Some("Could not reach Google Drive")
+        );
+        app
+    }
+
+    #[tokio::test]
+    async fn offline_cycle_with_an_open_review_keeps_the_tray_window_hidden() {
+        let app = fail_cycle_while_hidden(true, false).await;
+        // The review may be scrolled away, so the error also waits in the notice.
+        assert_eq!(
+            app.notice.as_ref().map(|notice| notice.0.as_str()),
+            Some("Could not reach Google Drive")
+        );
+        fail_cycle_while_hidden(true, true).await;
+    }
+
+    #[tokio::test]
+    async fn offline_cycle_without_a_review_keeps_the_tray_window_hidden() {
+        fail_cycle_while_hidden(false, false).await;
+        fail_cycle_while_hidden(false, true).await;
     }
 
     #[tokio::test]

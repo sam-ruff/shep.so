@@ -15,8 +15,9 @@ backup and automatic move-recovery failures no longer reopen a window hidden in
 the tray or cancel close intent; user-started writes, including explicit Activity
 move recovery, still reopen with their recovery. Automatic move recovery keeps its
 close dependency and journaled retry. A failed profile-sync status read or
-continuous cycle keeps a pending Quit. The single-account banner names the
-account once.
+continuous cycle keeps a pending Quit, and a failed automatic profile-sync cycle
+leaves a tray-hidden window closed, including while a setting or account review
+list is open. The single-account banner names the account once.
 
 Evidence: `ui/sync_status.rs` controlled-clock tests, `ui/sync_status_tests.rs`
 (real Store folder-listing revision change through the App: Refresh error after
@@ -24,7 +25,8 @@ listing, background failure reaching the banner, recovery without a false
 banner, overlapping healthy account, rename versus reconfiguration, and late
 older snapshots), `ui/tray.rs` App-level tray regressions for calendar refresh,
 automatic backup, automatic move recovery (the engine's `PendingMovesReady`
-sequence) and pending Quit, the profile-sync pending-Quit test, the dispatcher
+sequence) and pending Quit, the profile-sync pending-Quit and tray-hidden
+offline-cycle tests (with and without an open review, hidden and after tray Quit), the dispatcher
 relay and background-command tests, the `iced_test` delayed-banner scenario that
 clicks the real Dismiss control, and the native
 `test_tray_native_automatic_backup_failure_stays_hidden_until_opened` (light and
