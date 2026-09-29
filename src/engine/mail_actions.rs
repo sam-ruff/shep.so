@@ -768,7 +768,7 @@ mod tests {
                     "Archive".into(),
                 ))
                 .unwrap();
-            let result = tokio::time::timeout(Duration::from_secs(5), async {
+            let result = tokio::time::timeout(crate::test_wait::HANG, async {
                 loop {
                     if let Event::TransferFinished(id, moved, result) = events.next().await.unwrap()
                     {
@@ -825,7 +825,7 @@ mod tests {
                     Command::Move(1, original.clone(), "Archive".into())
                 })
                 .unwrap();
-            let receipt = tokio::time::timeout(Duration::from_secs(5), async {
+            let receipt = tokio::time::timeout(crate::test_wait::HANG, async {
                 loop {
                     match events.next().await.unwrap() {
                         Event::MoveFinished(1, _, _, result)
@@ -844,7 +844,7 @@ mod tests {
             sender
                 .try_send(Command::UndoMove(2, original.clone(), receipt.clone()))
                 .unwrap();
-            let restored = tokio::time::timeout(Duration::from_secs(5), async {
+            let restored = tokio::time::timeout(crate::test_wait::HANG, async {
                 loop {
                     if let Event::UndoFinished(2, _, result) = events.next().await.unwrap() {
                         break result.unwrap().current.clone().unwrap();
@@ -864,7 +864,7 @@ mod tests {
             sender
                 .try_send(Command::UndoMove(3, original, receipt))
                 .unwrap();
-            tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::time::timeout(crate::test_wait::HANG, async {
                 loop {
                     if let Event::UndoFinished(3, _, result) = events.next().await.unwrap() {
                         assert!(result.is_err());
@@ -1208,7 +1208,7 @@ mod tests {
             sources
         };
         let owner = async move { engine.clone().run_bulk_queue(input.bulk, output).await };
-        let (sources, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        let (sources, ()) = tokio::time::timeout(crate::test_wait::HANG, async {
             tokio::join!(collect, owner)
         })
         .await
@@ -1273,7 +1273,7 @@ mod tests {
         *scripted.reply.lock().unwrap() = ScriptedReply::Accept;
         engine.demo = true;
         engine.recover_completed_moves(output).await.unwrap();
-        let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+        let recovered = tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 if let Event::MoveRecovered(record) = events.next().await.unwrap() {
                     break record;
@@ -1397,7 +1397,7 @@ mod tests {
                     },
                 ))
                 .unwrap();
-            tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::time::timeout(crate::test_wait::HANG, async {
                 loop {
                     if let Event::FlagsFinished(id, _, result) = events.next().await.unwrap() {
                         assert_eq!(id, request);

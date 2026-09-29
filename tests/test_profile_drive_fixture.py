@@ -10,7 +10,9 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("harness", ROOT / "scripts/mcp_harness.py")
+# Seconds to wait for something a test expects; only turns a hang into a failure.
+HANG = 120
+spec =importlib.util.spec_from_file_location("harness", ROOT / "scripts/mcp_harness.py")
 harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)
 
@@ -22,7 +24,7 @@ def upload(fixture, identity):
     request = Request(fixture.url + "upload/drive/v3/files", data=data,
                       headers={"Authorization": "Bearer fixture-profile-token",
                                "Content-Type": "multipart/related; boundary=fixture"})
-    with urlopen(request, timeout=5) as response:
+    with urlopen(request, timeout=HANG) as response:
         return response.status, json.load(response)
 
 
@@ -32,7 +34,7 @@ class ProfileDriveFixtureTests(unittest.TestCase):
         try:
             with ThreadPoolExecutor(max_workers=1) as worker, tempfile.TemporaryDirectory() as directory:
                 pending = worker.submit(upload, fixture, "first")
-                self.assertTrue(fixture.upload_held.wait(2))
+                self.assertTrue(fixture.upload_held.wait(HANG))
                 self.assertFalse(pending.done())
                 self.assertIn("first", fixture.files)
                 desktop = harness.Desktop()
@@ -44,7 +46,7 @@ class ProfileDriveFixtureTests(unittest.TestCase):
                     desktop.batch([{"type": "release_profile_upload"}])
                     with self.assertRaisesRegex(RuntimeError, "No owned profile upload"):
                         desktop.batch([{"type": "release_profile_upload"}])
-                self.assertEqual(pending.result(timeout=2)[0], 201)
+                self.assertEqual(pending.result(timeout=HANG)[0], 201)
                 self.assertEqual(upload(fixture, "second")[0], 201)
                 self.assertEqual(set(fixture.files), {"first", "second"})
         finally:
@@ -55,11 +57,11 @@ class ProfileDriveFixtureTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=1) as worker:
             pending = worker.submit(upload, fixture, "closing")
             try:
-                self.assertTrue(fixture.upload_held.wait(2))
+                self.assertTrue(fixture.upload_held.wait(HANG))
             finally:
                 fixture.close()
             self.assertFalse(fixture.thread.is_alive())
-            self.assertEqual(pending.result(timeout=2)[0], 201)
+            self.assertEqual(pending.result(timeout=HANG)[0], 201)
 
     def test_credential_files_are_listed_apart_from_profiles_and_can_be_removed(self):
         fixture = harness._profile_fixture.ProfileDriveFixture("existing-passwords")
@@ -68,11 +70,11 @@ class ProfileDriveFixtureTests(unittest.TestCase):
             scope = ("appProperties has { key='shepProfile' and value='10000000-0000-4000-8000-000000000001' } "
                      "and appProperties has { key='shepGeneration' and value='20000000-0000-4000-8000-000000000001' }")
             query = "(appProperties has { key='shepType' and value='credential-key' } or appProperties has { key='shepType' and value='credential-vault' }) and " + scope
-            with urlopen(Request(fixture.url + "drive/v3/files?q=" + quote(query), headers=auth), timeout=5) as response:
+            with urlopen(Request(fixture.url + "drive/v3/files?q=" + quote(query), headers=auth), timeout=HANG) as response:
                 listed = json.load(response)["files"]
             self.assertEqual(sorted(f["appProperties"]["shepType"] for f in listed), ["credential-key", "credential-vault"])
             # Profile discovery never sees them.
-            with urlopen(Request(fixture.url + "drive/v3/files?q=" + quote("appProperties has { key='shepType' and value='profile' }"), headers=auth), timeout=5) as response:
+            with urlopen(Request(fixture.url + "drive/v3/files?q=" + quote("appProperties has { key='shepType' and value='profile' }"), headers=auth), timeout=HANG) as response:
                 self.assertTrue(all(f["appProperties"]["shepType"] == "profile" for f in json.load(response)["files"]))
             self.assertEqual(fixture.credential_state(), {"keys": 1, "vaults": 1, "plaintext": False})
             metadata = json.dumps({"id": "new-vault", "name": "shep-credential-vault-x.json",
@@ -80,11 +82,11 @@ class ProfileDriveFixtureTests(unittest.TestCase):
             data = (b'--fixture\r\nContent-Type: application/json\r\n\r\n' + metadata +
                     b'\r\n--fixture\r\nContent-Type: application/json\r\n\r\n{"secret":"fixture-cloud-smtp"}\r\n--fixture--\r\n')
             with urlopen(Request(fixture.url + "upload/drive/v3/files", data=data,
-                                 headers={**auth, "Content-Type": "multipart/related; boundary=fixture"}), timeout=5) as response:
+                                 headers={**auth, "Content-Type": "multipart/related; boundary=fixture"}), timeout=HANG) as response:
                 self.assertEqual(response.status, 200)
             # The oracle reports plaintext passwords stored by a faulty client.
             self.assertTrue(fixture.credential_state()["plaintext"])
-            with urlopen(Request(fixture.url + "drive/v3/files/new-vault", headers=auth, method="DELETE"), timeout=5) as response:
+            with urlopen(Request(fixture.url + "drive/v3/files/new-vault", headers=auth, method="DELETE"), timeout=HANG) as response:
                 self.assertEqual(response.status, 204)
             self.assertEqual(fixture.credential_state(), {"keys": 1, "vaults": 1, "plaintext": False})
             self.assertNotIn("new-vault", fixture.files)

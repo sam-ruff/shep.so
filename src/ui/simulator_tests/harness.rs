@@ -21,7 +21,7 @@ use keyboard::key::Named;
 use tokio::sync::mpsc;
 
 /// Bounds a hung scenario; passing checks return as soon as they hold.
-const DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+const DEADLINE: std::time::Duration = crate::test_wait::HANG;
 const NOTO_REGULAR: &[u8] = include_bytes!("../../../assets/NotoSans-Regular.ttf");
 const NOTO_SEMIBOLD: &[u8] = include_bytes!("../../../assets/NotoSans-SemiBold.ttf");
 

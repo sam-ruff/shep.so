@@ -535,10 +535,7 @@ async fn held_reads_do_not_block_observations_or_apply_to_a_restarted_scan() {
         let cloned = discovery.clone();
         let grant = drive.clone();
         let pending = tokio::spawn(async move { cloned.advance(&grant).await });
-        tokio::time::timeout(Duration::from_secs(5), received)
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::time::timeout(HANG, received).await.unwrap().unwrap();
         assert!(matches!(
             discovery.advance(&drive).await,
             Err(DiscoveryError::Busy)
@@ -584,10 +581,7 @@ async fn a_cancelled_read_can_retry_but_a_foreign_google_session_cannot_start_di
     let cloned = discovery.clone();
     let grant = drive.clone();
     let pending = tokio::spawn(async move { cloned.advance(&grant).await });
-    tokio::time::timeout(Duration::from_secs(5), received)
-        .await
-        .unwrap()
-        .unwrap();
+    tokio::time::timeout(HANG, received).await.unwrap().unwrap();
     pending.abort();
     assert!(pending.await.unwrap_err().is_cancelled());
     release.send(()).unwrap();

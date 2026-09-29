@@ -158,13 +158,10 @@ impl Server {
         self.requests.lock().unwrap().clone()
     }
     pub async fn finish(&mut self) {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            self.task.as_mut().unwrap(),
-        )
-        .await
-        .expect("Expected HTTP request was not made")
-        .expect("HTTP server failed");
+        tokio::time::timeout(crate::test_wait::HANG, self.task.as_mut().unwrap())
+            .await
+            .expect("Expected HTTP request was not made")
+            .expect("HTTP server failed");
         self.task = None;
     }
 }

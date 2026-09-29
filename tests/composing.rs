@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use mailparse::MailHeaderMap;
 use shep::{compose, model::*, store::Store};
 
@@ -98,7 +101,7 @@ async fn cached_attachments_survive_reopen_and_old_autosaves_without_copying_fil
     let file = dir.path().join("café notes.bin");
     let bytes = vec![0, 255, 1, 128, 13, 10];
     std::fs::write(&file, &bytes).unwrap();
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let old = draft();
     let mut latest = old.clone();
     latest.body = "Newer text".into();
@@ -113,7 +116,7 @@ async fn cached_attachments_survive_reopen_and_old_autosaves_without_copying_fil
     store.save_draft(old).await.unwrap();
     std::fs::remove_file(file).unwrap();
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let snapshot = store.draft_state().await.unwrap();
     let saved = &snapshot.drafts[0];
     assert_eq!(saved.body, latest.body);
@@ -226,7 +229,7 @@ async fn discard_retires_all_revisions_and_files_across_restart() {
     let path = dir.path().join("drafts.sqlite");
     let file = dir.path().join("attachment.txt");
     std::fs::write(&file, "Private draft attachment").unwrap();
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let original = draft();
     let mut other = original.clone();
     other.id = "other-draft".into();
@@ -246,7 +249,7 @@ async fn discard_retires_all_revisions_and_files_across_restart() {
     assert!(deleted.revision > state.revision);
     assert!(store.draft_files(attached).await.is_err());
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     for revision in [
         0,
         original.revision,
@@ -339,7 +342,7 @@ const FORWARD_MIME: &str = concat!(
 async fn forwarding_retains_html_inline_images_and_files_without_inheriting_recipients_or_thread() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mail.db");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let original = parse_mail(
         "work",
         "forward-original",
@@ -383,7 +386,7 @@ async fn forwarding_retains_html_inline_images_and_files_without_inheriting_reci
     store.save_draft(forward.clone()).await.unwrap();
     // Reopening must use persisted MIME/attachments, not the original body/cache.
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     forward = store.draft_state().await.unwrap().drafts.remove(0);
     let files = store.draft_files(forward.clone()).await.unwrap();
     assert_eq!(files[0].bytes, [0, 255, 1, 13, 10]);

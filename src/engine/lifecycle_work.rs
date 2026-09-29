@@ -183,7 +183,9 @@ mod tests {
         let reader = reader.await;
         assert!(lane.is_held().await);
         drop(reader);
-        assert!(!lane.is_held().await);
+        tokio::time::timeout(crate::test_wait::HANG, lane.write())
+            .await
+            .expect("the released lane grants the next writer");
     }
 
     #[tokio::test]
@@ -195,7 +197,7 @@ mod tests {
         }
         .await;
         assert!(failed.is_err());
-        let _next = tokio::time::timeout(Duration::from_secs(5), lane.write())
+        let _next = tokio::time::timeout(crate::test_wait::HANG, lane.write())
             .await
             .expect("lane released after the failed holder dropped");
     }
@@ -219,7 +221,7 @@ mod tests {
             .unwrap();
             waiting.push((granted, done));
         }
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while tx.capacity() != CAPACITY {
                 tokio::task::yield_now().await;
             }
@@ -256,7 +258,7 @@ mod tests {
             "the granted overflow holder is drained first"
         );
         drop(overflow_done);
-        tokio::time::timeout(Duration::from_secs(5), actor)
+        tokio::time::timeout(crate::test_wait::HANG, actor)
             .await
             .expect("coordinator drains and exits after the last handle")
             .unwrap();
@@ -272,7 +274,7 @@ mod tests {
         tokio::task::yield_now().await;
         assert!(!actor.is_finished());
         drop(access);
-        tokio::time::timeout(Duration::from_secs(5), actor)
+        tokio::time::timeout(crate::test_wait::HANG, actor)
             .await
             .expect("coordinator exits once the holder releases")
             .unwrap();

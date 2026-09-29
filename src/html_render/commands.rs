@@ -64,7 +64,7 @@ mod tests {
         let worker = tokio::task::spawn_blocking(move || input.blocking_recv());
         drop(cancel);
         assert_eq!(
-            tokio::time::timeout(std::time::Duration::from_secs(1), worker)
+            tokio::time::timeout(crate::test_wait::HANG, worker)
                 .await
                 .unwrap()
                 .unwrap(),

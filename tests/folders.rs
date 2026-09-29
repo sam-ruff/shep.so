@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     folders::{Mailbox, NameEncoding},
     model::*,
@@ -21,7 +24,7 @@ fn folder(name: &str, delimiter: Option<char>, selectable: bool) -> Mailbox {
 async fn catalog_and_expansion_survive_reopen_and_refresh_without_becoming_selectable() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     store.save_account(account()).await.unwrap();
     store
         .save_folder_catalog(
@@ -57,7 +60,7 @@ async fn catalog_and_expansion_survive_reopen_and_refresh_without_becoming_selec
     );
     store.save_preferences(preferences).await.unwrap();
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let workspace = store.workspace().await.unwrap();
     assert_eq!(
         workspace.account_folders["work"],

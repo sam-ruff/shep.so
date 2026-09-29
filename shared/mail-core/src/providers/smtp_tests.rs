@@ -97,10 +97,10 @@ async fn smtp_wire_keeps_bcc_in_envelope_and_distinguishes_rejection_from_lost_a
         let transport =
             lettre::AsyncSmtpTransport::<lettre::Tokio1Executor>::builder_dangerous("127.0.0.1")
                 .port(port)
-                .timeout(Some(Duration::from_secs(5)))
+                .timeout(Some(crate::test_wait::HANG))
                 .build();
         let result = deliver(transport, message).await;
-        let (recipients, raw) = tokio::time::timeout(Duration::from_secs(5), server)
+        let (recipients, raw) = tokio::time::timeout(crate::test_wait::HANG, server)
             .await
             .unwrap()
             .unwrap();

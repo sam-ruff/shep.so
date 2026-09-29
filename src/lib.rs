@@ -32,6 +32,10 @@ pub mod store;
 pub mod transfer;
 pub mod ui;
 
+#[cfg(test)]
+#[path = "../tests/support/wait.rs"]
+pub(crate) mod test_wait;
+
 #[cfg(feature = "test-support")]
 #[path = "../tests/support/fixtures.rs"]
 pub mod test_support;

@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{compose, model::*, outgoing::*, store::Store};
 fn account() -> Account {
     serde_json::from_value(serde_json::json!({"id":"work","name":"Work","email":"sender@example.test","protocol":"Imap","host":"imap.example.test","port":993,"username":"sender","smtp_host":"smtp.example.test","smtp_port":465})).unwrap()
@@ -34,7 +37,7 @@ async fn begin(store: &Store, draft: &Draft) -> OutgoingInfo {
 async fn queued_submission_reopens_with_exact_wire_and_claims_only_once() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("queued.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     store.save_account(account()).await.unwrap();
     let draft = draft("queued");
     store.save_draft(draft.clone()).await.unwrap();
@@ -52,7 +55,7 @@ async fn queued_submission_reopens_with_exact_wire_and_claims_only_once() {
     );
     assert!(store.delete_draft(draft.id).await.is_err());
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     assert_eq!(
         store.next_queued_outgoing().await.unwrap(),
         Some(info.attempt.clone())
@@ -95,7 +98,7 @@ async fn changed_sending_account_rejects_unsent_queue_before_claim() {
 async fn interrupted_submission_survives_restart_with_exact_wire_and_private_envelope() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     store.save_account(account()).await.unwrap();
     let draft = draft("one");
     store.save_draft(draft.clone()).await.unwrap();
@@ -105,7 +108,7 @@ async fn interrupted_submission_survives_restart_with_exact_wire_and_private_env
     assert!(!String::from_utf8_lossy(&raw).contains("private@example.test"));
     let started = store.begin_outgoing(wire, draft.clone()).await.unwrap();
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let pending = store
         .outgoing_submission(started.attempt.clone())
         .await

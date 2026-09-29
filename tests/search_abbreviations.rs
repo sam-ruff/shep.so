@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     fuzzy::{Matcher, WordMatcher, ranked, ranked_labels, score},
     model::*,
@@ -195,7 +198,7 @@ async fn numeric_phrase_counts_keep_selected_folder_bindings_and_empty_offsets()
 async fn phrase_tiers_preserve_paging_capture_and_equal_timestamp_order_after_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("phrases.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let mut rows = vec![
         mail(0, "architecture plan 17"),
         mail(1, "17 plan architecture"),
@@ -221,7 +224,7 @@ async fn phrase_tiers_preserve_paging_capture_and_equal_timestamp_order_after_re
     expected.extend(["work:INBOX:1".into(), "work:INBOX:2".into()]);
     drop(store);
     for _ in 0..2 {
-        let store = Store::open(&path).unwrap();
+        let store = wait::reopen(|| Store::open(&path));
         let mut actual = Vec::new();
         for offset in [0, PAGE_SIZE] {
             let page = store

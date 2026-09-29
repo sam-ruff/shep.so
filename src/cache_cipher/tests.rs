@@ -213,7 +213,7 @@ fn admitted_cache_reads_remain_valid_during_process_exit() {
             let (acknowledge, completed) = std::sync::mpsc::sync_channel(1);
             if let Some(worker) = WORKER.get() {
                 let _ = worker.send(acknowledge);
-                let _ = completed.recv_timeout(std::time::Duration::from_secs(10));
+                let _ = completed.recv_timeout(crate::test_wait::HANG);
             }
         }
         unsafe extern "C" {

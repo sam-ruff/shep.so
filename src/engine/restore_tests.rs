@@ -140,7 +140,7 @@ async fn restored_mail_deleted_on_the_server_survives_sync_and_store_reopen() {
     .unwrap();
     store.upsert(vec![normal]).await.unwrap();
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(&path));
     store
         .apply_sync(MailSyncItem::Reconcile {
             account: "work".into(),

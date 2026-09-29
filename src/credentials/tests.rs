@@ -275,7 +275,7 @@ async fn cancelled_observers_and_last_handle_drop_still_drain_accepted_writes_in
     assert!(first.await.unwrap_err().is_cancelled());
     drop(credentials);
     release.send(()).unwrap();
-    let entries = tokio::time::timeout(std::time::Duration::from_secs(5), result)
+    let entries = tokio::time::timeout(crate::test_wait::HANG, result)
         .await
         .unwrap()
         .unwrap();

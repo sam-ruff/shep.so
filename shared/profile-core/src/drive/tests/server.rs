@@ -137,7 +137,7 @@ impl Server {
         Drive::verify(
             Drive::client_builder()
                 .no_proxy()
-                .timeout(Duration::from_secs(5))
+                .timeout(HANG)
                 .build()
                 .unwrap(),
             self.base.clone(),
@@ -148,7 +148,7 @@ impl Server {
         .await
     }
     pub async fn finish(mut self) -> Vec<Request> {
-        tokio::time::timeout(Duration::from_secs(10), self.task.take().unwrap())
+        tokio::time::timeout(HANG, self.task.take().unwrap())
             .await
             .expect("unconsumed scripted request")
             .expect("HTTP fixture panicked");

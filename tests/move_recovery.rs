@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     mail_actions::{
         Fingerprint, MoveReceipt, connection_key,
@@ -49,7 +52,7 @@ fn resolved(original: &StoredMail, receipt: &MoveReceipt, uid: &str) -> StoredMa
 async fn acknowledged_move_without_uid_preserves_original_through_sync_restart_and_exact_lookup() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let (original, record) = prepare(&store, "42.7", "work").await;
     let committed = store
         .checkpoint_mail_move(record.clone(), MoveStage::Committed, record.receipt.clone())
@@ -68,7 +71,7 @@ async fn acknowledged_move_without_uid_preserves_original_through_sync_restart_a
         "Deletion cannot destroy a journal-owned original"
     );
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let pending = store.pending_mail_moves(None, None).await.unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].stage, MoveStage::Committed);
@@ -130,7 +133,7 @@ async fn acknowledged_move_without_uid_preserves_original_through_sync_restart_a
 async fn copied_append_uid_and_connections_survive_restart_and_cleanup_retry() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let (original, record) = prepare(&store, "42.8", "personal").await;
     let mut receipt = record.receipt.clone();
     receipt.current = Some(resolved(&original, &receipt, "76.5").summary);
@@ -143,7 +146,7 @@ async fn copied_append_uid_and_connections_survive_restart_and_cleanup_retry() {
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let resumed = store
         .mail_move_for_source(original.summary.id.clone())
         .await
@@ -345,14 +348,14 @@ async fn account_removal_reviews_pending_receipts_and_preserves_another_accounts
 async fn committed_recovery_is_readable_searchable_and_unselectable_in_destination_after_restart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let (original, record) = prepare(&store, "42.20", "personal").await;
     store
         .checkpoint_mail_move(record.clone(), MoveStage::Committed, record.receipt.clone())
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let query = MailQuery {
         account: Some("personal".into()),
         folder: "Keep".into(),
@@ -676,7 +679,7 @@ async fn reviewed_local_recovery_preserves_content_flags_and_uses_no_obsolete_se
     for stage in [MoveStage::Started, MoveStage::Copied, MoveStage::Committed] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mail.sqlite");
-        let store = Store::open(&path).unwrap();
+        let store = wait::reopen(|| Store::open(&path));
         let (original, mut record) = prepare(&store, "42.90", "personal").await;
         if stage != MoveStage::Started {
             record = store
@@ -707,7 +710,7 @@ async fn reviewed_local_recovery_preserves_content_flags_and_uses_no_obsolete_se
         assert_eq!(store.workspace().await.unwrap().move_pending_total, 0);
         assert!(store.keep_mail_move(kept.clone(), true).await.is_err());
         drop(store);
-        let store = Store::open(&path).unwrap();
+        let store = wait::reopen(|| Store::open(&path));
         store
             .apply_sync(MailSyncItem::Reconcile {
                 account: "work".into(),

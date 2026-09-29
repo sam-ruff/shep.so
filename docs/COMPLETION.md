@@ -1,5 +1,32 @@
 # Completion audit
 
+## Rust test hang guards on a starved runner, 29 September 2026
+
+Main run `36485832679` spent 1876 s in `cargo test --all-features` (usually 460
+to 610 s) while the Proxmox host ran several clones, and two tests failed only on
+their waits: the account setup held-probe test (1 s) and the speculative HTML
+preparation test (20 s around a real render).
+
+`test/hang-deadlines` audits every test wait. Waits for something the test
+expects to happen, including "must not wait for the held X" checks where the
+alternative is waiting forever, now use a shared 120 s `HANG`
+(`tests/support/wait.rs`; the shared crates and Python tests keep their own
+copy). Fixture HTTP/SMTP client timeouts that could fire while a test holds a
+response were raised the same way. Genuine "must not happen within" windows,
+virtual-time tests, production timeouts and performance budgets are unchanged.
+
+Starving the tests also exposed reopen races: a dropped `Store` closes its
+connection on its worker thread, and on a slow disk that close held the file
+past the new connection's 5 s busy timeout ("database is locked"). Tests that
+reopen a dropped store now use `wait::reopen`, which retries only that error.
+
+Evidence: in the CI image with two CPUs, four busy loops and 40 write IOPS the
+unpatched full suite took 1856 s for the main test binary, like the runner; at
+5 write IOPS 16 of the 43 profile store tests failed before the reopen change
+and all passed after it. Production bounds that still race extreme starvation
+(cache ownership `OPENING_WAIT` 2 s, activation IPC 250 ms and 2 s) are
+deliberately left. Runner confirmation remains open.
+
 ## Native scenarios on a starved runner, 27 September 2026
 
 Main run `36306277168` (sharing its Proxmox host with another full suite) and

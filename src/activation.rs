@@ -405,7 +405,7 @@ mod tests {
         let mut events = Box::pin(subscription(&subscription_signal));
         let request = Local.restart(record.clone());
         let handling = async {
-            let request = tokio::time::timeout(Duration::from_secs(2), events.next())
+            let request = tokio::time::timeout(crate::test_wait::HANG, events.next())
                 .await
                 .expect("restart arrives")
                 .expect("request");
@@ -501,7 +501,7 @@ mod tests {
         let mut events = Box::pin(subscription(&subscription_signal));
         let request = Local.request(record.clone());
         let handling = async {
-            let request = tokio::time::timeout(Duration::from_secs(2), events.next())
+            let request = tokio::time::timeout(crate::test_wait::HANG, events.next())
                 .await
                 .expect("activation arrives")
                 .expect("request");
@@ -535,7 +535,7 @@ mod tests {
         let compose = ipc::Compose(link.into());
         let request = compose.request(record.clone());
         let handling = async {
-            let request = tokio::time::timeout(Duration::from_secs(2), events.next())
+            let request = tokio::time::timeout(crate::test_wait::HANG, events.next())
                 .await
                 .expect("activation arrives")
                 .expect("request");
@@ -627,7 +627,7 @@ mod tests {
             let (Request::Open(generation) | Request::Restart(generation)) = request;
             signal.acknowledge(generation);
         };
-        let (reply, ()) = tokio::time::timeout(Duration::from_secs(2), async {
+        let (reply, ()) = tokio::time::timeout(crate::test_wait::HANG, async {
             tokio::join!(Local.request(record), handling)
         })
         .await
@@ -668,7 +668,7 @@ mod tests {
             .stdout(std::process::Stdio::null())
             .spawn()
             .expect("owned child process");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + crate::test_wait::HANG;
         while !root.path().join("child-ready").exists() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
