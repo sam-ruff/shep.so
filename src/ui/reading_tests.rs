@@ -90,40 +90,108 @@ fn search_uses_relevance_without_overwriting_browse_sort_and_rejects_stale_pages
 #[test]
 fn recovered_mail_sync_clears_its_error_but_preserves_other_action_errors() {
     let (mut app, _) = App::new();
+    let work = crate::engine::SyncAttempt {
+        account: "preview".into(),
+        connection: String::new(),
+        connection_revision: 0,
+        sequence: 1,
+        origin: crate::engine::SyncOrigin::Refresh,
+    };
+    let personal = crate::engine::SyncAttempt {
+        account: "accounts".into(),
+        connection: String::new(),
+        connection_revision: 0,
+        sequence: 2,
+        origin: crate::engine::SyncOrigin::Refresh,
+    };
     let _ = app.handle(Message::Backend(Event::MailSyncFinished(
-        "work".into(),
+        work.clone(),
         Err("Mail server unavailable. Try Refresh again.".into()),
     )));
     assert!(app.notice.as_ref().unwrap().1);
     // Another account's success leaves the failing account's notice alone.
-    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
-        "personal".into(),
-        Ok(()),
-    )));
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(personal, Ok(()))));
     assert!(app.notice.as_ref().unwrap().1);
     let _ = app.handle(Message::Backend(Event::MailSyncFinished(
-        "work".into(),
+        work.clone(),
         Ok(()),
     )));
     assert!(app.notice.is_none());
     let _ = app.handle(Message::Backend(Event::MailSyncFinished(
-        "work".into(),
+        work.clone(),
         Err("Mail server unavailable.".into()),
     )));
     // Give the unrelated notice a distinct, deterministic identity.
     app.sync_notice = Some((
-        "work".into(),
+        "preview".into(),
         Instant::now() - std::time::Duration::from_secs(1),
     ));
     app.notice("Archive failed. The message was restored.", true);
-    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
-        "work".into(),
-        Ok(()),
-    )));
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(work, Ok(()))));
     assert_eq!(
         app.notice.as_ref().unwrap().0,
         "Archive failed. The message was restored."
     );
+    assert!(app.sync_notice.is_none());
+}
+
+#[test]
+fn stale_and_removed_account_sync_results_cannot_publish_notices() {
+    let (mut app, _) = App::new();
+    let account: Account = serde_json::from_value(serde_json::json!({
+        "id":"fixture", "name":"Fixture", "email":"fixture@example.test",
+        "protocol":"Imap", "host":"imap.example.test", "port":993,
+        "username":"fixture", "smtp_host":"smtp.example.test", "smtp_port":465
+    }))
+    .expect("fixture account");
+    Arc::make_mut(&mut app.workspace).accounts.push(account);
+    let old = crate::engine::SyncAttempt {
+        account: "fixture".into(),
+        connection: "old".into(),
+        connection_revision: 0,
+        sequence: 1,
+        origin: crate::engine::SyncOrigin::Background,
+    };
+    let mut current = old.clone();
+    current.connection = "new".into();
+    current.sequence = 2;
+    let _ = app.handle(Message::Backend(Event::MailSyncStarted(old.clone())));
+    let _ = app.handle(Message::Backend(Event::MailSyncStarted(current.clone())));
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
+        old,
+        Err("stale".into()),
+    )));
+    assert!(app.notice.is_none());
+    Arc::make_mut(&mut app.workspace).accounts.clear();
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
+        current,
+        Err("removed".into()),
+    )));
+    assert!(app.notice.is_none());
+    assert!(!app.sync_status.has_failures());
+}
+
+#[test]
+fn replacing_a_connection_clears_its_visible_sync_notice() {
+    let (mut app, _) = App::new();
+    let old = crate::engine::SyncAttempt {
+        account: "preview".into(),
+        connection: "old-slot".into(),
+        connection_revision: 0,
+        sequence: 1,
+        origin: crate::engine::SyncOrigin::Refresh,
+    };
+    let mut replacement = old.clone();
+    replacement.connection = "new-slot".into();
+    replacement.sequence = 2;
+    let _ = app.handle(Message::Backend(Event::MailSyncStarted(old.clone())));
+    let _ = app.handle(Message::Backend(Event::MailSyncFinished(
+        old,
+        Err("Old connection failed".into()),
+    )));
+    assert!(app.notice.is_some());
+    let _ = app.handle(Message::Backend(Event::MailSyncStarted(replacement)));
+    assert!(app.notice.is_none());
     assert!(app.sync_notice.is_none());
 }
 

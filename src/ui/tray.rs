@@ -513,6 +513,68 @@ mod tests {
     }
 
     #[test]
+    fn sync_failure_and_delayed_banner_never_restore_hidden_write_window() {
+        use crate::engine::{SyncAttempt, SyncOrigin};
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        app.busy.insert("send:reply".into());
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.hidden);
+        let background = SyncAttempt {
+            account: "preview".into(),
+            connection: String::new(),
+            connection_revision: 0,
+            sequence: 1,
+            origin: SyncOrigin::Background,
+        };
+        let _ = app.update(Message::Backend(crate::engine::Event::MailSyncStarted(
+            background.clone(),
+        )));
+        app.sync_status.finished(
+            &background,
+            true,
+            Instant::now() - std::time::Duration::from_secs(30),
+        );
+        let _ = app.update(Message::Backend(crate::engine::Event::MailSyncFinished(
+            background,
+            Err("Preview sync failed".into()),
+        )));
+        assert!(app.tray.window.is_none());
+        let _ = app.update(Message::Tick);
+        assert_eq!(
+            app.notice.as_ref().map(|notice| notice.0.as_str()),
+            Some("Mail checks are still failing. Try Refresh.")
+        );
+        assert!(app.tray.window.is_none());
+        let manual = SyncAttempt {
+            account: "preview".into(),
+            connection: String::new(),
+            connection_revision: 0,
+            sequence: 2,
+            origin: SyncOrigin::Refresh,
+        };
+        let _ = app.update(Message::Backend(crate::engine::Event::MailSyncStarted(
+            manual.clone(),
+        )));
+        let _ = app.update(Message::Backend(crate::engine::Event::MailSyncFinished(
+            manual,
+            Err("Refresh failed".into()),
+        )));
+        assert_eq!(
+            app.notice.as_ref().map(|notice| notice.0.as_str()),
+            Some("Refresh failed")
+        );
+        assert!(app.tray.window.is_none());
+        let _ = app.update(Message::Backend(crate::engine::Event::Error(
+            "Save failed; retry".into(),
+        )));
+        assert!(app.tray.window.is_some());
+    }
+
+    #[test]
     fn quit_after_ordinary_hide_reopens_on_failure_and_late_stop_cannot_exit() {
         let (mut app, _) = App::new();
         let window = iced::window::Id::unique();

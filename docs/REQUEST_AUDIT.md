@@ -1,5 +1,20 @@
 # Conversation request audit
 
+**28 September sync notice, tray and reader report (issue #1):** The supplied
+image records an account sync no-progress timeout and a blank formatted reader,
+but does not establish the provider cause or a renderer defect. The accepted
+triage v1 handoff `01a0e95b-7f7d-72b4-aee1-9f19348920c9` for
+[issue #1](https://forgejo.home.arpa/hexecute/github-sam-ruff-shep.so/issues/1)
+identifies a code path where an unrelated sync error can restore a tray-hidden
+window during a required write. The implementation request is active in
+[TODO](../TODO.md): retain the eight-minute progress watchdog, delay automatic
+background notices for 30 seconds from the first observed failure, keep manual
+Refresh errors immediate without resetting that background episode, bind results
+to account and attempt, and preserve required-write recovery. Independently test
+the reader with fictional HTML. The scheduled independent review must audit the
+proposed code and actual checks; this entry requests that audit and does not
+claim implementation or verification.
+
 The next architecture continuation integrates checked Flutter folder changes and
 desktop Activity through existing owners. Mobile integrated gates pass198 Rust
 and265 Flutter tests; desktop application library passes1,076 with two ignored.

@@ -13,7 +13,7 @@ async fn ready(store: &Store) -> Vec<Account> {
         .await
         .unwrap()
         .into_iter()
-        .map(|(account, _)| account)
+        .map(|(account, _, _)| account)
         .collect()
 }
 

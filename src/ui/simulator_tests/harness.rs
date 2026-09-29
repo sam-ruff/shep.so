@@ -148,6 +148,19 @@ impl Harness {
         self.app.test_observation()
     }
 
+    pub async fn inject(&mut self, message: Message) {
+        self.dispatch(message);
+        self.settle().await;
+    }
+
+    pub fn age_sync_failure(&mut self, attempt: &crate::engine::SyncAttempt) {
+        self.app.sync_status.finished(
+            attempt,
+            true,
+            Instant::now() - std::time::Duration::from_secs(31),
+        );
+    }
+
     /// Waits until the observation at `path` equals `value`, like MCP `check`.
     pub async fn expect(&mut self, path: &str, value: impl Into<serde_json::Value>) {
         let value = value.into();

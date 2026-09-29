@@ -199,6 +199,21 @@ impl Command {
         }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncOrigin {
+    Background,
+    Refresh,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncAttempt {
+    pub account: String,
+    pub connection: String,
+    pub connection_revision: u64,
+    pub sequence: u64,
+    pub origin: SyncOrigin,
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
     Activity(u64, Result<Arc<crate::store::activity::Snapshot>, String>),
@@ -259,9 +274,8 @@ pub enum Event {
         result: Result<Arc<MailDetail>, String>,
         prefetch: bool,
     },
-    /// One account's check result, keyed by account so a recovered account
-    /// clears only its own earlier error.
-    MailSyncFinished(String, Result<(), String>),
+    MailSyncStarted(SyncAttempt),
+    MailSyncFinished(SyncAttempt, Result<(), String>),
     MailArrived(Arc<crate::notifications::Arrival>),
     FlagsFinished(u64, Mail, Result<(), String>),
     MoveFinished(

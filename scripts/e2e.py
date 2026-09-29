@@ -1612,6 +1612,25 @@ class NativeFlows(unittest.TestCase):
                                {"type":"focus_app"}, check("editor", "Keep this hidden reply", "contains"),
                                shot("tray-ordinary-hide-write-failure"))
 
+    def test_tray_native_background_sync_failure_does_not_reopen_pending_send(self):
+        started = self.mcp.call("desktop.start", tray="available", background_sync=True,
+                                sync_failure_once=True, mail_actions="slow")
+        print(f"Tray sync and send overlap: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("tray.available", True), key("r"),
+                       check("focused_input", "compose-body"),
+                       type_text("Keep this fictional reply while checking mail."))
+        draft = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(click(675, 564), check("busy", "send:" + draft, "contains"),
+                       {"type": "close_request"}, check("tray.visible", False),
+                       check("tray.temporary", False), check("background_sync", True),
+                       {**check("background_sync_failures", 1), "timeout_ms": 5000},
+                       check("tray.visible", False), check("notice", None),
+                       shot("tray-hidden-after-sync-failure"),
+                       check("notice", "Sending is disabled in preview", "contains"),
+                       check("tray.visible", True), check("editor", "Keep this fictional reply", "contains"),
+                       wait(200),
+                       shot("tray-write-failure-recovered"))
+
     def test_tray_native_temporary_saving_notifies_and_failure_reopens_draft(self):
         self.mcp.call("desktop.start", tray="available", mail_actions="slow")
         self.disable_close_to_tray()
@@ -3014,8 +3033,8 @@ class NativeFlows(unittest.TestCase):
     def test_background_sync_failure_allows_manual_retry(self):
         self.mcp.call("desktop.start", background_sync=True, sync_failure_once=True)
         self.mcp.batch(check("background_sync", True), check("refreshing", False),
-                       check("notice", "temporarily unavailable", "contains"),
-                       check("background_sync", False), check("total", 120), shot("background-sync-error"),
+                       check("background_sync_failures", 1),
+                       check("notice", None), check("total", 120), shot("background-sync-grace"),
                        click(1400, 36), check("refreshing", True),
                        check("sync_round", 2), check("total", 121), check("refreshing", False),
                        check("notice", None),

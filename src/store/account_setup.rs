@@ -479,8 +479,11 @@ impl Store {
     /// Accounts ready to sync, each with its incoming connection identity:
     /// the server settings plus the active credential binding. A long-lived
     /// connection opened with other values is stale.
-    pub(crate) async fn accounts_ready_to_watch(&self) -> anyhow::Result<Vec<(Account, String)>> {
+    pub(crate) async fn accounts_ready_to_watch(
+        &self,
+    ) -> anyhow::Result<Vec<(Account, String, u64)>> {
         self.run(|c| {
+            let revision = get(c, "connections_revision")?;
             super::profile_sync::join::ready_to_sync(c)?
                 .into_iter()
                 .map(|account| {
@@ -497,7 +500,7 @@ impl Store {
                         crate::mail_actions::connection_key(&account),
                         slot.unwrap_or_default()
                     );
-                    Ok((account, identity))
+                    Ok((account, identity, revision))
                 })
                 .collect()
         })

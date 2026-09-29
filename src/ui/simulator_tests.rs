@@ -24,5 +24,6 @@ mod harness;
 mod mail;
 mod preferences;
 mod shortcuts;
+mod sync_notice;
 
 use harness::Harness;
