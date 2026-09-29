@@ -21,12 +21,13 @@ async function checkNoOverflow(page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
-async function contextFor(browser, userAgent, platform, touches) {
-  const context = await browser.newContext({ userAgent });
+async function contextFor(browser, userAgent, platform, touches, options = {}) {
+  const context = await browser.newContext({ userAgent, ...options });
   await context.addInitScript(({ platform, touches }) => {
-    Object.defineProperty(navigator, 'platform', { get: () => platform });
-    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => touches });
-    Object.defineProperty(navigator, 'userAgentData', { get: () => undefined });
+    // Configurable, because a new tab can run the init script twice.
+    Object.defineProperty(navigator, 'platform', { get: () => platform, configurable: true });
+    Object.defineProperty(navigator, 'maxTouchPoints', { get: () => touches, configurable: true });
+    Object.defineProperty(navigator, 'userAgentData', { get: () => undefined, configurable: true });
   }, { platform, touches });
   return context;
 }
@@ -93,6 +94,241 @@ for (const [platform, userAgent, navigatorPlatform, touches, name] of platforms)
     await expect(page.locator('.install-panel:visible')).toHaveCount(1);
     await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByRole('tab')).toHaveCount(5);
+    await expect(page.locator('#demo-notice')).toBeVisible({ visible: mobile });
+    await page.goto(`${origin}/demo/`);
+    await expect(page.getByRole('dialog', { name: 'This demo is for desktop only.' })).toHaveCount(mobile ? 1 : 0);
+    if (!mobile) await expect(page.locator('#demo-frame')).toBeFocused();
+    await context.close();
+  });
+}
+
+const mobileNotice = 'Shep has a mobile app designed for a great experience on mobile.';
+const android = ['Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/149.0.0.0 Mobile Safari/537.36', 'Linux armv8l', 5];
+const iphone = ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1', 'iPhone', 5];
+const axeTags = ['wcag2a', 'wcag2aa', 'wcag21aa'];
+
+// The demo has no reader pane at phone widths, so searching shows it still takes input.
+async function searchDemo(demo) {
+  await demo.getByRole('textbox', { name: 'Search conversations' }).fill('coffee');
+  await expect(demo.getByRole('article')).toHaveCount(1);
+  await expect(demo.getByRole('button', { name: 'Coffee on Thursday?', exact: true })).toBeVisible();
+}
+
+test('mobile home: the demo notice covers the embedded demo without taking focus, and the keyboard continues', async ({ browser }, testInfo) => {
+  const context = await contextFor(browser, ...android, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: testInfo.project.name !== 'firefox' });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(origin);
+  const notice = page.getByRole('region', { name: 'This demo is for desktop only.' });
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText(mobileNotice);
+  await expect(page.frameLocator('#demo-frame').getByText('Coffee on Thursday?')).toBeAttached();
+  expect(await page.evaluate(() => [window.scrollY, document.activeElement === document.body])).toEqual([0, true]);
+  // The card sits over the frame, inside the demo window.
+  const [card, frame] = await Promise.all([page.locator('.notice-card').boundingBox(), page.locator('#demo-frame').boundingBox()]);
+  expect(card.x >= frame.x && card.y >= frame.y && card.x + card.width <= frame.x + frame.width && card.y + card.height <= frame.y + frame.height).toBe(true);
+  await checkNoOverflow(page);
+  expect((await new AxeBuilder({ page }).withTags(axeTags).analyze()).violations).toEqual([]);
+  await screenshot(page, testInfo, 'mobile-home-notice-light', false);
+  await page.locator('#demo').scrollIntoViewIfNeeded();
+  await screenshot(page, testInfo, 'mobile-home-notice-light-demo', false);
+
+  // Tab from the Full screen link skips the inert frame and reaches the notice.
+  await page.getByRole('link', { name: /^Full screen/ }).focus();
+  await page.keyboard.press('Tab');
+  const proceed = notice.getByRole('button', { name: 'Continue to the demo' });
+  await expect(proceed).toBeFocused();
+  expect(await page.evaluate(() => document.querySelector('#demo-frame').inert)).toBe(true);
+  await page.keyboard.press('Enter');
+  await expect(notice).toBeHidden();
+  await expect(page.locator('#demo-frame')).toBeFocused();
+  await searchDemo(page.frameLocator('#demo-frame'));
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+test('small phone home in dark: the notice fits, ignores unrelated Escape and closes by touch or Escape', async ({ browser }, testInfo) => {
+  const context = await contextFor(browser, ...iphone, { viewport: { width: 320, height: 640 }, hasTouch: true, isMobile: testInfo.project.name !== 'firefox' });
+  const page = await context.newPage();
+  await page.goto(origin);
+  await page.getByLabel('Appearance').selectOption('dark');
+  await expect(page.locator('html')).toHaveCSS('color-scheme', 'dark');
+  const notice = page.getByRole('region', { name: 'This demo is for desktop only.' });
+  await expect(notice).toBeVisible();
+  await checkNoOverflow(page);
+  expect((await new AxeBuilder({ page }).withTags(axeTags).analyze()).violations).toEqual([]);
+  await page.locator('#demo').scrollIntoViewIfNeeded();
+  await screenshot(page, testInfo, 'small-phone-home-notice-dark', false);
+
+  // Escape elsewhere on the page leaves the notice alone.
+  await page.getByLabel('Appearance').focus();
+  await page.keyboard.press('Escape');
+  await expect(notice).toBeVisible();
+  const proceed = notice.getByRole('button', { name: 'Continue to the demo' });
+  expect((await proceed.boundingBox()).height).toBeGreaterThanOrEqual(44);
+  await proceed.focus();
+  await page.keyboard.press('Escape');
+  await expect(notice).toBeHidden();
+  await expect(page.locator('#demo-frame')).toBeFocused();
+
+  // Changing the appearance reloads the demo but a dismissed notice stays dismissed for this page view.
+  await page.getByLabel('Appearance').selectOption('light');
+  await expect(notice).toBeHidden();
+  await page.reload();
+  await expect(notice).toBeVisible();
+  await notice.getByRole('button', { name: 'Continue to the demo' }).tap();
+  await expect(notice).toBeHidden();
+  const demo = page.frameLocator('#demo-frame');
+  await demo.getByRole('textbox', { name: 'Search conversations' }).tap();
+  await searchDemo(demo);
+  await context.close();
+});
+
+test('small phone home with enlarged text: the notice scrolls so Continue stays reachable', async ({ browser }, testInfo) => {
+  const context = await contextFor(browser, ...android, { viewport: { width: 320, height: 640 }, hasTouch: true, isMobile: testInfo.project.name !== 'firefox' });
+  const page = await context.newPage();
+  await page.goto(origin);
+  const notice = page.locator('#demo-notice');
+  await expect(notice).toBeVisible();
+  // The site sizes text in px, so doubling it matches a phone's larger-text setting.
+  await page.evaluate(() => {
+    for (const element of document.querySelectorAll('.notice-card, .notice-card *')) {
+      element.style.fontSize = `${parseFloat(getComputedStyle(element).fontSize) * 2}px`;
+    }
+  });
+  await page.locator('#demo').scrollIntoViewIfNeeded();
+  const overflow = await notice.evaluate(element => [getComputedStyle(element).overflowY, element.scrollHeight > element.clientHeight]);
+  expect(overflow).toEqual(['auto', true]);
+  // Before any scrolling, the heading starts inside the stage rather than above its top.
+  const start = await page.evaluate(() => ({
+    scrollTop: document.querySelector('#demo-notice').scrollTop,
+    heading: document.querySelector('#demo-notice-title').getBoundingClientRect().top,
+    stage: document.querySelector('.demo-stage').getBoundingClientRect().top,
+  }));
+  expect(start.scrollTop).toBe(0);
+  expect(start.heading, JSON.stringify(start)).toBeGreaterThanOrEqual(start.stage);
+  const proceed = page.getByRole('button', { name: 'Continue to the demo' });
+  const inside = async () => {
+    const [button, stage] = await Promise.all([proceed.boundingBox(), page.locator('.demo-stage').boundingBox()]);
+    return button.y >= stage.y && button.y + button.height <= stage.y + stage.height;
+  };
+  expect(await inside()).toBe(false);
+  if (testInfo.project.name !== 'webkit') {
+    // WebKit's mobile emulation has no wheel input; its overflow check above covers the same rule.
+    const stage = await page.locator('.demo-stage').boundingBox();
+    await page.mouse.move(stage.x + stage.width / 2, stage.y + stage.height / 2);
+    await page.mouse.wheel(0, 2000);
+    await expect.poll(() => notice.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+    await expect.poll(inside).toBe(true);
+    await checkNoOverflow(page);
+    await screenshot(page, testInfo, 'small-phone-home-notice-large-text-scrolled', false);
+    await proceed.click();
+    await expect(notice).toBeHidden();
+    await expect(page.locator('#demo-frame')).toBeFocused();
+  }
+  await context.close();
+});
+
+// Chromium only: raw CDP touch events, which the browser turns into a scroll gesture.
+// Input.synthesizeScrollGesture does not scroll even ordinary page content in headless Chromium.
+async function touchSwipe(page, x, y, distance) {
+  const session = await page.context().newCDPSession(page);
+  const steps = 12;
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: Math.round(x), y: Math.round(y) }] });
+  for (let step = 1; step <= steps; step++) {
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: Math.round(x), y: Math.round(y - step * distance / steps) }] });
+    await page.waitForTimeout(16);
+  }
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await session.detach();
+}
+
+test('phone home at default text: swiping or wheeling over the notice still scrolls the page', async ({ browser }, testInfo) => {
+  const engine = testInfo.project.name;
+  test.skip(engine === 'webkit', 'WebKit mobile emulation supports neither wheel nor touch gestures.');
+  const context = await contextFor(browser, ...android, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: engine !== 'firefox' });
+  const page = await context.newPage();
+  await page.goto(origin);
+  await expect(page.locator('#demo-notice')).toBeVisible();
+  // Put the stage top 500 px down the viewport, leaving page content above it and room to scroll.
+  const stageLow = async () => {
+    await page.locator('.demo-stage').evaluate(element => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY - 500));
+    await expect.poll(() => page.evaluate(() => document.querySelector('.demo-stage').getBoundingClientRect().top)).toBeCloseTo(500, 0);
+  };
+  const scrollY = () => page.evaluate(() => window.scrollY);
+  const overNotice = () => page.evaluate(() => document.elementFromPoint(195, 780)?.closest('#demo-notice') !== null);
+  await stageLow();
+  expect(await overNotice()).toBe(true);
+  expect(await page.locator('#demo-notice').evaluate(element => element.scrollHeight <= element.clientHeight)).toBe(true);
+  if (engine === 'chromium') {
+    // Control: the same drag over page content above the stage scrolls the page.
+    let before = await scrollY();
+    await touchSwipe(page, 195, 450, 240);
+    await expect.poll(scrollY).toBeGreaterThan(before);
+    await stageLow();
+    before = await scrollY();
+    await touchSwipe(page, 195, 780, 240);
+    await expect.poll(scrollY).toBeGreaterThan(before);
+    await stageLow();
+  }
+  const before = await scrollY();
+  await page.mouse.move(195, 780);
+  await page.mouse.wheel(0, 300);
+  await expect.poll(scrollY).toBeGreaterThan(before);
+  await context.close();
+});
+
+test('mobile full screen: a modal notice opens first and Escape returns to the demo', async ({ browser }, testInfo) => {
+  const context = await contextFor(browser, ...android, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: testInfo.project.name !== 'firefox' });
+  const page = await context.newPage();
+  const errors = [];
+  context.on('weberror', error => errors.push(error.error().message));
+  await page.goto(origin);
+  await page.getByRole('button', { name: 'Continue to the demo' }).click();
+  const [tab] = await Promise.all([context.waitForEvent('page'), page.getByRole('link', { name: /^Full screen/ }).click()]);
+  await expect(tab).toHaveURL(`${origin}/demo/`);
+  const dialog = tab.getByRole('dialog', { name: 'This demo is for desktop only.' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(mobileNotice);
+  const proceed = dialog.getByRole('button', { name: 'Continue to the demo' });
+  await expect(proceed).toBeFocused();
+  expect(await tab.evaluate(() => document.querySelector('#demo-notice').matches(':modal'))).toBe(true);
+  await tab.keyboard.press('Tab');
+  expect(await tab.evaluate(() => document.activeElement !== document.querySelector('#demo-frame'))).toBe(true);
+  await checkNoOverflow(tab);
+  expect((await new AxeBuilder({ page: tab }).withTags(axeTags).analyze()).violations).toEqual([]);
+  await screenshot(tab, testInfo, 'mobile-full-screen-notice-light', false);
+  await proceed.focus();
+  await tab.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(tab.locator('#demo-frame')).toBeFocused();
+  const size = await tab.evaluate(() => {
+    const box = document.querySelector('#demo-frame').getBoundingClientRect();
+    return [box.x, box.y, box.width === innerWidth, box.height === innerHeight];
+  });
+  expect(size).toEqual([0, 0, true, true]);
+  await searchDemo(tab.frameLocator('#demo-frame'));
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+for (const [name, query, colorScheme] of [['requested', '?appearance=dark', 'light'], ['system', '', 'dark']]) {
+  test(`small phone full screen follows the ${name} dark appearance and closes with its button`, async ({ browser }, testInfo) => {
+    const context = await contextFor(browser, ...iphone, { viewport: { width: 320, height: 640 }, hasTouch: true, isMobile: testInfo.project.name !== 'firefox', colorScheme });
+    const page = await context.newPage();
+    await page.goto(`${origin}/demo/${query}`);
+    const dialog = page.getByRole('dialog', { name: 'This demo is for desktop only.' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveCSS('background-color', 'rgb(28, 26, 32)');
+    await expect(dialog.getByRole('heading')).toHaveCSS('color', 'rgb(244, 241, 248)');
+    await checkNoOverflow(page);
+    expect((await new AxeBuilder({ page }).withTags(axeTags).analyze()).violations).toEqual([]);
+    await screenshot(page, testInfo, `small-phone-full-screen-notice-dark-${name}`, false);
+    await dialog.getByRole('button', { name: 'Continue to the demo' }).tap();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('#demo-frame')).toBeFocused();
+    await expect(page.frameLocator('#demo-frame').getByText('Coffee on Thursday?')).toBeVisible();
     await context.close();
   });
 }
@@ -184,6 +420,8 @@ test('full screen opens a new tab with the demo filling the window', async ({ pa
   await expect(tab).toHaveTitle('Shep live demo');
   const frame = tab.locator('#demo-frame');
   await expect(frame).toHaveAttribute('src', 'app/?appearance=dark');
+  await expect(tab.locator('#demo-notice')).not.toHaveAttribute('open');
+  await expect(tab.locator('#demo-notice')).toBeHidden();
   const size = await tab.evaluate(() => {
     const box = document.querySelector('#demo-frame').getBoundingClientRect();
     return [box.x, box.y, box.width === innerWidth, box.height === innerHeight];
@@ -272,6 +510,9 @@ for (const [name, width, height, theme] of [
     await expect(page.getByRole('link', { name: 'Open the demo full screen' })).toBeVisible();
     await expect(page.getByRole('link', { name: /^Full screen/ })).toBeVisible();
     await expect(page.frameLocator('#demo-frame').locator('html')).toHaveAttribute('data-theme', theme);
+    // Desktop browsers keep the demo at every width, including phone-sized windows.
+    await expect(page.locator('#demo-notice')).toBeHidden();
+    expect(await page.locator('#demo-frame').evaluate(frame => frame.inert)).toBe(false);
     await checkNoOverflow(page);
     await screenshot(page, testInfo, name);
     await screenshot(page, testInfo, `${name}-hero`, false);

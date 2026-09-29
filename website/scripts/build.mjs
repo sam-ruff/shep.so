@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { access, cp, mkdir, rename, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = new URL('../../', import.meta.url);
 const output = new URL('website/dist/', root);
@@ -16,6 +18,8 @@ try {
 await rm(output, { recursive: true, force: true });
 await mkdir(new URL('assets/', output), { recursive: true });
 await cp(new URL('website/public/', root), output, { recursive: true });
+// Type-check src/ and emit its classic scripts beside the public files.
+execFileSync(process.execPath, [createRequire(import.meta.url).resolve('typescript/bin/tsc'), '-p', fileURLToPath(new URL('website/tsconfig.json', root))], { stdio: 'inherit' });
 for (const [source, name] of [
   ['docs/images/mail-light.webp', 'mail-light.webp'],
   ['docs/images/calendar-dark.webp', 'calendar-dark.webp'],

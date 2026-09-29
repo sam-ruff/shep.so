@@ -41,8 +41,8 @@ test('Docker context allows only the promotional and demo build inputs', () => {
   const patterns = read('website/Dockerfile.dockerignore').trim().split('\n');
   assert.deepEqual(patterns, [
     '**', '!website/', '!website/Dockerfile', '!website/package.json',
-    '!website/package-lock.json', '!website/nginx.conf', '!website/public/',
-    '!website/public/**', '!website/scripts/', '!website/scripts/build.mjs',
+    '!website/package-lock.json', '!website/nginx.conf', '!website/tsconfig.json', '!website/public/',
+    '!website/public/**', '!website/src/', '!website/src/**', '!website/scripts/', '!website/scripts/build.mjs',
     '!assets/', '!assets/shepherd-light.svg', '!docs/',
     '!docs/images/', '!docs/images/mail-light.webp', '!docs/images/calendar-dark.webp',
     '!Cargo.toml', '!Cargo.lock', '!build.rs', '!src/', '!src/**', '!benches/', '!benches/**',

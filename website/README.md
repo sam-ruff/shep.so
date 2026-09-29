@@ -6,7 +6,9 @@ The page picks the visitor's platform from the user agent and shows that install
 
 ## The live demo
 
-`/demo/app/` is the browser client from `web/` built in its preview mode, with the fictional mailbox from `shared/preview.json`. Its MIME and profile code is the shared Rust compiled to WebAssembly, and it runs entirely in the visitor's browser: it cannot send mail or reach a server. The home page runs it in the hero as soon as the page loads, and `/demo/` shows it in a window-sized frame for the Full screen links, which open in a new tab. Both pass the page's appearance through `?appearance=`.
+`/demo/app/` is the browser client from `web/` built in its preview mode, with the fictional mailbox from `shared/preview.json`. Its MIME and profile code is the shared Rust compiled to WebAssembly, and it runs entirely in the visitor's browser: it cannot send mail or reach a server. The home page runs it in the hero as soon as the page loads, and `/demo/` shows it in a window-sized frame for the Full screen links, which open in a new tab. Both pass the page's appearance through `?appearance=`. On Android, iPhone and iPad both pages first show a dismissible notice that the demo is for desktop and Shep has a mobile app.
+
+The shared platform check and the mobile notice are TypeScript in `src/`, type-checked and emitted beside the `public/` files by `npm run build`.
 
 ## Building
 

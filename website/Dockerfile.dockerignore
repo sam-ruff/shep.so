@@ -4,8 +4,11 @@
 !website/package.json
 !website/package-lock.json
 !website/nginx.conf
+!website/tsconfig.json
 !website/public/
 !website/public/**
+!website/src/
+!website/src/**
 !website/scripts/
 !website/scripts/build.mjs
 !assets/
