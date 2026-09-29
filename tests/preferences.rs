@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     backup::BackupTarget,
     model::{Appearance, Preferences},
@@ -162,7 +165,7 @@ async fn reply_quote_preference_defaults_on_survives_reopen_and_leaves_saved_dra
     assert!(older.reply_include_original);
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("reply.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let draft = shep::model::Draft {
         id: "saved-reply".into(),
         account_id: "account".into(),
@@ -185,7 +188,7 @@ async fn reply_quote_preference_defaults_on_survives_reopen_and_leaves_saved_dra
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let workspace = store.workspace().await.unwrap();
     assert!(!workspace.preferences.reply_include_original);
     let drafts = store.draft_state().await.unwrap().drafts;
@@ -202,7 +205,7 @@ async fn close_to_tray_defaults_on_for_new_and_pre_tray_settings_but_keeps_a_sav
     assert!(pre_tray.close_to_tray);
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("tray.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     assert!(store.workspace().await.unwrap().preferences.close_to_tray);
     // Every save writes the whole record, so a saved off is kept as a choice.
     store
@@ -213,7 +216,7 @@ async fn close_to_tray_defaults_on_for_new_and_pre_tray_settings_but_keeps_a_sav
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     assert!(!store.workspace().await.unwrap().preferences.close_to_tray);
 }
 
@@ -222,7 +225,7 @@ async fn reopening_moves_the_old_default_check_interval_to_five_seconds_once() {
     let directory = tempfile::tempdir().unwrap();
     for (saved, expected) in [(15, 5), (20, 20)] {
         let path = directory.path().join(format!("{saved}.sqlite"));
-        let store = Store::open(&path).unwrap();
+        let store = wait::reopen(|| Store::open(&path));
         store
             .save_preferences(Preferences {
                 mail_check_seconds: saved,
@@ -239,7 +242,7 @@ async fn reopening_moves_the_old_default_check_interval_to_five_seconds_once() {
             .await
             .unwrap();
         drop(store);
-        let store = Store::open(&path).unwrap();
+        let store = wait::reopen(|| Store::open(&path));
         let workspace = store.workspace().await.unwrap();
         assert_eq!(workspace.preferences.mail_check_seconds, expected);
         // A deliberate 15 on a migrated database is kept.
@@ -251,7 +254,7 @@ async fn reopening_moves_the_old_default_check_interval_to_five_seconds_once() {
             .await
             .unwrap();
         drop(store);
-        let store = Store::open(&path).unwrap();
+        let store = wait::reopen(|| Store::open(&path));
         let workspace = store.workspace().await.unwrap();
         assert_eq!(workspace.preferences.mail_check_seconds, 15);
     }
@@ -261,7 +264,7 @@ async fn reopening_moves_the_old_default_check_interval_to_five_seconds_once() {
 async fn preferences_revision_survives_reopen_and_failed_validation_is_atomic() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("prefs.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let saved = store
         .save_preferences(Preferences {
             reader_font_size: 19,
@@ -285,7 +288,7 @@ async fn preferences_revision_survives_reopen_and_failed_validation_is_atomic() 
             .is_err()
     );
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let workspace = store.workspace().await.unwrap();
     assert_eq!(workspace.preferences_revision, saved.revision);
     assert_eq!(workspace.preferences.reader_font_size, 19);
@@ -361,7 +364,7 @@ async fn multiple_backup_destinations_keep_independent_history_across_edits_and_
     use shep::backup::config;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cache.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let mut prefs = Preferences {
         backup_folder: directory.path().join("one").to_string_lossy().into(),
         auto_backup: true,
@@ -408,7 +411,7 @@ async fn multiple_backup_destinations_keep_independent_history_across_edits_and_
         Some(10)
     );
     drop(store);
-    let reopened = Store::open(&path).unwrap();
+    let reopened = wait::reopen(|| Store::open(&path));
     assert_eq!(
         reopened.get::<Preferences>("preferences").await.unwrap(),
         after

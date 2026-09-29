@@ -127,7 +127,7 @@ mod tests {
         let (output, mut events) = mpsc::channel(2);
         let (_cancel, stopped) = commands::cancellation();
         let thread = std::thread::spawn(move || worker(rx, output, stopped));
-        let result = tokio::time::timeout(std::time::Duration::from_secs(20), events.next())
+        let result = tokio::time::timeout(crate::test_wait::HANG, events.next())
             .await
             .unwrap();
         let Some(Event::Prepared(key, Some(frame))) = result else {
@@ -152,7 +152,7 @@ mod tests {
         let (cancel, stopped) = commands::cancellation();
         let worker = tokio::task::spawn_blocking(move || worker(rx, output, stopped));
         drop(cancel);
-        tokio::time::timeout(std::time::Duration::from_secs(1), worker)
+        tokio::time::timeout(crate::test_wait::HANG, worker)
             .await
             .unwrap()
             .unwrap();

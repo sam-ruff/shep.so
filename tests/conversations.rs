@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     model::*,
     store::{CONVERSATION_PAGE_SIZE, Store},
@@ -225,7 +228,7 @@ async fn long_conversations_page_without_omitting_the_anchor_or_older_messages()
 async fn legacy_indexing_resumes_after_reopen_and_does_not_change_original_mail() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let messages: Vec<_> = (0..70)
         .map(|i| {
             mail(
@@ -246,7 +249,7 @@ async fn legacy_indexing_resumes_after_reopen_and_does_not_change_original_mail(
     conn.execute_batch("DROP TABLE conversation_members; DROP TABLE conversation_tokens;")
         .unwrap();
     drop(conn);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     assert_eq!(
         store
             .conversation(anchor.clone(), None)
@@ -257,7 +260,7 @@ async fn legacy_indexing_resumes_after_reopen_and_does_not_change_original_mail(
     );
     assert!(store.index_conversation_batch().await.unwrap());
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     while store.index_conversation_batch().await.unwrap() {}
     assert_eq!(
         store

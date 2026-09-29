@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     model::*,
     store::{ConnectionKind, ConnectionRef, Store},
@@ -59,7 +62,7 @@ async fn removal_cleans_only_reviewed_account_and_blocks_late_writes_after_reope
     let path = dir.path().join("connections.sqlite");
     let file = dir.path().join("notes.txt");
     std::fs::write(&file, "Private draft attachment").unwrap();
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     for id in ["work", "personal"] {
         store.save_account(account(id)).await.unwrap();
         store
@@ -86,7 +89,7 @@ async fn removal_cleans_only_reviewed_account_and_blocks_late_writes_after_reope
         .unwrap();
     store.remove_connection(reviewed, false).await.unwrap(); // duplicate completion is harmless
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let ws = store.workspace().await.unwrap();
     assert_eq!(ws.accounts.len(), 1);
     assert_eq!(ws.accounts[0].id, "personal");

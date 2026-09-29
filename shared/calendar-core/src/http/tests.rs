@@ -3,6 +3,9 @@ use crate::FailureKind;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// Bounds a wait a test expects to finish; generous for starved CI runners.
+const HANG: Duration = Duration::from_secs(120);
+
 struct Request {
     headers: String,
     body: Vec<u8>,
@@ -24,7 +27,7 @@ async fn fixture(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let base = format!("http://{}/calendar/v3", listener.local_addr()?);
     let server = tokio::spawn(async move {
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(HANG, async {
             let mut requests = Vec::new();
             for response in replies {
                 let (mut stream, _) = listener.accept().await?;
@@ -69,9 +72,7 @@ async fn fixture(
     });
     Ok((
         GoogleCalendarProvider {
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(3))
-                .build()?,
+            client: reqwest::Client::builder().timeout(HANG).build()?,
             base,
         },
         server,

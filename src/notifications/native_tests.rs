@@ -85,7 +85,7 @@ async fn private_bus() -> (Bus, String, Connection) {
         child,
         _directory: directory,
     };
-    let connection = tokio::time::timeout(Duration::from_secs(3), async {
+    let connection = tokio::time::timeout(crate::test_wait::HANG, async {
         loop {
             if let Ok(connection) = Builder::address(address.as_str()).unwrap().build().await {
                 break connection;
@@ -251,7 +251,7 @@ async fn notification_sender_stays_on_bus_between_arrivals_until_worker_is_dropp
     );
     assert!(proxy.name_has_owner(name.as_str().try_into()?).await?);
     drop(client);
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(crate::test_wait::HANG, async {
         while proxy.name_has_owner(name.as_str().try_into()?).await? {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

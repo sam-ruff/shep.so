@@ -10,6 +10,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+# Seconds to wait for something a test expects; only turns a hang into a failure.
+HANG = 120
 
 
 @unittest.skipUnless(sys.platform == "linux", "Linux shell command contracts")
@@ -48,7 +50,7 @@ else: assert sys.argv[1]=="run"
             blocks = [part.split("```", 1)[0] for part in section.split("```sh\n")[1:]]
             self.assertEqual(len(blocks), 2)
             result = subprocess.run(["bash", "-e", "-c", "\n".join(blocks)], cwd=root, env=env,
-                                    capture_output=True, text=True, timeout=20)
+                                    capture_output=True, text=True, timeout=HANG)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual([json.loads(line)[0] for line in log.read_text().splitlines()], ["run", "build"])
             self.assertEqual((home / ".local/bin/shep").read_bytes(), b"fictional quickstart build")

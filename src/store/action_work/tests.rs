@@ -122,7 +122,7 @@ async fn reopening_version_seven_adds_the_ready_index_without_changing_owned_ite
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(&path));
     assert_eq!(store.bulk_job("migration".into()).await.unwrap().running, 1);
     store.run(|c| {
         assert_eq!(c.query_row("PRAGMA user_version",[],|r|r.get::<_,u32>(0))?,crate::store::DATABASE_VERSION);

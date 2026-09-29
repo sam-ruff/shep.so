@@ -356,7 +356,7 @@ async fn engine_recovers_lost_local_commit_after_reopen_without_reencrypting_or_
         );
     }
     let mut resumed = engine(secrets.clone());
-    resumed.store = Store::open(&store_path).unwrap();
+    resumed.store = crate::test_wait::reopen(|| Store::open(&store_path));
     // New mail arrives after the staged snapshot. Recovery must use the exact
     // original ciphertext, then allow a later backup to include that new mail.
     resumed

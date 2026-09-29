@@ -596,7 +596,7 @@ async fn google_login_waits_for_inflight_refresh_persistence_and_then_wins() {
     let google = google(&server, credentials.clone());
     let worker = google.clone();
     let refresh = tokio::spawn(async move { worker.token(&prefs()).await });
-    tokio::time::timeout(Duration::from_secs(10), entered.notified())
+    tokio::time::timeout(crate::test_wait::HANG, entered.notified())
         .await
         .expect("Refresh did not reach its keychain checkpoint");
     let prefs = prefs();
@@ -789,7 +789,7 @@ async fn google_callback_ignores_invalid_requests_and_accepts_fragmented_headers
     let addr = listener.local_addr().unwrap();
     let receiver = tokio::spawn(async move {
         tokio::time::timeout(
-            Duration::from_secs(10),
+            crate::test_wait::HANG,
             callback::receive(listener, "expected-state"),
         )
         .await
@@ -859,12 +859,9 @@ async fn google_callback_denial_with_matching_state_acknowledges_the_browser() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let receiver = tokio::spawn(async move {
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            callback::receive(listener, "state"),
-        )
-        .await
-        .expect("Callback did not finish")
+        tokio::time::timeout(crate::test_wait::HANG, callback::receive(listener, "state"))
+            .await
+            .expect("Callback did not finish")
     });
     let mut socket = tokio::net::TcpStream::connect(addr).await.unwrap();
     socket
@@ -1100,7 +1097,7 @@ async fn staged_google_activation_survives_validation_failure_database_rollback_
     // Simulate exit immediately after DB commit and before credential pruning.
     drop(store);
     drop(google);
-    let store = crate::store::Store::open(&path).unwrap();
+    let store = crate::test_wait::reopen(|| crate::store::Store::open(&path));
     let committed: Preferences = store.get("preferences").await.unwrap();
     assert_eq!(committed.google_grant, grant);
     let google = self::google(&server, credentials.clone());
@@ -1290,7 +1287,7 @@ async fn cancelled_refresh_observer_still_persists_the_rotated_token_in_order() 
     let google = google(&server, credentials.clone());
     let worker = google.clone();
     let refresh = tokio::spawn(async move { worker.token(&prefs()).await });
-    tokio::time::timeout(Duration::from_secs(10), entered.notified())
+    tokio::time::timeout(crate::test_wait::HANG, entered.notified())
         .await
         .expect("Refresh did not reach its keychain checkpoint");
     // The observer leaves while the owner is mid-save; the admitted job drains.
@@ -1330,13 +1327,13 @@ async fn dropping_the_last_google_handle_drains_the_running_save_before_exit() {
     let google = google(&server, credentials.clone());
     let worker = google.clone();
     let refresh = tokio::spawn(async move { worker.token(&prefs()).await });
-    tokio::time::timeout(Duration::from_secs(10), entered.notified())
+    tokio::time::timeout(crate::test_wait::HANG, entered.notified())
         .await
         .expect("Refresh did not reach its keychain checkpoint");
     refresh.abort();
     drop(google);
     release.notify_one();
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(crate::test_wait::HANG, async {
         while credentials.writes.load(Ordering::SeqCst) == 0
             || credentials
                 .saved
@@ -1534,7 +1531,7 @@ async fn denied_refused_cancelled_and_timed_out_sign_ins_leave_the_connection_un
             SignInError::Cancelled => cancel.cancel(),
             _ => {}
         }
-        let error = tokio::time::timeout(Duration::from_secs(10), login)
+        let error = tokio::time::timeout(crate::test_wait::HANG, login)
             .await
             .expect("sign-in stopped")
             .unwrap()

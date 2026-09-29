@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     model::*,
     store::{MailSelectionId, SelectionChange, Store},
@@ -519,7 +522,7 @@ async fn stale_changes_and_failed_ranges_cannot_replace_newer_selection_or_a_rev
 async fn snapshot_pages_use_current_flags_and_do_not_persist_into_other_connections_or_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     fixture(&store).await;
     let id = MailSelectionId::default();
     store
@@ -553,12 +556,12 @@ async fn snapshot_pages_use_current_flags_and_do_not_persist_into_other_connecti
     assert_eq!(page.rows[0].mail.id, mail.id);
     assert!(!page.rows[0].mail.unread);
     assert!(!page.rows[0].mail.starred);
-    let other = Store::open(&path).unwrap();
+    let other = wait::reopen(|| Store::open(&path));
     assert!(other.selection_snapshot(id, vec![]).await.is_err());
     assert_eq!(other.query(MailQuery::default()).await.unwrap().total, 142);
     drop(other);
     drop(store);
-    let reopened = Store::open(path).unwrap();
+    let reopened = wait::reopen(|| Store::open(&path));
     assert!(reopened.selection_snapshot(id, vec![]).await.is_err());
     assert_eq!(
         reopened.query(MailQuery::default()).await.unwrap().total,

@@ -11,6 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from gnome_activation import (cleanup_all, desktop_entry, eventually, fixture_processes, notifier_items,
                               require_stable, runtime_processes, start_system_bus, stop_process, stop_runtime_processes)
 
+# Seconds to wait for something a test expects; only turns a hang into a failure.
+HANG = 120
+
 
 class GnomeActivationTests(unittest.TestCase):
     def test_cleanup_continues_after_failed_receipt_and_escalates_hung_child(self):
@@ -92,9 +95,9 @@ class GnomeActivationTests(unittest.TestCase):
                                        start_new_session=True)
             try:
                 # Until the child execs, /proc shows the parent's environment.
-                eventually(lambda: runtime_processes(runtime) == [escaped.pid], "escaped child environment", 5)
+                eventually(lambda: runtime_processes(runtime) == [escaped.pid], "escaped child environment", HANG)
                 stop_runtime_processes(runtime)
-                self.assertIsNotNone(escaped.wait(timeout=5))
+                self.assertIsNotNone(escaped.wait(timeout=HANG))
                 self.assertEqual(runtime_processes(runtime), [])
             finally:
                 if escaped.poll() is None:

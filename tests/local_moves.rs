@@ -1,6 +1,9 @@
 //! A move the server refused completes on this device only. The cached row
 //! keeps its server identity, shows at the destination, survives sync and
 //! restart, and is retried on a bounded schedule.
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     mail_actions::{journal::*, *},
     model::*,
@@ -104,10 +107,10 @@ async fn device_only_move_shows_at_destination_and_sync_neither_restores_nor_for
 async fn device_only_move_survives_restart_and_is_retried_on_a_bounded_schedule() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let (original, record) = refused(&store).await;
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let archive = store.query(folder("Archive")).await.unwrap();
     assert_eq!(archive.rows[0].id, original.summary.id);
     assert_eq!(

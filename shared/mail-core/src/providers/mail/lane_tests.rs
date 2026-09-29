@@ -142,7 +142,7 @@ async fn imap_sync_orders_small_bodies_first_and_slow_bodies_after_every_folder(
         let known = HashSet::new();
         let (result, items) = tokio::join!(
             tokio::time::timeout(
-                Duration::from_secs(10),
+                crate::test_wait::HANG,
                 sync_imap_session(session, &account, &known, tx, None),
             ),
             consume

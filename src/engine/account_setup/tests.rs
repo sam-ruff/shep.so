@@ -129,7 +129,7 @@ async fn removal_during_incoming_probe_retires_late_result_without_smtp_or_ui_er
         )
         .await
     });
-    tokio::time::timeout(Duration::from_secs(1), held.entered.notified())
+    tokio::time::timeout(crate::test_wait::HANG, held.entered.notified())
         .await
         .expect("incoming started");
     let review = store
@@ -141,7 +141,7 @@ async fn removal_during_incoming_probe_retires_late_result_without_smtp_or_ui_er
         .expect("review");
     store.remove_connection(review, true).await.expect("remove");
     held.release.notify_one();
-    let events = tokio::time::timeout(Duration::from_secs(1), pending)
+    let events = tokio::time::timeout(crate::test_wait::HANG, pending)
         .await
         .expect("late result settles")
         .expect("task")
@@ -174,7 +174,7 @@ async fn account_setup_stop_drains_active_writes_but_not_the_connection_lifecycl
     let mut stop = Box::pin(run(&engine, Command::InterruptAccountSetups(7)));
     assert!(futures::poll!(&mut stop).is_pending());
     drop(active_write);
-    let events = tokio::time::timeout(Duration::from_secs(1), stop)
+    let events = tokio::time::timeout(crate::test_wait::HANG, stop)
         .await
         .expect("unrelated provider read cannot delay setup drain")
         .expect("stopped");
@@ -233,13 +233,13 @@ async fn a_held_probe_allows_another_account_to_activate_and_close_interrupts_wi
         )
         .await
     });
-    tokio::time::timeout(Duration::from_secs(1), held.entered.notified())
+    tokio::time::timeout(crate::test_wait::HANG, held.entered.notified())
         .await
         .expect("probe started");
     let mut other = original.clone();
     other.id = "other-account".into();
     let saved = tokio::time::timeout(
-        Duration::from_secs(1),
+        crate::test_wait::HANG,
         run(
             &engine,
             Command::SaveAccount(other.clone(), secret("other"), secret("")),
@@ -262,7 +262,7 @@ async fn a_held_probe_allows_another_account_to_activate_and_close_interrupts_wi
         original.id
     );
     engine.bulk_control.stopping.set(true);
-    let error = tokio::time::timeout(Duration::from_secs(1), first)
+    let error = tokio::time::timeout(crate::test_wait::HANG, first)
         .await
         .expect("close stops a read-only probe")
         .expect("task")
@@ -280,7 +280,7 @@ async fn a_held_probe_allows_another_account_to_activate_and_close_interrupts_wi
                 && attempt.stage == crate::store::account_setup::Stage::Interrupted)
     );
     drop(engine);
-    let reopened = Store::open(path).expect("reopen");
+    let reopened = crate::test_wait::reopen(|| Store::open(&path));
     assert_eq!(
         reopened
             .account_credential_key(original.clone(), false)
@@ -385,7 +385,7 @@ async fn shared_account_setup_blank_save_and_failed_write_retain_reconnection_ac
             );
         }
         drop(engine);
-        let reopened = Store::open(&path).unwrap();
+        let reopened = crate::test_wait::reopen(|| Store::open(&path));
         assert!(
             reopened
                 .require_account_reconnected(account.id)

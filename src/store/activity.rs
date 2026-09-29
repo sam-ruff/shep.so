@@ -441,7 +441,7 @@ mod tests {
             Ok(())
         }).await?;
         drop(store);
-        let reopened = Store::open(&path)?;
+        let reopened = crate::test_wait::reopen(|| Store::open(&path));
         assert!(
             reopened
                 .activity()

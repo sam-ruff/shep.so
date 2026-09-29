@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{model::*, store::Store};
 
 fn message(id: usize, subject: &str, body: &str) -> StoredMail {
@@ -10,7 +13,7 @@ fn message(id: usize, subject: &str, body: &str) -> StoredMail {
 async fn prefix_membership_tracks_inserts_removal_and_reopen() -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("prefix.sqlite");
-    let store = Store::open(&path)?;
+    let store = wait::reopen(|| Store::open(&path));
     store.upsert(vec![message(1, "Milestone", "Notes")]).await?;
     let query = MailQuery {
         search: "milestone".into(),
@@ -23,12 +26,12 @@ async fn prefix_membership_tracks_inserts_removal_and_reopen() -> anyhow::Result
     store.upsert(vec![extension]).await?;
     assert_eq!(store.query(query.clone()).await?.total, 2);
     drop(store);
-    let store = Store::open(&path)?;
+    let store = wait::reopen(|| Store::open(&path));
     assert_eq!(store.query(query.clone()).await?.total, 2);
     store.remove(extension_id).await?;
     assert_eq!(store.query(query.clone()).await?.total, 1);
     drop(store);
-    let store = Store::open(path)?;
+    let store = wait::reopen(|| Store::open(&path));
     assert_eq!(store.query(query).await?.total, 1);
     Ok(())
 }
@@ -106,7 +109,7 @@ async fn literal_pages_fall_back_at_corrected_boundary() -> anyhow::Result<()> {
 async fn exact_short_body_beats_newer_weak_and_typo_matches_with_stable_pages_after_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("search.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let mut messages = vec![
         message(0, "Quick note", "test"),
         message(200, "Camping", "tent"),
@@ -154,7 +157,7 @@ async fn exact_short_body_beats_newer_weak_and_typo_matches_with_stable_pages_af
         109
     );
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     assert_eq!(store.query(query.clone()).await.unwrap().rows[0].id, ids[0]);
     for sort in MailSort::BROWSE {
         let page = store

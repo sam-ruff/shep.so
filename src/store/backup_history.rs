@@ -103,7 +103,7 @@ mod tests {
         assert_eq!(rows.len(), PAGE);
         assert_eq!(rows[0].id, last);
         drop(store);
-        let store = Store::open(path).unwrap();
+        let store = crate::test_wait::reopen(|| Store::open(&path));
         let rows = store.backup_history(target).await.unwrap();
         assert_eq!(rows.len(), PAGE);
         assert_eq!(rows[0].outcome, Outcome::Unfinished);

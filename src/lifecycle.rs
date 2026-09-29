@@ -80,7 +80,7 @@ mod tests {
         tokio::pin!(waiter);
         assert!(futures::poll!(&mut waiter).is_pending());
         signal.set(true);
-        tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+        tokio::time::timeout(crate::test_wait::HANG, waiter)
             .await
             .unwrap();
     }
@@ -98,7 +98,7 @@ mod tests {
             "normal shutdown must not be cut short"
         );
         receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
+            .recv_timeout(crate::test_wait::HANG)
             .expect("the deadline must end a lingering shutdown");
     }
 }

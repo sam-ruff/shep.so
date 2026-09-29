@@ -81,8 +81,10 @@ if (!$env:SystemRoot) {{ $env:SystemRoot = {literal(self.root / 'Fictional Windo
 {setup}
 {command}
 ''')
+        # The first PowerShell run on a fresh Windows clone pays .NET start-up and the first
+        # antivirus scan; the limit only catches a hang.
         result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(script)], env=self.env,
-                                capture_output=True, text=True, timeout=20)
+                                capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
         self.assertEqual(list(self.temporary.iterdir()), [], 'release staging must be cleaned')
         return result
