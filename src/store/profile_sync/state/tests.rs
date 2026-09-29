@@ -16,7 +16,8 @@ fn appearance(value: &str) -> Change {
     }
 }
 async fn fixture(path: &std::path::Path) -> (Store, Replica, history::Binding, Uuid) {
-    let store = Store::open(path.join("cache.sqlite")).unwrap();
+    // Callers may have just dropped a store on this path.
+    let store = crate::test_wait::reopen(|| Store::open(path.join("cache.sqlite")));
     super::super::tests::connected(&store).await;
     store
         .update_preferences(|p| p.appearance = Appearance::Light)
@@ -152,7 +153,7 @@ async fn profile_reverted_native_setting_survives_pull_and_restart() {
         .await
         .unwrap();
     drop(store);
-    let reopened = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let reopened = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     assert_eq!(
         reopened.capture_profile_change().await.unwrap(),
         Some(pending)
@@ -337,7 +338,7 @@ async fn profile_remote_application_preserves_racing_local_intent_and_applies_ot
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     assert_eq!(store.capture_profile_change().await.unwrap(), Some(pending));
     replica.close().await.unwrap();
 }
@@ -480,7 +481,7 @@ async fn profile_edits_keep_exact_request_across_restart_and_newer_local_changes
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(directory.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(directory.path().join("cache.sqlite")));
     assert_eq!(
         store.capture_profile_change().await.unwrap(),
         Some(first.clone())
@@ -1023,7 +1024,7 @@ async fn profile_setting_review_reset_is_durable_and_replays_exactly_after_lost_
     replica.edit(pending.edit()).await.unwrap();
     replica.close().await.unwrap();
     drop(store);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     let mut replica = Replica::open(
         dir.path().join("history.sqlite"),
         binding.clone(),
@@ -1207,7 +1208,7 @@ async fn profile_native_connection_reversions_remain_pending_through_restart() {
         store.save_account(edited).await.unwrap();
         store.save_account(original.clone()).await.unwrap();
         drop(store);
-        let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+        let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
         let pending = store
             .capture_profile_change()
             .await

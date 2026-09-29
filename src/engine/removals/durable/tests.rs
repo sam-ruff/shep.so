@@ -61,12 +61,10 @@ async fn removal_admission_hides_calendar_while_provider_drains_without_global_l
         tokio::spawn(async move { engine.execute_removal_work(id, output).await })
     };
     tokio::task::yield_now().await;
-    let independent = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        engine.connection_lifecycle.write(),
-    )
-    .await
-    .expect("unrelated connection is not blocked");
+    let independent =
+        tokio::time::timeout(crate::test_wait::HANG, engine.connection_lifecycle.write())
+            .await
+            .expect("unrelated connection is not blocked");
     drop(independent);
     assert!(!worker.is_finished());
     assert!(

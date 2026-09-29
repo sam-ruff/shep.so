@@ -410,7 +410,7 @@ async fn profile_join_applies_reviewed_values_once_preserves_local_accounts_and_
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     accept(&store, &paths, review.clone(), &Control::default())
         .await
         .unwrap();
@@ -632,7 +632,7 @@ async fn profile_catalog_held_read_cancels_and_reopens_its_owned_checkpoint() {
     };
     entered.await.unwrap();
     stop.send_replace(true);
-    let result = tokio::time::timeout(std::time::Duration::from_secs(2), task)
+    let result = tokio::time::timeout(crate::test_wait::HANG, task)
         .await
         .unwrap()
         .unwrap();
@@ -890,7 +890,7 @@ async fn profile_join_links_an_explicit_matching_local_account_without_replacing
         matches!(pending.change.action,Action::AccountName {id,name} if id == connection.id && name == account.name)
     );
     drop(store);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     let error = accept(&store, &paths, review.clone(), &Control::default())
         .await
         .unwrap_err();

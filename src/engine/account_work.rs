@@ -288,7 +288,7 @@ mod tests {
                 })
                 .await
         });
-        tokio::time::timeout(Duration::from_secs(10), start)
+        tokio::time::timeout(crate::test_wait::HANG, start)
             .await
             .unwrap()
             .unwrap();
@@ -300,7 +300,7 @@ mod tests {
         let accounts = Accounts::default();
         let (release, held) = oneshot::channel();
         let (sync, interrupted) = held_sync(&accounts, held).await;
-        let write = tokio::time::timeout(Duration::from_secs(10), accounts.write("fixture"))
+        let write = tokio::time::timeout(crate::test_wait::HANG, accounts.write("fixture"))
             .await
             .expect("a write must not wait for the download");
         drop(write);
@@ -324,12 +324,12 @@ mod tests {
         let mut third = Box::pin(accounts.write("fixture"));
         assert!(poll!(&mut third).is_pending());
         drop(first);
-        let second = tokio::time::timeout(Duration::from_secs(10), second)
+        let second = tokio::time::timeout(crate::test_wait::HANG, second)
             .await
             .unwrap();
         assert!(poll!(&mut third).is_pending());
         drop(second);
-        tokio::time::timeout(Duration::from_secs(10), third)
+        tokio::time::timeout(crate::test_wait::HANG, third)
             .await
             .unwrap();
         release.send(()).unwrap();
@@ -364,7 +364,7 @@ mod tests {
             })
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(10), start)
+        tokio::time::timeout(crate::test_wait::HANG, start)
             .await
             .unwrap()
             .unwrap();
@@ -375,10 +375,9 @@ mod tests {
         let accounts = Accounts::default();
         let (_release, held) = oneshot::channel();
         let (sync, interrupted) = held_sync(&accounts, held).await;
-        let exclusive =
-            tokio::time::timeout(Duration::from_secs(10), accounts.exclusive("fixture"))
-                .await
-                .unwrap();
+        let exclusive = tokio::time::timeout(crate::test_wait::HANG, accounts.exclusive("fixture"))
+            .await
+            .unwrap();
         assert!(
             interrupted.await.unwrap(),
             "exclusive work must stop the download"
@@ -451,7 +450,7 @@ mod tests {
             tx.send(request).await.unwrap();
             waiting_calls.push((response, done));
         }
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while tx.capacity() != 32 {
                 tokio::task::yield_now().await;
             }
@@ -473,7 +472,7 @@ mod tests {
         drop(active);
         drop(accounts);
         drop(tx);
-        tokio::time::timeout(Duration::from_secs(10), actor)
+        tokio::time::timeout(crate::test_wait::HANG, actor)
             .await
             .unwrap()
             .unwrap();

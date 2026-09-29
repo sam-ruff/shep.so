@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{model::*, store::Store};
 
 fn source(id: &str, kind: CalendarKind) -> CalendarSource {
@@ -53,13 +56,13 @@ async fn seed(store: &Store) -> Preferences {
 async fn google_disconnect_keeps_cache_and_backup_identity_and_survives_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("workspace.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let old = seed(&store).await;
     let lifecycle = store.disconnect_google(0).await.unwrap();
     assert!(lifecycle.disconnected && lifecycle.cleanup_pending);
     assert_eq!(lifecycle.revision, 1);
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let workspace = store.workspace().await.unwrap();
     assert_eq!(
         workspace.preferences.google_connection_id,

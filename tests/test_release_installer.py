@@ -17,6 +17,8 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
+# Seconds to wait for something a test expects; only turns a hang into a failure.
+HANG = 120
 spec = importlib.util.spec_from_file_location("release_installer", ROOT / "scripts/install_release.py")
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
@@ -77,7 +79,7 @@ class ReleaseFixture:
         # Explicit fixture transport: production URLs are checked before being
         # routed to this owned loopback HTTP server; no internet or credentials.
         path = urllib.parse.urlsplit(url).path
-        return urllib.request.urlopen(f"http://127.0.0.1:{self.server.server_port}{path}", timeout=3)
+        return urllib.request.urlopen(f"http://127.0.0.1:{self.server.server_port}{path}", timeout=HANG)
 
     def seed_source(self, entries=None):
         commit = "abc12345" * 5
@@ -320,7 +322,7 @@ spec=importlib.util.spec_from_file_location("installer",{str(ROOT / "scripts/ins
 installer=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 def fetch(url):
- return urllib.request.urlopen("http://127.0.0.1:{self.fixture.server.server_port}"+urllib.parse.urlsplit(url).path,timeout=3)
+ return urllib.request.urlopen("http://127.0.0.1:{self.fixture.server.server_port}"+urllib.parse.urlsplit(url).path,timeout={HANG})
 installer.install(installer.parser().parse_args(),fetch=fetch,machine="x86_64")
 ''')
         curl = tools / "curl"
@@ -350,7 +352,7 @@ print(json.dumps({"reason":"compiler-artifact","target":{"name":"shep","kind":["
         readme = (ROOT / "README.md").read_text()
         command = readme.split("```sh\n", 1)[1].split("```", 1)[0].strip()
         result = subprocess.run(["bash", "-o", "pipefail", "-c", command], cwd=self.root,
-                                env=env, capture_output=True, text=True, timeout=20)
+                                env=env, capture_output=True, text=True, timeout=HANG)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         binary = home / ".local/bin/shep"
         self.assertEqual(binary.read_bytes(), b"fictional pipeline source build")

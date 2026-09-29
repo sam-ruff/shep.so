@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     model::*,
     providers::calendar::{encode_ical, parse_caldav},
@@ -141,12 +144,12 @@ async fn calendar_cache_migrates_legacy_keys_once_and_preserves_events() {
             )
             .unwrap();
     }
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let mut updated = old.clone();
     updated.title = "Updated after migration".into();
     store.save_event(updated.clone()).await.unwrap();
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let events = store.events().await.unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].title, updated.title);

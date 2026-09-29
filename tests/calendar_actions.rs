@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{model::*, store::Store};
 
 #[tokio::test]
@@ -5,7 +8,7 @@ async fn safe_offline_wait_survives_restart_and_caps_automatic_retries() {
     use shep::providers::calendar::WaitReason;
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("calendar.db");
-    let store = Store::open(&path).expect("store");
+    let store = wait::reopen(|| Store::open(&path));
     prepare(&store).await;
     store
         .admit_calendar_action("one".into(), event("Keep pending"), false)
@@ -32,7 +35,7 @@ async fn safe_offline_wait_survives_restart_and_caps_automatic_retries() {
             .is_none()
     );
     drop(store);
-    let store = Store::open(&path).expect("restart");
+    let store = wait::reopen(|| Store::open(&path));
     store.recover_calendar_actions().await.expect("recover");
     assert_eq!(
         store
@@ -212,7 +215,7 @@ async fn acknowledged_missing_version_remains_reviewable_after_cache_and_restart
 async fn restart_retains_queued_but_never_replays_unacknowledged_dispatch() {
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("calendar.db");
-    let store = Store::open(&path).expect("store");
+    let store = wait::reopen(|| Store::open(&path));
     prepare(&store).await;
     let request = event("Queued");
     let admitted = store
@@ -228,7 +231,7 @@ async fn restart_retains_queued_but_never_replays_unacknowledged_dispatch() {
         admitted.revision
     );
     drop(store);
-    let store = Store::open(&path).expect("reopen");
+    let store = wait::reopen(|| Store::open(&path));
     store.recover_calendar_actions().await.expect("recover");
     assert_eq!(
         store.next_calendar_action().await.expect("next"),
@@ -238,7 +241,7 @@ async fn restart_retains_queued_but_never_replays_unacknowledged_dispatch() {
         .claim_calendar_action("one".into())
         .await
         .expect("claim");
-    let observer = Store::open(&path).expect("observer");
+    let observer = wait::reopen(|| Store::open(&path));
     assert_eq!(
         observer
             .calendar_job("one".into())
@@ -249,7 +252,7 @@ async fn restart_retains_queued_but_never_replays_unacknowledged_dispatch() {
     );
     drop(observer);
     drop(store);
-    let store = Store::open(&path).expect("restart");
+    let store = wait::reopen(|| Store::open(&path));
     store.recover_calendar_actions().await.expect("recover");
     assert_eq!(
         store.calendar_job("one".into()).await.expect("job").status,
@@ -262,7 +265,7 @@ async fn restart_retains_queued_but_never_replays_unacknowledged_dispatch() {
 async fn receipt_survives_restart_and_rebinds_newer_intent_without_replaying_provider() {
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("calendar.db");
-    let store = Store::open(&path).expect("store");
+    let store = wait::reopen(|| Store::open(&path));
     prepare(&store).await;
     let original = event("First");
     store
@@ -288,7 +291,7 @@ async fn receipt_survives_restart_and_rebinds_newer_intent_without_replaying_pro
         .expect("acknowledge");
     assert!(store.calendar_snapshot().await.expect("cache").1.is_empty());
     drop(store);
-    let store = Store::open(&path).expect("restart");
+    let store = wait::reopen(|| Store::open(&path));
     store.recover_calendar_actions().await.expect("recover");
     assert_eq!(
         store

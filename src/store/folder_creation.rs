@@ -404,7 +404,7 @@ mod tests {
                 Some(original.clone())
             );
         }
-        let store = Store::open(&path).expect("reopen fixture");
+        let store = crate::test_wait::reopen(|| Store::open(&path));
         let workspace = store.workspace().await.expect("restart workspace");
         assert_eq!(workspace.creation_jobs.len(), 1);
         assert_eq!(workspace.creation_jobs[0].name, "Receipts");

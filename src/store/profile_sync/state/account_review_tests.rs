@@ -226,7 +226,7 @@ async fn profile_account_review_restart_admits_the_reserved_identity_without_dup
     let accounts = store.get::<Vec<Account>>("accounts").await.unwrap();
     replica.close().await.unwrap();
     drop(store);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     let mut replica = Replica::open(
         dir.path().join("history.sqlite"),
         binding,
@@ -380,7 +380,7 @@ async fn profile_account_review_keeps_remote_removed_account_and_mail_without_re
     // The owned Store's saved replication state is the restart contract; reopen
     // after all acknowledged work and verify its original account identity.
     drop(store);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     assert!(
         store
             .profile_replication(binding)

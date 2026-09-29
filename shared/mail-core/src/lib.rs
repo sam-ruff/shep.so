@@ -10,3 +10,5 @@ pub mod outgoing;
 pub mod profiles;
 pub mod providers;
 pub mod replies;
+#[cfg(test)]
+pub(crate) mod test_wait;

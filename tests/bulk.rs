@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     bulk::{Action, Receipt},
     mail_actions::{Flags, MoveReceipt},
@@ -494,7 +497,7 @@ async fn queued_successor_uses_actual_acknowledged_move_identity_after_restart()
 -> anyhow::Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path)?;
+    let store = wait::reopen(|| Store::open(&path));
     seed(&store, 1).await;
     let original = store.query(MailQuery::default()).await?.rows[0].clone();
     store
@@ -527,7 +530,7 @@ async fn queued_successor_uses_actual_acknowledged_move_identity_after_restart()
         .finish_bulk_item(item, Ok(Receipt::Move(Box::new(receipt))))
         .await?;
     drop(store);
-    let store = Store::open(path)?;
+    let store = wait::reopen(|| Store::open(&path));
     let item = store
         .claim_bulk_item("flag".into())
         .await?
@@ -646,7 +649,7 @@ async fn acknowledged_flags_repair_after_restart_without_dispatch_and_preserve_u
     let path = directory.path().join("mail.sqlite");
     let original;
     {
-        let store = Store::open(&path).expect("store");
+        let store = wait::reopen(|| Store::open(&path));
         seed(&store, 1).await;
         original = store.query(MailQuery::default()).await.expect("page").rows[0].clone();
         store
@@ -686,7 +689,7 @@ async fn acknowledged_flags_repair_after_restart_without_dispatch_and_preserve_u
             .await
             .expect("undo during cache gap");
     }
-    let store = Store::open(&path).expect("reopen");
+    let store = wait::reopen(|| Store::open(&path));
     let lease = store.bulk_lease("flags".into()).await.expect("lease");
     let resumed = store.resume_bulk(&lease).await.expect("resume");
     assert_eq!(resumed.uncertain, 0);
@@ -836,7 +839,7 @@ async fn individual_admission_rejects_changed_physical_identity_without_creating
 async fn individual_admission_survives_restart_and_never_requeues_a_dispatched_action() {
     let directory = tempfile::tempdir().expect("directory");
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).expect("store");
+    let store = wait::reopen(|| Store::open(&path));
     seed(&store, 2).await;
     let rows = store.query(MailQuery::default()).await.expect("page").rows;
     store
@@ -853,7 +856,7 @@ async fn individual_admission_survives_restart_and_never_requeues_a_dispatched_a
         .expect("claimed")
         .expect("item");
     drop(store);
-    let reopened = Store::open(&path).expect("reopen");
+    let reopened = wait::reopen(|| Store::open(&path));
     assert_eq!(
         reopened
             .query(MailQuery::default())
@@ -1181,7 +1184,7 @@ async fn undo_while_running_cancels_unsent_items_and_waits_for_a_durable_receipt
 async fn restart_preserves_receipts_and_never_replays_an_unacknowledged_step() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     seed(&store, 3).await;
     let snapshot = freeze(&store, MailQuery::default()).await;
     store
@@ -1201,7 +1204,7 @@ async fn restart_preserves_receipts_and_never_replays_an_unacknowledged_step() {
         .unwrap();
     let interrupted = store.claim_bulk_item("move".into()).await.unwrap().unwrap();
     drop(store);
-    let reopened = Store::open(&path).unwrap();
+    let reopened = wait::reopen(|| Store::open(&path));
     let lease = reopened.bulk_lease("move".into()).await.unwrap();
     let status = reopened.resume_bulk(&lease).await.unwrap();
     assert_eq!(
@@ -1314,14 +1317,14 @@ async fn bulk_lease_child_process() {
     let Some(path) = std::env::var_os("SHEP_BULK_LOCK_FIXTURE") else {
         return;
     };
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     assert!(store.bulk_lease("owned".into()).await.is_err());
 }
 #[tokio::test]
 async fn a_second_process_cannot_recover_a_live_job_and_released_lease_is_reusable() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let lease = store.bulk_lease("owned".into()).await.unwrap();
     let result = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "bulk_lease_child_process", "--nocapture"])

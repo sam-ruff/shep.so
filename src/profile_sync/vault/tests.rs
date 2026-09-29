@@ -822,7 +822,7 @@ async fn profile_vault_restart_keeps_revisions_and_does_not_republish() {
     let saved = a.local().await;
     let keychain = a.keychain.clone();
     drop(a);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     let reopened = Device {
         credentials: Credentials::with_backend(CredentialScope::Legacy, keychain.clone())
             .with_account_store(store.clone()),

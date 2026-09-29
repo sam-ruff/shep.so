@@ -74,7 +74,7 @@ async fn host_server() -> (
             result = &mut running => result.unwrap(),
             _ = stopped => {
                 handle.shutdown("Fixture finished".into());
-                tokio::time::timeout(Duration::from_secs(2), running).await.unwrap().unwrap();
+                tokio::time::timeout(crate::test_wait::HANG, running).await.unwrap().unwrap();
             }
         }
     });
@@ -127,7 +127,7 @@ async fn sftp_framing_rejects_oversized_packets_before_reading_a_body() {
     let (client, mut server) = tokio::io::duplex(64);
     let mut client = bounded_stream(client);
     server.write_all(&u32::MAX.to_be_bytes()).await.unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(1), client.read_u8())
+    let result = tokio::time::timeout(crate::test_wait::HANG, client.read_u8())
         .await
         .unwrap();
     assert!(result.is_err());
@@ -505,7 +505,7 @@ async fn sftp_channel_confirmation_deadline_releases_setup_and_allows_retry() {
         .await;
     let provider = peer.provider();
     let setup = tokio::spawn(async move { provider.test_connection().await });
-    tokio::time::timeout(Duration::from_secs(5), waiting)
+    tokio::time::timeout(crate::test_wait::HANG, waiting)
         .await
         .expect("the real SSH handshake must reach channel confirmation")
         .unwrap();

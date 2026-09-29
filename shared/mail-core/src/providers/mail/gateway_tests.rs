@@ -219,7 +219,7 @@ async fn pinned_imap_and_pop3_preserve_tls_hostname_validation_and_upgrade_befor
                     )
                     .await;
                 assert_eq!(result.is_ok(), !wrong_host);
-                tokio::time::timeout(Duration::from_secs(5), server)
+                tokio::time::timeout(crate::test_wait::HANG, server)
                     .await
                     .unwrap()
                     .unwrap();
@@ -238,7 +238,7 @@ async fn pinned_smtp_uses_required_tls_with_original_hostname_and_no_unauthentic
                 .probe_smtp(&account, &SecretString::from("fixture-password"))
                 .await;
             assert_eq!(result.is_ok(), !wrong_host);
-            tokio::time::timeout(Duration::from_secs(5), server)
+            tokio::time::timeout(crate::test_wait::HANG, server)
                 .await
                 .unwrap()
                 .unwrap();
@@ -284,7 +284,7 @@ async fn pinned_folder_catalog_and_create_preserve_tls_hostname_validation() {
                     CreateOutcome::Acknowledged
                 );
             }
-            tokio::time::timeout(Duration::from_secs(5), server)
+            tokio::time::timeout(crate::test_wait::HANG, server)
                 .await
                 .expect("fixture completion")
                 .expect("fixture task");
@@ -314,7 +314,7 @@ async fn pinned_sent_discovery_lookup_and_append_keep_tls_identity_and_original_
                     "Sent Mail"
                 );
             }
-            tokio::time::timeout(Duration::from_secs(5), server)
+            tokio::time::timeout(crate::test_wait::HANG, server)
                 .await
                 .unwrap()
                 .unwrap();

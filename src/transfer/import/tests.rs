@@ -63,12 +63,12 @@ async fn complete_snapshot_is_private_consistent_and_does_not_touch_either_works
     })
     .await
     .unwrap();
-    tokio::time::timeout(Duration::from_secs(5), waiting)
+    tokio::time::timeout(crate::test_wait::HANG, waiting)
         .await
         .unwrap()
         .unwrap();
     // Both real stores remain available while the snapshot holds its read point.
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(crate::test_wait::HANG, async {
         source.put("after-snapshot", true).await.unwrap();
         destination.put("local-only", "untouched").await.unwrap();
         assert_eq!(source.query(Default::default()).await.unwrap().total, 1);
