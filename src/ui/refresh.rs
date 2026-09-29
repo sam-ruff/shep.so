@@ -116,7 +116,6 @@ mod tests {
             crate::engine::SyncAttempt {
                 account: "accounts".into(),
                 connection: String::new(),
-                connection_revision: 0,
                 sequence: 1,
                 origin: crate::engine::SyncOrigin::Refresh,
             },

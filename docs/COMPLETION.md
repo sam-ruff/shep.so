@@ -1,5 +1,33 @@
 # Completion audit
 
+## Sync failure banner and tray reopening, 29 September 2026 (desktop)
+
+Background mail-check failures now wait 30 seconds from the first observed
+failed result before a banner appears, naming the account and its last error
+when only one is failing. Refresh errors show at once without resetting that
+timer. Results are fenced by each account's incoming connection identity
+(connection key plus credential slot) rather than `connections_revision`, which
+every IMAP check's own folder listing advanced and which had discarded real
+accounts' results. Mail sync, calendar refresh and timer-started automatic
+backup failures no longer reopen a window hidden in the tray or cancel close
+intent; user-started writes still reopen with their recovery.
+
+Evidence: `ui/sync_status.rs` controlled-clock tests, `ui/sync_status_tests.rs`
+(real Store folder-listing revision change through the App: Refresh error after
+listing, background failure reaching the banner, recovery without a false
+banner, overlapping healthy account, rename versus reconfiguration),
+`ui/tray.rs` App-level tray regressions for calendar refresh, automatic backup
+and pending Quit, the dispatcher relay test, and the native
+`test_tray_native_automatic_backup_failure_stays_hidden_until_opened` (light and
+compact dark) plus the existing tray/background-sync scenarios.
+
+Limits: the 480-second no-progress watchdog is unchanged, so a stalled download
+shows its banner about eight and a half minutes after progress stops. The
+reported blank formatted reader was not reproduced with fictional wide or long
+HTML. Calendar refresh has App-level tests only, because preview never contacts
+a calendar provider. No live provider, real desktop-shell tray, Windows or macOS
+execution. Flutter and browser parity stays open in TODO.
+
 ## Native scenarios on a starved runner, 27 September 2026
 
 Main run `36306277168` (sharing its Proxmox host with another full suite) and

@@ -57,6 +57,8 @@ mod simulator_tests;
 #[cfg(feature = "test-support")]
 mod store_truth;
 mod sync_status;
+#[cfg(test)]
+mod sync_status_tests;
 mod text_context;
 mod tray;
 pub mod update_notice;
@@ -514,6 +516,8 @@ pub struct App {
     notice: Option<(String, bool, Instant)>,
     /// The account whose failed check raised the current notice, and when.
     sync_notice: Option<(String, Instant)>,
+    /// When the current notice came from read-only or unattended work.
+    background_notice: Option<Instant>,
     sync_status: sync_status::State,
     preference_notice: Option<Instant>,
     google_connected: bool,
@@ -746,6 +750,7 @@ impl App {
                 refresh: Default::default(),
                 notice: None,
                 sync_notice: None,
+                background_notice: None,
                 sync_status: sync_status::State::default(),
                 preference_notice: None,
                 google_connected: false,
@@ -957,6 +962,47 @@ impl App {
     }
     fn notice(&mut self, message: impl Into<String>, error: bool) {
         self.notice = Some((message.into(), error, Instant::now()));
+    }
+    /// Shows an error from a read-only refresh or unattended journaled work.
+    /// It never cancels close intent or reopens a tray-hidden window.
+    fn background_notice(&mut self, message: impl Into<String>) {
+        self.notice(message, true);
+        self.background_notice = self.notice.as_ref().map(|notice| notice.2);
+    }
+    /// Shows the delayed banner for continuous background check failures,
+    /// naming the account and its latest error when only one is failing.
+    fn show_sync_banner(&mut self) {
+        const GENERAL: &str = "Mail checks are still failing. Try Refresh.";
+        let (owner, text) = match self.sync_status.single_failure() {
+            Some((account, error)) => {
+                let text = self
+                    .workspace
+                    .accounts
+                    .iter()
+                    .find(|saved| saved.id == account)
+                    .map_or_else(
+                        || GENERAL.to_owned(),
+                        |saved| {
+                            format!(
+                                "{}: mail checks are still failing. Try Refresh. Last error: {error}",
+                                saved.name
+                            )
+                        },
+                    );
+                (account.to_owned(), text)
+            }
+            None => (sync_status::COMBINED.to_owned(), GENERAL.to_owned()),
+        };
+        self.background_notice(text);
+        self.sync_notice = self.notice.as_ref().map(|notice| (owner, notice.2));
+    }
+    /// Clears the sync notice, and the visible notice when it is that one.
+    fn clear_sync_notice(&mut self) {
+        if let Some((_, at)) = self.sync_notice.take()
+            && self.notice.as_ref().is_some_and(|notice| notice.2 == at)
+        {
+            self.notice = None;
+        }
     }
     fn field(&self, key: &str) -> &str {
         self.fields.get(key).map(String::as_str).unwrap_or("")
@@ -1180,25 +1226,15 @@ impl App {
         let hidden_closing =
             self.tray.hidden && (self.pending_close.is_some() || self.composer.close.is_some());
         let hidden_write = self.tray.hidden && !hidden_closing && self.has_required_close_work();
-        let sync_result = matches!(&message, Message::Backend(Event::MailSyncFinished(_, _)));
         let previous_notice = self.notice.as_ref().map(|(_, _, at)| *at);
-        let previous_sync_notice = self.sync_notice.as_ref().map(|(_, at)| *at);
         let task = self.handle(message);
         self.pump_bulk();
         self.pump_account_setup_close();
         let close = self.continue_pending_close();
-        let sync_banner = self.sync_notice.as_ref().is_some_and(|(_, at)| {
-            Some(*at) != previous_sync_notice
-                && self.notice.as_ref().is_some_and(|notice| notice.2 == *at)
-        });
-        let reopen = if sync_banner || (sync_result && !self.new_error_since(previous_notice)) {
-            Task::none()
-        } else {
-            self.reopen_after_failed_close(
-                hidden_write && self.new_error_since(previous_notice),
-                hidden_closing,
-            )
-        };
+        let reopen = self.reopen_after_failed_close(
+            hidden_write && self.new_required_error_since(previous_notice),
+            hidden_closing,
+        );
         let tray_close = self.continue_tray_close();
         self.update_desktop_badge();
         self.update_notification_settings();
@@ -1517,40 +1553,28 @@ impl App {
                         workspace.drafts = self.workspace.drafts.clone();
                         workspace.drafts_revision = self.workspace.drafts_revision;
                     }
-                    let changed_accounts: Vec<String> = self
+                    // A reconfigured, reconnected or removed account ends its
+                    // failure episode and notice; a rename or folder listing
+                    // does not.
+                    let replaced: Vec<String> = self
                         .workspace
-                        .accounts
+                        .incoming_identities
                         .iter()
-                        .filter(|old| {
-                            workspace.accounts.iter().find(|new| new.id == old.id) != Some(*old)
-                        })
-                        .map(|account| account.id.clone())
+                        .filter(|(id, old)| workspace.incoming_identities.get(*id) != Some(*old))
+                        .map(|(id, _)| id.clone())
                         .collect();
                     self.workspace = Arc::new(workspace);
-                    for account in &changed_accounts {
-                        self.sync_status.remove(account);
-                    }
-                    self.sync_status.retain_accounts(|id| {
-                        self.workspace
-                            .accounts
-                            .iter()
-                            .any(|account| account.id == id)
-                    });
-                    if let Some((account, at)) = self.sync_notice.as_ref()
-                        && (changed_accounts.iter().any(|changed| changed == account)
-                            || (account == "accounts" && !self.sync_status.has_failures())
-                            || (account != "accounts"
-                                && account != "preview"
-                                && !self
-                                    .workspace
-                                    .accounts
-                                    .iter()
-                                    .any(|saved| &saved.id == account)))
+                    let identities = &self.workspace.incoming_identities;
+                    let mut retired = self
+                        .sync_status
+                        .reconcile(|id| identities.get(id).map(String::as_str));
+                    retired.extend(replaced);
+                    if let Some((account, _)) = self.sync_notice.as_ref()
+                        && (retired.contains(account)
+                            || (account == sync_status::COMBINED
+                                && !self.sync_status.has_failures()))
                     {
-                        if self.notice.as_ref().is_some_and(|notice| notice.2 == *at) {
-                            self.notice = None;
-                        }
-                        self.sync_notice = None;
+                        self.clear_sync_notice();
                     }
                     self.reconcile_folder_accounts();
                     if let Some(folders) = &mut self.query.folders {
@@ -1802,59 +1826,49 @@ impl App {
                 }
                 Event::MailSyncStarted(attempt) => {
                     if self.sync_status.started(&attempt)
-                        && let Some((account, at)) = self.sync_notice.as_ref()
+                        && let Some((account, _)) = self.sync_notice.as_ref()
                         && (account == &attempt.account
-                            || (account == "accounts" && !self.sync_status.has_failures()))
+                            || (account == sync_status::COMBINED
+                                && !self.sync_status.has_failures()))
                     {
-                        if self.notice.as_ref().is_some_and(|notice| notice.2 == *at) {
-                            self.notice = None;
-                        }
-                        self.sync_notice = None;
+                        self.clear_sync_notice();
                     }
                 }
                 Event::MailSyncFinished(attempt, result) => {
-                    let account = &attempt.account;
-                    let present = self
+                    let identity = self
                         .workspace
-                        .accounts
-                        .iter()
-                        .any(|saved| &saved.id == account);
-                    if !self.sync_status.current(
-                        &attempt,
-                        self.workspace.connections_revision,
-                        present,
-                    ) {
+                        .incoming_identities
+                        .get(&attempt.account)
+                        .map(String::as_str);
+                    if !self.sync_status.current(&attempt, identity) {
                         return Task::none();
                     }
-                    self.sync_status
-                        .finished(&attempt, result.is_err(), Instant::now());
+                    self.sync_status.finished(
+                        &attempt,
+                        result.as_ref().err().map(String::as_str),
+                        Instant::now(),
+                    );
                     match result {
                         Ok(()) => {
-                            let recovered = self
-                                .sync_notice
+                            if self.sync_notice.as_ref().is_some_and(|(failed, _)| {
+                                failed == &attempt.account
+                                    || (failed == sync_status::COMBINED
+                                        && !self.sync_status.has_failures())
+                            }) {
+                                self.clear_sync_notice();
+                            }
+                        }
+                        // Background failures wait for the grace period; an
+                        // explicit Refresh reports at once. Neither is a
+                        // required write, so neither reopens a hidden window.
+                        Err(error) if attempt.origin == SyncOrigin::Refresh => {
+                            self.background_notice(error);
+                            self.sync_notice = self
+                                .notice
                                 .as_ref()
-                                .filter(|(failed, _)| {
-                                    failed == account
-                                        || (failed == "accounts"
-                                            && !self.sync_status.has_failures())
-                                })
-                                .map(|(_, at)| *at);
-                            if let Some(at) = recovered {
-                                if self.notice.as_ref().is_some_and(|notice| notice.2 == at) {
-                                    self.notice = None;
-                                }
-                                self.sync_notice = None;
-                            }
+                                .map(|notice| (attempt.account.clone(), notice.2));
                         }
-                        Err(error) => {
-                            if attempt.origin == SyncOrigin::Refresh {
-                                self.notice(error, true);
-                                self.sync_notice = self
-                                    .notice
-                                    .as_ref()
-                                    .map(|notice| (account.clone(), notice.2));
-                            }
-                        }
+                        Err(_) => {}
                     }
                 }
                 Event::MailArrived(arrival) => self.notification_arrived(arrival),
@@ -1920,6 +1934,7 @@ impl App {
                     self.notice(text, true);
                     self.pending_details.clear();
                 }
+                Event::BackgroundError(text) => self.background_notice(text),
                 Event::GoogleStatus(revision, connected) => {
                     if revision == self.preferences.google_lifecycle.revision {
                         self.google_connected =
@@ -2326,15 +2341,9 @@ impl App {
             }
             Message::Tick => {
                 if self.notice.as_ref().is_none_or(|(_, error, _)| !error)
-                    && self
-                        .sync_status
-                        .due(Instant::now(), self.workspace.connections_revision)
+                    && self.sync_status.due(Instant::now())
                 {
-                    self.notice("Mail checks are still failing. Try Refresh.", true);
-                    self.sync_notice = self
-                        .notice
-                        .as_ref()
-                        .map(|notice| ("accounts".into(), notice.2));
+                    self.show_sync_banner();
                 }
                 if self.change_refresh.due(Instant::now()) {
                     self.refresh_after_change();

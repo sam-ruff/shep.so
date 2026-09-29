@@ -33,9 +33,6 @@ pub(super) trait SyncTarget: Clone + Send + Sync + 'static {
     fn name(&self) -> &str;
     /// The settings a server watcher connects with; a change restarts it.
     fn connection(&self) -> &str;
-    fn connection_revision(&self) -> u64 {
-        0
-    }
 }
 
 #[derive(Clone)]
@@ -44,7 +41,6 @@ pub(super) enum Target {
     Account {
         account: Box<Account>,
         connection: String,
-        revision: u64,
     },
 }
 impl SyncTarget for Target {
@@ -64,12 +60,6 @@ impl SyncTarget for Target {
         match self {
             Self::Preview => "",
             Self::Account { connection, .. } => connection,
-        }
-    }
-    fn connection_revision(&self) -> u64 {
-        match self {
-            Self::Preview => 0,
-            Self::Account { revision, .. } => *revision,
         }
     }
 }
@@ -139,10 +129,9 @@ impl Engine {
         let accounts = self.store.accounts_ready_to_watch().await?;
         Ok(accounts
             .into_iter()
-            .map(|(account, connection, revision)| Target::Account {
+            .map(|(account, connection)| Target::Account {
                 account: Box::new(account),
                 connection,
-                revision,
             })
             .collect())
     }
@@ -341,7 +330,6 @@ async fn drive<T, L, LF, R, RF, W, WF>(
                                     crate::engine::SyncAttempt {
                                         account: LISTING.into(),
                                         connection: String::new(),
-                                        connection_revision: 0,
                                         sequence: next_sequence,
                                         origin: crate::engine::SyncOrigin::Background,
                                     },
@@ -365,7 +353,6 @@ async fn drive<T, L, LF, R, RF, W, WF>(
                             let attempt = crate::engine::SyncAttempt {
                                 account: key,
                                 connection: target.connection().to_owned(),
-                                connection_revision: target.connection_revision(),
                                 sequence: next_sequence,
                                 origin: if manual {
                                     crate::engine::SyncOrigin::Refresh
@@ -399,7 +386,6 @@ async fn drive<T, L, LF, R, RF, W, WF>(
                                 crate::engine::SyncAttempt {
                                     account: LISTING.into(),
                                     connection: String::new(),
-                                    connection_revision: 0,
                                     sequence: next_sequence,
                                     origin: if manual {
                                         crate::engine::SyncOrigin::Refresh

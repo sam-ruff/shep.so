@@ -156,7 +156,7 @@ impl Harness {
     pub fn age_sync_failure(&mut self, attempt: &crate::engine::SyncAttempt) {
         self.app.sync_status.finished(
             attempt,
-            true,
+            Some("Fixture check failed"),
             Instant::now() - std::time::Duration::from_secs(31),
         );
     }

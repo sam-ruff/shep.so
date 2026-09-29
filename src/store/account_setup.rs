@@ -475,32 +475,35 @@ impl Store {
     }
 }
 
+/// An account's incoming connection identity: the server settings plus the
+/// active credential binding. It changes only when that account is
+/// reconfigured or reconnected, never when another account lists folders.
+pub(crate) fn incoming_identity(c: &Connection, account: &Account) -> anyhow::Result<String> {
+    let slot: Option<String> = c
+        .query_row(
+            "SELECT json_extract(data,'$.incoming') FROM account_credential_slots WHERE account=?",
+            [&account.id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(format!(
+        "{}\n{}",
+        crate::mail_actions::connection_key(account),
+        slot.unwrap_or_default()
+    ))
+}
+
 impl Store {
-    /// Accounts ready to sync, each with its incoming connection identity:
-    /// the server settings plus the active credential binding. A long-lived
-    /// connection opened with other values is stale.
-    pub(crate) async fn accounts_ready_to_watch(
-        &self,
-    ) -> anyhow::Result<Vec<(Account, String, u64)>> {
+    /// Accounts ready to sync, each with its incoming connection identity. A
+    /// long-lived connection opened with other values is stale.
+    pub(crate) async fn accounts_ready_to_watch(&self) -> anyhow::Result<Vec<(Account, String)>> {
         self.run(|c| {
-            let revision = get(c, "connections_revision")?;
             super::profile_sync::join::ready_to_sync(c)?
                 .into_iter()
                 .map(|account| {
-                    let slot: Option<String> = c
-                        .query_row(
-                            "SELECT json_extract(data,'$.incoming') FROM account_credential_slots WHERE account=?",
-                            [&account.id],
-                            |r| r.get(0),
-                        )
-                        .optional()?
-                        .flatten();
-                    let identity = format!(
-                        "{}\n{}",
-                        crate::mail_actions::connection_key(&account),
-                        slot.unwrap_or_default()
-                    );
-                    Ok((account, identity, revision))
+                    let identity = incoming_identity(c, &account)?;
+                    Ok((account, identity))
                 })
                 .collect()
         })

@@ -205,11 +205,12 @@ pub enum SyncOrigin {
     Refresh,
 }
 
+/// One mail check, bound to the account's incoming connection identity when
+/// it was listed. A result for another identity is stale.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncAttempt {
     pub account: String,
     pub connection: String,
-    pub connection_revision: u64,
     pub sequence: u64,
     pub origin: SyncOrigin,
 }
@@ -317,6 +318,10 @@ pub enum Event {
     Busy(String, bool),
     Notice(String),
     Error(String),
+    /// A failure from a read-only refresh or unattended journaled work, such
+    /// as a calendar refresh or an automatic backup. It is shown like any
+    /// error but never cancels close intent or reopens a tray-hidden window.
+    BackgroundError(String),
     GoogleStatus(u64, bool),
     GoogleDisconnected(u64, Result<(), String>),
     AccountSaved(String),

@@ -1631,6 +1631,40 @@ class NativeFlows(unittest.TestCase):
                        wait(200),
                        shot("tray-write-failure-recovered"))
 
+    def test_tray_native_automatic_backup_failure_stays_hidden_until_opened(self):
+        # The engine's own timer starts the backup after the window is hidden;
+        # its lost acknowledgment is journaled, so the tray must not reopen.
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                started = self.mcp.call("desktop.start", tray="available", backup_run="automatic",
+                                        **({"width": 900, "height": 640} if compact else {}))
+                directory = Path(started["artifacts"])
+                print(f"Automatic backup failure while hidden ({'compact dark' if compact else 'light'}): {directory}", flush=True)
+                self.mcp.batch(check("tray.available", True), check("tray.saved_enabled", True))
+                if compact:
+                    self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366),
+                                   check("dark", True), key("ctrl+1"), check("tab", "Mail"))
+                self.mcp.batch({"type": "close_request"}, check("tray.visible", False),
+                               check("tray.temporary", False), check("close_pending", False))
+                # The backup key names the harness-owned folder, so poll the
+                # observation for it rather than an exact wait_for value.
+                deadline = time.monotonic() + 5
+                while True:
+                    busy = self.mcp.call("desktop.state")["busy"]
+                    if any(k.startswith("backup:") and k.endswith('/second")') for k in busy):
+                        break
+                    self.assertLess(time.monotonic(), deadline, f"the automatic backup runs while hidden: {busy}")
+                    time.sleep(0.1)
+                self.mcp.batch(check("notice", None),
+                               wait(2000), wait(2000),
+                               {**check("notice", "acknowledgment was lost", "contains"), "timeout_ms": 5000},
+                               wait(500), check("tray.visible", False), check("close_pending", False),
+                               shot("tray-hidden-after-automatic-backup-failure"),
+                               {"type": "tray_menu"}, key("Down"), key("Return"),
+                               check("tray.visible", True), {"type": "focus_app"},
+                               check("notice", "acknowledgment was lost", "contains"),
+                               wait(200), shot("tray-opened-shows-automatic-backup-failure"))
+
     def test_tray_native_temporary_saving_notifies_and_failure_reopens_draft(self):
         self.mcp.call("desktop.start", tray="available", mail_actions="slow")
         self.disable_close_to_tray()

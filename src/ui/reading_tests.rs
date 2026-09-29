@@ -93,14 +93,12 @@ fn recovered_mail_sync_clears_its_error_but_preserves_other_action_errors() {
     let work = crate::engine::SyncAttempt {
         account: "preview".into(),
         connection: String::new(),
-        connection_revision: 0,
         sequence: 1,
         origin: crate::engine::SyncOrigin::Refresh,
     };
     let personal = crate::engine::SyncAttempt {
         account: "accounts".into(),
         connection: String::new(),
-        connection_revision: 0,
         sequence: 2,
         origin: crate::engine::SyncOrigin::Refresh,
     };
@@ -144,11 +142,14 @@ fn stale_and_removed_account_sync_results_cannot_publish_notices() {
         "username":"fixture", "smtp_host":"smtp.example.test", "smtp_port":465
     }))
     .expect("fixture account");
-    Arc::make_mut(&mut app.workspace).accounts.push(account);
+    let workspace = Arc::make_mut(&mut app.workspace);
+    workspace.accounts.push(account);
+    workspace
+        .incoming_identities
+        .insert("fixture".into(), "new".into());
     let old = crate::engine::SyncAttempt {
         account: "fixture".into(),
         connection: "old".into(),
-        connection_revision: 0,
         sequence: 1,
         origin: crate::engine::SyncOrigin::Background,
     };
@@ -162,7 +163,9 @@ fn stale_and_removed_account_sync_results_cannot_publish_notices() {
         Err("stale".into()),
     )));
     assert!(app.notice.is_none());
-    Arc::make_mut(&mut app.workspace).accounts.clear();
+    let workspace = Arc::make_mut(&mut app.workspace);
+    workspace.accounts.clear();
+    workspace.incoming_identities.clear();
     let _ = app.handle(Message::Backend(Event::MailSyncFinished(
         current,
         Err("removed".into()),
@@ -177,7 +180,6 @@ fn replacing_a_connection_clears_its_visible_sync_notice() {
     let old = crate::engine::SyncAttempt {
         account: "preview".into(),
         connection: "old-slot".into(),
-        connection_revision: 0,
         sequence: 1,
         origin: crate::engine::SyncOrigin::Refresh,
     };

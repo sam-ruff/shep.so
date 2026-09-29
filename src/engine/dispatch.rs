@@ -285,6 +285,45 @@ async fn network_operation<Fut: std::future::Future<Output = anyhow::Result<()>>
         .context("The operation timed out. Try again.")?
 }
 
+/// Calendar refreshes are read-only; a failure must never cancel close intent
+/// or reopen a tray-hidden window, whoever started the refresh.
+fn read_only_refresh(command: &Command) -> bool {
+    matches!(command, Command::SyncCalendar)
+}
+
+/// Runs read-only or unattended journaled work, reporting its errors as
+/// `BackgroundError`. Every event is delivered before this returns, so the
+/// caller's busy release still follows the failure. Closing the relay after
+/// the work finishes means a clone kept by other tasks cannot hold it open.
+async fn unattended<Fut: std::future::Future<Output = anyhow::Result<()>>>(
+    mut output: Output,
+    work: impl FnOnce(Output) -> Fut,
+) -> anyhow::Result<()> {
+    use futures::{SinkExt, StreamExt};
+    fn retype(event: Event) -> Event {
+        match event {
+            Event::Error(text) => Event::BackgroundError(text),
+            event => event,
+        }
+    }
+    let (relay, mut events) = futures::channel::mpsc::channel(32);
+    let work = work(relay);
+    tokio::pin!(work);
+    let result = loop {
+        tokio::select! {
+            result = &mut work => break result,
+            Some(event) = events.next() => {
+                let _ = output.send(retype(event)).await;
+            }
+        }
+    };
+    events.close();
+    while let Some(event) = events.next().await {
+        let _ = output.send(retype(event)).await;
+    }
+    result
+}
+
 impl Engine {
     pub(super) async fn run(self, input: Inputs, output: Output) {
         let background = !self.demo || {
@@ -361,10 +400,17 @@ impl Engine {
 
     async fn run_network(self, mut input: mpsc::Receiver<Command>, mut output: Output) {
         let engine = self;
-        let demo = engine.demo;
+        // The native fixture runs the unattended timer in preview, quickly, so
+        // tray scenarios can observe a real automatic backup.
+        #[cfg(feature = "test-support")]
+        let unattended_fixture = engine.demo && crate::test_support::backups::automatic();
+        #[cfg(not(feature = "test-support"))]
+        let unattended_fixture = false;
+        let demo = engine.demo && !unattended_fixture;
         let mut jobs = tokio::task::JoinSet::new();
         let mut busy = HashSet::new();
-        let mut timer = tokio::time::interval(Duration::from_secs(60));
+        let mut timer =
+            tokio::time::interval(Duration::from_secs(if unattended_fixture { 1 } else { 60 }));
         timer.tick().await;
         let mut last_calendar_sync = Instant::now();
         let mut last_backup_attempt = std::collections::HashMap::<String, Instant>::new();
@@ -372,10 +418,13 @@ impl Engine {
             tokio::select! {
                 biased;
                 result=jobs.join_next(),if !jobs.is_empty()=>{
-                    if let Some(Ok((key,result)))=result{
+                    if let Some(Ok((key,background,result)))=result{
                         // Failure must reach the UI before releasing its close
                         // dependency; otherwise it may quit on Busy(false).
-                        if let Err(e)=result{let _=output.send(Event::Error(format!("{e:#}"))).await;}
+                        if let Err(e)=result{
+                            let text=format!("{e:#}");
+                            let _=output.send(if background{Event::BackgroundError(text)}else{Event::Error(text)}).await;
+                        }
                         if let Some(key)=key{busy.remove(&key);let _=output.send(Event::Busy(key,false)).await;}
                     }
                 }
@@ -390,10 +439,15 @@ impl Engine {
                     }
                     if let Some(key)=&key{busy.insert(key.clone());let _=output.send(Event::Busy(key.clone(),true)).await;}
                     let engine=engine.clone();let output=output.clone();
+                    let background=read_only_refresh(&command);
                     jobs.spawn(async move {
                         let _slot = engine.provider_slots.acquire().await;
-                        let result = network_operation(command, |command| engine.execute(command, output)).await;
-                        (key, result)
+                        let result = if background {
+                            unattended(output, |relay| network_operation(command, |command| engine.execute(command, relay))).await
+                        } else {
+                            network_operation(command, |command| engine.execute(command, output)).await
+                        };
+                        (key, background, result)
                     });
                 }
                 _=timer.tick(),if !demo=>{
@@ -404,7 +458,7 @@ impl Engine {
                             let worker = engine.clone(); let events = output.clone();
                             jobs.spawn(async move {
                                 let _slot = worker.provider_slots.acquire().await;
-                                (Some("calendar".into()), worker.execute(Command::SyncCalendar, events).await)
+                                (Some("calendar".into()), true, unattended(events, |relay| worker.execute(Command::SyncCalendar, relay)).await)
                             });
                         }
                         let configured = backup::config::configurations(&prefs);
@@ -422,7 +476,9 @@ impl Engine {
                                 let engine = engine.clone(); let output = output.clone();
                                 jobs.spawn(async move {
                                     let _slot = engine.provider_slots.acquire().await;
-                                    (Some(key), engine.execute(Command::AutomaticBackup(target), output).await)
+                                    // Timer-started backups are journaled and resume on a
+                                    // later attempt; their failure stays in backup history.
+                                    (Some(key), true, unattended(output, |relay| engine.execute(Command::AutomaticBackup(target), relay)).await)
                                 });
                             }
                         }
@@ -436,6 +492,48 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unattended_work_reports_background_errors_before_it_returns() {
+        use futures::{FutureExt, SinkExt, StreamExt};
+        let (output, mut events) = futures::channel::mpsc::channel(64);
+        let kept = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let lingering = kept.clone();
+        let result = unattended(output, |mut relay: Output| async move {
+            relay.send(Event::Notice("Checking".into())).await?;
+            relay.send(Event::Error("Calendar offline".into())).await?;
+            // A clone kept by other work cannot hold the job open.
+            *lingering.lock().expect("clone slot") = Some(relay.clone());
+            anyhow::bail!("Could not refresh")
+        })
+        .await;
+        assert!(
+            result.is_err(),
+            "the caller still reports the final failure"
+        );
+        let delivered: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
+            .map(|event| match event {
+                Event::Notice(text) => format!("notice {text}"),
+                Event::BackgroundError(text) => format!("background {text}"),
+                Event::Error(text) => format!("error {text}"),
+                _ => "other".into(),
+            })
+            .collect();
+        assert_eq!(
+            delivered,
+            ["notice Checking", "background Calendar offline"]
+        );
+        let mut clone = kept.lock().expect("clone slot").take().expect("clone");
+        assert!(clone.send(Event::Error("late".into())).await.is_err());
+        assert!(events.next().now_or_never().flatten().is_none());
+    }
+
+    #[test]
+    fn only_calendar_refreshes_are_read_only_commands() {
+        assert!(read_only_refresh(&Command::SyncCalendar));
+        assert!(!read_only_refresh(&Command::Sync));
+        assert!(!read_only_refresh(&Command::CleanupCredentials));
+    }
 
     #[tokio::test]
     async fn account_close_interrupts_admitted_setup_behind_eight_held_provider_jobs() {

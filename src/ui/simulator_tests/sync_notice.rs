@@ -13,7 +13,6 @@ async fn delayed_banner_is_visible_and_dismissible() {
     let attempt = SyncAttempt {
         account: "preview".into(),
         connection: String::new(),
-        connection_revision: 0,
         sequence: 100,
         origin: SyncOrigin::Background,
     };

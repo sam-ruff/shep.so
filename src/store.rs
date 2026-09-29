@@ -69,6 +69,8 @@ pub struct Workspace {
     pub creation_jobs: Vec<CreationJob>,
     pub move_pending_total: usize,
     pub accounts: Vec<Account>,
+    /// Each account's incoming connection identity, as sync attempts carry it.
+    pub incoming_identities: std::collections::HashMap<String, String>,
     pub account_reconnect: crate::profile_sync::join::Reconnect,
     pub calendars: Vec<CalendarSource>,
     pub preferences: Preferences,
@@ -455,11 +457,17 @@ impl Store {
             }
             let folder_trees = catalogs.into_iter().map(|(account, catalog)| (account, Arc::new(crate::folders::Tree::new(&catalog)))).collect();
             let drafts = drafts::snapshot(c)?;
+            let accounts: Vec<Account> = get(c, "accounts")?;
+            let incoming_identities = accounts
+                .iter()
+                .map(|account| Ok((account.id.clone(), account_setup::incoming_identity(c, account)?)))
+                .collect::<anyhow::Result<_>>()?;
             Ok(Workspace {
                 removals: connections::pending_removals(c)?,
                 folder_creations: folder_creation::pending(c)?,
                 creation_jobs: creation_jobs.into_iter().filter(|job|!removed.contains(&job.account)).collect(),
-                accounts: get(c, "accounts")?,
+                accounts,
+                incoming_identities,
                 account_reconnect: get(c,crate::profile_sync::join::RECONNECT_KEY)?,
                 calendars: get(c, "calendars")?,
                 preferences: get(c, "preferences")?,
