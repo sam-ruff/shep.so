@@ -124,9 +124,10 @@ async fn background_failure_after_the_folder_listing_reaches_the_banner() -> any
     assert_eq!(
         f.notice(),
         Some(
-            format!("Cognition: mail checks are still failing. Try Refresh. Last error: {TIMEOUT}")
-                .as_str()
-        )
+            "Cognition: mail checks are still failing. Try Refresh. \
+             Last error: Account sync timed out without download progress"
+        ),
+        "the account is named once"
     );
     Ok(())
 }
@@ -206,6 +207,50 @@ async fn rename_keeps_the_episode_while_reconfiguration_retires_it() -> anyhow::
     f.finish(late, Err(TIMEOUT));
     assert!(!f.app.sync_status.has_failures());
     f.finish(failed, Err(TIMEOUT));
+    assert!(!f.app.sync_status.has_failures());
+    let _ = f.app.handle(Message::Tick);
+    assert_eq!(f.notice(), None);
+    Ok(())
+}
+
+/// Hands the App a workspace captured before later connection changes, as a
+/// check's own late publication can.
+fn deliver(app: &mut App, workspace: crate::store::Workspace) {
+    let _ = app.handle(Message::Backend(Event::Workspace(Arc::new(workspace))));
+}
+
+#[tokio::test]
+async fn a_late_older_snapshot_keeps_the_current_refresh_error() -> anyhow::Result<()> {
+    let mut f = Fixture::new(&[account("cognition", "Cognition", "imap.example.test")]).await?;
+    let older = f.store.workspace().await?;
+    f.store
+        .save_account(account("cognition", "Cognition", "imap.moved.example.test"))
+        .await?;
+    f.publish().await?;
+    let manual = f.start("cognition", SyncOrigin::Refresh).await?;
+    deliver(&mut f.app, older);
+    assert_eq!(
+        f.app.workspace.incoming_identities.get("cognition"),
+        Some(&manual.connection),
+        "the older snapshot replaced the current identity"
+    );
+    f.finish(manual, Err(TIMEOUT));
+    assert_eq!(f.notice(), Some(TIMEOUT));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_replaced_connection_cannot_start_an_episode_after_a_late_snapshot() -> anyhow::Result<()>
+{
+    let mut f = Fixture::new(&[account("cognition", "Cognition", "imap.example.test")]).await?;
+    let old = f.start("cognition", SyncOrigin::Background).await?;
+    let older = f.store.workspace().await?;
+    f.store
+        .save_account(account("cognition", "Cognition", "imap.moved.example.test"))
+        .await?;
+    f.publish().await?;
+    deliver(&mut f.app, older);
+    f.finish(old, Err(TIMEOUT));
     assert!(!f.app.sync_status.has_failures());
     let _ = f.app.handle(Message::Tick);
     assert_eq!(f.notice(), None);

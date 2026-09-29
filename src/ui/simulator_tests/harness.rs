@@ -225,6 +225,20 @@ impl Harness {
         self.click(bounds.center()).await;
     }
 
+    /// Centre of the first visible text equal to `text`.
+    pub fn text_center(&mut self, text: &str) -> Point {
+        let bounds = self.text_bounds(text);
+        let Some(bounds) = bounds.first() else {
+            panic!("no visible text {text:?}");
+        };
+        bounds.center()
+    }
+
+    /// The window's logical width.
+    pub fn width(&self) -> f32 {
+        self.size.width
+    }
+
     /// Visible bounds of every text equal to `text`, in widget-tree order.
     fn text_bounds(&mut self, text: &str) -> Vec<iced::Rectangle> {
         let mut operation = text.find_all();

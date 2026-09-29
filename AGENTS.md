@@ -1958,9 +1958,15 @@ tests. Keep normal non-tray close/restart native flows alongside tray regression
 Ordinary tray hiding also preserves required-write error visibility. Track actual
 hidden-window ownership separately from startup's absent window. A fresh error
 while an ordinary-hidden write is pending reopens the work; an old error does not.
-Failures of mail sync (background or Refresh), calendar refreshes and unattended
-timer-started automatic backups never reopen a hidden window and never cancel
-close intent, even while another required write is pending. The engine marks them
+Failures of mail sync (background or Refresh), calendar refreshes, unattended
+timer-started automatic backups and automatic move recovery (`RecoverPendingMoves`,
+dispatched after `PendingMovesReady` and on close) never reopen a hidden window
+and never cancel close intent, even while another required write is pending.
+Automatic move recovery keeps its `pending-move-recovery` close dependency: Quit
+still waits for the pass, and the journaled record and cached message remain for
+the next retry. Explicit `RecoverMailMove` from Activity keeps `Event::Error` and
+reopens. A failed profile-sync status read or continuous cycle keeps a pending
+Quit; other failed profile work still cancels it. The engine marks them
 with typed provenance (`MailSyncFinished` with its `SyncOrigin`, and
 `Event::BackgroundError` from the network dispatcher's relay), never by matching
 error text; the UI records such notices with `background_notice`. The failure
@@ -1982,9 +1988,17 @@ once and never reset that timer. Each episode is bound to the account's incoming
 connection identity (`Workspace.incoming_identities`: connection key plus the
 active credential slot), not to `connections_revision`, which every check's own
 folder listing advances. Renames keep an episode; reconfiguration, reconnection
-and removal end it, and late results from an old identity are ignored. Dismissal
-suppresses the banner until the account recovers. Keep `ui/sync_status_tests.rs`,
-which drives the real Store's folder-listing revision change through the App.
+and removal end it, and late results from an old identity are ignored. An older
+Workspace snapshot keeps the newer `incoming_identities` together with `accounts`.
+Dismissal suppresses the banner until the account recovers, and an unrelated
+error notice already on screen holds the banner back until it is dismissed. The
+banner names a single failing account once, stripping the engine's
+`"{name} sync failed: "` prefix for display only. Keep `ui/sync_status_tests.rs`,
+which drives the real Store's folder-listing revision change and late older
+snapshots through the App. The 30-second wait exceeds the native harness's batch
+limits, so only the `iced_test` simulator (which clicks the real Dismiss control)
+shows the delayed banner; native scenarios check the episode and its absence
+during the grace period.
 
 Windows badge images are prepared on the existing count watch worker; iced's
 native window callback only owns the HWND overlay and its recovery subclass.

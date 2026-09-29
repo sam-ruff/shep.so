@@ -79,6 +79,10 @@ pub(super) struct State {
     login_seen: Option<u64>,
     automatic_generation: Option<u64>,
     automatic_job: Option<u64>,
+    /// The running continuous cycle. Its local changes stay journaled until
+    /// acknowledged, so its failure is retried later rather than cancelling
+    /// a pending Quit.
+    cycle_job: Option<u64>,
     offer: bool,
     desired: Changes,
     sent: Option<Changes>,
@@ -500,6 +504,9 @@ impl App {
             if matches!(request, Request::AfterLogin(_)) {
                 state.automatic_generation = Some(self.preference_sync.generation());
             }
+            if matches!(request, Request::Sync(_)) {
+                state.cycle_job = Some(id);
+            }
             if !matches!(request, Request::Status(_)) {
                 state.error = None;
             }
@@ -568,6 +575,10 @@ impl App {
         let pending = matches!(update, Update::Pending(_));
         if automatic && !pending {
             state.automatic_job = None;
+        }
+        let cycle = state.cycle_job == Some(id);
+        if cycle && !pending {
+            state.cycle_job = None;
         }
         let published = matches!(update, Update::Published(_));
         let joined = matches!(update, Update::Joined(_) | Update::AutoJoined { .. });
@@ -760,7 +771,12 @@ impl App {
                 if job && (state.setting_reviews.is_some() || state.account_reviews.is_some()) {
                     self.notice(error, true);
                 }
-                self.pending_close = None;
+                // A failed status read or continuous cycle, typically offline,
+                // is retried later; Quit may continue. Other profile work keeps
+                // the window open with its error.
+                if !(cycle || loading) {
+                    self.pending_close = None;
+                }
                 refresh = !loading;
             }
             Update::Stopped => {
@@ -1239,6 +1255,51 @@ mod tests {
         assert!(!state.accepts_account_review(&review));
         assert!(state.account_after.is_none());
         assert!(state.next_sync.is_some());
+    }
+
+    #[tokio::test]
+    async fn pending_quit_survives_a_failed_continuous_cycle_but_not_other_profile_work() {
+        use crate::engine::Event;
+        let (mut app, mut queue, _) = app().await;
+        app.bulk.stopped = true;
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.shared_profile_action(Action::Sync);
+        let Ok(Command::ProfileSync(Request::Sync(cycle))) = queue.try_recv() else {
+            panic!("expected a cycle");
+        };
+        let _ = app.update(Message::WindowClose(window));
+        assert_eq!(app.pending_close, Some(window));
+        let Ok(Command::ProfileSync(Request::Stop(stop))) = queue.try_recv() else {
+            panic!("closing stops the cycle");
+        };
+        let _ = app.update(Message::Backend(Event::ProfileSync(
+            cycle,
+            Update::Failed("Could not reach Google Drive".into()),
+        )));
+        assert_eq!(app.pending_close, Some(window), "offline cycle keeps Quit");
+        assert_eq!(
+            app.profile_sync.activity_error(),
+            Some("Could not reach Google Drive")
+        );
+        let _ = app.update(Message::Backend(Event::ProfileSync(stop, Update::Stopped)));
+        assert!(app.tray.exiting, "Quit continues after the stop");
+
+        // Other profile work still cancels Quit with its error.
+        let (mut other, mut queue, _) = self::app().await;
+        other.bulk.stopped = true;
+        other.tray.window = Some(window);
+        other.shared_profile_action(Action::Discover);
+        let Ok(Command::ProfileSync(Request::Discover(discover))) = queue.try_recv() else {
+            panic!("expected discovery");
+        };
+        let _ = other.update(Message::WindowClose(window));
+        assert_eq!(other.pending_close, Some(window));
+        let _ = other.update(Message::Backend(Event::ProfileSync(
+            discover,
+            Update::Failed("Discovery failed".into()),
+        )));
+        assert_eq!(other.pending_close, None);
     }
 
     #[tokio::test]

@@ -628,6 +628,62 @@ mod tests {
         assert!(app.tray.window.is_some());
     }
 
+    const MOVE_RECOVERY_OFFLINE: &str =
+        "The cached message is retained. Move recovery needs attention: connection refused";
+
+    #[test]
+    fn automatic_move_recovery_failure_keeps_the_tray_window_hidden() {
+        let mut app = hidden_with_nothing_pending();
+        // Reads stay open so the refresh after `Changed` is admitted.
+        let (sender, mut network, _reads) = crate::engine::CommandSender::move_test_channels();
+        app.tx = Some(sender);
+        // The engine's sequence after an account check while offline.
+        let _ = app.update(Message::Backend(crate::engine::Event::PendingMovesReady));
+        assert!(matches!(
+            network.try_recv(),
+            Ok(Command::RecoverPendingMoves)
+        ));
+        for event in [
+            crate::engine::Event::Busy("pending-move-recovery".into(), true),
+            crate::engine::Event::BackgroundError(MOVE_RECOVERY_OFFLINE.into()),
+            crate::engine::Event::Changed,
+            crate::engine::Event::Busy("pending-move-recovery".into(), false),
+        ] {
+            let _ = app.update(Message::Backend(event));
+            assert!(app.tray.window.is_none(), "reopened by the retry");
+        }
+        assert!(app.tray.hidden);
+        assert_eq!(
+            app.notice.as_ref().map(|notice| notice.0.as_str()),
+            Some(MOVE_RECOVERY_OFFLINE),
+            "the failure is waiting when the window is next opened"
+        );
+    }
+
+    #[test]
+    fn pending_quit_survives_an_automatic_move_recovery_failure() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.bulk.stopped = true;
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "pending-move-recovery".into(),
+            true,
+        )));
+        let _ = app.update(Message::WindowClose(window));
+        assert_eq!(app.pending_close, Some(window), "waits for the receipt");
+        let _ = app.update(Message::Backend(crate::engine::Event::BackgroundError(
+            MOVE_RECOVERY_OFFLINE.into(),
+        )));
+        assert_eq!(app.pending_close, Some(window), "close intent is kept");
+        assert!(!app.tray.exiting, "still waits for the recovery to finish");
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "pending-move-recovery".into(),
+            false,
+        )));
+        assert!(app.tray.exiting, "the journaled record retries next launch");
+    }
+
     #[test]
     fn calendar_refresh_failure_during_a_pending_send_keeps_the_tray_window_hidden() {
         let (mut app, _) = App::new();

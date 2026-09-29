@@ -285,10 +285,15 @@ async fn network_operation<Fut: std::future::Future<Output = anyhow::Result<()>>
         .context("The operation timed out. Try again.")?
 }
 
-/// Calendar refreshes are read-only; a failure must never cancel close intent
-/// or reopen a tray-hidden window, whoever started the refresh.
-fn read_only_refresh(command: &Command) -> bool {
-    matches!(command, Command::SyncCalendar)
+/// Calendar refreshes are read-only, and automatic move recovery retries its
+/// journaled records while keeping the cached message. Their failures must
+/// never cancel close intent or reopen a tray-hidden window. Explicit
+/// `RecoverMailMove` from Activity stays an ordinary user-started command.
+fn background_command(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::SyncCalendar | Command::RecoverPendingMoves
+    )
 }
 
 /// Runs read-only or unattended journaled work, reporting its errors as
@@ -439,7 +444,7 @@ impl Engine {
                     }
                     if let Some(key)=&key{busy.insert(key.clone());let _=output.send(Event::Busy(key.clone(),true)).await;}
                     let engine=engine.clone();let output=output.clone();
-                    let background=read_only_refresh(&command);
+                    let background=background_command(&command);
                     jobs.spawn(async move {
                         let _slot = engine.provider_slots.acquire().await;
                         let result = if background {
@@ -529,10 +534,11 @@ mod tests {
     }
 
     #[test]
-    fn only_calendar_refreshes_are_read_only_commands() {
-        assert!(read_only_refresh(&Command::SyncCalendar));
-        assert!(!read_only_refresh(&Command::Sync));
-        assert!(!read_only_refresh(&Command::CleanupCredentials));
+    fn only_calendar_refreshes_and_automatic_move_recovery_are_background_commands() {
+        assert!(background_command(&Command::SyncCalendar));
+        assert!(background_command(&Command::RecoverPendingMoves));
+        assert!(!background_command(&Command::Sync));
+        assert!(!background_command(&Command::CleanupCredentials));
     }
 
     #[tokio::test]

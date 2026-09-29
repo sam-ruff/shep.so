@@ -9,8 +9,9 @@ tracked in [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md): keep t
 eight-minute progress watchdog, delay background notices for 30 seconds from the
 first observed failure, keep Refresh errors immediate without resetting that
 episode, bind results to each account's incoming connection identity, and keep
-mail sync, calendar refresh and unattended automatic backup failures from
-reopening a hidden window while user-started writes keep their recovery. Desktop
+mail sync, calendar refresh, unattended automatic backup and automatic
+move-recovery failures from reopening a hidden window or cancelling Quit while
+user-started writes keep their recovery. Desktop
 is implemented with the evidence in [the completion log](COMPLETION.md); Flutter
 and browser parity and the blank-reader question remain open.
 

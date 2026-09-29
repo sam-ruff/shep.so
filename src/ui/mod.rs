@@ -983,8 +983,13 @@ impl App {
                     .map_or_else(
                         || GENERAL.to_owned(),
                         |saved| {
+                            // The engine's error already names the account;
+                            // the banner names it once.
+                            let cause = error
+                                .strip_prefix(&format!("{} sync failed: ", saved.name))
+                                .unwrap_or(error);
                             format!(
-                                "{}: mail checks are still failing. Try Refresh. Last error: {error}",
+                                "{}: mail checks are still failing. Try Refresh. Last error: {cause}",
                                 saved.name
                             )
                         },
@@ -1529,6 +1534,7 @@ impl App {
                     let mut workspace = (*workspace).clone();
                     if workspace.connections_revision < self.workspace.connections_revision {
                         workspace.accounts = self.workspace.accounts.clone();
+                        workspace.incoming_identities = self.workspace.incoming_identities.clone();
                         workspace.account_reconnect = self.workspace.account_reconnect.clone();
                         workspace.calendars = self.workspace.calendars.clone();
                         workspace.account_folders = self.workspace.account_folders.clone();

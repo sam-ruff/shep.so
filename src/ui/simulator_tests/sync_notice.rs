@@ -29,7 +29,11 @@ async fn delayed_banner_is_visible_and_dismissible() {
     h.expect("notice", "Mail checks are still failing. Try Refresh.")
         .await;
     assert!(!h.snapshot().matches_hash(&before).expect("notice snapshot"));
-    h.inject(Message::Dismiss).await;
+    // The notice bar ends with its 40 px Dismiss (×) button inside 14 px of
+    // padding, on the same row as the message.
+    let row = h.text_center("Mail checks are still failing. Try Refresh.");
+    let width = h.width();
+    h.click_at(width - 14. - 20., row.y).await;
     h.expect("notice", serde_json::Value::Null).await;
     h.inject(Message::Tick).await;
     h.expect("notice", serde_json::Value::Null).await;
