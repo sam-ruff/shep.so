@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     model::{Preferences, StoredMail, parse_mail},
     store::Store,
@@ -31,13 +34,13 @@ async fn notification_controls_default_on_and_persist_independently() {
     assert!(defaults.notifications.popups && defaults.notifications.sound);
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cache.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let mut preferences = defaults;
     preferences.notifications.popups = false;
     preferences.notifications.show_details = false;
     store.save_preferences(preferences).await.unwrap();
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let preferences: Preferences = store.get("preferences").await.unwrap();
     assert!(!preferences.notifications.popups);
     assert!(preferences.notifications.sound);
@@ -48,7 +51,7 @@ async fn notification_controls_default_on_and_persist_independently() {
 async fn partial_initial_import_stays_quiet_across_restart_then_new_mail_alerts_once() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cache.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     store
         .begin_notification_sync("work".into(), "imap:7".into())
         .await
@@ -56,7 +59,7 @@ async fn partial_initial_import_stays_quiet_across_restart_then_new_mail_alerts_
     let old = mail("work", "7.1", Some("old"), "Old mail");
     assert!(store.sync_message(old.clone()).await.unwrap().is_none());
     drop(store); // The provider never completed the first import.
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     store
         .begin_notification_sync("work".into(), "imap:7".into())
         .await
@@ -78,7 +81,7 @@ async fn partial_initial_import_stays_quiet_across_restart_then_new_mail_alerts_
     assert_eq!(arrival.account, "work");
     assert!(store.sync_message(fresh.clone()).await.unwrap().is_none());
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     store
         .begin_notification_sync("work".into(), "imap:7".into())
         .await

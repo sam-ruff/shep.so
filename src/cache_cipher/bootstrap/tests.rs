@@ -110,7 +110,7 @@ async fn legacy_root(dir: &Path) -> uuid::Uuid {
 /// Worker threads close their connections after the last handle drops. Wait
 /// until no connection remains open on the fixture databases.
 fn settle(paths: &[PathBuf]) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + crate::test_wait::HANG;
     for path in paths {
         loop {
             // A lock error, like staying in WAL, means a connection is still open.
@@ -193,7 +193,7 @@ async fn plaintext_root_stays_plaintext_and_holds_ownership_without_a_key() {
 }
 
 fn wait_for_release(dir: &Path) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + crate::test_wait::HANG;
     while Guard::migration(dir).is_err() {
         assert!(
             std::time::Instant::now() < deadline,

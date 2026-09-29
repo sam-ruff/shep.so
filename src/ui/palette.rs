@@ -439,7 +439,7 @@ mod tests {
             .await
             .unwrap();
         drop(store);
-        let reopened = crate::store::Store::open(&path).unwrap();
+        let reopened = crate::test_wait::reopen(|| crate::store::Store::open(&path));
         let saved: Preferences = reopened.get("preferences").await.unwrap();
         assert_eq!(saved.palettes, preferences.palettes);
         let legacy: Preferences = serde_json::from_str("{\"appearance\":\"Dark\"}").unwrap();

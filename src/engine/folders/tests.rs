@@ -44,7 +44,7 @@ async fn folder_review_and_staging_use_local_dispatch_with_all_provider_slots_oc
         Box::default(),
     )))
     .unwrap();
-    let preview = tokio::time::timeout(Duration::from_secs(3), async {
+    let preview = tokio::time::timeout(crate::test_wait::HANG, async {
         loop {
             if let Some(super::super::Event::Folder(Event::Review(7, result))) = events.next().await
             {
@@ -60,7 +60,7 @@ async fn folder_review_and_staging_use_local_dispatch_with_all_provider_slots_oc
         None,
     )))
     .unwrap();
-    tokio::time::timeout(Duration::from_secs(3), async {
+    tokio::time::timeout(crate::test_wait::HANG, async {
         loop {
             if let Some(super::super::Event::Folder(Event::Started(id, result))) =
                 events.next().await
@@ -183,7 +183,7 @@ async fn closing_a_folder_job_waiting_for_capacity_keeps_it_queued_without_waiti
     ));
     assert!(engine.bulk_control.active.get());
     engine.bulk_control.stopping.set(true);
-    tokio::time::timeout(Duration::from_secs(3), worker)
+    tokio::time::timeout(crate::test_wait::HANG, worker)
         .await
         .unwrap()
         .unwrap();

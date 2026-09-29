@@ -14,19 +14,7 @@ appearance.addEventListener('change', () => {
   try { localStorage.setItem(preferenceKey, appearance.value); } catch { /* Session-only appearance. */ }
 });
 
-// Android comes before Linux, and desktop-mode iPads come before macOS.
-// ChromeOS installs through its Linux environment.
-function detectedPlatform() {
-  const ua = navigator.userAgent;
-  const platform = navigator.userAgentData?.platform ?? navigator.platform ?? '';
-  if (/Android/i.test(`${ua} ${platform}`)) return 'android';
-  if (/iPhone|iPad|iPod/i.test(ua) || (/Mac/i.test(platform) && navigator.maxTouchPoints > 1)) return 'ios';
-  if (/Windows|Win32/i.test(`${ua} ${platform}`)) return 'windows';
-  if (/Mac/i.test(`${ua} ${platform}`)) return 'macos';
-  if (/Linux|CrOS/i.test(`${ua} ${platform}`)) return 'linux';
-  return null;
-}
-
+// detectedPlatform() comes from platform.js, which loads first.
 const names = { linux: 'Linux', macos: 'macOS', windows: 'Windows', android: 'Android', ios: 'iPhone and iPad' };
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 

@@ -5423,7 +5423,8 @@ class NativeFlows(unittest.TestCase):
                        key("ctrl+2"),check("tab","Calendar"),check("move_recovery.pending",0),
                        check("notice","temporarily unavailable","contains"),key("ctrl+1"),check("tab","Mail"),
                        click(85,576),check("selected","Recovered keepsake"),check("reader_text_ready",True),
-                       check("mail_rows.0.group_pending",True),click(1340,192),check("dialog","MoveRecovery"),
+                       # After the tab switch the state can precede the drawn banner; let it settle.
+                       check("mail_rows.0.group_pending",True),wait(150),click(1340,192),check("dialog","MoveRecovery"),
                        wait(100),shot("move-recovery-retry-error"),key("Return"),check("move_recovery.pending",1),
                        check("move_recovery.pending",0),check("dialog",None),check("move_recovery.total",0),
                        check("selected","Recovered keepsake"),check("mail_rows.0.group_pending",False),

@@ -9,7 +9,7 @@ import sys
 import tarfile
 import unittest
 
-from test_release_installer import ReleaseFixture, ROOT
+from test_release_installer import HANG, ReleaseFixture, ROOT
 import tempfile
 
 
@@ -181,7 +181,7 @@ os.execv({real_mv!r},[{real_mv!r}]+sys.argv[1:])
             process = subprocess.Popen(self.arguments[:2], env=self.env, stdin=slave, stdout=slave,
                                        stderr=slave, preexec_fn=attach_terminal)
             os.write(master, b'c\n')
-            self.assertEqual(process.wait(timeout=5), 1)
+            self.assertEqual(process.wait(timeout=HANG), 1)
         finally:
             os.close(master)
             os.close(slave)

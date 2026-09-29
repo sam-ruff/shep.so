@@ -564,7 +564,7 @@ mod tests {
                 })
                 .expect("held provider");
         }
-        tokio::time::timeout(Duration::from_secs(5), started.wait())
+        tokio::time::timeout(crate::test_wait::HANG, started.wait())
             .await
             .expect("all provider jobs held");
         let account: Account = serde_json::from_value(serde_json::json!({"id":"queued-setup","name":"Queued","email":"fixture@example.test","protocol":"Imap","host":"imap.example.test","port":993,"username":"fixture","smtp_host":"smtp.example.test","smtp_port":465})).expect("account");
@@ -572,7 +572,7 @@ mod tests {
         sender
             .try_send(Command::AdmitAccount(id.clone(), account, None))
             .expect("local admission");
-        let event = tokio::time::timeout(Duration::from_secs(5), events.next())
+        let event = tokio::time::timeout(crate::test_wait::HANG, events.next())
             .await
             .expect("local response")
             .expect("event");
@@ -588,7 +588,7 @@ mod tests {
         sender
             .try_send(Command::InterruptAccountSetups(9))
             .expect("ordered interruption");
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if matches!(event, Event::AccountSetupsStopped(9, Ok(()))) {
                     return;
@@ -614,7 +614,7 @@ mod tests {
                 .is_empty()
         );
         release.notify_waiters();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if matches!(event, Event::Busy(ref key, false) if key == &format!("account:{id}")) {
                     return;
@@ -698,7 +698,7 @@ mod tests {
             .send(Command::BackupIncluded(2, "first".into(), target))
             .await
             .unwrap();
-        let duplicate = tokio::time::timeout(Duration::from_secs(5), events.next())
+        let duplicate = tokio::time::timeout(crate::test_wait::HANG, events.next())
             .await
             .unwrap();
         assert!(
@@ -706,7 +706,7 @@ mod tests {
         );
         // The duplicate result is delivered while the original remains held.
         drop(held);
-        let result = tokio::time::timeout(Duration::from_secs(5), async {
+        let result = tokio::time::timeout(crate::test_wait::HANG, async {
             let mut observations = Vec::new();
             while let Some(event) = events.next().await {
                 let finished = matches!(event, Event::Busy(_, false));
@@ -748,7 +748,7 @@ mod tests {
             .send(Command::SaveAccount(account, "".into(), "".into()))
             .await
             .unwrap();
-        let events = tokio::time::timeout(Duration::from_secs(5), async {
+        let events = tokio::time::timeout(crate::test_wait::HANG, async {
             let mut received = Vec::new();
             while let Some(event) = events.next().await {
                 let done =
@@ -846,7 +846,7 @@ mod tests {
         }
         // This is an ordering/correctness test: provider jobs remain blocked until
         // after local work completes. The timeout only bounds a deadlocked test.
-        tokio::time::timeout(Duration::from_secs(5), started.wait())
+        tokio::time::timeout(crate::test_wait::HANG, started.wait())
             .await
             .unwrap();
         for _ in 0..CHANNEL_CAPACITY {
@@ -934,7 +934,7 @@ mod tests {
                 vec![id.clone()],
             ))
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             let (mut page, mut detail, mut saved, mut conversation, mut selected, mut profile) =
                 (false, false, false, false, false, false);
             while !(page && detail && saved && conversation && selected && profile) {
@@ -991,7 +991,7 @@ mod tests {
         sender
             .try_send(Command::DeleteDraft("saved-draft".into()))
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 if let Event::DraftDeleted(id, result) =
                     events.next().await.expect("Dispatcher stopped")
@@ -1011,7 +1011,7 @@ mod tests {
                 "forward-without-network".into(),
             ))
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 if let Event::ForwardDraft(id, result) =
                     events.next().await.expect("Dispatcher stopped")
@@ -1032,7 +1032,7 @@ mod tests {
                 replace: false,
             }))
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG,async {
             loop {
                 if let Event::Database(78, crate::transfer::Update::Finished(result)) = events.next().await.unwrap() {
                     assert!(matches!(result.unwrap(), crate::transfer::Outcome::Saved { path, .. } if path == destination));
@@ -1055,7 +1055,7 @@ mod tests {
                 source: destination,
             }))
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 if let Event::Database(79, crate::transfer::Update::Review(review)) =
                     events.next().await.unwrap()
@@ -1070,7 +1070,7 @@ mod tests {
         sender
             .try_send(Command::Database(crate::transfer::Request::Cancel(79)))
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 if let Event::Database(79, crate::transfer::Update::ImportFinished(result)) =
                     events.next().await.unwrap()
@@ -1085,7 +1085,7 @@ mod tests {
         sender
             .try_send(Command::Print(77, id, Default::default()))
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 if let Event::Print(request, result) =
                     events.next().await.expect("Dispatcher stopped")

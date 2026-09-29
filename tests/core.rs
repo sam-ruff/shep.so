@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use secrecy::SecretString;
 use shep::{
     backup::{self, BackupProvider, LocalBackup, Snapshot},
@@ -93,7 +96,7 @@ fn mail(i: usize) -> StoredMail {
 async fn pagination_search_and_flags_survive_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     store.upsert((0..123).map(mail).collect()).await.unwrap();
     let query = MailQuery {
         folder: "INBOX".into(),
@@ -125,7 +128,7 @@ async fn pagination_search_and_flags_survive_reopen() {
         .await
         .unwrap();
     drop(store);
-    let reopened = Store::open(path).unwrap();
+    let reopened = wait::reopen(|| Store::open(&path));
     let detail = reopened.detail(selected.id).await.unwrap();
     assert!(detail.summary.starred);
     assert!(!detail.summary.unread);
@@ -338,7 +341,7 @@ fn ical_folds_unicode_without_splitting_codepoints_or_injecting_properties() {
 async fn drafts_and_preferences_survive_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let prefs = Preferences {
         appearance: Appearance::Dark,
         ..Default::default()
@@ -354,7 +357,7 @@ async fn drafts_and_preferences_survive_reopen() {
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let workspace = store.workspace().await.unwrap();
     assert_eq!(workspace.preferences.appearance, Appearance::Dark);
     assert_eq!(workspace.drafts[0].body, "Unfinished thought");

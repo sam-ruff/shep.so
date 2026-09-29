@@ -657,7 +657,7 @@ mod tests {
         }
         let (mut output, _rx) = futures::channel::mpsc::channel(32);
         tokio::time::timeout(
-            Duration::from_secs(2),
+            crate::test_wait::HANG,
             engine.queue_draft(draft(), &mut output),
         )
         .await

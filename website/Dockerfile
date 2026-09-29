@@ -50,7 +50,9 @@ COPY website/package.json website/package-lock.json ./
 
 RUN npm ci
 
+COPY website/tsconfig.json ./
 COPY website/public ./public
+COPY website/src ./src
 COPY website/scripts ./scripts
 COPY assets/shepherd-light.svg /app/assets/
 COPY docs/images/mail-light.webp docs/images/calendar-dark.webp /app/docs/images/

@@ -25,7 +25,7 @@ async fn profile_login_opt_out_is_durable_before_enrollment_and_survives_reconne
     assert!(declined.enrollment.revision > first.enrollment.revision);
     assert!(!crate::profile_sync::onboarding::eligible(&declined));
     drop(store);
-    let reopened = Store::open(&path).unwrap();
+    let reopened = crate::test_wait::reopen(|| Store::open(&path));
     let prefs: Preferences = reopened.get("preferences").await.unwrap();
     let disconnected = reopened
         .disconnect_google(prefs.google_lifecycle.revision)
@@ -178,7 +178,7 @@ async fn profile_enrollment_keeps_original_pending_choice_across_restart_and_rej
             .is_err()
     );
     drop(store);
-    let store = Store::open(path).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(&path));
     assert_eq!(
         store.profile_enrollment().await.unwrap().enrollment,
         pending.enrollment
@@ -493,7 +493,7 @@ async fn profile_seed_freezes_legacy_account_mapping_and_chunk_retries_across_re
         serde_json::to_vec(&first.changes).unwrap()
     );
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(&path));
     let reopened = store.profile_seed(original.clone()).await.unwrap();
     assert_eq!(reopened.account_ids, seed.account_ids);
     assert_eq!(reopened.chunks[0].operation, first.operation);

@@ -183,7 +183,7 @@ async fn root_ownership_outlives_admitted_writes_and_the_last_handle() {
     assert!(Guard::migration(directory.path()).is_err());
     release.send(()).unwrap();
     observed.await.unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + crate::test_wait::HANG;
     while Guard::migration(directory.path()).is_err() {
         assert!(
             std::time::Instant::now() < deadline,

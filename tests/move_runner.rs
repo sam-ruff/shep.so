@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     mail_actions::{
         journal::*,
@@ -145,10 +148,10 @@ async fn setup(store: &Store, transfer: bool) -> (MoveRecord, Server) {
 async fn missing_destination_with_intact_original_resumes_same_journal_after_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let (record, mut server) = setup(&store, false).await;
     store.prepare_mail_move(record.clone()).await.unwrap();
-    server.store = Store::open(&path).unwrap();
+    server.store = wait::reopen(|| Store::open(&path));
     server.inspection = Inspection::SourceIntactNoDestinationCopy;
     let finished = runner::recover(&server.store.clone(), &mut server, record.clone())
         .await
@@ -316,7 +319,7 @@ async fn acknowledged_missing_uid_returns_without_lookup_and_recovers_after_reop
  {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let (record, mut server) = setup(&store, false).await;
     server.reply = Some(Ok(None));
     let committed = runner::start(&store, &mut server, record.clone())
@@ -330,7 +333,7 @@ async fn acknowledged_missing_uid_returns_without_lookup_and_recovers_after_reop
     );
     server.store = Store::memory().unwrap();
     drop(store);
-    server.store = Store::open(&path).unwrap();
+    server.store = wait::reopen(|| Store::open(&path));
     let store = server.store.clone();
     let saved = store.mail_move(record.token).await.unwrap();
     let found = runner::recover(&store, &mut server, saved).await.unwrap();
@@ -353,7 +356,7 @@ async fn acknowledged_missing_uid_returns_without_lookup_and_recovers_after_reop
 async fn copied_uid_survives_cleanup_failure_then_retry_verifies_it_without_reupload() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let (record, mut server) = setup(&store, true).await;
     server.cleanup_error = true;
     let error = runner::start(&store, &mut server, record.clone())
@@ -365,7 +368,7 @@ async fn copied_uid_survives_cleanup_failure_then_retry_verifies_it_without_reup
     assert_eq!(saved.receipt.current.as_ref().unwrap().remote_id, "91.38");
     server.store = Store::memory().unwrap();
     drop(store);
-    server.store = Store::open(&path).unwrap();
+    server.store = wait::reopen(|| Store::open(&path));
     let store = server.store.clone();
     server.cleanup_error = false;
     let completed = runner::recover(&store, &mut server, saved).await.unwrap();

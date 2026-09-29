@@ -584,7 +584,7 @@ mod tests {
             .await
             .expect("checks");
         drop(store);
-        let reopened = Store::open(dir.path().join("cache.sqlite")).expect("reopen");
+        let reopened = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
         reopened.interrupt_account_setups().await.expect("recovery");
         assert_eq!(
             reopened

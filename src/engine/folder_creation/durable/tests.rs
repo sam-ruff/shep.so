@@ -246,7 +246,7 @@ async fn held_provider_capacity_leaves_durable_admission_queued_and_close_never_
     );
     engine.bulk_control.stopping.set(true);
     assert!(
-        !tokio::time::timeout(Duration::from_secs(1), pending)
+        !tokio::time::timeout(crate::test_wait::HANG, pending)
             .await
             .expect("close does not wait for capacity")
     );

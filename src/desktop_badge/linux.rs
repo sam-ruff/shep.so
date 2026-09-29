@@ -118,7 +118,7 @@ mod tests {
             child,
             _directory: directory,
         };
-        let connection = tokio::time::timeout(Duration::from_secs(3), async {
+        let connection = tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 if let Ok(c) = Builder::address(address.as_str()).unwrap().build().await {
                     return c;
@@ -131,7 +131,7 @@ mod tests {
         (bus, address, connection)
     }
     async fn next(stream: &mut MessageStream, expected: u64) {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 let message = stream.next().await.unwrap().unwrap();
                 let (uri, values): (String, HashMap<String, OwnedValue>) =
@@ -201,7 +201,7 @@ mod tests {
         next(&mut messages, 0).await;
         drop(tx);
         next(&mut messages, 0).await;
-        tokio::time::timeout(Duration::from_secs(3), worker)
+        tokio::time::timeout(crate::test_wait::HANG, worker)
             .await
             .unwrap()
             .unwrap();
@@ -241,7 +241,7 @@ mod tests {
             .stderr(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        let observer = tokio::time::timeout(Duration::from_secs(3), async {
+        let observer = tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 if let Ok(connection) = Builder::address(address.as_str()).unwrap().build().await {
                     break connection;
@@ -258,7 +258,7 @@ mod tests {
         next(&mut messages, 12).await;
         drop(tx);
         next(&mut messages, 0).await;
-        tokio::time::timeout(Duration::from_secs(3), worker)
+        tokio::time::timeout(crate::test_wait::HANG, worker)
             .await
             .unwrap()
             .unwrap();

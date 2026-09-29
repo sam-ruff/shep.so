@@ -164,7 +164,7 @@ async fn profile_account_link_keeps_native_identity_and_mail_without_republishin
     // device's account name is shared, never another connection definition.
     replica.close().await.unwrap();
     drop(store);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     let mut replica = Replica::open(
         dir.path().join("history.sqlite"),
         binding.clone(),
@@ -235,7 +235,7 @@ async fn profile_account_link_add_new_creates_one_reconnecting_account_across_re
     );
     replica.close().await.unwrap();
     drop(store);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     let replica = Replica::open(
         dir.path().join("history.sqlite"),
         binding,
@@ -287,7 +287,7 @@ async fn profile_account_link_keep_local_suppresses_the_shared_identity_durably(
         assert!(store.capture_profile_change().await.unwrap().is_none());
         replica.close().await.unwrap();
         drop(store);
-        let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+        let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
         let replica = Replica::open(
             dir.path().join("history.sqlite"),
             binding.clone(),

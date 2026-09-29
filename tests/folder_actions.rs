@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     folder_actions::{Action, Outcome, Status},
     folders::{Mailbox, NameEncoding},
@@ -73,7 +76,7 @@ fn move_to_storage() -> Action {
 async fn acknowledged_move_rekeys_entire_subtree_atomically_and_survives_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let metadata = seed(&store).await;
     let before = store.raw_message(metadata[3].id.clone()).await.unwrap();
     let restored = metadata[3].id.clone();
@@ -112,7 +115,7 @@ async fn acknowledged_move_rekeys_entire_subtree_atomically_and_survives_reopen(
     );
     drop(lease);
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let workspace = store.workspace().await.unwrap();
     let tree = &workspace.folder_trees["work"];
     assert!(tree.node("Projects").is_none());
@@ -240,7 +243,7 @@ async fn interrupted_write_is_not_replayed_but_durable_acknowledgment_can_finish
     for acknowledged in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("mail.sqlite");
-        let store = Store::open(&path).unwrap();
+        let store = wait::reopen(|| Store::open(&path));
         seed(&store).await;
         let lease = start(&store, "restart", move_to_storage()).await;
         let step = store.claim_folder_step(&lease).await.unwrap().unwrap();
@@ -252,7 +255,7 @@ async fn interrupted_write_is_not_replayed_but_durable_acknowledgment_can_finish
         }
         drop(lease);
         drop(store);
-        let store = Store::open(&path).unwrap();
+        let store = wait::reopen(|| Store::open(&path));
         let lease = store.folder_lease("restart".into()).await.unwrap();
         let job = store.recover_folder_change(&lease).await.unwrap();
         assert!(store.claim_folder_step(&lease).await.unwrap().is_none());
@@ -597,10 +600,10 @@ async fn pop3_local_folder_moves_keep_download_identity() {
 async fn folder_executor_lease_excludes_another_connection_and_rejects_wrong_store() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("mail.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     seed(&store).await;
     let lease = start(&store, "lease", Action::Delete).await;
-    let other = Store::open(&path).unwrap();
+    let other = wait::reopen(|| Store::open(&path));
     assert!(other.folder_lease("lease".into()).await.is_err());
     assert!(other.claim_folder_step(&lease).await.is_err());
     let child = std::process::Command::new(std::env::current_exe().unwrap())

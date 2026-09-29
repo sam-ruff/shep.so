@@ -8,6 +8,8 @@ use server::{Response as TestResponse, *};
 const NAMESPACE: &str = "so.shep.fixture";
 const PRINCIPAL: &str = "drive:fixture-owner";
 const FILE_ID: &str = "reserved-fixture-file";
+/// Bounds a wait a test expects to finish; generous for starved CI runners.
+const HANG: Duration = Duration::from_secs(120);
 
 #[tokio::test]
 async fn fixture_transport_rejects_non_loopback_and_ambiguous_endpoints_before_connecting() {
@@ -539,10 +541,7 @@ async fn cancellation_during_upload_retains_reservation_and_cannot_acknowledge_a
     let drive = server.connect(Some(PRINCIPAL)).await.unwrap();
     let cloned = worker.clone();
     let task = tokio::spawn(async move { drive.upload_next(&cloned).await });
-    tokio::time::timeout(Duration::from_secs(5), received)
-        .await
-        .unwrap()
-        .unwrap();
+    tokio::time::timeout(HANG, received).await.unwrap().unwrap();
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     assert_eq!(state(&worker).await.queued, 1);

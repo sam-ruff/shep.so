@@ -248,7 +248,7 @@ async fn profile_setup_publishes_reviewed_seed_after_restart_and_other_device_re
             .all(|r| !String::from_utf8_lossy(r.record.bytes()).contains("path-does-not-travel"))
     );
     drop(store);
-    let store = Store::open(dir.path().join("cache.sqlite")).unwrap();
+    let store = crate::test_wait::reopen(|| Store::open(dir.path().join("cache.sqlite")));
     let mut replica = open(dir.path(), &pending, &journal).await;
     let mut replies = vec![Reply::new(200, r#"{"files":[]}"#)];
     replies.extend(fresh_uploads(&saved));
@@ -688,7 +688,7 @@ async fn profile_setup_keeps_inflight_receipt_but_never_reenables_a_disabled_or_
             let result = publish(&writer, &mut replica, &session, reviewed, 123).await;
             (replica, result)
         });
-        tokio::time::timeout(std::time::Duration::from_secs(5), observed)
+        tokio::time::timeout(crate::test_wait::HANG, observed)
             .await
             .unwrap()
             .unwrap();
@@ -768,7 +768,7 @@ async fn profile_control_interrupts_a_held_read_but_waits_for_an_admitted_upload
     received.await.unwrap();
     stop.send_replace(true);
     assert!(
-        tokio::time::timeout(std::time::Duration::from_secs(2), read)
+        tokio::time::timeout(crate::test_wait::HANG, read)
             .await
             .unwrap()
             .unwrap()

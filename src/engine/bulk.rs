@@ -415,7 +415,7 @@ mod tests {
             }
             panic!("Missing durable completion")
         };
-        let (_, job) = tokio::time::timeout(Duration::from_secs(20), async {
+        let (_, job) = tokio::time::timeout(crate::test_wait::HANG, async {
             tokio::join!(engine.execute_bulk_job(id.into(), output), collect)
         })
         .await
@@ -611,7 +611,7 @@ mod tests {
             let (output, mut events) = futures::channel::mpsc::channel(64);
             let owner = tokio::spawn(engine.clone().run_bulk_queue(input.bulk, output.clone()));
             let (mut failures, mut mail_done, mut calendar_done) = (0, false, scratch_failure);
-            tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::time::timeout(crate::test_wait::HANG, async {
                 while failures == 0 || !mail_done || !calendar_done {
                     match events.next().await.expect("owner event") {
                         Event::CalendarJob(id, Err(_)) if id == "blocked" => failures += 1,
@@ -656,7 +656,7 @@ mod tests {
             );
             engine.execute(Command::BulkStop(1), output).await.unwrap();
             drop(sender);
-            tokio::time::timeout(Duration::from_secs(2), owner)
+            tokio::time::timeout(crate::test_wait::HANG, owner)
                 .await
                 .unwrap()
                 .unwrap();
@@ -742,7 +742,7 @@ mod tests {
         drop(sender);
         let (output, mut events) = futures::channel::mpsc::channel(4);
         tokio::time::timeout(
-            Duration::from_secs(2),
+            crate::test_wait::HANG,
             engine.clone().run_bulk_queue(input.bulk, output),
         )
         .await
@@ -830,7 +830,7 @@ mod tests {
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);
         let owner = tokio::spawn(engine.clone().run_bulk_queue(input.bulk, output.clone()));
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if let Event::BulkFinished(id, result) = event
                     && id == "zz-repair"
@@ -848,7 +848,7 @@ mod tests {
         }
         engine.execute(Command::BulkStop(1), output).await.unwrap();
         drop(sender);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if matches!(event, Event::BulkStopped(1)) {
                     break;
@@ -937,14 +937,14 @@ mod tests {
                     .await
             }
         });
-        let initial = tokio::time::timeout(Duration::from_secs(5), events.next())
+        let initial = tokio::time::timeout(crate::test_wait::HANG, events.next())
             .await
             .unwrap();
         assert!(
             matches!(initial, Some(Event::BulkUpdate(ref job)) if job.remaining == 2 && job.running == 0)
         );
         engine.execute(Command::BulkStop(1), output).await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), worker)
+        tokio::time::timeout(crate::test_wait::HANG, worker)
             .await
             .unwrap()
             .unwrap();
@@ -1241,7 +1241,7 @@ mod tests {
         }
         let (mut output, _events) = futures::channel::mpsc::channel(16);
         let changed = tokio::time::timeout(
-            Duration::from_secs(1),
+            crate::test_wait::HANG,
             engine.execute_bulk_work(id.clone(), Some(position), 1, None, &mut output),
         )
         .await
@@ -1483,7 +1483,7 @@ mod tests {
         drop(sender);
         let (output, mut events) = futures::channel::mpsc::channel(2);
         let collect = async { while events.next().await.is_some() {} };
-        tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             tokio::join!(engine.clone().run_bulk_queue(input.bulk, output), collect);
         })
         .await
@@ -1538,7 +1538,7 @@ mod tests {
                 }
             }
         };
-        tokio::time::timeout(Duration::from_secs(60), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             tokio::join!(engine.clone().run_bulk_queue(input.bulk, output), collect);
         })
         .await
@@ -1588,7 +1588,7 @@ mod tests {
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);
         let owner = tokio::spawn(engine.clone().run_bulk_queue(input.bulk, output.clone()));
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if let Event::BulkUpdate(job) = event
                     && job.id == "shared"
@@ -1626,7 +1626,7 @@ mod tests {
         }
         drop(held);
         drop(sender);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if matches!(event, Event::BulkStopped(1)) {
                     break;
@@ -1681,7 +1681,7 @@ mod tests {
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);
         let owner = tokio::spawn(engine.clone().run_bulk_queue(input.bulk, output.clone()));
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 match events.next().await.unwrap() {
                     Event::BulkUpdate(job) if job.id == "pages" && job.completed == 1 => {
@@ -1703,7 +1703,7 @@ mod tests {
             .unwrap();
         drop(held);
         drop(sender);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if matches!(event, Event::BulkStopped(1)) {
                     break;
@@ -1893,7 +1893,7 @@ mod tests {
         let (sender, input) = CommandSender::channel();
         let (output, mut events) = futures::channel::mpsc::channel(32);
         let owner = tokio::spawn(engine.clone().run_bulk_queue(input.bulk, output.clone()));
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if matches!(event, Event::BulkUpdate(job) if job.id == "held" && job.running == 1) {
                     break;
@@ -1953,7 +1953,7 @@ mod tests {
             .await
             .unwrap();
         sender.try_send(Command::BulkRun(String::new())).unwrap();
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             let (mut mail_done, mut calendar_done) = (false, false);
             while let Some(event) = events.next().await {
                 match event {
@@ -1987,7 +1987,7 @@ mod tests {
         assert!(engine.bulk_control.active.get());
         drop(held);
         drop(sender);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if matches!(event, Event::BulkStopped(1)) {
                     break;
@@ -2030,7 +2030,7 @@ mod tests {
             }
             count
         };
-        let (_, count) = tokio::time::timeout(Duration::from_secs(10), async {
+        let (_, count) = tokio::time::timeout(crate::test_wait::HANG, async {
             tokio::join!(engine.clone().run_bulk_queue(input.bulk, output), collect)
         })
         .await
@@ -2062,7 +2062,7 @@ mod tests {
             let output = output.clone();
             async move { engine.execute_bulk_job("close".into(), output).await }
         });
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while let Some(event) = events.next().await {
                 if let Event::BulkUpdate(job) = event
                     && job.running == 1
@@ -2079,7 +2079,7 @@ mod tests {
             .unwrap();
         assert!(engine.bulk_control.active.get());
         drop(account);
-        let job = tokio::time::timeout(Duration::from_secs(5), async {
+        let job = tokio::time::timeout(crate::test_wait::HANG, async {
             let mut saved = None;
             while let Some(event) = events.next().await {
                 match event {

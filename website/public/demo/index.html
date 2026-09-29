@@ -10,9 +10,16 @@
     <link rel="icon" type="image/svg+xml" href="../assets/shepherd.svg">
     <link rel="stylesheet" href="frame.css">
     <script src="frame.js" defer></script>
+    <script src="../platform.js" defer></script>
+    <script src="notice.js" defer></script>
     <title>Shep live demo</title>
   </head>
   <body>
     <iframe id="demo-frame" src="app/" title="Shep live demo with fictional mail"></iframe>
+    <dialog class="notice-card" id="demo-notice" aria-labelledby="demo-notice-title">
+      <h2 id="demo-notice-title">This demo is for desktop only.</h2>
+      <p>Shep has a mobile app designed for a great experience on mobile.</p>
+      <button class="notice-button" type="button" autofocus>Continue to the demo</button>
+    </dialog>
   </body>
 </html>

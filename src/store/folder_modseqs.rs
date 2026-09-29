@@ -126,7 +126,7 @@ mod tests {
                 .expect("save");
         }
         drop(store);
-        let store = Store::open(&path).expect("reopen");
+        let store = crate::test_wait::reopen(|| Store::open(&path));
         let reopened = saved(&store).await;
         assert_eq!(reopened.get("INBOX"), Some(&INBOX));
         assert_eq!(reopened.len(), 2);
@@ -282,7 +282,7 @@ mod tests {
             .await
             .expect("downgrade");
         drop(store);
-        let store = Store::open(&path).expect("upgrade");
+        let store = crate::test_wait::reopen(|| Store::open(&path));
         assert!(saved(&store).await.is_empty());
         store
             .apply_sync(state("INBOX", Some(INBOX)))

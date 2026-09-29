@@ -107,7 +107,7 @@ async fn server_requires_host_token_method_and_consumes_once_without_disk_files(
     assert!(get.ends_with("PRIVATE-MESSAGE"));
     assert!(get.contains("Cache-Control: no-store"));
     assert!(get.contains("Referrer-Policy: no-referrer"));
-    tokio::time::timeout(Duration::from_secs(1), server)
+    tokio::time::timeout(crate::test_wait::HANG, server)
         .await
         .unwrap()
         .unwrap();
