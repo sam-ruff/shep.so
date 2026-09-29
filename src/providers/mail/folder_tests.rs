@@ -1,6 +1,6 @@
 use super::*;
 use crate::{folders::NameEncoding, model::Account, store::Store};
-use std::{collections::HashSet, time::Duration};
+use std::collections::HashSet;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::test]
@@ -62,7 +62,7 @@ async fn listing_preserves_hierarchy_and_never_selects_container_names() {
     store.save_account(account.clone()).await.unwrap();
     let (tx, mut rx) = tokio::sync::mpsc::channel(16);
     let names = tokio::time::timeout(
-        Duration::from_secs(5),
+        crate::test_wait::HANG,
         sync_imap_session(session, &account, &HashSet::new(), tx, None),
     )
     .await

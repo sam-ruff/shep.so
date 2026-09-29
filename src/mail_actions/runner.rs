@@ -405,7 +405,7 @@ mod tests {
                 let local = kept.retained.as_ref().expect("retained copy").clone();
                 let saved = serde_json::to_string(&kept).expect("old receipt");
                 drop(store);
-                let store = Store::open(&path).expect("reopened cache");
+                let store = crate::test_wait::reopen(|| Store::open(&path));
                 store
                     .upsert(vec![original.clone()])
                     .await

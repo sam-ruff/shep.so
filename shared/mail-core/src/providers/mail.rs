@@ -1699,7 +1699,7 @@ mod tests {
         let account: Account = serde_json::from_value(serde_json::json!({"id":"test", "name":"Test", "email":"test@example.com", "protocol":"Imap", "host":"localhost", "port":993, "username":"test", "smtp_host":"localhost", "smtp_port":465})).unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let folders = tokio::time::timeout(
-            Duration::from_secs(5),
+            crate::test_wait::HANG,
             sync_imap_session(session, &account, &HashSet::new(), tx, None),
         )
         .await

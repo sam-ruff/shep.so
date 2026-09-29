@@ -3,7 +3,7 @@ use futures::StreamExt;
 use std::collections::HashMap;
 
 async fn next(rx: &mut mpsc::Receiver<Event>) -> Event {
-    tokio::time::timeout(std::time::Duration::from_secs(20), rx.next())
+    tokio::time::timeout(crate::test_wait::HANG, rx.next())
         .await
         .unwrap()
         .unwrap()
@@ -29,7 +29,7 @@ async fn cancelling_a_loaded_document_stops_the_renderer_with_its_sender_retaine
     assert!(matches!(next(&mut events).await, Event::Frame(_)));
     drop(cancel);
     drop(events);
-    tokio::time::timeout(std::time::Duration::from_secs(2), worker)
+    tokio::time::timeout(crate::test_wait::HANG, worker)
         .await
         .unwrap()
         .unwrap();

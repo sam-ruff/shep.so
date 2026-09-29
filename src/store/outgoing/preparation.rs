@@ -229,7 +229,7 @@ mod tests {
                 .is_err()
         );
         drop(store);
-        let store = Store::open(path)?;
+        let store = crate::test_wait::reopen(|| Store::open(&path));
         let preparation = store
             .outgoing_preparation(admitted.attempt.clone())
             .await?

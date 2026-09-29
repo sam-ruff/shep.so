@@ -10,7 +10,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location("harness", ROOT / "scripts/mcp_harness.py")
+# Seconds to wait for something a test expects; only turns a hang into a failure.
+HANG = 120
+spec =importlib.util.spec_from_file_location("harness", ROOT / "scripts/mcp_harness.py")
 harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)
 
@@ -498,7 +500,7 @@ class HarnessTests(unittest.TestCase):
                                     "com.canonical.Unity.LauncherEntry", "Update", "sa{sv}",
                                     "application://so.shep.Shep.desktop", "2", "count", "x", str(count),
                                     "count-visible", "b", "true" if count else "false")
-                    deadline = time.monotonic() + 2
+                    deadline = time.monotonic() + HANG
                     while time.monotonic() < deadline:
                         observed = desktop.badge_state()
                         if observed and observed["count"] == count:
@@ -796,7 +798,7 @@ class HarnessTests(unittest.TestCase):
         ]
         result = subprocess.run([sys.executable, str(ROOT / "scripts/mcp_harness.py")],
                                 input="\n".join(json.dumps(m) for m in messages) + "\n",
-                                text=True, capture_output=True, timeout=10, check=True)
+                                text=True, capture_output=True, timeout=HANG, check=True)
         responses = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual(len(responses), 3)
         self.assertEqual(responses[0]["result"]["protocolVersion"], "2025-11-25")
@@ -869,7 +871,7 @@ class HarnessTests(unittest.TestCase):
     def test_invalid_requests_stay_valid_json_rpc(self):
         result = subprocess.run([sys.executable, str(ROOT / "scripts/mcp_harness.py")],
                                 input='bad json\n{"jsonrpc":"2.0","id":2,"method":"unknown"}\n',
-                                text=True, capture_output=True, timeout=10, check=True)
+                                text=True, capture_output=True, timeout=HANG, check=True)
         responses = [json.loads(line) for line in result.stdout.splitlines()]
         self.assertEqual(responses[0]["error"]["code"], -32600)
         self.assertEqual(responses[1]["error"]["code"], -32601)

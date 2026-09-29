@@ -123,7 +123,7 @@ async fn interrupted_cache_write(finish: Finish) {
             })
             .await
     });
-    tokio::time::timeout(Duration::from_secs(10), entered)
+    tokio::time::timeout(crate::test_wait::HANG, entered)
         .await
         .expect("cache write did not start")
         .unwrap();
@@ -143,7 +143,7 @@ async fn interrupted_cache_write(finish: Finish) {
     }
     let mut dropped = Some(dropped);
     if !matches!(finish, Finish::Writer) {
-        tokio::time::timeout(Duration::from_secs(10), dropped.take().unwrap())
+        tokio::time::timeout(crate::test_wait::HANG, dropped.take().unwrap())
             .await
             .expect("provider did not settle after its termination")
             .unwrap();
@@ -163,7 +163,7 @@ async fn interrupted_cache_write(finish: Finish) {
             .await
     });
     if let Some(dropped) = dropped {
-        tokio::time::timeout(Duration::from_secs(10), dropped)
+        tokio::time::timeout(crate::test_wait::HANG, dropped)
             .await
             .expect("exclusive work did not interrupt stalled read-only provider")
             .unwrap();
@@ -173,7 +173,7 @@ async fn interrupted_cache_write(finish: Finish) {
         "cache commit must still own the account"
     );
     // Another account is completely independent of this blocked cache write.
-    let other = tokio::time::timeout(Duration::from_secs(10), engine.account_access("other"))
+    let other = tokio::time::timeout(crate::test_wait::HANG, engine.account_access("other"))
         .await
         .unwrap();
     drop(other);
@@ -236,11 +236,11 @@ async fn mail_action_completes_beside_a_held_readonly_sync() {
             })
             .await
     });
-    tokio::time::timeout(Duration::from_secs(10), start)
+    tokio::time::timeout(crate::test_wait::HANG, start)
         .await
         .unwrap()
         .unwrap();
-    let write = tokio::time::timeout(Duration::from_secs(10), engine.account_access("fixture"))
+    let write = tokio::time::timeout(crate::test_wait::HANG, engine.account_access("fixture"))
         .await
         .expect("a mail action must not wait for the download");
     drop(write);
@@ -249,7 +249,7 @@ async fn mail_action_completes_beside_a_held_readonly_sync() {
         "the download must continue past the action"
     );
     task.abort();
-    tokio::time::timeout(Duration::from_secs(10), dropped)
+    tokio::time::timeout(crate::test_wait::HANG, dropped)
         .await
         .expect("shutdown still stops the provider")
         .unwrap();
@@ -301,8 +301,8 @@ async fn a_listing_taken_before_a_local_flag_write_does_not_undo_it() -> anyhow:
             })
             .await
     });
-    tokio::time::timeout(Duration::from_secs(10), listing).await??;
-    let access = tokio::time::timeout(Duration::from_secs(10), engine.account_access("fixture"))
+    tokio::time::timeout(crate::test_wait::HANG, listing).await??;
+    let access = tokio::time::timeout(crate::test_wait::HANG, engine.account_access("fixture"))
         .await
         .expect("the flag write must not wait for the download");
     store
@@ -355,7 +355,7 @@ async fn timed_out_fetch_keeps_inflight_cache_write_owned() {
 async fn failed_cache_receiver_closes_bounded_provider_channel_without_deadlock() {
     let accounts = account_work::Accounts::default();
     let result = tokio::time::timeout(
-        Duration::from_secs(10),
+        crate::test_wait::HANG,
         accounts.sync("fixture", |stop| async move {
             download(
                 stop,

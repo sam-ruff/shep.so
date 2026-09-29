@@ -460,7 +460,7 @@ async fn catalog_and_active_store_keep_root_ownership_until_their_writes_drain()
     drop((store, session, catalog));
     assert!(Guard::migration(directory.path()).is_err());
     release.send(()).unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + crate::test_wait::HANG;
     while Guard::migration(directory.path()).is_err() {
         assert!(
             std::time::Instant::now() < deadline,

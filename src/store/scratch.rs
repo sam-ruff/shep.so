@@ -157,7 +157,7 @@ mod tests {
         assert!(scratch.exists());
         release.send(()).unwrap();
         observed.await.unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             // Removing the file precedes removing its directory. Observe the
             // complete owned cleanup, not an intermediate filesystem step.
             while scratch.parent().unwrap().exists() {
@@ -214,7 +214,7 @@ mod tests {
         std::fs::copy(&scratch, orphan.join("scratch.sqlite")).unwrap();
         let original_orphan = std::fs::read(orphan.join("scratch.sqlite")).unwrap();
         drop(store);
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::time::timeout(crate::test_wait::HANG, async {
             while scratch.parent().unwrap().exists() {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }

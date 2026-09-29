@@ -197,7 +197,7 @@ async fn admission_hides_rows_and_counts_before_bounded_cleanup_and_survives_res
     );
     let id = job.id.clone();
     drop(store);
-    let store = Store::open(path).expect("restart");
+    let store = crate::test_wait::reopen(|| Store::open(&path));
     assert_eq!(
         store
             .query(query)

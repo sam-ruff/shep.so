@@ -101,7 +101,7 @@ pub(super) async fn run(
     let account = account();
     let (result, items) = tokio::join!(
         tokio::time::timeout(
-            Duration::from_secs(10),
+            crate::test_wait::HANG,
             sync_imap_session_mode(
                 session,
                 &account,

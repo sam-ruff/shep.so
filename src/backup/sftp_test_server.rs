@@ -86,7 +86,7 @@ impl Fixture {
             );
             let handle = running.handle();
             tokio::pin!(running);
-            tokio::select! { result = &mut running => result.unwrap(), _ = stopped => { handle.shutdown("Fixture finished".into()); tokio::time::timeout(Duration::from_secs(2), running).await.unwrap().unwrap(); } }
+            tokio::select! { result = &mut running => result.unwrap(), _ = stopped => { handle.shutdown("Fixture finished".into()); tokio::time::timeout(crate::test_wait::HANG, running).await.unwrap().unwrap(); } }
         });
         Self {
             settings,

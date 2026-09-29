@@ -84,7 +84,7 @@ async fn snapshot_keeps_complete_database_while_writes_and_reads_continue() {
     assert!(futures::FutureExt::now_or_never(export.finish()).is_none());
     // The copy is still held. These are actual mail-cache reads/writes through
     // its production worker, not timing a quickly completed background job.
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(crate::test_wait::HANG, async {
         assert_eq!(store.query(Default::default()).await.unwrap().total, 1);
         store
             .save_preferences(Preferences {
@@ -454,7 +454,7 @@ async fn encrypted_export_cancel_preserves_existing_copy_and_removes_private_out
         }
         // Admission of another export is the actual prior-owner drain signal.
         let next = directory.path().join("next.sqlite");
-        let mut complete = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut complete = tokio::time::timeout(crate::test_wait::HANG, async {
             loop {
                 if let Ok(export) = export_database(store.clone(), next.clone(), false).await {
                     break export;

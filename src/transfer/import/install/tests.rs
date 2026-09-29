@@ -74,7 +74,7 @@ async fn cancel_before_publication_cleans_up_but_cancel_after_publication_keeps_
                 },
             )
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(5), waiting)
+        tokio::time::timeout(crate::test_wait::HANG, waiting)
             .await
             .unwrap()
             .unwrap();

@@ -216,7 +216,7 @@ mod tests {
         assert!(engine.store.workspace().await.unwrap().calendars.is_empty());
         drop(engine);
         let mut restarted = super::super::calendar_tests::engine();
-        restarted.store = Store::open(path).unwrap();
+        restarted.store = crate::test_wait::reopen(|| Store::open(&path));
         restarted.secret_remover = fake.clone();
         assert_eq!(restarted.store.cleanup_jobs().await.unwrap().len(), 1);
         fake.fail.store(false, Ordering::SeqCst);

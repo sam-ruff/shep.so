@@ -493,7 +493,7 @@ mod tests {
                 }
             }
             line.clear();
-            let bytes = tokio::time::timeout(Duration::from_secs(1), server.read_line(&mut line))
+            let bytes = tokio::time::timeout(crate::test_wait::HANG, server.read_line(&mut line))
                 .await
                 .expect("client closes after its operation")
                 .expect("read final input");

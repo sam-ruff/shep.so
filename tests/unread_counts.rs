@@ -1,3 +1,6 @@
+#[path = "support/wait.rs"]
+mod wait;
+
 use shep::{
     model::{MailQuery, parse_mail},
     store::Store,
@@ -7,7 +10,7 @@ use shep::{
 async fn reopened_cache_counts_unread_accounts_without_mail_row_reads_or_sorting() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cache.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     // Model the earlier cache schema; reopening must add the covering index.
     store
         .run(|c| {
@@ -17,7 +20,7 @@ async fn reopened_cache_counts_unread_accounts_without_mail_row_reads_or_sorting
         .await
         .unwrap();
     drop(store);
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     store.run(|c| {
         let steps = c.prepare("EXPLAIN QUERY PLAN SELECT account,COUNT(*) FROM messages WHERE folder='INBOX' AND unread=1 GROUP BY account")?
             .query_map([],|r|r.get::<_,String>(3))?
@@ -84,12 +87,14 @@ async fn unread_badge_defaults_on_and_disabled_preference_survives_reopen() {
     assert!(old.unread_badge);
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cache.sqlite");
-    let store = Store::open(&path).unwrap();
+    let store = wait::reopen(|| Store::open(&path));
     let mut prefs = old;
     prefs.unread_badge = false;
     store.save_preferences(prefs).await.unwrap();
     drop(store);
-    let restored: shep::model::Preferences =
-        Store::open(path).unwrap().get("preferences").await.unwrap();
+    let restored: shep::model::Preferences = wait::reopen(|| Store::open(&path))
+        .get("preferences")
+        .await
+        .unwrap();
     assert!(!restored.unread_badge);
 }
