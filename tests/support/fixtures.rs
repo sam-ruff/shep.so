@@ -740,7 +740,11 @@ pub async fn sync_mail_with(
 ) -> anyhow::Result<(u64, Option<crate::notifications::Arrival>)> {
     let round = store.get::<u64>("preview-sync-round").await? + 1;
     store.put("preview-sync-round", round).await?;
-    tokio::time::sleep(std::time::Duration::from_millis(if background {
+    let overlap_pending_send =
+        background && fail_once && std::env::args().any(|arg| arg == "--mail-actions=slow");
+    tokio::time::sleep(std::time::Duration::from_millis(if overlap_pending_send {
+        4000
+    } else if background {
         2500
     } else {
         1500

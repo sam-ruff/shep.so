@@ -13,10 +13,21 @@ use std::{collections::HashMap, path::PathBuf};
 pub fn active() -> bool {
     mode().is_some()
 }
+/// `automatic` runs the engine's unattended backup timer in preview, every
+/// second instead of every minute, and loses the second upload's
+/// acknowledgment once like `recover`.
+pub fn automatic() -> bool {
+    mode().as_deref() == Some("automatic")
+}
 fn mode() -> Option<String> {
     std::env::args()
         .find_map(|a| a.strip_prefix("--backup-run=").map(str::to_owned))
-        .filter(|value| matches!(value.as_str(), "ready" | "recover" | "warning" | "held"))
+        .filter(|value| {
+            matches!(
+                value.as_str(),
+                "ready" | "recover" | "warning" | "held" | "automatic"
+            )
+        })
 }
 fn root() -> anyhow::Result<PathBuf> {
     Ok(super::workspace::path_from_arguments()?
@@ -42,6 +53,7 @@ pub async fn seed(store: &Store) -> anyhow::Result<()> {
         destination.ready = true;
         destination.accounts = false;
         destination.copies = 2;
+        destination.automatic = automatic();
     }
     let first = prefs.backup_destinations[0].clone();
     first.apply(&mut prefs);
@@ -110,7 +122,7 @@ pub fn provider(store: &Store, prefs: &Preferences) -> anyhow::Result<Box<dyn Ba
     Ok(Box::new(FixtureProvider {
         local: backup::LocalBackup { directory: path },
         store: store.clone(),
-        fail_once: mode().as_deref() == Some("recover"),
+        fail_once: matches!(mode().as_deref(), Some("recover" | "automatic")),
         hold: mode().as_deref() == Some("held"),
     }))
 }
@@ -164,7 +176,9 @@ impl BackupProvider for FixtureProvider {
                 })
                 .await?;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+            // An automatic run stays pending long enough to hide the window first.
+            let delay = if automatic() { 6000 } else { 1800 };
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
         }
         self.local.upload_prepared(upload, data, checkpoint).await?;
         if self.fail_once

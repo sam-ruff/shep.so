@@ -148,6 +148,19 @@ impl Harness {
         self.app.test_observation()
     }
 
+    pub async fn inject(&mut self, message: Message) {
+        self.dispatch(message);
+        self.settle().await;
+    }
+
+    pub fn age_sync_failure(&mut self, attempt: &crate::engine::SyncAttempt) {
+        self.app.sync_status.finished(
+            attempt,
+            Some("Fixture check failed"),
+            Instant::now() - std::time::Duration::from_secs(31),
+        );
+    }
+
     /// Waits until the observation at `path` equals `value`, like MCP `check`.
     pub async fn expect(&mut self, path: &str, value: impl Into<serde_json::Value>) {
         let value = value.into();
@@ -210,6 +223,20 @@ impl Harness {
             panic!("no visible text {text:?}");
         };
         self.click(bounds.center()).await;
+    }
+
+    /// Centre of the first visible text equal to `text`.
+    pub fn text_center(&mut self, text: &str) -> Point {
+        let bounds = self.text_bounds(text);
+        let Some(bounds) = bounds.first() else {
+            panic!("no visible text {text:?}");
+        };
+        bounds.center()
+    }
+
+    /// The window's logical width.
+    pub fn width(&self) -> f32 {
+        self.size.width
     }
 
     /// Visible bounds of every text equal to `text`, in widget-tree order.

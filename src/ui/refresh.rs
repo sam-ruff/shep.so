@@ -113,7 +113,12 @@ mod tests {
         app.full_reader = false;
         assert!(app.refresh_animating());
         let _ = app.handle(Message::Backend(Event::MailSyncFinished(
-            "work".into(),
+            crate::engine::SyncAttempt {
+                account: "accounts".into(),
+                connection: String::new(),
+                sequence: 1,
+                origin: crate::engine::SyncOrigin::Refresh,
+            },
             Err("Try again".into()),
         )));
         // Only the scheduler knows whether a follow-up is still queued.

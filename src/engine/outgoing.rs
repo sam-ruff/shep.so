@@ -46,7 +46,14 @@ impl Engine {
         {
             // Hold fixture preparation so native tests can switch editors before
             // the existing preview refusal. No SMTP or keychain access occurs.
-            tokio::time::sleep(Duration::from_millis(1600)).await;
+            let overlap_sync_failure = std::env::args().any(|arg| arg == "--background-sync")
+                && std::env::args().any(|arg| arg == "--sync-failure-once");
+            tokio::time::sleep(Duration::from_millis(if overlap_sync_failure {
+                5000
+            } else {
+                1600
+            }))
+            .await;
         }
         anyhow::ensure!(
             !self.demo

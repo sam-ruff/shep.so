@@ -199,6 +199,22 @@ impl Command {
         }
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncOrigin {
+    Background,
+    Refresh,
+}
+
+/// One mail check, bound to the account's incoming connection identity when
+/// it was listed. A result for another identity is stale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncAttempt {
+    pub account: String,
+    pub connection: String,
+    pub sequence: u64,
+    pub origin: SyncOrigin,
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
     Activity(u64, Result<Arc<crate::store::activity::Snapshot>, String>),
@@ -259,9 +275,8 @@ pub enum Event {
         result: Result<Arc<MailDetail>, String>,
         prefetch: bool,
     },
-    /// One account's check result, keyed by account so a recovered account
-    /// clears only its own earlier error.
-    MailSyncFinished(String, Result<(), String>),
+    MailSyncStarted(SyncAttempt),
+    MailSyncFinished(SyncAttempt, Result<(), String>),
     MailArrived(Arc<crate::notifications::Arrival>),
     FlagsFinished(u64, Mail, Result<(), String>),
     MoveFinished(
@@ -303,6 +318,10 @@ pub enum Event {
     Busy(String, bool),
     Notice(String),
     Error(String),
+    /// A failure from a read-only refresh or unattended journaled work, such
+    /// as a calendar refresh or an automatic backup. It is shown like any
+    /// error but never cancels close intent or reopens a tray-hidden window.
+    BackgroundError(String),
     GoogleStatus(u64, bool),
     GoogleDisconnected(u64, Result<(), String>),
     AccountSaved(String),

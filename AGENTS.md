@@ -1957,12 +1957,51 @@ tests. Keep normal non-tray close/restart native flows alongside tray regression
 
 Ordinary tray hiding also preserves required-write error visibility. Track actual
 hidden-window ownership separately from startup's absent window. A fresh error
-while an ordinary-hidden write is pending reopens the work; an old error or an
-optional read-only refresh does not. If Quit was already pending, use the existing
+while an ordinary-hidden write is pending reopens the work; an old error does not.
+Failures of mail sync (background or Refresh), calendar refreshes, unattended
+timer-started automatic backups and automatic move recovery (`RecoverPendingMoves`,
+dispatched after `PendingMovesReady` and on close) never reopen a hidden window
+and never cancel close intent, even while another required write is pending.
+Automatic move recovery keeps its `pending-move-recovery` close dependency: Quit
+still waits for the pass, and the journaled record and cached message remain for
+the next retry. Explicit `RecoverMailMove` from Activity keeps `Event::Error` and
+reopens. A failed profile-sync status read or continuous cycle keeps a pending
+Quit; other failed profile work still cancels it. A failed automatic
+profile-sync cycle also leaves a tray-hidden window closed, including while a
+setting or account review list is open; rejected review choices keep the
+ordinary notice. The engine marks them
+with typed provenance (`MailSyncFinished` with its `SyncOrigin`, and
+`Event::BackgroundError` from the network dispatcher's relay), never by matching
+error text; the UI records such notices with `background_notice`. The failure
+stays in the in-app notice and backup history for when the window is next opened;
+automatic backups are journaled and resume on a later attempt. User-started
+backups, sends, draft/preference saves and other required writes keep reopening
+with their recovery. If Quit was already pending, use the existing
 operation-owned cancellation state before reopening: a stale attachment/discard
 result cannot cancel a newer close dependency. Queue-rejected draft saves keep
 the visible window. Preserve `test_tray_native_ordinary_hide_reopens_when_pending_send_fails`
-and its actual tray-menu Quit variant alongside the typed-result regressions.
+and its actual tray-menu Quit variant, `test_tray_native_background_sync_failure_does_not_reopen_pending_send`,
+`test_tray_native_automatic_backup_failure_stays_hidden_until_opened`
+(`backup_run="automatic"` runs the unattended timer in preview) and the
+typed-result regressions.
+
+Background mail-check failures wait 30 seconds from the first observed failed
+result before `ui/sync_status.rs` shows a banner; explicit Refresh errors show at
+once and never reset that timer. Each episode is bound to the account's incoming
+connection identity (`Workspace.incoming_identities`: connection key plus the
+active credential slot), not to `connections_revision`, which every check's own
+folder listing advances. Renames keep an episode; reconfiguration, reconnection
+and removal end it, and late results from an old identity are ignored. An older
+Workspace snapshot keeps the newer `incoming_identities` together with `accounts`.
+Dismissal suppresses the banner until the account recovers, and an unrelated
+error notice already on screen holds the banner back until it is dismissed. The
+banner names a single failing account once, stripping the engine's
+`"{name} sync failed: "` prefix for display only. Keep `ui/sync_status_tests.rs`,
+which drives the real Store's folder-listing revision change and late older
+snapshots through the App. The 30-second wait exceeds the native harness's batch
+limits, so only the `iced_test` simulator (which clicks the real Dismiss control)
+shows the delayed banner; native scenarios check the episode and its absence
+during the grace period.
 
 Windows badge images are prepared on the existing count watch worker; iced's
 native window callback only owns the HWND overlay and its recovery subclass.

@@ -310,6 +310,16 @@ impl App {
             .is_some_and(|(_, error, at)| *error && Some(*at) != previous)
     }
 
+    /// A new error that may belong to a pending required write. Failures of
+    /// read-only refreshes and unattended journaled work never qualify.
+    pub(super) fn new_required_error_since(&self, previous: Option<Instant>) -> bool {
+        self.new_error_since(previous)
+            && self
+                .notice
+                .as_ref()
+                .is_none_or(|notice| Some(notice.2) != self.background_notice)
+    }
+
     pub(super) fn reopen_after_failed_close(
         &mut self,
         hidden_write_failed: bool,
@@ -510,6 +520,211 @@ mod tests {
             assert!(app.pending_close.is_none());
             assert_eq!(app.notice.as_ref().unwrap().0, "New failure; retry");
         }
+    }
+
+    #[test]
+    fn sync_failure_and_delayed_banner_never_restore_hidden_write_window() {
+        use crate::engine::{SyncAttempt, SyncOrigin};
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        app.busy.insert("send:reply".into());
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.hidden);
+        let background = SyncAttempt {
+            account: "preview".into(),
+            connection: String::new(),
+            sequence: 1,
+            origin: SyncOrigin::Background,
+        };
+        let _ = app.update(Message::Backend(crate::engine::Event::MailSyncStarted(
+            background.clone(),
+        )));
+        app.sync_status.finished(
+            &background,
+            Some("Preview sync failed"),
+            Instant::now() - std::time::Duration::from_secs(30),
+        );
+        let _ = app.update(Message::Backend(crate::engine::Event::MailSyncFinished(
+            background,
+            Err("Preview sync failed".into()),
+        )));
+        assert!(app.tray.window.is_none());
+        let _ = app.update(Message::Tick);
+        assert_eq!(
+            app.notice.as_ref().map(|notice| notice.0.as_str()),
+            Some("Mail checks are still failing. Try Refresh.")
+        );
+        assert!(app.tray.window.is_none());
+        let manual = SyncAttempt {
+            account: "preview".into(),
+            connection: String::new(),
+            sequence: 2,
+            origin: SyncOrigin::Refresh,
+        };
+        let _ = app.update(Message::Backend(crate::engine::Event::MailSyncStarted(
+            manual.clone(),
+        )));
+        let _ = app.update(Message::Backend(crate::engine::Event::MailSyncFinished(
+            manual,
+            Err("Refresh failed".into()),
+        )));
+        assert_eq!(
+            app.notice.as_ref().map(|notice| notice.0.as_str()),
+            Some("Refresh failed")
+        );
+        assert!(app.tray.window.is_none());
+        let _ = app.update(Message::Backend(crate::engine::Event::Error(
+            "Save failed; retry".into(),
+        )));
+        assert!(app.tray.window.is_some());
+    }
+
+    fn hidden_with_nothing_pending() -> App {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        app.bulk.stopped = true;
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.hidden);
+        assert!(app.tray.window.is_none(), "hidden to tray with no work");
+        app
+    }
+
+    #[test]
+    fn unattended_automatic_backup_failure_keeps_the_tray_window_hidden() {
+        let mut app = hidden_with_nothing_pending();
+        // The engine's timer starts the backup after the window is hidden.
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "backup:drive".into(),
+            true,
+        )));
+        let _ = app.update(Message::Backend(crate::engine::Event::BackgroundError(
+            "Could not reach Google Drive: connection timed out".into(),
+        )));
+        assert!(app.tray.window.is_none());
+        assert_eq!(
+            app.notice.as_ref().map(|notice| notice.0.as_str()),
+            Some("Could not reach Google Drive: connection timed out"),
+            "the failure is waiting when the window is next opened"
+        );
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "backup:drive".into(),
+            false,
+        )));
+        assert!(app.tray.window.is_none());
+        // A user-started write that fails still reopens with its error.
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "send:reply".into(),
+            true,
+        )));
+        let _ = app.update(Message::Backend(crate::engine::Event::Error(
+            "Sending failed; your reply was kept".into(),
+        )));
+        assert!(app.tray.window.is_some());
+    }
+
+    const MOVE_RECOVERY_OFFLINE: &str =
+        "The cached message is retained. Move recovery needs attention: connection refused";
+
+    #[test]
+    fn automatic_move_recovery_failure_keeps_the_tray_window_hidden() {
+        let mut app = hidden_with_nothing_pending();
+        // Reads stay open so the refresh after `Changed` is admitted.
+        let (sender, mut network, _reads) = crate::engine::CommandSender::move_test_channels();
+        app.tx = Some(sender);
+        // The engine's sequence after an account check while offline.
+        let _ = app.update(Message::Backend(crate::engine::Event::PendingMovesReady));
+        assert!(matches!(
+            network.try_recv(),
+            Ok(Command::RecoverPendingMoves)
+        ));
+        for event in [
+            crate::engine::Event::Busy("pending-move-recovery".into(), true),
+            crate::engine::Event::BackgroundError(MOVE_RECOVERY_OFFLINE.into()),
+            crate::engine::Event::Changed,
+            crate::engine::Event::Busy("pending-move-recovery".into(), false),
+        ] {
+            let _ = app.update(Message::Backend(event));
+            assert!(app.tray.window.is_none(), "reopened by the retry");
+        }
+        assert!(app.tray.hidden);
+        assert_eq!(
+            app.notice.as_ref().map(|notice| notice.0.as_str()),
+            Some(MOVE_RECOVERY_OFFLINE),
+            "the failure is waiting when the window is next opened"
+        );
+    }
+
+    #[test]
+    fn pending_quit_survives_an_automatic_move_recovery_failure() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.bulk.stopped = true;
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "pending-move-recovery".into(),
+            true,
+        )));
+        let _ = app.update(Message::WindowClose(window));
+        assert_eq!(app.pending_close, Some(window), "waits for the receipt");
+        let _ = app.update(Message::Backend(crate::engine::Event::BackgroundError(
+            MOVE_RECOVERY_OFFLINE.into(),
+        )));
+        assert_eq!(app.pending_close, Some(window), "close intent is kept");
+        assert!(!app.tray.exiting, "still waits for the recovery to finish");
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "pending-move-recovery".into(),
+            false,
+        )));
+        assert!(app.tray.exiting, "the journaled record retries next launch");
+    }
+
+    #[test]
+    fn calendar_refresh_failure_during_a_pending_send_keeps_the_tray_window_hidden() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.tray.available = true;
+        app.preferences.close_to_tray = true;
+        app.busy.insert("send:reply".into());
+        let _ = app.update(Message::WindowCloseRequested(window));
+        assert!(app.tray.hidden);
+        let _ = app.update(Message::Backend(crate::engine::Event::BackgroundError(
+            "Could not refresh Google calendar access: connection timed out".into(),
+        )));
+        assert!(app.tray.window.is_none());
+        let _ = app.update(Message::Backend(crate::engine::Event::Error(
+            "Sending failed; your reply was kept".into(),
+        )));
+        assert!(
+            app.tray.window.is_some(),
+            "the send's own failure still reopens"
+        );
+    }
+
+    #[test]
+    fn pending_quit_survives_an_unattended_backup_failure_and_exits_after_it() {
+        let (mut app, _) = App::new();
+        let window = iced::window::Id::unique();
+        app.tray.window = Some(window);
+        app.bulk.stopped = true;
+        app.busy.insert("backup:drive".into());
+        let _ = app.update(Message::WindowClose(window));
+        assert_eq!(app.pending_close, Some(window), "waits for the backup");
+        let _ = app.update(Message::Backend(crate::engine::Event::BackgroundError(
+            "Could not reach Google Drive".into(),
+        )));
+        assert_eq!(app.pending_close, Some(window), "close intent is kept");
+        let _ = app.update(Message::Backend(crate::engine::Event::Busy(
+            "backup:drive".into(),
+            false,
+        )));
+        assert!(app.tray.exiting, "the journaled backup resumes next launch");
     }
 
     #[test]

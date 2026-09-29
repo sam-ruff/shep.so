@@ -1,5 +1,49 @@
 # Completion audit
 
+## Sync failure banner and tray reopening, 29 September 2026 (desktop)
+
+Background mail-check failures now wait 30 seconds from the first observed
+failed result before a banner appears, naming the account and its last error
+when only one is failing. Refresh errors show at once without resetting that
+timer. Results are fenced by each account's incoming connection identity
+(connection key plus credential slot) rather than `connections_revision`, which
+every IMAP check's own folder listing advanced and which had discarded real
+accounts' results. An older Workspace snapshot that arrives late keeps the newer
+incoming identities, so it cannot hide a current Refresh error or let a replaced
+connection start an episode. Mail sync, calendar refresh, timer-started automatic
+backup and automatic move-recovery failures no longer reopen a window hidden in
+the tray or cancel close intent; user-started writes, including explicit Activity
+move recovery, still reopen with their recovery. Automatic move recovery keeps its
+close dependency and journaled retry. A failed profile-sync status read or
+continuous cycle keeps a pending Quit, and a failed automatic profile-sync cycle
+leaves a tray-hidden window closed, including while a setting or account review
+list is open. The single-account banner names the account once.
+
+Evidence: `ui/sync_status.rs` controlled-clock tests, `ui/sync_status_tests.rs`
+(real Store folder-listing revision change through the App: Refresh error after
+listing, background failure reaching the banner, recovery without a false
+banner, overlapping healthy account, rename versus reconfiguration, and late
+older snapshots), `ui/tray.rs` App-level tray regressions for calendar refresh,
+automatic backup, automatic move recovery (the engine's `PendingMovesReady`
+sequence) and pending Quit, the profile-sync pending-Quit and tray-hidden
+offline-cycle tests (with and without an open review, hidden and after tray Quit), the dispatcher
+relay and background-command tests, the `iced_test` delayed-banner scenario that
+clicks the real Dismiss control, and the native
+`test_tray_native_automatic_backup_failure_stays_hidden_until_opened` (light and
+compact dark) plus the existing tray/background-sync scenarios.
+
+Limits: the 480-second no-progress watchdog is unchanged, so a stalled download
+shows its banner about eight and a half minutes after progress stops. The
+reported blank formatted reader was not reproduced with fictional wide or long
+HTML. Calendar refresh has App-level tests only, because preview never contacts
+a calendar provider. Automatic move recovery also has App-level tests only: the
+native `move_recovery` fixture drives explicit Activity recovery, not a failing
+automatic pass. The delayed banner has no native capture because its 30-second
+wait exceeds the native harness's explicit-wait limits; only the simulator shows
+it. An unrelated error notice already on screen holds the banner back until it is
+dismissed. No live provider, real desktop-shell tray, Windows or macOS
+execution. Flutter and browser parity stays open in TODO.
+
 ## Rust test hang guards on a starved runner, 29 September 2026
 
 Main run `36485832679` spent 1876 s in `cargo test --all-features` (usually 460

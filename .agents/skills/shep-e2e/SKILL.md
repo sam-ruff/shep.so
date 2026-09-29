@@ -752,6 +752,14 @@ return code, the journal row survives restart), the slow-upload close notice flo
 and the held read-only sync Quit flow. `wait_exit` reports `returncode`; assert
 it rather than only that a window disappeared.
 
+`desktop.start(tray="available", backup_run="automatic")` runs the engine's
+unattended backup timer in preview every second and holds the second upload for
+six seconds before losing its acknowledgment once. The busy key names the
+harness-owned folder, so poll `desktop.state` for a `backup:` entry ending in
+`/second")` rather than an exact `wait_for` value. Keep
+`test_tray_native_automatic_backup_failure_stays_hidden_until_opened`: the
+failure arrives while hidden, the window stays hidden, and tray Open shows it.
+
 `test_tray_native_ordinary_hide_reopens_when_pending_send_fails` enables the real
 close preference, sends an isolated failing reply, and closes to the native tray.
 It covers both ordinary hidden saving and selecting Quit from the actual tray

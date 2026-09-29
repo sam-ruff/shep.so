@@ -1612,6 +1612,59 @@ class NativeFlows(unittest.TestCase):
                                {"type":"focus_app"}, check("editor", "Keep this hidden reply", "contains"),
                                shot("tray-ordinary-hide-write-failure"))
 
+    def test_tray_native_background_sync_failure_does_not_reopen_pending_send(self):
+        started = self.mcp.call("desktop.start", tray="available", background_sync=True,
+                                sync_failure_once=True, mail_actions="slow")
+        print(f"Tray sync and send overlap: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("tray.available", True), key("r"),
+                       check("focused_input", "compose-body"),
+                       type_text("Keep this fictional reply while checking mail."))
+        draft = self.mcp.call("desktop.state")["composer"]["id"]
+        self.mcp.batch(click(675, 564), check("busy", "send:" + draft, "contains"),
+                       {"type": "close_request"}, check("tray.visible", False),
+                       check("tray.temporary", False), check("background_sync", True),
+                       {**check("background_sync_failures", 1), "timeout_ms": 5000},
+                       check("tray.visible", False), check("notice", None),
+                       shot("tray-hidden-after-sync-failure"),
+                       check("notice", "Sending is disabled in preview", "contains"),
+                       check("tray.visible", True), check("editor", "Keep this fictional reply", "contains"),
+                       wait(200),
+                       shot("tray-write-failure-recovered"))
+
+    def test_tray_native_automatic_backup_failure_stays_hidden_until_opened(self):
+        # The engine's own timer starts the backup after the window is hidden;
+        # its lost acknowledgment is journaled, so the tray must not reopen.
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                started = self.mcp.call("desktop.start", tray="available", backup_run="automatic",
+                                        **({"width": 900, "height": 640} if compact else {}))
+                directory = Path(started["artifacts"])
+                print(f"Automatic backup failure while hidden ({'compact dark' if compact else 'light'}): {directory}", flush=True)
+                self.mcp.batch(check("tray.available", True), check("tray.saved_enabled", True))
+                if compact:
+                    self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366),
+                                   check("dark", True), key("ctrl+1"), check("tab", "Mail"))
+                self.mcp.batch({"type": "close_request"}, check("tray.visible", False),
+                               check("tray.temporary", False), check("close_pending", False))
+                # The backup key names the harness-owned folder, so poll the
+                # observation for it rather than an exact wait_for value.
+                deadline = time.monotonic() + 5
+                while True:
+                    busy = self.mcp.call("desktop.state")["busy"]
+                    if any(k.startswith("backup:") and k.endswith('/second")') for k in busy):
+                        break
+                    self.assertLess(time.monotonic(), deadline, f"the automatic backup runs while hidden: {busy}")
+                    time.sleep(0.1)
+                self.mcp.batch(check("notice", None),
+                               wait(2000), wait(2000),
+                               {**check("notice", "acknowledgment was lost", "contains"), "timeout_ms": 5000},
+                               wait(500), check("tray.visible", False), check("close_pending", False),
+                               shot("tray-hidden-after-automatic-backup-failure"),
+                               {"type": "tray_menu"}, key("Down"), key("Return"),
+                               check("tray.visible", True), {"type": "focus_app"},
+                               check("notice", "acknowledgment was lost", "contains"),
+                               wait(200), shot("tray-opened-shows-automatic-backup-failure"))
+
     def test_tray_native_temporary_saving_notifies_and_failure_reopens_draft(self):
         self.mcp.call("desktop.start", tray="available", mail_actions="slow")
         self.disable_close_to_tray()
@@ -3014,8 +3067,8 @@ class NativeFlows(unittest.TestCase):
     def test_background_sync_failure_allows_manual_retry(self):
         self.mcp.call("desktop.start", background_sync=True, sync_failure_once=True)
         self.mcp.batch(check("background_sync", True), check("refreshing", False),
-                       check("notice", "temporarily unavailable", "contains"),
-                       check("background_sync", False), check("total", 120), shot("background-sync-error"),
+                       check("background_sync_failures", 1),
+                       check("notice", None), check("total", 120), shot("background-sync-grace"),
                        click(1400, 36), check("refreshing", True),
                        check("sync_round", 2), check("total", 121), check("refreshing", False),
                        check("notice", None),

@@ -301,7 +301,8 @@ async fn drive<T, L, LF, R, RF, W, WF>(
     let mut jobs = tokio::task::JoinSet::new();
     let mut watchers = mail_push::Watchers::default();
     let (changed, mut pushes) = mpsc::unbounded_channel::<String>();
-    let mut owners: HashMap<tokio::task::Id, (String, bool)> = HashMap::new();
+    let mut owners: HashMap<tokio::task::Id, crate::engine::SyncAttempt> = HashMap::new();
+    let mut next_sequence = 0_u64;
     let mut manual_busy = false;
     let mut manual_running = 0usize;
     let mut background_running = 0usize;
@@ -325,7 +326,15 @@ async fn drive<T, L, LF, R, RF, W, WF>(
                     Ok(targets) => {
                         if std::mem::take(&mut listing_failed) {
                             let _ = output
-                                .send(Event::MailSyncFinished(LISTING.into(), Ok(())))
+                                .send(Event::MailSyncFinished(
+                                    crate::engine::SyncAttempt {
+                                        account: LISTING.into(),
+                                        connection: String::new(),
+                                        sequence: next_sequence,
+                                        origin: crate::engine::SyncOrigin::Background,
+                                    },
+                                    Ok(()),
+                                ))
                                 .await;
                         }
                         let was_idle = background_running == 0;
@@ -340,6 +349,18 @@ async fn drive<T, L, LF, R, RF, W, WF>(
                             }
                             let name = target.name().to_owned();
                             let key = target.key().to_owned();
+                            next_sequence = next_sequence.saturating_add(1);
+                            let attempt = crate::engine::SyncAttempt {
+                                account: key,
+                                connection: target.connection().to_owned(),
+                                sequence: next_sequence,
+                                origin: if manual {
+                                    crate::engine::SyncOrigin::Refresh
+                                } else {
+                                    crate::engine::SyncOrigin::Background
+                                },
+                            };
+                            let _ = output.send(Event::MailSyncStarted(attempt.clone())).await;
                             let work = run(target, output.clone());
                             let handle = jobs.spawn(async move {
                                 tokio::time::timeout(Duration::from_secs(600), work)
@@ -348,7 +369,7 @@ async fn drive<T, L, LF, R, RF, W, WF>(
                                     .and_then(|result| result)
                                     .with_context(|| format!("{name} sync failed"))
                             });
-                            owners.insert(handle.id(), (key, manual));
+                            owners.insert(handle.id(), attempt);
                         }
                         if was_idle && background_running > 0 {
                             let _ = output
@@ -358,10 +379,20 @@ async fn drive<T, L, LF, R, RF, W, WF>(
                     }
                     Err(error) => {
                         listing_failed = true;
+                        let manual = schedule.pending;
                         schedule.settle();
                         let _ = output
                             .send(Event::MailSyncFinished(
-                                LISTING.into(),
+                                crate::engine::SyncAttempt {
+                                    account: LISTING.into(),
+                                    connection: String::new(),
+                                    sequence: next_sequence,
+                                    origin: if manual {
+                                        crate::engine::SyncOrigin::Refresh
+                                    } else {
+                                        crate::engine::SyncOrigin::Background
+                                    },
+                                },
                                 Err(format!("{error:#}")),
                             ))
                             .await;
@@ -391,9 +422,9 @@ async fn drive<T, L, LF, R, RF, W, WF>(
                     Ok((id, result)) => (id, result),
                     Err(error) => (error.id(), Err(anyhow::anyhow!("Mail refresh stopped unexpectedly. Try Refresh again."))),
                 };
-                let Some((key, manual)) = owners.remove(&id) else { continue };
-                schedule.finish(&key);
-                if manual {
+                let Some(attempt) = owners.remove(&id) else { continue };
+                schedule.finish(&attempt.account);
+                if attempt.origin == crate::engine::SyncOrigin::Refresh {
                     manual_running = manual_running.saturating_sub(1);
                 } else {
                     background_running = background_running.saturating_sub(1);
@@ -401,7 +432,7 @@ async fn drive<T, L, LF, R, RF, W, WF>(
                         let _ = output.send(Event::Busy("background-sync".into(), false)).await;
                     }
                 }
-                let _ = output.send(Event::MailSyncFinished(key, result.map_err(|error| format!("{error:#}")))).await;
+                let _ = output.send(Event::MailSyncFinished(attempt, result.map_err(|error| format!("{error:#}")))).await;
                 pass = true;
             }
             request = requests.recv(), if !closed => {
@@ -564,6 +595,7 @@ mod tests {
         pushes: tokio::sync::broadcast::Sender<&'static str>,
         task: tokio::task::JoinHandle<()>,
         trace: Vec<String>,
+        started: HashMap<String, crate::engine::SyncAttempt>,
     }
     impl Drop for Harness {
         fn drop(&mut self) {
@@ -694,6 +726,7 @@ mod tests {
                 pushes,
                 task,
                 trace: vec![],
+                started: HashMap::new(),
             }
         }
         fn push(&self, key: &'static str) {
@@ -710,11 +743,26 @@ mod tests {
                     let label = match self.events.next().await.expect("Sync worker stopped") {
                         Event::Busy(key, value) => format!("{key}:{value}"),
                         Event::Notice(text) => text,
-                        Event::MailSyncFinished(key, Err(error)) => {
-                            assert!(error.starts_with(&key), "{error} names its account");
-                            format!("{key} error")
+                        Event::MailSyncStarted(attempt) => {
+                            self.started.insert(attempt.account.clone(), attempt);
+                            continue;
                         }
-                        Event::MailSyncFinished(key, Ok(())) => format!("{key} ok"),
+                        Event::MailSyncFinished(attempt, Err(error)) => {
+                            if attempt.account != LISTING {
+                                assert_eq!(self.started.get(&attempt.account), Some(&attempt));
+                            }
+                            assert!(
+                                error.starts_with(&attempt.account),
+                                "{error} names its account"
+                            );
+                            format!("{} error", attempt.account)
+                        }
+                        Event::MailSyncFinished(attempt, Ok(())) => {
+                            if attempt.account != LISTING {
+                                assert_eq!(self.started.get(&attempt.account), Some(&attempt));
+                            }
+                            format!("{} ok", attempt.account)
+                        }
                         _ => continue,
                     };
                     self.trace.push(label.clone());
@@ -761,10 +809,19 @@ mod tests {
         let start = Deadline::now();
         let mut harness = Harness::single(Settings::default(), true, false);
         harness.event("a started 1").await;
+        assert_eq!(
+            harness.started["a"].origin,
+            crate::engine::SyncOrigin::Background
+        );
         assert_eq!(Deadline::now(), start);
         harness.event("background-sync:false").await;
         assert_eq!(Deadline::now(), start + Duration::from_secs(2));
         harness.event("a started 2").await;
+        assert_eq!(
+            harness.started["a"].origin,
+            crate::engine::SyncOrigin::Background
+        );
+        assert_eq!(harness.started["a"].connection, "original");
         assert_eq!(Deadline::now(), start + Duration::from_secs(5));
         assert!(
             !harness.trace.iter().any(|event| event.starts_with("sync:")),
@@ -782,6 +839,10 @@ mod tests {
         harness.requests.send(Command::Sync).await.unwrap();
         harness.requests.send(Command::Sync).await.unwrap();
         harness.event("a started 2").await;
+        assert_eq!(
+            harness.started["a"].origin,
+            crate::engine::SyncOrigin::Refresh
+        );
         assert_eq!(Deadline::now(), start + Duration::from_secs(2));
         // A new click during the follow-up is retained as one more check.
         harness.requests.send(Command::Sync).await.unwrap();
