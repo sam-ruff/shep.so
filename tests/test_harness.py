@@ -141,6 +141,32 @@ class HarnessTests(unittest.TestCase):
         tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
         self.assertEqual(tool["inputSchema"]["properties"]["profile_passwords"]["enum"], ["ready", "reject"])
 
+    def test_reclaiming_focus_refocuses_until_a_late_browser_activation_settles(self):
+        desktop = harness.Desktop()
+        desktop.window = "12345"
+        # Shep is focused, the browser then activates itself, and Shep keeps
+        # focus once it is reclaimed.
+        focus = iter(["12345", "999", "12345"])
+        last = ["12345"]
+
+        def command(*args):
+            if args[:2] == ("xdotool", "getwindowfocus"):
+                last[0] = next(focus, last[0])
+                return last[0]
+            return ""
+
+        with patch.object(desktop, "command", side_effect=command) as calls:
+            desktop.reclaim_app_focus(settle=.05, timeout=HANG)
+        refocused = [c.args for c in calls.call_args_list if c.args[1] == "windowfocus"]
+        self.assertEqual(refocused, [("xdotool", "windowfocus", "12345")])
+
+    def test_reclaiming_focus_fails_when_another_window_keeps_it(self):
+        desktop = harness.Desktop()
+        desktop.window = "12345"
+        stolen = patch.object(desktop, "command", side_effect=lambda *a: "999" if a[1] == "getwindowfocus" else "")
+        with stolen, self.assertRaisesRegex(RuntimeError, "did not keep keyboard focus"):
+            desktop.reclaim_app_focus(settle=.05, timeout=.1)
+
     def test_nonblocking_close_uses_only_owned_native_window(self):
         desktop = harness.Desktop()
         desktop.app = Mock()
