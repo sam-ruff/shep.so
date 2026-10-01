@@ -544,7 +544,7 @@ impl App {
             return self.conversation_reader();
         }
         let Some(detail) = &self.detail else {
-            return container(
+            let placeholder = container(
                 column![
                     icon("mail", 32.),
                     text(if self.selected.is_some() {
@@ -560,7 +560,19 @@ impl App {
                 .align_x(Alignment::Center),
             )
             .center_x(Length::Fill)
-            .center_y(Length::Fill)
+            .center_y(Length::Fill);
+            // Metadata actions must not wait for the body, so the toolbar is
+            // drawn from the selected row while it loads.
+            let Some(summary) = self.selected_row() else {
+                return placeholder.into();
+            };
+            return column![
+                container(self.reader_toolbar(summary, false)).padding([10, 18]),
+                line(),
+                placeholder
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
             .into();
         };
         let mut footer = column![self.reader_actions(Some(detail))].spacing(4);
@@ -568,7 +580,7 @@ impl App {
             footer = footer.push(self.reader_navigation());
         }
         column![
-            container(self.reader_toolbar(detail)).padding([10, 18]),
+            container(self.reader_toolbar(&detail.summary, true)).padding([10, 18]),
             line(),
             self.find_bar(),
             self.reader_surface(
@@ -586,8 +598,20 @@ impl App {
         .height(Length::Fill)
         .into()
     }
-    pub(super) fn reader_toolbar<'a>(&'a self, detail: &'a MailDetail) -> Element<'a, Message> {
-        let (unread, starred) = self.displayed_mail_flags(&detail.summary);
+    /// The inbox row for the selected message, available before its body.
+    pub(super) fn selected_row(&self) -> Option<&Mail> {
+        let selected = self.selected.as_ref()?;
+        self.page.rows.iter().find(|mail| &mail.id == selected)
+    }
+
+    /// Find and Export need the loaded body (`loaded`); the other actions
+    /// only need the row's metadata.
+    pub(super) fn reader_toolbar<'a>(
+        &'a self,
+        summary: &Mail,
+        loaded: bool,
+    ) -> Element<'a, Message> {
+        let (unread, starred) = self.displayed_mail_flags(summary);
         let toolbar = row![
             self.icon_action(
                 "archive",
@@ -621,10 +645,10 @@ impl App {
                 starred,
                 Message::ToggleStar
             ),
-            self.icon_action(
+            self.icon_action_maybe(
                 "search",
                 self.shortcut_hint("Find in message", Action::Find),
-                Message::Find(super::find_message::Message::Open)
+                loaded.then_some(Message::Find(super::find_message::Message::Open))
             ),
             space().width(Length::Fill),
             if (self.size.width / (self.preferences.interface_scale as f32 / 100.)
@@ -655,10 +679,10 @@ impl App {
                 .on_press(Message::Open(Dialog::Move))
                 .into()
             },
-            self.icon_action(
+            self.icon_action_maybe(
                 "download",
                 "Export original email",
-                Message::Open(Dialog::Export)
+                loaded.then_some(Message::Open(Dialog::Export))
             )
         ]
         .spacing(4)

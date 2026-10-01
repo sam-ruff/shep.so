@@ -256,7 +256,11 @@ pause release publishing with it rather than shipping Linux alone.
 Linux quality runs inside the owned Ubuntu 24.04 image with pinned Rust, Node
 and sandboxed Chrome, matching the runner UID/GID. Preserve the restricted
 seccomp profile, namespace/browser preflight, four Cargo jobs and native timing
-budgets. Windows uses the provisioned MSVC/Python toolchain. Documentation uses
+budgets. The functional `scripts/e2e.py` run keeps its fixture data on a bounded
+tmpfs (`SHEP_E2E_ARTIFACTS=/e2e`) because SQLite commits on the runner's
+rotational pool stalled for tens of seconds under shared load; its evidence is
+copied back to `artifacts/e2e/` for upload. Timing scripts stay on disk. Never
+lengthen a wait to absorb a slow disk instead. Windows uses the provisioned MSVC/Python toolchain. Documentation uses
 the installed Python in a private virtual environment because setup-python has
 no matching Debian 13 Python build. Keep the CI image free of profile data and
 checkout credentials.

@@ -153,6 +153,13 @@ impl Harness {
         self.settle().await;
     }
 
+    /// Returns the reader to its state before the selected body arrives, which
+    /// a slow disk can hold for seconds.
+    pub fn unload_body(&mut self) {
+        self.app.detail = None;
+        self.redraw();
+    }
+
     pub fn age_sync_failure(&mut self, attempt: &crate::engine::SyncAttempt) {
         self.app.sync_status.finished(
             attempt,
