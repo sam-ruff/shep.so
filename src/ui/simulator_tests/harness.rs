@@ -5,7 +5,7 @@
 //! one `UserInterface` cache across rebuilds, as the real runtime does, and uses
 //! `iced_test` selectors, input events and `Simulator` snapshots on top of it.
 //!
-//! Background work is the real demo engine on an in-memory fixture store. Its
+//! Background work uses either the demo engine or the owned real mail engine. Its
 //! events and every `Task` the app returns are forwarded into bounded queues and
 //! handled on the test thread. Assertions wait for an observed condition with a
 //! deadline, never for a fixed time.
@@ -80,6 +80,11 @@ pub struct Harness {
     action_sender: mpsc::UnboundedSender<iced_runtime::Action<Message>>,
     backend: mpsc::Receiver<engine::Event>,
     tasks: tokio::task::JoinSet<()>,
+    backend_task: Option<tokio::task::JoinHandle<()>>,
+    tick: tokio::time::Interval,
+    exited: bool,
+    successful_mail_checks: usize,
+    outgoing_repaired: bool,
 }
 
 fn load_fonts() {
@@ -102,6 +107,15 @@ impl Harness {
     /// Starts the app on the demo engine and waits for its first mail page,
     /// matching the native harness's `desktop.start`.
     pub async fn with_size(width: f32, height: f32) -> Self {
+        Self::with_backend(width, height, engine::subscription(&true), None).await
+    }
+
+    pub async fn with_backend(
+        width: f32,
+        height: f32,
+        events: impl futures::Stream<Item = engine::Event> + Send + 'static,
+        observation: Option<std::path::PathBuf>,
+    ) -> Self {
         load_fonts();
         let renderer = <iced::Renderer as Headless>::new(
             iced::Font::with_name("Noto Sans"),
@@ -110,12 +124,13 @@ impl Harness {
         )
         .await
         .expect("headless renderer");
-        let (app, _system_theme) = App::new();
+        let (mut app, _system_theme) = App::new();
+        app.test_state = observation;
         let (backend_sender, backend) = mpsc::channel(crate::model::CHANNEL_CAPACITY);
         let (action_sender, actions) = mpsc::unbounded_channel();
-        let mut tasks = tokio::task::JoinSet::new();
-        tasks.spawn(async move {
-            let mut events = std::pin::pin!(engine::subscription(&true));
+        let tasks = tokio::task::JoinSet::new();
+        let backend_task = tokio::spawn(async move {
+            let mut events = std::pin::pin!(events);
             while let Some(event) = events.next().await {
                 if backend_sender.send(event).await.is_err() {
                     break;
@@ -135,7 +150,17 @@ impl Harness {
             action_sender,
             backend,
             tasks,
+            backend_task: Some(backend_task),
+            tick: tokio::time::interval_at(
+                tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+                std::time::Duration::from_secs(1),
+            ),
+            exited: false,
+            successful_mail_checks: 0,
+            outgoing_repaired: false,
         };
+        harness.app.tray.window = Some(harness.window);
+        harness.app.tray.ready = true;
         harness.dispatch(Message::Resize(size));
         harness.redraw();
         harness.expect("ready", true).await;
@@ -145,7 +170,12 @@ impl Harness {
 
     /// The observation the native harness writes to its state file.
     pub fn state(&self) -> serde_json::Value {
-        self.app.test_observation()
+        let mut state = self.app.test_observation();
+        state["harness"] = serde_json::json!({
+            "successful_mail_checks": self.successful_mail_checks,
+            "outgoing_repaired": self.outgoing_repaired,
+        });
+        state
     }
 
     pub async fn inject(&mut self, message: Message) {
@@ -154,11 +184,9 @@ impl Harness {
     }
 
     pub fn age_sync_failure(&mut self, attempt: &crate::engine::SyncAttempt) {
-        self.app.sync_status.finished(
-            attempt,
-            Some("Fixture check failed"),
-            Instant::now() - std::time::Duration::from_secs(31),
-        );
+        self.app
+            .sync_status
+            .backdate(&attempt.account, std::time::Duration::from_secs(31));
     }
 
     /// Waits until the observation at `path` equals `value`, like MCP `check`.
@@ -193,24 +221,41 @@ impl Harness {
 
     /// Waits until `accept` holds for the observation at `path`.
     pub async fn expect_that(&mut self, path: &str, accept: impl Fn(&serde_json::Value) -> bool) {
-        let deadline = tokio::time::Instant::now() + DEADLINE;
-        // The app's one-second `Tick` subscription, for timeouts and retries.
-        let mut tick = tokio::time::interval_at(
-            tokio::time::Instant::now() + std::time::Duration::from_secs(1),
-            std::time::Duration::from_secs(1),
-        );
+        self.expect_state(|state| accept(&lookup(state, path)), path)
+            .await;
+    }
+
+    pub async fn expect_state(
+        &mut self,
+        accept: impl Fn(&serde_json::Value) -> bool,
+        description: &str,
+    ) {
+        self.expect_within(accept, description, DEADLINE).await;
+    }
+
+    pub async fn expect_within(
+        &mut self,
+        accept: impl Fn(&serde_json::Value) -> bool,
+        description: &str,
+        budget: std::time::Duration,
+    ) {
+        let deadline = tokio::time::Instant::now() + budget;
         loop {
             self.pump();
-            let observed = lookup(&self.state(), path);
+            let observed = self.state();
             if accept(&observed) {
+                assert!(
+                    tokio::time::Instant::now() <= deadline,
+                    "{description} exceeded {budget:?}"
+                );
                 return;
             }
             tokio::select! {
                 Some(action) = self.actions.recv() => self.perform(action),
                 Some(event) = self.backend.recv() => self.handle(Message::Backend(event)),
-                _ = tick.tick() => self.handle(Message::Tick),
+                _ = self.tick.tick() => self.handle(Message::Tick),
                 () = tokio::time::sleep_until(deadline) => {
-                    panic!("{path} never matched; last observed {observed}")
+                    panic!("{description} never matched; last observed {observed}")
                 }
             }
         }
@@ -218,9 +263,13 @@ impl Harness {
 
     /// Clicks the centre of the first visible text equal to `text`.
     pub async fn click_text(&mut self, text: &str) {
+        self.click_text_nth(text, 0).await;
+    }
+
+    pub async fn click_text_nth(&mut self, text: &str, index: usize) {
         let bounds = self.text_bounds(text);
-        let Some(bounds) = bounds.first() else {
-            panic!("no visible text {text:?}");
+        let Some(bounds) = bounds.get(index) else {
+            panic!("no visible text {text:?} at index {index}");
         };
         self.click(bounds.center()).await;
     }
@@ -234,6 +283,14 @@ impl Harness {
         bounds.center()
     }
 
+    pub async fn click_id(&mut self, id: &'static str) {
+        let bounds = self.bounds(iced_test::selector::id(id));
+        let target = bounds
+            .first()
+            .unwrap_or_else(|| panic!("no visible widget {id:?}"));
+        self.click(target.center()).await;
+    }
+
     /// The window's logical width.
     pub fn width(&self) -> f32 {
         self.size.width
@@ -241,7 +298,14 @@ impl Harness {
 
     /// Visible bounds of every text equal to `text`, in widget-tree order.
     fn text_bounds(&mut self, text: &str) -> Vec<iced::Rectangle> {
-        let mut operation = text.find_all();
+        self.bounds(text)
+    }
+
+    fn bounds<S: Selector + Send>(&mut self, selector: S) -> Vec<iced::Rectangle>
+    where
+        S::Output: Bounded + Clone + Send + 'static,
+    {
+        let mut operation = selector.find_all();
         let cache = self.cache.take().unwrap_or_default();
         let mut ui = Ui::build(self.app.view(), self.size, cache, &mut self.renderer);
         ui.operate(
@@ -264,6 +328,35 @@ impl Harness {
 
     pub async fn click_at(&mut self, x: f32, y: f32) {
         self.click(Point::new(x, y)).await;
+    }
+
+    pub async fn close(mut self) {
+        // The window subscription translates the OS close event to this message.
+        self.handle(Message::WindowCloseRequested(self.window));
+        let deadline = tokio::time::Instant::now() + DEADLINE;
+        while !self.exited {
+            self.pump();
+            if self.exited {
+                break;
+            }
+            tokio::select! {
+                Some(action) = self.actions.recv() => self.perform(action),
+                Some(event) = self.backend.recv() => self.handle(Message::Backend(event)),
+                _ = self.tick.tick() => self.handle(Message::Tick),
+                () = tokio::time::sleep_until(deadline) => panic!("app did not finish closing: {}", self.state()),
+            }
+        }
+        self.tasks.abort_all();
+        while self.tasks.join_next().await.is_some() {}
+        self.app.tx = None;
+        tokio::time::timeout(DEADLINE, async {
+            while self.backend.recv().await.is_some() {}
+            if let Some(task) = self.backend_task.take() {
+                task.await.expect("backend task completed");
+            }
+        })
+        .await
+        .expect("backend drained before restart");
     }
 
     pub async fn right_click_at(&mut self, x: f32, y: f32) {
@@ -390,8 +483,13 @@ impl Harness {
     }
 
     fn pump(&mut self) {
-        while self.tasks.try_join_next().is_some() {}
-        loop {
+        while let Some(result) = self.tasks.try_join_next() {
+            result.expect("application task panicked");
+        }
+        if self.tick.tick().now_or_never().is_some() {
+            self.handle(Message::Tick);
+        }
+        for _ in 0..crate::model::CHANNEL_CAPACITY {
             if let Ok(action) = self.actions.try_recv() {
                 self.perform(action);
             } else if let Ok(event) = self.backend.try_recv() {
@@ -436,6 +534,15 @@ impl Harness {
     }
 
     fn dispatch(&mut self, message: Message) {
+        match &message {
+            Message::Backend(engine::Event::MailSyncFinished(_, Ok(()))) => {
+                self.successful_mail_checks += 1;
+            }
+            Message::Backend(engine::Event::Busy(key, false)) if key == "outgoing-repair" => {
+                self.outgoing_repaired = true;
+            }
+            _ => {}
+        }
         let task = self.app.update(message);
         let Some(mut stream) = iced_runtime::task::into_stream(task) else {
             return;
@@ -502,7 +609,8 @@ impl Harness {
             iced_runtime::Action::Output(message) => self.handle(message),
             iced_runtime::Action::Widget(operation) => self.operate(operation),
             iced_runtime::Action::Window(action) => self.window(action),
-            // Clipboard, system, image and exit requests have no headless effect.
+            iced_runtime::Action::Exit => self.exited = true,
+            // Clipboard, system and image requests have no headless effect.
             _ => {}
         }
     }
@@ -534,6 +642,21 @@ impl Harness {
                 let _ = sender.send(1.);
             }
             _ => {}
+        }
+    }
+}
+
+impl Drop for Harness {
+    fn drop(&mut self) {
+        if let Some(task) = &self.backend_task {
+            task.abort();
+        }
+        if std::thread::panicking()
+            && let Some(directory) = self.app.test_state.as_ref().and_then(|path| path.parent())
+        {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.snapshot().matches_image(directory.join("failed-ui"))
+            }));
         }
     }
 }

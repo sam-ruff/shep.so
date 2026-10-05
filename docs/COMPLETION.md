@@ -1,5 +1,72 @@
 # Completion audit
 
+## Real-server iced_test coverage, 5 October 2026 (desktop)
+
+The opt-in desktop suite drives actual widgets through `iced_test` with the
+production engine and disposable GreenMail TLS IMAP/POP3/SMTP servers. It checks
+server Message-IDs, physical UIDs, flags, exact folder membership, reply headers
+and forwarded attachment bytes independently of the app's cache. Accounts and
+credentials belong to each test; no personal mailbox or OS keychain is used.
+Run `python3 scripts/test_real_mail.py`; see
+[simulator tests](agents/simulator-tests.md) for prerequisites and filters.
+
+Coverage includes repeated Send, Refresh, flag, Archive/Delete and counted Undo
+inputs; cross-page selection and History Undo; drafts, search and reader state
+across screens and graceful restart; SMTP/Sent without repeat delivery; real
+authentication and POP3; and folder create/move/delete controls. Held IMAP replies,
+65 cached messages, and an initial 121-message backlog with a 3 MiB body exercise
+foreground work during actual downloads. Headless input p95 must stay below
+100 ms; new mail must appear within five seconds of SMTP acknowledgement with
+the ordinary polling interval set to one hour.
+
+The strict `first_download_preserves_active_composer_and_focus` regression found
+that the first nonempty mail page selected a reader and parked an open composer,
+letting further typing invoke mail shortcuts. The authorised follow-up adds one
+guard: automatic first-row selection requires no current composer. Blank,
+edited and minimised drafts keep their existing session; explicit mail selection
+still parks the composer. Three App-level tests cover those paths, refreshed
+pages that retain/remove the selection, and normal initial reader selection.
+The real-server regression now passes, continues typing without refocusing and
+reopens the exact saved draft after restart. Its reviewed capture is
+`artifacts/e2e-iced/mail-RJhBsv/composer-kept-during-first-download-tiny-skia.png`.
+
+The 41 composer tests pass after the guard, including the three new page-arrival
+regressions. Four saved native MCP flows also pass: autosave/typed Move,
+Preferences plus graceful restart, composer collapse/selection, and inline reply
+Find/scroll/focus. Logs are `artifacts/logs/composer-first-download-unit.log`
+and `artifacts/logs/composer-first-download-native.log`. Browser and Flutter
+source review found no matching automatic-selection path; their exact first-page
+focus tests remain open in the shared scenarios and TODO.
+
+The final optimised run passed all 24 scenarios in 371 seconds. Input p95 was
+16.23 ms with replies held, 17.29 ms during the initial backlog, 25.01 ms during
+a large download alongside cached reading, and 20.28 ms during repeated flag
+input. New mail appeared in 626.52 ms without Refresh. The run log is
+`artifacts/logs/real-mail-20261004T234738Z.log`, with the fixed composer evidence
+in `artifacts/e2e-iced/mail-jztMSq`. Timing JSON and caches remain beside each
+scenario's state observations.
+
+The pre-fix run passed 23 scenarios and failed only this composer regression;
+its log and screenshot remain at `artifacts/logs/real-mail-20261004T224709Z.log`
+and `artifacts/e2e-iced/mail-qZjSPP/failed-ui-tiny-skia.png`.
+
+Pre-fix offline verification: `cargo test --all-features` passed 1,692 tests, with 46
+ignored, including the 24 opt-in real-server scenarios. All 16 existing widget
+scenarios passed. The persistent harness timer exposed an old notification-test
+race; that test now observes the initial hidden banner before backdating the
+failure. All-target/all-feature Clippy and no-default-feature Clippy passed with
+warnings denied, as did Ruff and the strict documentation build. Logs are in
+`artifacts/logs/real-mail-offline-final.log` and the adjacent real-mail check logs.
+
+Limits: Linux/Docker execution only; GreenMail is an owned protocol server, not
+evidence of external-provider compatibility or relay policy. Accounts are
+preconfigured with memory credentials, so onboarding and device keychains remain
+separate. `iced_test` timings cover widget input, App state and layout, not native
+window presentation. Formatted HTML, file pickers, printing, tray/badges,
+Google/CalDAV, other platforms and process-crash recovery remain outside this
+suite. Restart scenarios drain the engine and reopen the cache in the same
+process. CI workflows were not changed; server-backed scenarios remain opt-in.
+
 ## Sync failure banner and tray reopening, 29 September 2026 (desktop)
 
 Background mail-check failures now wait 30 seconds from the first observed

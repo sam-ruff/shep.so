@@ -45,6 +45,118 @@ fn draft(id: &str) -> Draft {
     }
 }
 
+fn arriving_mail_page(remote_id: &str) -> anyhow::Result<Arc<MailPage>> {
+    let mail = parse_mail(
+        "test",
+        remote_id,
+        "INBOX",
+        b"From: sender@example.test\r\nSubject: Incoming mail\r\n\r\nBody".to_vec(),
+        false,
+        false,
+    )?;
+    Ok(Arc::new(MailPage {
+        rows: vec![mail.summary],
+        total: 1,
+        ..Default::default()
+    }))
+}
+
+#[test]
+fn first_mail_page_preserves_blank_and_edited_composers() -> anyhow::Result<()> {
+    for (edited, minimised) in [(false, false), (true, false), (false, true), (true, true)] {
+        let (mut app, _) = App::new();
+        if edited {
+            app.load_draft(draft("working"));
+            let _ = app.handle(Message::ComposeField("subject", "Unsent subject".into()));
+            let _ = app.handle(Message::Editor(text_editor::Action::SelectAll));
+            let _ = app.handle(Message::Editor(text_editor::Action::Edit(
+                text_editor::Edit::Paste(Arc::new("Unsent body".into())),
+            )));
+            assert_eq!(app.current_draft().subject, "Unsent subject");
+            assert_eq!(app.current_draft().body.trim(), "Unsent body");
+        } else {
+            app.new_composer();
+            assert!(app.current_draft().subject.is_empty());
+            assert!(app.current_draft().body.trim().is_empty());
+            assert!(app.composer.current.dirty.is_none());
+        }
+        if minimised {
+            let _ = app.handle(Message::ToggleComposer);
+        }
+        let expected = app.current_draft();
+        let ui_key = app.composer.current.ui_key;
+        let page = arriving_mail_page("1")?;
+        let incoming_id = page.rows[0].id.clone();
+        let _ = app.handle(Message::Backend(Event::Page(app.generation, page, false)));
+
+        assert_eq!(app.page.total, 1);
+        assert_eq!(app.page.rows[0].id, incoming_id);
+        assert!(app.compose_visible());
+        assert_eq!(app.current_draft(), expected);
+        assert_eq!(app.composer.current.ui_key, ui_key);
+        assert_eq!(app.composer.current.minimized, minimised);
+        assert!(app.composer.parked.is_empty());
+        assert!(app.selected.is_none());
+        assert!(app.detail.is_none());
+    }
+    Ok(())
+}
+
+#[test]
+fn mail_page_refresh_preserves_composer_and_selection() -> anyhow::Result<()> {
+    for retain_selected in [false, true] {
+        let (mut app, _) = App::new();
+        let previous = arriving_mail_page("1")?;
+        let selected_id = previous.rows[0].id.clone();
+        let _ = app.handle(Message::Backend(Event::Page(
+            app.generation,
+            previous.clone(),
+            false,
+        )));
+        assert_eq!(app.selected.as_deref(), Some(selected_id.as_str()));
+        app.load_draft(draft("working"));
+        let _ = app.handle(Message::ComposeField("subject", "Still composing".into()));
+        let expected = app.current_draft();
+        let mut page = arriving_mail_page("2")?;
+        let incoming_id = page.rows[0].id.clone();
+        if retain_selected {
+            let page = Arc::make_mut(&mut page);
+            page.rows.push(previous.rows[0].clone());
+            page.total += 1;
+        }
+        let _ = app.handle(Message::Backend(Event::Page(app.generation, page, false)));
+
+        assert_eq!(app.page.rows[0].id, incoming_id);
+        assert_eq!(app.selected, retain_selected.then_some(selected_id));
+        assert!(app.compose_visible());
+        assert_eq!(app.current_draft(), expected);
+        assert!(app.composer.parked.is_empty());
+
+        let _ = app.handle(Message::Select(incoming_id.clone()));
+        assert_eq!(app.selected.as_deref(), Some(incoming_id.as_str()));
+        assert!(!app.compose_visible());
+        assert_eq!(app.owned_draft("working"), Some(expected));
+    }
+    Ok(())
+}
+
+#[test]
+fn first_mail_page_selects_first_message_without_a_composer() -> anyhow::Result<()> {
+    let (mut app, _) = App::new();
+    let mut page = arriving_mail_page("1")?;
+    let first_id = page.rows[0].id.clone();
+    let second = arriving_mail_page("2")?;
+    Arc::make_mut(&mut page).rows.push(second.rows[0].clone());
+    Arc::make_mut(&mut page).total = 2;
+    let _ = app.handle(Message::Backend(Event::Page(app.generation, page, false)));
+
+    assert_eq!(app.page.total, 2);
+    assert_eq!(app.selected.as_deref(), Some(first_id.as_str()));
+    assert!(!app.compose_visible());
+    assert!(app.composer.current.draft.id.is_empty());
+    Ok(())
+}
+
 #[test]
 fn full_save_queue_retains_latest_edits_and_retries_when_capacity_returns() {
     let (mut app, _) = App::new();

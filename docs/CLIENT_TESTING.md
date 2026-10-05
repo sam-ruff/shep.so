@@ -1,5 +1,14 @@
 # Client testing
 
+The `first-download-composer-focus` contract holds the first nonempty mail page
+while New message is open on an empty Inbox. Release the page while To, Subject
+or Message owns focus; keep the same draft, editor, caret and typing target.
+Continue typing `f` and `r` without refocusing, then save/reopen and verify exact
+content. Desktop has App-level cases and a real-server `iced_test` regression
+that also reopens the draft after restart. Browser Playwright and Flutter
+widget/Android equivalents remain open; delayed Forward and draft-save tests do
+not establish this first-page contract.
+
 Desktop common Activity regressions are saved as `test_common_activity_*` in
 `scripts/e2e.py`. They use real pointer/keyboard controls, restart, held providers,
 older folder records and exact backup destinations. Keep indexed 100,000-history

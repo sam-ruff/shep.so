@@ -1752,6 +1752,7 @@ impl App {
                         }
                         if self.selected.is_none()
                             && self.dialog.is_none()
+                            && self.composer.current.draft.id.is_empty()
                             && let Some(first) = self.page.rows.first()
                         {
                             self.select(first.id.clone());

@@ -23,6 +23,10 @@ macro_rules! scenarios {
 mod harness;
 mod mail;
 mod preferences;
+#[cfg(target_os = "linux")]
+mod real_mail;
+#[cfg(target_os = "linux")]
+mod real_server;
 mod shortcuts;
 mod sync_notice;
 

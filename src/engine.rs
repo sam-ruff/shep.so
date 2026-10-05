@@ -26,6 +26,8 @@ mod restore;
 #[cfg(test)]
 mod restore_tests;
 pub mod selections;
+#[cfg(all(test, feature = "test-support", target_os = "linux"))]
+pub(crate) mod simulator_support;
 pub use dispatch::CommandSender;
 
 use crate::{

@@ -18,13 +18,13 @@ async fn delayed_banner_is_visible_and_dismissible() {
     };
     h.inject(Message::Backend(Event::MailSyncStarted(attempt.clone())))
         .await;
-    h.age_sync_failure(&attempt);
     h.inject(Message::Backend(Event::MailSyncFinished(
-        attempt,
+        attempt.clone(),
         Err("Fixture check failed".into()),
     )))
     .await;
     h.expect("notice", serde_json::Value::Null).await;
+    h.age_sync_failure(&attempt);
     h.inject(Message::Tick).await;
     h.expect("notice", "Mail checks are still failing. Try Refresh.")
         .await;

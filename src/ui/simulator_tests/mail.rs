@@ -29,6 +29,7 @@ async fn move_mouse_and_keyboard_and_typing_protection() {
     h.click_at(85., 398.).await;
     h.expect("folder", "Archive").await;
     h.expect("total", 1).await;
+    h.close().await;
 }
 
 /// `test_delete_archive_defaults_and_mail_returns_to_inbox`
@@ -218,7 +219,7 @@ async fn dropdown_escape_keeps_composer_and_frees_the_covered_field() {
     h.expect("composer.visible", true).await;
     h.expect("focused_input", "to").await;
     h.type_text("dropdown@example.com").await;
-    h.click_at(1040., 278.).await;
+    h.click_id("subject").await;
     h.type_text("Plans").await;
     h.expect("compose_fields.subject", "Plans").await;
     h.click_at(1040., 182.).await;

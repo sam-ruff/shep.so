@@ -1,5 +1,12 @@
 # Client parity
 
+First-download composer ownership: desktop preserves the current draft and
+typing target when the first mail page arrives, while explicit mail selection
+can still park it. Flutter's separate composer route and browser's retained
+modal have no matching automatic-selection path on source inspection. Exact
+first-download focus regressions on both clients remain an active verification
+gap; see `first-download-composer-focus` in the shared client scenarios.
+
 Browser CalDAV schema19 and Flutter connection lifecycle v2 are integrated for
 combined verification. Browser setup retains local identity before discovery,
 keeps passwords in tab memory and rejects late activation after removal or newer
