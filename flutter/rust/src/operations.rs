@@ -993,7 +993,8 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let mut folders=db.prepare("SELECT account_id,names FROM folders")?;
             let folders=folders.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?.into_iter().map(|(id,s)|Ok((id,serde_json::from_str::<Vec<String>>(&s)?))).collect::<Result<HashMap<_,_>>>()?;
             let reconnect = db.prepare("SELECT account_id FROM profile_reconnect ORDER BY account_id")?.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(json!({"accounts":accounts,"folders":folders,"reconnect":reconnect}))
+            let incoming_slots = accounts.iter().map(|account| Ok((account.id.clone(), crate::connections::stored_slot(db, &account.id)?))).collect::<Result<HashMap<_, _>>>()?;
+            Ok(json!({"accounts":accounts,"folders":folders,"reconnect":reconnect,"incoming_slots":incoming_slots}))
         }).await).await,
         Request::SaveSentPreferences{id,policy,folder} => {
             let _guard=profile.operations.account(&id).await;

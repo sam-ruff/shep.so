@@ -1,5 +1,20 @@
 # Conversation request audit
 
+**6 October mobile review and parallel delivery:** Review Android/iOS
+functionality against current desktop behaviour, excluding mobile usability
+adaptations; file GitHub issues and assign GPT-6.1 Sol agents at high reasoning.
+The primary thread reviews PRs, answers questions, tests combined changes and
+handles merging. The [source audit](agents/MOBILE_FUNCTIONAL_AUDIT.md) links
+24 functional gaps and a separate platform-evidence issue. This session permits
+three concurrent child agents, so delivery uses waves within the requested
+maximum of five. Existing unrelated changes remain outside these PRs.
+Initial fixes are account-bound notices in
+[PR #53](https://github.com/sam-ruff/shep.so/pull/53), retained bulk selection
+in [PR #54](https://github.com/sam-ruff/shep.so/pull/54) and Preferences search
+in [PR #55](https://github.com/sam-ruff/shep.so/pull/55). Reader headers,
+calendar scheduling and bounded History remain active implementation lanes;
+the tracker retains the remaining functional and platform gaps.
+
 **28 September sync notice, tray and reader report:** The user's screenshot
 shows an account sync no-progress timeout and a blank formatted reader. It does
 not establish the provider cause or a renderer defect. The user asked that a
@@ -12,8 +27,14 @@ episode, bind results to each account's incoming connection identity, and keep
 mail sync, calendar refresh, unattended automatic backup and automatic
 move-recovery failures from reopening a hidden window or cancelling Quit while
 user-started writes keep their recovery. Desktop
-is implemented with the evidence in [the completion log](COMPLETION.md); Flutter
-and browser parity and the blank-reader question remain open.
+is implemented with the evidence in [the completion log](COMPLETION.md).
+Flutter's foreground notice policy is implemented in
+[PR #53](https://github.com/sam-ruff/shep.so/pull/53), including exact incoming
+identities, delayed automatic episodes, immediate Refresh and owned recovery.
+Its independent scheduling and OS lifecycle work remain in
+[#35](https://github.com/sam-ruff/shep.so/issues/35) and
+[#46](https://github.com/sam-ruff/shep.so/issues/46). Browser notice parity and
+the blank-reader question remain open.
 
 The next architecture continuation integrates checked Flutter folder changes and
 desktop Activity through existing owners. Mobile integrated gates pass198 Rust
@@ -489,7 +510,7 @@ hook test executions passing; see the newest completion entry. OAuth and the sha
 | R96 | Reply buttons float at the bottom of the preview panel so replying needs no scrolling (11 September 2026) | Reproduced in native conversations: the expanded card carried Reply/Reply all/Forward/Print inside its scroller. The reader now reserves a footer outside those cards and binds it to the focused physical message, including collapsed cards and HTML preparation. Evidence and remaining integration/shipping are recorded in completion; individual reader and client footers were already outside the body. |
 | R97 | Configurable option to include the previous email thread in replies (11 September 2026) | Desktop delivered on `feat/reply-include-original-preference` (22 September): Preferences → General → Composing sets the starting state of the per-reply Include original message checkbox for new Reply and Reply all drafts, default on; saved and parked drafts keep their own choice and forwards always include the original. Browser/Flutter controls, a portable profile key and shipping stay open in TODO |
 | R98 | Small ? help icons with tooltips beside easily misunderstood settings only, not every option (11 September 2026) | Desktop delivered on `feat/settings-help-tooltips`: seven reviewed settings get a focusable ? with hover/click/Tab help that hides through its own synced help-icons preference; unit and native scenarios recorded in completion. Browser/Flutter parity and screen reader exposure remain open in TODO |
-| R99 | Settings search should search all settings (11 September 2026) | Desktop rendered-caption catalogue, individual-control reveal/focus, coverage guard and the "shared profile" regression fix. Flutter #26 adds a local available-control catalogue, weighted matching, actual-control/destination reveal and retained unsaved state with model/widget/preview controls. Browser search, Android/iOS search execution, unimplemented mobile settings (#41) and desktop unbuilt review states remain open in TODO; see [Preferences search](agents/SETTINGS_SEARCH.md) |
+| R99 | Settings search should search all settings (11 September 2026) | Desktop rendered-caption catalogue, individual-control reveal/focus, coverage guard and the "shared profile" regression fix. Flutter #26 adds a local available-control catalogue, shared native matching, actual-control/destination reveal and retained unsaved state with model/widget/preview controls and executed Android native search/reveal/Theme evidence. Browser search, wider Android/iOS execution, unimplemented mobile settings (#41) and desktop unbuilt review states remain open in TODO; see [Preferences search](agents/SETTINGS_SEARCH.md) |
 | R100 | "Could not load related messages: Query returned no rows" keeps appearing after archiving and is not useful (14 September 2026) | Fixed and pushed as `3dabf16`: a removed or never-synced conversation anchor returns an empty conversation instead of a raw SQLite error; regression test added. Flutter/browser clients have no grouped conversation view, so nothing there can fail the same way; grouping parity itself is an open client gap |
 | R111 | Mobile visitors to the shep.so demo see a popup saying the demo is for desktop only and that Shep has a mobile app with a good mobile experience (29 September 2026) | Source and Playwright tests on the review branch: a card over the home-page demo and a modal on `/demo/` for Android and iOS visitors. Deployment (R94), the owner's decision on the conflicting "coming to" store copy and real-device checks are tracked in TODO |
 | R110 | Faster UI tests using the official `iced_test` crate, alongside the slow native Xvfb suite (26 September 2026) | The October extension adds 24 owned GreenMail scenarios with the production engine, repeated inputs, screen-state retention, held/slow downloads and timed new-mail arrival. All 24 pass after the authorised first-download composer fix: background initial selection preserves the current draft and typing target. All 41 composer tests and four saved native flows pass. Headless input p95 stays below 100 ms; new mail appears in 627 ms against a five-second limit. See [simulator tests](agents/simulator-tests.md) and [completion evidence](COMPLETION.md). Exact mobile/browser first-page focus regressions and native/external-provider limits remain explicit. |

@@ -27,7 +27,13 @@ async fn select_all(p: &crate::api::MobileProfile, id: &str) -> Value {
 }
 async fn review(p: &crate::api::MobileProfile, job: &str, action: Value) -> Value {
     let captured = select_all(p, &format!("{job}-selection")).await;
-    groups(p,json!({"kind":"prepare","id":job,"selection":format!("{job}-selection"),"expected":captured["revision"],"action":action,"scope":{"folder":"Inbox"}})).await
+    let review = groups(p,json!({"kind":"prepare","id":job,"selection":format!("{job}-selection"),"expected":captured["revision"],"action":action,"scope":{"folder":"Inbox"}})).await;
+    request(
+        p,
+        json!({"op":"selection","command":{"kind":"release","id":captured["id"]}}),
+    )
+    .await;
+    review
 }
 async fn approve(p: &crate::api::MobileProfile, job: &str) -> Value {
     groups(p, json!({"kind":"approve","id":job})).await
@@ -198,13 +204,114 @@ async fn frozen_review_stages_exact_membership_and_executes_every_step_locally()
     let third = items(&p, "archive", second["next_after"].as_i64()).await;
     assert_eq!(third["rows"].as_array().unwrap().len(), 25);
     assert!(third["next_after"].is_null());
-    // The frozen selection sessions were released with the review.
+    // Only the temporary frozen copy is released during preparation.
     let released = failure(
         &p,
         json!({"op":"selection","command":{"kind":"observe","id":"archive-frozen"}}),
     )
     .await;
     assert!(released.contains("no longer available"), "{released}");
+}
+
+#[tokio::test]
+async fn declined_review_preserves_the_exact_original_capture_across_pages() {
+    let (_dir, p) = profile().await;
+    seed(&p, 125).await;
+    let captured = select_all(&p, "declined-selection").await;
+    let reviewed = groups(&p,json!({"kind":"prepare","id":"declined","selection":"declined-selection","expected":captured["revision"],"action":{"kind":"archive"},"scope":{"folder":"Inbox"}})).await;
+    let inspect = groups(&p, json!({"kind":"inspect","id":"declined"})).await;
+    assert_eq!(inspect, reviewed);
+    groups(&p, json!({"kind":"decline","id":"declined"})).await;
+    let observed = request(
+        &p,
+        json!({"op":"selection","command":{"kind":"observe","id":"declined-selection"}}),
+    )
+    .await;
+    assert_eq!(observed["selected"], 125);
+    let mut after = None;
+    let mut total = 0;
+    loop {
+        let selected = request(&p, json!({"op":"selection","command":{"kind":"page","id":"declined-selection","expected":observed["revision"],"after":after}})).await;
+        let rows = selected["rows"].as_array().expect("selected page");
+        assert!(rows.len() <= 50);
+        total += rows.len();
+        after = selected["next_after"].as_u64();
+        if after.is_none() {
+            break;
+        }
+    }
+    assert_eq!(total, 125);
+    let next = groups(&p, json!({"kind":"prepare","id":"next","selection":"declined-selection","expected":observed["revision"],"action":{"kind":"flag"},"scope":{"folder":"Inbox"}})).await;
+    assert_eq!(next["total"], 125);
+    let approved = approve(&p, "next").await;
+    assert_eq!(
+        groups(&p, json!({"kind":"inspect","id":"next"})).await,
+        approved
+    );
+    let repeated = group_failure(&p, json!({"kind":"approve","id":"next"})).await;
+    assert!(repeated.contains("no longer open"), "{repeated}");
+    request(
+        &p,
+        json!({"op":"selection","command":{"kind":"release","id":"declined-selection"}}),
+    )
+    .await;
+    let released = failure(
+        &p,
+        json!({"op":"selection","command":{"kind":"observe","id":"declined-selection"}}),
+    )
+    .await;
+    assert!(released.contains("no longer available"), "{released}");
+}
+
+#[tokio::test]
+async fn failed_prepare_preserves_the_original_capture_for_retry() {
+    let (_dir, p) = profile().await;
+    seed(&p, 125).await;
+    let captured = select_all(&p, "retry-selection").await;
+    let rejected = group_failure(&p, json!({"kind":"prepare","id":"bad","selection":"retry-selection","expected":999,"action":{"kind":"archive"},"scope":{"folder":"Inbox"}})).await;
+    assert!(rejected.contains("selection changed"), "{rejected}");
+    let observed = request(
+        &p,
+        json!({"op":"selection","command":{"kind":"observe","id":"retry-selection"}}),
+    )
+    .await;
+    assert_eq!(observed["id"], captured["id"]);
+    assert_eq!(observed["revision"], captured["revision"]);
+    assert_eq!(observed["selected"], 125);
+    p.database
+        .write(|db| {
+            db.execute_batch("CREATE TRIGGER refuse_review_page BEFORE INSERT ON group_items BEGIN SELECT RAISE(ABORT,'review storage fixture failure'); END")?;
+            Ok(())
+        })
+        .await
+        .expect("install staging failure");
+    let failed = group_failure(&p,json!({"kind":"prepare","id":"failed-copy","selection":"retry-selection","expected":observed["revision"],"action":{"kind":"archive"},"scope":{"folder":"Inbox"}})).await;
+    assert!(!failed.is_empty());
+    let interrupted = groups(&p, json!({"kind":"inspect","id":"failed-copy"})).await;
+    assert_eq!(interrupted["state"], "interrupted");
+    assert_eq!(interrupted["total"], 0);
+    let frozen = failure(
+        &p,
+        json!({"op":"selection","command":{"kind":"observe","id":"failed-copy-frozen"}}),
+    )
+    .await;
+    assert!(frozen.contains("no longer available"), "{frozen}");
+    let retained = request(
+        &p,
+        json!({"op":"selection","command":{"kind":"observe","id":"retry-selection"}}),
+    )
+    .await;
+    assert_eq!(retained["revision"], captured["revision"]);
+    assert_eq!(retained["selected"], 125);
+    p.database
+        .write(|db| {
+            db.execute_batch("DROP TRIGGER refuse_review_page")?;
+            Ok(())
+        })
+        .await
+        .expect("restore staging writes");
+    let retried = groups(&p, json!({"kind":"prepare","id":"retry","selection":"retry-selection","expected":observed["revision"],"action":{"kind":"archive"},"scope":{"folder":"Inbox"}})).await;
+    assert_eq!(retried["total"], 125);
 }
 
 #[tokio::test]
@@ -498,6 +605,11 @@ async fn account_removal_takes_the_group_fence_and_discards_only_reviewed_work()
         tokio::spawn(async move { step(&profile, Some("secret")).await })
     };
     provider.started.notified().await;
+    let live = groups(&p, json!({"kind":"inspect","id":"archive"})).await;
+    assert_eq!(live["state"], "running");
+    assert_eq!(live["counts"]["sending"], 1);
+    assert!(live["counts"]["uncertain"].is_null());
+    assert_eq!(provider.moves.load(Ordering::SeqCst), 1);
     let preview = request(&p, json!({"op":"account_removal_preview","id":"fixture"})).await;
     assert_eq!(preview["groups"], 8);
     let blocked = failure(
@@ -530,6 +642,8 @@ async fn account_removal_takes_the_group_fence_and_discards_only_reviewed_work()
         "Account removed from this device"
     );
     assert!(job(&p, "later").await.is_null());
+    let stopped = groups(&p, json!({"kind":"inspect","id":"later"})).await;
+    assert_eq!(stopped["state"], "cancelled");
     assert!(
         group_failure(&p, json!({"kind":"approve","id":"later"}))
             .await
@@ -537,6 +651,27 @@ async fn account_removal_takes_the_group_fence_and_discards_only_reviewed_work()
     );
     assert_eq!(step(&p, Some("secret")).await["idle"], true);
     assert_eq!(provider.moves.load(Ordering::SeqCst), 1);
+    groups(&p, json!({"kind":"decline","id":"later"})).await;
+    let removed = group_failure(&p, json!({"kind":"inspect","id":"later"})).await;
+    assert!(!removed.is_empty());
+    assert_eq!(
+        groups(&p, json!({"kind":"inspect","id":"archive"})).await,
+        finished
+    );
+}
+
+#[tokio::test]
+async fn inspection_does_not_create_missing_reviews_or_admit_invalid_identities() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    let before = groups(&p, json!({"kind":"history"})).await;
+    let invalid = group_failure(&p, json!({"kind":"inspect","id":"../other"})).await;
+    assert!(invalid.contains("Invalid group identity"), "{invalid}");
+    let missing = group_failure(&p, json!({"kind":"inspect","id":"missing"})).await;
+    assert!(!missing.is_empty());
+    assert_eq!(groups(&p, json!({"kind":"history"})).await, before);
+    assert_eq!(step(&p, None).await["idle"], true);
+    assert_eq!(page(&p, "Inbox").await["total"], 1);
 }
 
 #[tokio::test]

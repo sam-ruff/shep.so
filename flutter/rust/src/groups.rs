@@ -98,6 +98,9 @@ pub enum Command {
     Approve {
         id: String,
     },
+    Inspect {
+        id: String,
+    },
     Decline {
         id: String,
     },
@@ -261,6 +264,16 @@ pub(crate) async fn run(profile: &MobileProfile, command: Command) -> Result<Val
             action,
             scope,
         } => prepare(profile, id, selection, expected, action, scope).await,
+        Command::Inspect { id } => {
+            token(&id)?;
+            db.read(move |db| {
+                let tx = db.unchecked_transaction()?;
+                let value = summary(&tx, &id)?;
+                tx.commit()?;
+                Ok(value)
+            })
+            .await
+        }
         Command::Approve { id } => {
             db.write(move |db| {
                 let tx = db.transaction()?;
@@ -503,16 +516,6 @@ async fn prepare(
     .await?;
     let staged = stage(profile, &id, &selection, expected).await;
     let job = id.clone();
-    let release = selection.clone();
-    let _ = db
-        .selection(move |db| {
-            crate::selection::run(
-                db,
-                crate::selection::Command::Release { id: release },
-                vec![],
-            )
-        })
-        .await;
     match staged {
         Ok(()) => {
             db.write(move |db| {
