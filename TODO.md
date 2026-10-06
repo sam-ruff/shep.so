@@ -444,6 +444,10 @@ Next add OS background scheduling, subscriptions seeded from a first publication
 
 ## Mobile, web and website (same monorepo)
 
+- [ ] **6 October mobile functionality audit and delivery:** Review the Flutter Android/iOS app against the current desktop implementation, excluding differences needed for mobile usability. Confirm gaps in source and tests, create linked GitHub issues, then deliver fixes in isolated worktrees with GPT-6.1 Sol agents at high reasoning. The primary thread reviews every PR, answers implementation questions, merges verified work and runs combined checks. This session supports three concurrent child agents; use waves within the requested maximum of five. Preserve existing local changes and distinguish host/widget evidence from Android, Apple and live-provider verification.
+
+  Source audit: [24 functional gaps and platform verification](docs/agents/MOBILE_FUNCTIONAL_AUDIT.md), tracked in [GitHub #51](https://github.com/sam-ruff/shep.so/issues/51). Existing CalDAV, folder mutations, captured bulk actions and preference reconciliation are implemented foundations, not missing features. Initial lanes address #26, #27 and #28; remaining tickets stay open until reviewed tests and merges establish their behaviour.
+
 - [ ] **Website migration hardening:** publish the tested full-SHA promotional image with OCI source identity, validate pull requests without registry publication, retain local-only CI, constrain its Docker context and revalidate unversioned assets. Infrastructure must verify the successful Website workflow and pin its image digest before staging and production promotion. Keep application release workflows disabled and record live deployment separately from source checks.
 
 Client request numbers R67 to R80 in this section are the client session's own numbers.

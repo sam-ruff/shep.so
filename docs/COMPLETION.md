@@ -1,5 +1,23 @@
 # Completion audit
 
+## Mobile source audit and issue inventory, 6 October 2026
+
+The [functional audit](agents/MOBILE_FUNCTIONAL_AUDIT.md) compares Flutter
+Android/iOS against desktop `main` `4dec758`, covering all application domains
+and excluding mobile layout adaptations and incomplete shared features.
+[GitHub #51](https://github.com/sam-ruff/shep.so/issues/51) links 24 confirmed
+functional gaps and a separate platform/provider verification issue. Each
+ticket includes baseline source evidence and acceptance criteria.
+
+Existing mobile folder mutations, CalDAV, durable bulk actions and preference
+reconciliation were checked in source, correcting stale broad missing-feature
+claims. The review also found lost selection after a declined bulk review,
+missing Undo before the first group acknowledgement, unbounded History item
+accumulation and the reader's account label being shown as recipient metadata.
+Implementation PRs and their executed checks are recorded separately. This
+inventory does not claim runtime or full-parity completion. The pinned strict
+Zensical documentation build passes.
+
 ## Real-server iced_test coverage, 5 October 2026 (desktop)
 
 The opt-in desktop suite drives actual widgets through `iced_test` with the
