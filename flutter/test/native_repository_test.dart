@@ -50,6 +50,32 @@ class FixtureCredentials implements CredentialStore {
   }
 }
 
+class _LostUndoRepository implements GroupRepository {
+  _LostUndoRepository(this.native);
+  final NativeRepository native;
+  bool lost = false, inspectUnavailable = false;
+  int undoCalls = 0;
+  @override
+  Future<dynamic> groups(Map<String, Object?> command) async {
+    if (command['kind'] == 'inspect' && inspectUnavailable) {
+      inspectUnavailable = false;
+      throw StateError('Lost status reply');
+    }
+    final result = await native.groups(command);
+    if (command['kind'] == 'undo') {
+      undoCalls++;
+      if (!lost) {
+        lost = true;
+        throw StateError('Lost committed Undo reply');
+      }
+    }
+    return result;
+  }
+
+  @override
+  Future<Map<String, dynamic>> groupStep() => native.groupStep();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
@@ -414,6 +440,60 @@ void main() {
   );
 
   test(
+    'queued native Undo survives lost Dart replies through exact FFI status',
+    () async {
+      final credentials = FixtureCredentials()..unavailable = true;
+      final repository = await connection(credentials);
+      final selection = MailSelection(
+        repository: repository,
+        scope: () => {'folder': 'Inbox'},
+        currentCount: () => 1,
+        changed: () {},
+      );
+      addTearDown(selection.dispose);
+      selection.watch('fixture:INBOX:files');
+      selection.all();
+      await settled(() => selection.ready);
+      final capture = selection.snapshot!;
+      await repository.groups({
+        'kind': 'prepare',
+        'id': 'ffi-queued',
+        'selection': capture.id,
+        'expected': capture.revision,
+        'action': {'kind': 'archive'},
+        'scope': {'folder': 'Inbox'},
+      });
+      final approved = GroupJob(
+        await repository.groups({'kind': 'approve', 'id': 'ffi-queued'})
+            as Map<String, dynamic>,
+      );
+      expect(approved.count('done'), 0);
+      expect(approved.canUndo, true);
+      final lost = _LostUndoRepository(repository)..inspectUnavailable = true;
+      final groups = MailGroups(
+        repository: lost,
+        changed: () {},
+        refreshMail: () async {},
+      );
+      addTearDown(groups.dispose);
+      await groups.undo(approved);
+      expect(groups.undoError, isNotNull);
+      final checked =
+          await repository.groups({'kind': 'inspect', 'id': approved.id})
+              as Map;
+      expect(checked['undo'], true);
+      expect((checked['counts'] as Map)['cancelled'], 1);
+      await groups.undo(groups.failedUndo!);
+      await settled(() => !groups.running && !groups.historyLoading);
+      expect(groups.undoError, isNull);
+      expect(lost.undoCalls, 1);
+      expect(groups.jobs.single.id, approved.id);
+      expect(groups.jobs.single.count('cancelled'), 1);
+      expect(credentials.reads, 0);
+    },
+  );
+
+  test(
     'native group journal freezes, executes, undoes and fences removal through actual FFI',
     () async {
       final credentials = FixtureCredentials()..unavailable = true;
@@ -472,6 +552,31 @@ void main() {
       final items = await groups.items(job);
       expect(items.rows.single.subject, 'Incoming files fixture');
       expect(items.rows.single.state, 'done');
+      expect(items.nextAfter, isNull);
+      final emptyItems = await groups.items(
+        job,
+        after: items.rows.single.position,
+      );
+      expect(emptyItems.rows, isEmpty);
+      expect(emptyItems.hasPrevious, true);
+      final restoredPage = await groups.items(
+        job,
+        after: emptyItems.previousAfter,
+      );
+      expect(restoredPage.rows.single.mail, items.rows.single.mail);
+      final latest = await repository.groups({'kind': 'history'});
+      expect(latest['active'], isEmpty);
+      final emptyHistory = await repository.groups({
+        'kind': 'history',
+        'before': latest['jobs'][0]['seq'],
+      });
+      expect(emptyHistory['jobs'], isEmpty);
+      expect(emptyHistory['has_previous'], true);
+      final previousHistory = await repository.groups({
+        'kind': 'history',
+        'before': emptyHistory['previous_before'],
+      });
+      expect(previousHistory['jobs'][0]['id'], job.id);
       await groups.undo(job);
       await settled(() => !groups.running && groups.jobs.single.finished);
       expect(groups.jobs.single.count('undone'), 1);

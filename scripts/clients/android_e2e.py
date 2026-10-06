@@ -195,9 +195,27 @@ def bulk(device, flutter, env):
                 fixture.terminate()
                 try:fixture.wait(timeout=5)
                 except subprocess.TimeoutExpired:fixture.kill();fixture.wait()
+
     if not report.exists() or json.loads(report.read_text()).get('bulk_native') != ['bulk-controls-light', 'bulk-controls-dark', 'bulk-native-journal-restart']:
         raise RuntimeError('Group action native scenarios did not report completion; an interrupted driver is not a pass')
 
+def calendar(device, flutter, env):
+    report = ROOT/'artifacts/flutter/native/integration-calendar-result.json'
+    report.unlink(missing_ok=True)
+    with (LOGS/'calendar-native-android-fixture.log').open('w') as log:
+        fixture=subprocess.Popen([sys.executable,str(ROOT/'scripts/clients/android_calendar_fixture.py'),'--device',device],stdout=log,stderr=subprocess.STDOUT)
+        try:
+            test_env=env.copy();test_env['SHEP_NATIVE_REPORT']='integration-calendar-result'
+            run('calendar-native-android-integration',[flutter,'drive','--driver','test_driver/native_driver.dart','--target','integration_test/calendar_android_test.dart','-d',device,'--flavor','preview'],cwd=ROOT/'flutter',env=test_env)
+            if fixture.wait(timeout=15)!=0:raise RuntimeError('Calendar fixture failed; see its log')
+            expected=['timed-dark','all-day-dark','timed-light','all-day-light','native-reopen']
+            if not report.exists() or json.loads(report.read_text()).get('calendar_native')!=expected:
+                raise RuntimeError('Calendar controls did not report completion; an interrupted driver is not a pass')
+        finally:
+            if fixture.poll() is None:
+                fixture.terminate()
+                try:fixture.wait(timeout=5)
+                except subprocess.TimeoutExpired:fixture.kill();fixture.wait()
 def appium(device,flutter,env,formatted_reader=False,discovery_reader=False,creation_reader=False,enrollment_reader=False,sync_reader=False,bulk_reader=False):
     if formatted_reader:
         run('android-formatted-fixture-check',[sys.executable,str(ROOT/'scripts/clients/generate_html_fixture.py'),'--check'],env=env)
@@ -286,7 +304,7 @@ def sync(device, flutter, env):
     if not report.exists() or json.loads(report.read_text()).get('profile_sync') != ['sync-controls-conflicts-receipts', 'sync-disconnect-pause']:
         raise RuntimeError('Profile sync controls did not report completion; an interrupted driver is not a pass')
 
-def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False, appium_only=False, formatted_only=False, forward_only=False, print_only=False, google_only=False, profiles_only=False, discovery_only=False, creation_only=False, enrollment_only=False, sync_only=False, bulk_only=False):
+def main(device, flutter='flutter', compose_only=False, outbox_only=False, incoming_only=False, appium_only=False, formatted_only=False, forward_only=False, print_only=False, google_only=False, profiles_only=False, discovery_only=False, creation_only=False, enrollment_only=False, sync_only=False, bulk_only=False, calendar_only=False):
     if not device.startswith('emulator-') or not device.removeprefix('emulator-').isdigit():
         raise ValueError('Only an explicit Android emulator is allowed; personal devices are refused')
     avd = subprocess.check_output(['adb', '-s', device, 'emu', 'avd', 'name'], text=True).splitlines()[0]
@@ -295,6 +313,10 @@ def main(device, flutter='flutter', compose_only=False, outbox_only=False, incom
     env = os.environ.copy()
     env['ANDROID_SERIAL'] = device
     env['APPIUM_HOME'] = str(ROOT / 'artifacts/appium')
+    if calendar_only:
+        calendar(device, flutter, env)
+        print('Android calendar schedule controls and native journal reopen passed; live providers remain separate.')
+        return
     if bulk_only:
         bulk(device, flutter, env)
         appium(device, flutter, env, bulk_reader=True)
@@ -403,6 +425,7 @@ if __name__=='__main__':
     parser.add_argument('--enrollment-only',action='store_true',help='Run native profile review, application, retry and reconnect controls')
     parser.add_argument('--sync-only',action='store_true',help='Run native preference sync switches, conflict decisions, lost receipts and disconnect controls')
     parser.add_argument('--bulk-only',action='store_true',help='Run native group selection, review, execution, Undo, History and durable journal controls')
+    parser.add_argument('--calendar-only',action='store_true',help='Run native date/time/all-day controls and calendar journal reopening')
     args=parser.parse_args()
-    if sum([args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only,args.profiles_only,args.discovery_only,args.creation_only,args.enrollment_only,args.sync_only,args.bulk_only])>1: parser.error('Choose only one targeted scenario')
-    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only,args.profiles_only,args.discovery_only,args.creation_only,args.enrollment_only,args.sync_only,args.bulk_only)
+    if sum([args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only,args.profiles_only,args.discovery_only,args.creation_only,args.enrollment_only,args.sync_only,args.bulk_only,args.calendar_only])>1: parser.error('Choose only one targeted scenario')
+    main(args.device,args.flutter,args.compose_only,args.outbox_only,args.incoming_only,args.appium_only,args.formatted_only,args.forward_only,args.print_only,args.google_only,args.profiles_only,args.discovery_only,args.creation_only,args.enrollment_only,args.sync_only,args.bulk_only,args.calendar_only)

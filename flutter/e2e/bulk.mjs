@@ -183,7 +183,7 @@ try {
   await waitText("Skipped · Already up to date");
   await capture("bulk-history-dark");
   const more = page.getByRole("button", {
-    name: "Load next 50 messages",
+    name: "Next 50 messages",
     exact: true,
   });
   for (let i = 0; i < 40 && !(await more.count()); i++) {

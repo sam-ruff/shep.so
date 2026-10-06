@@ -10,6 +10,27 @@
       "browser": "Shared codec plus default/profile mappings retain false, reset, change-revert and old receipt fields. OPEN: per-reply composer control and new-reply default application; codec support does not establish composer parity."
     },
     {
+      "id": "mobile-bulk-queued-undo",
+      "contract": "Approved groups offer Undo before any acknowledgement, including queued, paused and in-flight first steps. Cancel only unsent membership, preserve actual receipts and newer fields, and inspect/retry the same durable Undo after lost replies. Removal fences held replies and capacity rejection keeps visible exact Retry.",
+      "desktop": "Existing completed-plus-remaining Undo control and retained group journal remain the reference.",
+      "mobile": "GroupJob pending/sending eligibility, same-group idempotent native decision, bounded retained Undo requests and shared Retry Undo notice. Native provider fixtures hold all capacity and first acknowledgement across restart; model, actual FFI and bulk_undo_controls_test.dart cover queued/paused/partial/lost replies and reviewed compact light/dark notices. Removal and 32-request capacity regressions retain exact targets. Platform/live-provider evidence remains separate.",
+      "browser": "Existing retained group Undo/projection lifecycle remains the reference; this increment changes Flutter only."
+    },
+    {
+      "id": "mobile-bulk-final-observation-wake",
+      "contract": "An explicit Undo, Resume or Retry arriving while the existing pump awaits its final History observation must retain one continuation wake when that observation settles. Observation does not authorise replay of uncertain provider work.",
+      "desktop": "Existing journal-owned scheduling remains the reference.",
+      "mobile": "mail_groups_wake_test.dart holds the final owner read and covers all three commands. Each failed before the fix with one step call instead of two; the same owner now consumes the wake after clearing running.",
+      "browser": "Separate owner scheduling and uncertainty regressions remain unchanged."
+    },
+    {
+      "id": "mobile-bulk-history-pages",
+      "contract": "Retain one 20-group History page and one 50-item detail page with exact bidirectional cursors. Completed receipts remain durable until explicit removal. Delayed recovery, page reads and owner observations cannot replace newer groups/pages or resurrect removed records; native admission/execution/attention seeks stay independent of completed history.",
+      "desktop": "Existing paged group History and exact retained journal ownership remain the reference.",
+      "mobile": "Schema25 positive history/attention indexes and20-active admission preserve older receipts. groups_tests.rs covers migration, exact final/empty-boundary pages and100,000 completed-history seeks. group_history_test.dart and group_history_controls_test.dart cover bounded cardinality, held Retry/Accept across groups/pages/same-group re-entry, two removals during held page/owner reads, stale read failures, coalesced Refresh and rapid group choices, failed-page Retry and independent Pause/Undo/Resume/close. native_repository_test.dart exercises actual FFI cursor boundaries. Compact light/dark failure captures are reviewed; execution counts and remaining platform/provider requirements are in COMPLETION.",
+      "browser": "Existing worker/journal History and recovery scenarios remain the reference; this increment changes Flutter only."
+    },
+    {
       "id": "first-download-composer-focus",
       "contract": "Publishing the first nonempty mail page while composing from an empty Inbox preserves the same active draft, editor, caret and typing focus. Further typing must edit that draft without triggering mail shortcuts. Save/reopen and graceful restart retain the complete input; explicit mail selection remains available.",
       "desktop": "Automatic first-row selection requires no current composer. App-level cases and first_download_preserves_active_composer_and_focus exercise empty/populated editors, real TLS IMAP arrival, continued Subject typing and draft restart.",
@@ -183,9 +204,9 @@
     },
     {
       "id": "calendar-identity",
-      "contract": "edit selected calendar event; preserve source/end; read-only cannot save",
-      "mobile": "ui_test.dart",
-      "browser": "workspace.spec.ts"
+      "contract": "Create or edit timed/all-day schedules with valid end-after-start and inclusive Last date/exclusive all-day end. Preserve source, ETag, resource URL, description and untouched times. Canonical all-day dates are nominal; non-midnight legacy pairs retain exact timestamps until the schedule is explicitly edited. Read-only and expanded recurring events cannot save. Freeze exact admissions, retain newer form input and never bypass an unknown CREATE by switching its calendar.",
+      "mobile": "event_schedule_test.dart, event_editor_test.dart and calendar_native_repository_test.dart cover native picker controls, multi-day projection, London/Los Angeles spring gaps, nominal DST arithmetic, exact legacy/timed round trips, source pinning, held/lost admission and actual native profile close/reopen. The saved calendar_android_test.dart scenario passes light/dark timed and all-day saves plus native journal close/reopen, with reviewed captures. Live providers, full recurrence, Calendar Undo and Apple execution remain separate.",
+      "browser": "workspace.spec.ts covers identity; timed creation/scheduling controls remain open."
     },
     {
       "id": "production-isolation",

@@ -53,6 +53,7 @@ void main() {
       await tester.pumpWidget(ShepApp(key: UniqueKey(), workspace: workspace));
       await tester.pumpAndSettle();
       Future<void> wait(bool Function() ready) async {
+        await tester.pump();
         final end = DateTime.now().add(const Duration(seconds: 45));
         while (!ready()) {
           if (DateTime.now().isAfter(end)) {
@@ -78,6 +79,7 @@ void main() {
         await tester.pumpAndSettle();
       }
 
+      Map<String, dynamic>? originalSnapshot;
       Future<void> reopen() async {
         await tester.pumpWidget(const SizedBox());
         workspace.dispose();
@@ -88,6 +90,13 @@ void main() {
         );
         workspace = Workspace(repository, settings);
         await workspace.initialize();
+        if (originalSnapshot case final saved?) {
+          final reopened = repository.savedDrafts.single;
+          expect(reopened.replyContext?.toJson(), saved['reply_context']);
+          expect(reopened.references, saved['references']);
+          expect(reopened.inReplyTo, saved['in_reply_to']);
+          expect(reopened.bcc, saved['bcc']);
+        }
         workspace.setForeground(false);
         await tester.pumpWidget(
           ShepApp(key: UniqueKey(), workspace: workspace),
@@ -170,6 +179,9 @@ void main() {
       expect(find.byTooltip('Remove shep-e2e-binary.bin'), findsOneWidget);
       await tester.tap(find.text('Save draft'));
       await wait(() => find.byType(Composer).evaluate().isEmpty);
+      originalSnapshot = Map<String, dynamic>.from(
+        (await repository.call({'op': 'drafts'}) as List).single as Map,
+      );
       await reopen();
       expect(tester.widget<CheckboxListTile>(toggle).value, isFalse);
       await show(message);
@@ -211,14 +223,41 @@ void main() {
             .text,
         'Saved reply with one binary attachment.',
       );
-      await tester.tap(find.byTooltip('Send'));
-      await editable();
-      expect(workspace.error, contains('Reconnect'));
-      expect(find.byTooltip('Remove shep-e2e-binary.bin'), findsOneWidget);
       await show(toggle, back: true);
       await binding.convertFlutterSurfaceToImage();
       await tester.pumpAndSettle();
       await binding.takeScreenshot('native-reply-attachments');
+      await tester.tap(find.byTooltip('Send'));
+      await wait(() => find.byType(Composer).evaluate().isEmpty);
+      await tester.tap(find.byTooltip('Open navigation menu'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Outbox'));
+      await wait(
+        () => find.text('Waiting for account access').evaluate().isNotEmpty,
+      );
+      final queued = (await repository.outbox()).rows.single;
+      expect(queued.state, 'waiting');
+      expect(queued.subject, 'Re: Shared reply');
+      expect(queued.accountId, originalSnapshot!['account_id']);
+      expect(credentials.values, isEmpty);
+      await binding.takeScreenshot('native-reply-outbox-waiting');
+      await tester.tap(find.text('Cancel'));
+      await wait(
+        () => find
+            .text('No outgoing messages need attention.')
+            .evaluate()
+            .isNotEmpty,
+      );
+      expect((await repository.outbox()).rows, isEmpty);
+      await reopen();
+      expect(tester.widget<CheckboxListTile>(toggle).value, isFalse);
+      await show(find.byTooltip('Remove shep-e2e-binary.bin'));
+      expect(find.byTooltip('Remove shep-e2e-binary.bin'), findsOneWidget);
+      await show(message);
+      expect(
+        tester.widget<TextField>(message).controller!.text,
+        'Saved reply with one binary attachment.',
+      );
       binding.reportData = {
         ...?binding.reportData,
         'scenarios': ['native-reply-original-default-files-reopen'],

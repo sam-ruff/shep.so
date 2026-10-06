@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../data/groups.dart';
 import '../model/mail_groups.dart';
+import '../model/group_history.dart';
 import '../model/workspace.dart';
 import 'controls.dart';
 import 'icons.dart';
@@ -279,16 +280,43 @@ class GroupReviewDialog extends StatelessWidget {
   }
 }
 
+class _UndoNotice extends StatelessWidget {
+  const _UndoNotice(this.groups);
+  final MailGroups groups;
+  @override
+  Widget build(BuildContext context) {
+    final job = groups.failedUndo;
+    final error = groups.undoError;
+    if (job == null || error == null) return const SizedBox.shrink();
+    return Semantics(
+      liveRegion: true,
+      child: NoticeBar(
+        error: true,
+        trailing: [
+          TextButton(
+            onPressed: groups.undoDeciding(job)
+                ? null
+                : () => unawaited(groups.undo(job)),
+            child: const Text('Retry Undo'),
+          ),
+        ],
+        child: Text(error),
+      ),
+    );
+  }
+}
+
 /// Progress, completion and attention notices for group actions.
 class GroupActionBanner extends StatelessWidget {
   const GroupActionBanner({super.key, required this.workspace});
   final Workspace workspace;
 
-  void openHistory(BuildContext context) {
+  void openHistory(BuildContext context, {GroupJob? target}) {
     Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (_) => GroupHistoryScreen(workspace: workspace),
+        builder: (_) =>
+            GroupHistoryScreen(workspace: workspace, initialJob: target),
       ),
     );
   }
@@ -299,13 +327,14 @@ class GroupActionBanner extends StatelessWidget {
     final groups = workspace.groups;
     if (groups == null) return const SizedBox.shrink();
     final active = groups.active;
-    final paused = groups.jobs.where((j) => j.paused).firstOrNull;
+    final paused = groups.activeJobs.where((j) => j.paused).firstOrNull;
     final completed = groups.completed;
+    final attention = groups.attentionCount;
     final review = groups.review;
-    final attention = groups.needingReview.fold(0, (n, j) => n + j.attention);
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        _UndoNotice(groups),
         if (groups.error case final error?)
           Semantics(
             liveRegion: true,
@@ -345,12 +374,14 @@ class GroupActionBanner extends StatelessWidget {
                 ),
                 if (active.canUndo)
                   TextButton(
-                    onPressed: () => unawaited(groups.undo(active)),
+                    onPressed: groups.undoPending(active)
+                        ? null
+                        : () => unawaited(groups.undo(active)),
                     child: const Text('Undo'),
                   ),
                 IconButton(
                   tooltip: 'Open group History',
-                  onPressed: () => openHistory(context),
+                  onPressed: () => openHistory(context, target: active),
                   icon: const ShepIcon('clock', size: 18),
                 ),
               ],
@@ -366,8 +397,15 @@ class GroupActionBanner extends StatelessWidget {
                   onPressed: () => unawaited(groups.resume(paused)),
                   child: const Text('Resume'),
                 ),
+                if (paused.canUndo)
+                  TextButton(
+                    onPressed: groups.undoPending(paused)
+                        ? null
+                        : () => unawaited(groups.undo(paused)),
+                    child: const Text('Undo'),
+                  ),
                 TextButton(
-                  onPressed: () => openHistory(context),
+                  onPressed: () => openHistory(context, target: paused),
                   child: const Text('History'),
                 ),
               ],
@@ -390,7 +428,8 @@ class GroupActionBanner extends StatelessWidget {
                       ),
                     ),
                     TextButton(
-                      onPressed: () => openHistory(context),
+                      onPressed: () =>
+                          openHistory(context, target: groups.attentionTarget),
                       child: const Text('History'),
                     ),
                   ],
@@ -405,7 +444,9 @@ class GroupActionBanner extends StatelessWidget {
               trailing: [
                 if (completed.canUndo)
                   TextButton(
-                    onPressed: () => unawaited(groups.undo(completed)),
+                    onPressed: groups.undoPending(completed)
+                        ? null
+                        : () => unawaited(groups.undo(completed)),
                     child: const Text('Undo'),
                   ),
                 IconButton(
@@ -424,64 +465,46 @@ class GroupActionBanner extends StatelessWidget {
 
 /// At most 20 groups with per-state counts; each group pages 50 items.
 class GroupHistoryScreen extends StatefulWidget {
-  const GroupHistoryScreen({super.key, required this.workspace});
+  const GroupHistoryScreen({
+    super.key,
+    required this.workspace,
+    this.initialJob,
+  });
   final Workspace workspace;
+  final GroupJob? initialJob;
   @override
   State<GroupHistoryScreen> createState() => _GroupHistoryScreenState();
 }
 
 class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
-  String? expanded;
-  List<GroupItem> rows = [];
-  int? nextAfter;
-  bool loading = false;
-  String? itemsError;
-  int _request = 0;
+  late final GroupHistory history;
   MailGroups get groups => widget.workspace.groups!;
 
   @override
   void initState() {
     super.initState();
+    history = GroupHistory(
+      groups: groups,
+      changed: () {
+        if (mounted) setState(() {});
+      },
+    );
     unawaited(groups.refreshHistory());
+    final initial = widget.initialJob;
+    unawaited(initial == null ? history.load() : history.openTarget(initial));
   }
 
-  Future<void> load(GroupJob job, {bool more = false}) async {
-    final request = ++_request;
-    setState(() {
-      loading = true;
-      itemsError = null;
-      if (!more) {
-        rows = [];
-        nextAfter = null;
-      }
-    });
-    try {
-      final page = await groups.items(job, after: more ? nextAfter : null);
-      if (request != _request || !mounted) return;
-      setState(() {
-        rows = more ? [...rows, ...page.rows] : page.rows;
-        nextAfter = page.nextAfter;
-      });
-    } catch (e) {
-      if (request != _request || !mounted) return;
-      setState(() => itemsError = 'Could not read these messages. $e');
-    } finally {
-      if (request == _request && mounted) setState(() => loading = false);
-    }
-  }
-
-  void toggle(GroupJob job) {
-    if (expanded == job.id) {
-      setState(() => expanded = null);
-      return;
-    }
-    setState(() => expanded = job.id);
-    unawaited(load(job));
+  @override
+  void dispose() {
+    history.dispose();
+    super.dispose();
   }
 
   Widget item(GroupJob job, GroupItem item) {
     final c = ShepColors.of(context);
+    final generation = history.detailGeneration;
     return Padding(
+      key: ValueKey('${job.id}:${item.position}:$generation'),
       padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
       child: Row(
         children: [
@@ -507,18 +530,20 @@ class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
           ),
           if (item.canRetry)
             TextButton(
-              onPressed: () async {
-                await groups.retry(job, item);
-                if (mounted) unawaited(load(job));
-              },
+              onPressed: history.pending(job, item)
+                  ? null
+                  : () => unawaited(
+                      history.decide(job, item, generation, accept: false),
+                    ),
               child: const Text('Retry'),
             ),
           if (item.canAccept)
             TextButton(
-              onPressed: () async {
-                await groups.accept(job, item);
-                if (mounted) unawaited(load(job));
-              },
+              onPressed: history.pending(job, item)
+                  ? null
+                  : () => unawaited(
+                      history.decide(job, item, generation, accept: true),
+                    ),
               child: const Text('Accept current state'),
             ),
         ],
@@ -528,14 +553,15 @@ class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
 
   Widget card(GroupJob job) {
     final c = ShepColors.of(context);
-    final open = expanded == job.id;
+    final open = history.selected == job.id;
     return Card(
+      key: ValueKey('group-history-${job.id}'),
       semanticContainer: false,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
-            onTap: () => toggle(job),
+            onTap: () => history.toggle(job),
             borderRadius: BorderRadius.circular(ShepRadius.card),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
@@ -602,12 +628,14 @@ class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
                   ),
                 if (job.canUndo)
                   TextButton(
-                    onPressed: () => unawaited(groups.undo(job)),
+                    onPressed: groups.undoPending(job)
+                        ? null
+                        : () => unawaited(groups.undo(job)),
                     child: const Text('Undo'),
                   ),
                 if (job.canRemove)
                   TextButton(
-                    onPressed: () => unawaited(groups.remove(job)),
+                    onPressed: () => unawaited(history.remove(job)),
                     child: const Text('Remove'),
                   ),
               ],
@@ -615,18 +643,29 @@ class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
           ),
           if (open) ...[
             Divider(color: c.border, height: 1),
-            if (itemsError case final error?)
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(error, style: TextStyle(color: c.flag)),
-              ),
-            for (final row in rows) item(job, row),
-            if (loading) const LinearProgressIndicator(),
-            if (nextAfter != null && !loading)
-              TextButton(
-                onPressed: () => unawaited(load(job, more: true)),
-                child: const Text('Load next 50 messages'),
-              ),
+            for (final row in history.rows) item(job, row),
+            if (history.itemsLoading) const LinearProgressIndicator(),
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              children: [
+                TextButton(
+                  onPressed: history.hasPrevious && !history.itemsLoading
+                      ? () => unawaited(
+                          history.loadItems(job, cursor: history.previousAfter),
+                        )
+                      : null,
+                  child: const Text('Previous 50 messages'),
+                ),
+                TextButton(
+                  onPressed: history.nextAfter != null && !history.itemsLoading
+                      ? () => unawaited(
+                          history.loadItems(job, cursor: history.nextAfter),
+                        )
+                      : null,
+                  child: const Text('Next 50 messages'),
+                ),
+              ],
+            ),
             const SizedBox(height: 6),
           ],
         ],
@@ -639,20 +678,28 @@ class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
     listenable: widget.workspace,
     builder: (context, _) {
       final c = ShepColors.of(context);
-      final jobs = groups.jobs;
+      history.observeUpdates();
+      final jobs = history.jobs;
+      final selected = history.selectedJob;
+      final detailGeneration = history.detailGeneration;
+      final after = history.after;
       return Scaffold(
         appBar: AppBar(
           title: const Text('Group History'),
           actions: [
             IconButton(
               tooltip: 'Refresh History',
-              onPressed: () => unawaited(groups.refreshHistory()),
+              onPressed: () {
+                unawaited(groups.refreshHistory());
+                unawaited(history.load(cursor: history.before, preserve: true));
+              },
               icon: const ShepIcon('sync', size: 20),
             ),
           ],
         ),
         body: Column(
           children: [
+            _UndoNotice(groups),
             if (groups.error case final error?)
               NoticeBar(
                 error: true,
@@ -668,16 +715,41 @@ class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
                 ],
                 child: Text(error),
               ),
-            if (groups.historyError case final error?)
+            if (history.error case final error?)
               NoticeBar(
                 error: true,
                 trailing: [
                   TextButton(
-                    onPressed: () => unawaited(groups.refreshHistory()),
+                    onPressed: () => unawaited(
+                      history.load(cursor: history.retryBefore, preserve: true),
+                    ),
                     child: const Text('Retry'),
                   ),
                 ],
                 child: Text(error),
+              ),
+            if (history.itemsError case final error?)
+              NoticeBar(
+                key: ValueKey(
+                  'history-detail-error-${selected?.id}:$detailGeneration',
+                ),
+                error: true,
+                trailing: [
+                  TextButton(
+                    onPressed: selected == null
+                        ? null
+                        : () {
+                            if (history.selected == selected.id &&
+                                history.detailGeneration == detailGeneration) {
+                              unawaited(
+                                history.loadItems(selected, cursor: after),
+                              );
+                            }
+                          },
+                    child: const Text('Retry messages'),
+                  ),
+                ],
+                child: Text('${selected?.title ?? 'Group details'}: $error'),
               ),
             Expanded(
               child: jobs.isEmpty
@@ -685,14 +757,34 @@ class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
                       icon: 'clock',
                       title: 'No group actions yet',
                       message:
-                          'Select messages, choose an action and approve the review to see it here. History keeps the latest 20.',
+                          'Select messages, choose an action and approve the review to see it here.',
                     )
                   : ListView(
                       padding: const EdgeInsets.all(12),
                       children: [for (final job in jobs) card(job)],
                     ),
             ),
-            if (groups.historyLoading) LinearProgressIndicator(color: c.accent),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                TextButton(
+                  onPressed: history.hasNewer && !history.loading
+                      ? () => unawaited(
+                          history.load(cursor: history.previousBefore),
+                        )
+                      : null,
+                  child: const Text('Newer groups'),
+                ),
+                TextButton(
+                  onPressed: history.nextBefore != null && !history.loading
+                      ? () =>
+                            unawaited(history.load(cursor: history.nextBefore))
+                      : null,
+                  child: const Text('Older groups'),
+                ),
+              ],
+            ),
+            if (history.loading) LinearProgressIndicator(color: c.accent),
           ],
         ),
       );

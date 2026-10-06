@@ -45,7 +45,8 @@ the corresponding request in the main TODO.
 | Activity | Recovery remains separated by domain without the bounded combined summary | [#45](https://github.com/sam-ruff/shep.so/issues/45) |
 | Reader metadata | To displays an account label; subject and sender name cannot be selected | [#47](https://github.com/sam-ruff/shep.so/issues/47) |
 | Logical mail folders | Archive/Trash/Spam use literal names without the desktop destination lifecycle | [#48](https://github.com/sam-ruff/shep.so/issues/48) |
-| Pending bulk Undo | Controls require an acknowledged item before offering Undo for unsent work | [#49](https://github.com/sam-ruff/shep.so/issues/49) |
+| Pending bulk Undo | Lane implementation offers queued/paused Undo with exact lost-reply recovery; root integration/platform verification pending | [#49](https://github.com/sam-ruff/shep.so/issues/49) |
+| Bulk owner wake | Undo/Resume/Retry during final History observation lost their pump wake; lane regression/fix implemented | [#58](https://github.com/sam-ruff/shep.so/issues/58) |
 | History bounds and identity | Item pages accumulate in Dart, older completed groups are deleted, and delayed recovery can load details for a previously selected group | [#50](https://github.com/sam-ruff/shep.so/issues/50) |
 
 ## Implemented foundations
@@ -109,7 +110,10 @@ device/provider checks.
 The table records the audit baseline. Account-bound delayed notices (#28) are
 implemented in [PR #53](https://github.com/sam-ruff/shep.so/pull/53), retained
 bulk selection (#27) in [PR #54](https://github.com/sam-ruff/shep.so/pull/54),
-and Preferences search (#26) in [PR #55](https://github.com/sam-ruff/shep.so/pull/55).
-Follow-up inspection expanded #50 to retain older completed receipts and fence
-late recovery details to the exact selected group and page. The delivery tracker
-and completion log distinguish these changes from the remaining open findings.
+Preferences search (#26) in [PR #55](https://github.com/sam-ruff/shep.so/pull/55),
+calendar scheduling (#29) in [PR #56](https://github.com/sam-ruff/shep.so/pull/56),
+and bounded History (#50) in [PR #57](https://github.com/sam-ruff/shep.so/pull/57).
+The independent History review also identified a pre-existing executor wake
+race, now reproduced and tracked in [#58](https://github.com/sam-ruff/shep.so/issues/58)
+alongside queued Undo (#49). The delivery tracker and completion log distinguish
+these changes from the remaining open findings.

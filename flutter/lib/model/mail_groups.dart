@@ -10,6 +10,13 @@ class _Review {
   final SelectionCapture capture;
 }
 
+class _Undo {
+  _Undo(this.job);
+  final GroupJob job;
+  bool unknown = false, busy = false;
+  String? error;
+}
+
 /// Drives the durable group journal: one frozen review at a time, one owned
 /// step at a time, bounded History pages and explicit failure decisions.
 /// Membership stays in the repository; this controller holds counts only.
@@ -23,6 +30,26 @@ class MailGroups {
   final void Function() changed;
   final Future<void> Function() refreshMail;
   List<GroupJob> jobs = [];
+  List<GroupJob> activeJobs = [];
+  List<GroupJob> observedJobs = [];
+  int attentionCount = 0;
+  GroupJob? attentionTarget, updatedJob;
+  String? removedJob;
+  int updateRevision = 0;
+  final _undos = <String, _Undo>{};
+  GroupJob? _blockedUndo;
+  bool undoPending(GroupJob job) =>
+      _undos.containsKey(job.id) || _blockedUndo?.id == job.id;
+  bool undoDeciding(GroupJob job) => _undos[job.id]?.busy == true;
+  GroupJob? get failedUndo =>
+      _blockedUndo ??
+      _undos.values.where((request) => request.error != null).firstOrNull?.job;
+  String? get undoError => _blockedUndo != null
+      ? 'Undo is catching up. Retry Undo for ${_blockedUndo!.title} after a saved decision finishes.'
+      : _undos.values
+            .where((request) => request.error != null)
+            .firstOrNull
+            ?.error;
   _Review? _review;
   GroupJob? get review => _review?.job;
   bool deciding = false;
@@ -35,7 +62,7 @@ class MailGroups {
   String? error, historyError;
   Timer? _toast, _repaint;
 
-  GroupJob? get active => jobs
+  GroupJob? get active => activeJobs
       .where((j) => j.state == 'running' || j.state == 'undoing')
       .firstOrNull;
   Iterable<GroupJob> get needingReview => jobs.where((j) => j.attention > 0);
@@ -274,6 +301,7 @@ class MailGroups {
       if (!_disposed) {
         unawaited(refreshMail());
         changed();
+        if (_pumpAgain) unawaited(pump());
       }
     }
   }
@@ -290,40 +318,84 @@ class MailGroups {
     });
   }
 
-  Future<void> refreshHistory() async {
-    if (_disposed) return;
-    if (historyLoading) {
-      // Coalesce with the read in flight and observe again after it.
-      _historyAgain = true;
-      await _historyIdle.future;
-      return;
-    }
-    _historyAgain = false;
-    final idle = _historyIdle = Completer<void>();
+  Future<void> refreshHistory() {
+    if (_disposed) return Future.value();
+    _historyAgain = true;
+    if (historyLoading) return _historyIdle.future;
+    _historyIdle = Completer<void>();
     historyLoading = true;
+    unawaited(_observeHistory());
+    return _historyIdle.future;
+  }
+
+  Future<void> _observeHistory() async {
+    final idle = _historyIdle;
     try {
-      final data = await repository.groups({'kind': 'history'});
-      if (_disposed) return;
-      final previous = {for (final j in jobs) j.id: j};
-      jobs = (data['jobs'] as List)
-          .map((j) => GroupJob(j as Map<String, dynamic>))
-          .toList();
-      for (final job in jobs) {
-        final before = previous[job.id];
-        if (before != null && before.active && job.finished) {
-          _announce(job);
+      while (_historyAgain && !_disposed) {
+        _historyAgain = false;
+        final revision = updateRevision;
+        try {
+          final data = await repository.groups({
+            'kind': 'history',
+            'tracked': activeJobs.map((j) => j.id).toList(),
+          });
+          if (_disposed) return;
+          if (revision != updateRevision) {
+            _historyAgain = true;
+            continue;
+          }
+          final previous = {
+            for (final j in [...jobs, ...activeJobs]) j.id: j,
+          };
+          jobs = (data['jobs'] as List)
+              .map((j) => GroupJob(j as Map<String, dynamic>))
+              .toList();
+          activeJobs =
+              (data['active'] as List? ?? jobs.where((j) => j.active).toList())
+                  .map(
+                    (j) =>
+                        j is GroupJob ? j : GroupJob(j as Map<String, dynamic>),
+                  )
+                  .toList();
+          attentionCount =
+              data['attention'] as int? ??
+              needingReview.fold(0, (n, j) => n + j.attention);
+          attentionTarget = data['attention_job'] is Map<String, dynamic>
+              ? GroupJob(data['attention_job'] as Map<String, dynamic>)
+              : null;
+          final tracked = (data['tracked'] as List? ?? [])
+              .map((j) => GroupJob(j as Map<String, dynamic>))
+              .toList();
+          observedJobs = [
+            ...tracked,
+            ...observedJobs.where((j) => !tracked.any((t) => t.id == j.id)),
+          ].take(20).toList();
+          for (final job in [
+            ...jobs,
+            ...(data['tracked'] as List? ?? []).map(
+              (j) => GroupJob(j as Map<String, dynamic>),
+            ),
+          ]) {
+            final before = previous[job.id];
+            if (before != null && before.active && job.finished) {
+              _announce(job);
+            }
+          }
+          historyError = null;
+          if (data['runnable'] == true && !running) unawaited(pump());
+        } catch (e) {
+          if (_disposed) return;
+          if (revision != updateRevision) {
+            _historyAgain = true;
+            continue;
+          }
+          historyError = 'Could not read group History. $e';
         }
+        if (!_disposed) changed();
       }
-      historyError = null;
-      if (data['runnable'] == true && !running) unawaited(pump());
-    } catch (e) {
-      historyError = 'Could not read group History. $e';
     } finally {
       historyLoading = false;
-      changed();
-      if (_historyAgain && !_disposed) {
-        await refreshHistory();
-      }
+      if (!_disposed) changed();
       idle.complete();
     }
   }
@@ -341,7 +413,23 @@ class MailGroups {
   }
 
   void _replace(GroupJob job) {
-    jobs = [job, ...jobs.where((j) => j.id != job.id)];
+    final known = [
+      ...jobs,
+      ...activeJobs,
+      ...observedJobs,
+      ?updatedJob,
+    ].where((j) => j.id == job.id);
+    if (known.any((j) => j.revision > job.revision)) return;
+    jobs = [job, ...jobs.where((j) => j.id != job.id)]
+      ..sort((a, b) => b.sequence.compareTo(a.sequence));
+    jobs = jobs.take(20).toList();
+    activeJobs = [
+      if (job.active) job,
+      ...activeJobs.where((j) => j.id != job.id),
+    ];
+    updatedJob = job;
+    removedJob = null;
+    updateRevision++;
   }
 
   Future<void> _command(Map<String, Object?> command) async {
@@ -350,20 +438,73 @@ class MailGroups {
       if (_disposed) return;
       if (data is Map<String, dynamic> && data['id'] is String) {
         _replace(GroupJob(data));
+        if (command['kind'] == 'accept' || command['kind'] == 'retry') {
+          unawaited(refreshHistory());
+        }
       }
       error = null;
     } catch (e) {
+      if (_disposed) return;
       error = '$e';
     }
-    changed();
+    if (!_disposed) changed();
   }
 
   Future<void> undo(GroupJob job) async {
+    if (_disposed || (!job.canUndo && !_undos.containsKey(job.id))) return;
+    if (!_undos.containsKey(job.id) && _undos.length >= 32) {
+      _blockedUndo = job;
+      changed();
+      return;
+    }
+    final request = _undos.putIfAbsent(job.id, () => _Undo(job));
+    bool owns() => !_disposed && identical(_undos[job.id], request);
+    if (request.busy) return;
+    request.busy = true;
     if (completed?.id == job.id) dismiss();
-    await _command({'kind': 'undo', 'id': job.id});
-    // The decision paints the restored rows before its inverse steps run.
-    unawaited(refreshMail());
-    unawaited(pump());
+    changed();
+    try {
+      GroupJob saved;
+      final inspected = request.unknown ? await _inspect(request.job.id) : null;
+      if (!owns()) return;
+      if (inspected?.undo == true) {
+        saved = inspected!;
+      } else {
+        request.unknown = true;
+        try {
+          saved = GroupJob(
+            await repository.groups({'kind': 'undo', 'id': request.job.id})
+                as Map<String, dynamic>,
+          );
+        } catch (_) {
+          if (!owns()) return;
+          saved = await _inspect(request.job.id);
+          if (!owns()) return;
+          if (!saved.undo) {
+            request.unknown = false;
+            rethrow;
+          }
+        }
+      }
+      if (saved.id != request.job.id || !saved.undo) {
+        throw StateError('The saved group has not confirmed this Undo.');
+      }
+      if (!owns()) return;
+      _replace(saved);
+      _undos.remove(request.job.id);
+      if (_blockedUndo?.id == request.job.id) _blockedUndo = null;
+      unawaited(refreshMail());
+      unawaited(refreshHistory());
+      unawaited(pump());
+    } catch (e) {
+      if (owns()) {
+        request.error =
+            'Could not confirm Undo for ${request.job.title}. Retry checks this saved group. $e';
+      }
+    } finally {
+      request.busy = false;
+      if (!_disposed) changed();
+    }
   }
 
   Future<void> pause(GroupJob job) => _command({'kind': 'pause', 'id': job.id});
@@ -380,21 +521,38 @@ class MailGroups {
   Future<void> accept(GroupJob job, GroupItem item) =>
       _command({'kind': 'accept', 'id': job.id, 'position': item.position});
 
-  Future<void> remove(GroupJob job) async {
+  Future<bool> remove(GroupJob job) async {
     try {
       await repository.groups({'kind': 'remove', 'id': job.id});
+      if (_disposed) return false;
       jobs = jobs.where((j) => j.id != job.id).toList();
+      activeJobs = activeJobs.where((j) => j.id != job.id).toList();
+      _undos.remove(job.id);
+      if (_blockedUndo?.id == job.id) _blockedUndo = null;
+      removedJob = job.id;
+      updatedJob = null;
+      updateRevision++;
       error = null;
+      changed();
+      unawaited(refreshHistory());
+      return true;
     } catch (e) {
+      if (_disposed) return false;
       error = '$e';
     }
-    changed();
+    if (!_disposed) changed();
+    return false;
   }
 
-  Future<({List<GroupItem> rows, int? nextAfter})> items(
-    GroupJob job, {
-    int? after,
-  }) async {
+  Future<
+    ({
+      List<GroupItem> rows,
+      int? nextAfter,
+      bool hasPrevious,
+      int? previousAfter,
+    })
+  >
+  items(GroupJob job, {int? after}) async {
     final data = await repository.groups({
       'kind': 'items',
       'id': job.id,
@@ -405,6 +563,8 @@ class MailGroups {
           .map((r) => GroupItem(r as Map<String, dynamic>))
           .toList(),
       nextAfter: data['next_after'] as int?,
+      hasPrevious: data['has_previous'] == true,
+      previousAfter: data['previous_after'] as int?,
     );
   }
 

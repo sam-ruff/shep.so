@@ -14,7 +14,7 @@ Select all is a captured `all` gesture on the SQLite capture; it never loops ove
 
 ## Durable journal
 
-`flutter/rust/src/groups.rs` stores group work in the profile database (schema version 13) in dedicated tables: `group_jobs` (action, approved fields, state, scope, approval and Undo revisions, revision counter), `group_items` (frozen position, cache id, account, physical folder and UID, baseline flags, state, claim attempt, receipt, reason), `mail_intents` (per-message per-field revisions reserved by individual actions) and `group_clock`. The tables hold metadata and physical identities only, never MIME or secrets. Keeping them beside the mail cache lets each receipt and its cache write commit in one transaction under the writer FIFO; the ephemeral TEMP capture stays separate.
+`flutter/rust/src/groups.rs` stores group work in the profile database (schema25) in dedicated tables: `group_jobs` (action, approved fields, state, scope, approval and Undo revisions, revision counter), `group_items` (frozen position, cache id, account, physical folder and UID, baseline flags, state, claim attempt, receipt, reason), `mail_intents` (per-message per-field revisions reserved by individual actions) and `group_clock`. The tables hold metadata and physical identities only, never MIME or secrets. Keeping them beside the mail cache lets each receipt and its cache write commit in one transaction under the writer FIFO; the ephemeral TEMP capture stays separate.
 
 Commands travel through the existing `request` bridge as `{"op":"groups","command":{...}}`:
 
@@ -25,11 +25,47 @@ Commands travel through the existing `request` bridge as `{"op":"groups","comman
 - `undo` bumps the clock, cancels unsent items before any provider call, queues acknowledged items as inverse steps and lets a step acknowledged after the decision join the inverse queue. Inverse steps compare the current identity with the receipt's `after` identity (or only the folder when an acknowledged move still awaits UID recovery), restore only the fields the receipt applied and respect newer individual intent.
 - `pause`, `resume`, `retry` (failed steps only), `accept` (unconfirmed steps only; retires the local intent without classifying the provider result), `history` (newest 20 jobs with per-state counts), `items` (50 per page) and `remove` (finished, cancelled or interrupted jobs, retired in 50-row transactions).
 
-Restart: opening the profile marks claimed `sending`/`reversing` items `uncertain`/`undo_uncertain`, pauses their group, marks `staging` jobs interrupted, cancels abandoned reviews and sweeps retired jobs in bounded transactions. Nothing is repeated automatically. Preparing a new review retires the oldest finished group once History holds 20 and refuses a twenty-first active group.
+Restart: opening the profile marks claimed `sending`/`reversing` items `uncertain`/`undo_uncertain`, pauses their group, marks `staging` jobs interrupted, cancels abandoned reviews and sweeps retired jobs in bounded transactions. Nothing is repeated automatically. Preparing a new review retains completed receipts and refuses a twenty-first active group. Retry/Undo reactivation observes the same active bound. Schema25 prevents an older binary reopening a profile whose retained history its admission policy would otherwise delete.
 
 Account removal takes `Operations.groups` before the account lock so no owned step can dispatch or write a receipt meanwhile; the removal review counts the account's queued, in-flight, failed, uncertain and inverse work as `groups`, requires the explicit discard confirmation for them, cancels those items, abandons reviews that froze the account and leaves completed receipts alone.
 
 ## Flutter controller and controls
+
+Approved groups offer Undo for pending or sending work before any acknowledgement,
+including the paused notice and History. The local transaction cancels pending
+items, removes forward projection and keeps sending items until their actual
+receipt can join the inverse queue. Newer individual fields remain authoritative.
+Same-group native Undo retries return its current status without advancing the
+original Undo revision. Dart retains at most 32 exact decision requests plus one
+latest capacity rejection, and inspects unknown outcomes before any retry. A
+dedicated Retry Undo notice survives History close and unrelated pump errors.
+Explicit removal clears only that group's retained request; held replies cannot
+recreate its state or feedback. Explicit Undo/Resume/Retry wakes received during
+the pump's final History read start the same owner again after it becomes idle.
+
+`model/group_history.dart` owns one 20-group page and one 50-item page, with
+visible Newer/Older groups and Previous/Next messages controls. Indexed native
+cursors report exact last pages and retain surviving boundary rows after
+removals. Details keep their exact group, item and page generation through
+delayed Retry/Accept, page changes and same-group re-entry. Group pages and detail
+pages each keep one running read and its latest replacement with a shared idle
+future. Command revisions reject old page results and errors after removal or
+newer decisions. Detail failures keep their scoped Retry
+above the scroller while group controls remain available.
+
+The existing `MailGroups` owner observes active/attention records separately from
+the displayed page, including exact older targets. Its iterative observation
+loop has the same command fence and coalescing bound.
+Accept, Retry and Remove refresh this independent attention snapshot through the
+same coalesced owner; accepting checked state still does not claim server success.
+Status indexes keep
+completed history out of admission and next-step seeks; each active group offers
+one indexed eligible item before the next-step choice. This does not introduce
+another dispatcher or authorise replay of an uncertain provider step.
+
+Attention counting still visits matching failed/uncertain entries, and each
+group summary aggregates its members. Indexed completed-history seeks do not
+establish a fixed cost for large attention sets or large active groups.
 
 `flutter/lib/model/mail_groups.dart` drives the journal: it prepares the review from the controller's snapshot, approves or declines, pumps steps until the journal is idle or paused (coalescing repaints to one per 250 ms and refreshing History every ten steps), announces completion for six seconds, and exposes Undo, Pause, Resume, Retry, Accept, Remove, History and item pages. `NativeRepository.groupStep` resolves `requires_credentials` with the device credential store for one step. Saved groups recover at startup: runnable groups continue, paused groups wait in History.
 
