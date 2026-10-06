@@ -867,7 +867,7 @@ pub(crate) fn field_owned(
         "Invalid group field."
     );
     let individual: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND ((revision>?3 AND revision!=COALESCE((SELECT undone FROM group_jobs WHERE id=?4),-1)) OR (applied_revision>?3 AND applied_revision!=COALESCE((SELECT undone FROM group_jobs WHERE id=?4),-1))))",
+        "SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND ((revision>?3 AND revision!=COALESCE((SELECT undone FROM group_jobs WHERE id=?4),-1)) OR (applied_revision>?3 AND applied_revision!=COALESCE((SELECT undone FROM group_jobs WHERE id=?4),-1)) OR legacy_revision>?3))",
         params![mail, field, approved,job],
         |row| row.get(0),
     )?;
@@ -1056,10 +1056,13 @@ fn next(db: &Connection) -> Result<Next> {
     {
         fields.folder = None;
     }
-    if fields.unread.is_some_and(|u| u == current.unread) {
+    let known_field = |field: &str| -> Result<bool> {
+        Ok(!db.query_row("SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND legacy_revision>applied_revision)",params![current.id,field],|row|row.get::<_,bool>(0))?)
+    };
+    if fields.unread.is_some_and(|u| u == current.unread) && known_field("unread")? {
         fields.unread = None;
     }
-    if fields.starred.is_some_and(|s| s == current.starred) {
+    if fields.starred.is_some_and(|s| s == current.starred) && known_field("starred")? {
         fields.starred = None;
     }
     if fields.is_empty() {

@@ -121,6 +121,7 @@ impl Database {
                 writer.execute("DROP INDEX IF EXISTS group_item_attention", [])?;
                 for (table, column, definition) in [
                     ("mail_intents", "applied_revision", "INTEGER NOT NULL DEFAULT 0"),
+                    ("mail_intents", "legacy_revision", "INTEGER NOT NULL DEFAULT 0"),
                     ("group_items", "lineage", "TEXT"),
                     ("group_items", "connection", "TEXT"),
                     ("individual_mail_actions", "group_job", "TEXT"),
@@ -136,6 +137,14 @@ impl Database {
                     if exists && !present {
                         writer.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])?;
                     }
+                }
+                let intents: bool = writer.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='mail_intents')",
+                    [], |row| row.get(0))?;
+                if intents {
+                    // Older field choices have unknown cache completion, so
+                    // each saved revision becomes an ownership fence.
+                    writer.execute("UPDATE mail_intents SET legacy_revision=MAX(legacy_revision,revision)", [])?;
                 }
             }
             if version > 0 && version < 17 {

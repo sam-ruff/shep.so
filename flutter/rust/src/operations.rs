@@ -736,11 +736,22 @@ fn deduplicate_move(
 }
 
 pub(crate) fn adopt_action_alias(db: &Connection, source: &str, target: &str) -> Result<()> {
+    for field in ["unread", "starred"] {
+        let newer:bool=db.query_row("SELECT COALESCE((SELECT MAX(applied_revision,legacy_revision) FROM mail_intents WHERE mail=?1 AND field=?3),0)>COALESCE((SELECT MAX(applied_revision,legacy_revision) FROM mail_intents WHERE mail=?2 AND field=?3),0)",params![source,target,field],|row|row.get(0))?;
+        if newer {
+            db.execute(
+                &format!(
+                    "UPDATE mail SET {field}=(SELECT {field} FROM mail WHERE id=?1) WHERE id=?2"
+                ),
+                params![source, target],
+            )?;
+        }
+    }
     db.execute("UPDATE mail_lineage_aliases SET target=(SELECT token FROM mail_lineage WHERE id=?2) WHERE target=(SELECT token FROM mail_lineage WHERE id=?1)",params![source,target])?;
     db.execute("INSERT INTO mail_lineage_aliases(source,target) SELECT s.token,t.token FROM mail_lineage s,mail_lineage t WHERE s.id=?1 AND t.id=?2 ON CONFLICT(source) DO UPDATE SET target=excluded.target",params![source,target])?;
     db.execute(
-        "INSERT INTO mail_intents(mail,field,revision,applied_revision) SELECT ?2,field,revision,applied_revision FROM mail_intents WHERE mail=?1
-         ON CONFLICT(mail,field) DO UPDATE SET revision=MAX(mail_intents.revision,excluded.revision),applied_revision=MAX(mail_intents.applied_revision,excluded.applied_revision)",
+        "INSERT INTO mail_intents(mail,field,revision,applied_revision,legacy_revision) SELECT ?2,field,revision,applied_revision,legacy_revision FROM mail_intents WHERE mail=?1
+         ON CONFLICT(mail,field) DO UPDATE SET revision=MAX(mail_intents.revision,excluded.revision),applied_revision=MAX(mail_intents.applied_revision,excluded.applied_revision),legacy_revision=MAX(mail_intents.legacy_revision,excluded.legacy_revision)",
         params![source,target],
     )?;
     db.execute(
@@ -1610,7 +1621,7 @@ fn apply_individual_receipt(db: &Connection, action: &str) -> Result<ReceiptAppl
     let current = stored_mail(&tx, &mail)?;
     let mut needs_inspection = false;
     let cache_owned = |field: &str| -> Result<bool> {
-        Ok(!tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND applied_revision>?3)",params![mail,field,revision],|row|row.get::<_,bool>(0))?)
+        Ok(!tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND MAX(applied_revision,legacy_revision)>?3)",params![mail,field,revision],|row|row.get::<_,bool>(0))?)
     };
     match receipt {
         IndividualReceipt::Move { receipt } => {
@@ -1744,7 +1755,7 @@ fn release_action_intent(db: &Connection, action: &str) -> Result<()> {
     for field in ["folder", "unread", "starred"] {
         if fields.get(field).is_some_and(|value| !value.is_null()) {
             db.execute(
-                "DELETE FROM mail_intents WHERE mail=?1 AND field=?2 AND revision=?3 AND applied_revision=0",
+                "DELETE FROM mail_intents WHERE mail=?1 AND field=?2 AND revision=?3 AND applied_revision=0 AND legacy_revision=0",
                 params![mail, field, revision],
             )?;
             db.execute(

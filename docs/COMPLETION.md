@@ -20,7 +20,7 @@ independently of reserved input; it protects newer completed choices while a
 pending opposite group dispatches against the acknowledged baseline. Legacy
 zero never infers completion. Failed-before logs remain in ignored artifacts.
 
-The current full native suite passes 245 tests, including quote/schema migration,
+The current full native suite passes 248 tests, including quote/schema migration,
 selection/History/queued Undo and new mocked-provider ownership cases. The
 previous five failures were only current schema-marker expectations, corrected
 without weakening payload assertions. The mixed individual/group failed-before
@@ -40,8 +40,21 @@ reads. Compact light/dark repair goldens have been inspected. The first host
 fixture run needed real asynchronous Process I/O; the next needed completion
 timer cleanup. Those logs and the older-probe CLI fixture failure remain in
 ignored artifacts; production did not change for those harness corrections.
-Normal hooks and integration with current main remain before publication.
-Android, Apple, live-provider and timing evidence is not claimed.
+The frozen checkpoint `7fb92fa` passes normal hooks, including 1,203 desktop
+library tests with 26 intentional ignored tests, plus the remaining shared and
+profile checks. Main `8a91144` is integrated by merge `71ca852`, whose normal
+hooks pass again. Subsequent regressions reproduce completed destination flags
+lost by alias folding and newer legacy choices overwritten after
+upgrade/cancellation. Cache values now move atomically with newer ownership;
+`legacy_revision` preserves observed old decisions through cancellation and
+alias folding without claiming completion. A fresh explicit flag write
+establishes a known baseline. On the integrated tree, native Clippy, Flutter
+analysis and strict documentation pass; Flutter passes 417 host cases with the
+two older-library probes and two zone-conditional Calendar cases skipped. The
+real-library receipt controls pass in light and dark against unchanged goldens,
+and the schema26 probe passes again with the same library hash. Known
+same-account successor adoption remains explicit #66. Android device, Apple,
+live-provider and timing evidence is not claimed.
 
 ## Mobile reply original and portable default, 6 October 2026 (#30)
 

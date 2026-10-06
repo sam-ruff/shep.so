@@ -27,6 +27,14 @@ Commands travel through the existing `request` bridge as `{"op":"groups","comman
 
 Restart checks the saved child attempt first: acknowledged `sending`/`reversing` work becomes `repair`/`undo_repair`; a claim without acknowledgement becomes `uncertain`/`undo_uncertain`. Staging remains interrupted and abandoned reviews retire in bounded transactions. Unknown provider mutations are never replayed automatically. Preparing a new review retains completed receipts and refuses a twenty-first active group. Schema27 fences older cache writers before relying on group child ownership and applied-field versions. Migration keeps old bytes and revisions, leaves applied completion at unknown zero and does not invent lineage or connection proof for old reviews.
 
+Migration retains each observed old field revision as `legacy_revision`, an
+unknown ownership fence rather than cache completion. Cancellation cannot erase
+it, and an older ACK cannot overwrite it. A new explicit flag choice may need
+one actual dispatch even when the cached value already matches; only its cache
+completion establishes a known baseline. Proven alias folding keeps cache values
+consistent with newer completed or legacy ownership while pending input remains
+projected separately. Conflicting replacement bytes still refuse the merge.
+
 Account removal takes `Operations.groups` before the account lock so no owned step can dispatch or write a receipt meanwhile; the removal review counts the account's queued, in-flight, failed, uncertain and inverse work as `groups`, requires the explicit discard confirmation for them, cancels those items, abandons reviews that froze the account and leaves completed receipts alone.
 
 ## Flutter controller and controls
@@ -81,5 +89,10 @@ establish a fixed cost for large attention sets or large active groups.
 `test/support/group_repository.dart` is the synthetic journal used by previews and host tests; it mirrors the Rust contract but is not the production path.
 
 ## Limitations
+
+Queued successors retain strict frozen folder/UID checks even when captured
+lineage proves an earlier acknowledged move. Exact same-account successor
+adoption is tracked in #66 after the receipt/destination prerequisites. This
+conservative skip does not authorise unknown MOVE replay or cross-account work.
 
 Review keys are a browser and desktop matter. Each IMAP step opens its own provider session, so large IMAP groups remain slow; destination planning #48, cross-account moves, large-group performance, Apple and live-provider execution remain open. The live capture remains available through preparation and declined or dismissed reviews. Approval releases only its matching capture after durable confirmation. Group intent paints after the saved decision; acknowledged cache gaps repair through the existing owner and do not authorise another provider mutation. Real FFI/control fixtures remain separate evidence from mocked wire acknowledgement and live providers.

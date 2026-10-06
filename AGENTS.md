@@ -148,8 +148,12 @@ selection lineage cannot acquire proof from a later replacement. Preserve the
 original approval through inverse admission and newer field choices, including
 same-value decisions. `mail_intents.applied_revision` records actual cache
 completion independently of reserved input; legacy zero is unknown. Keep the
-held opposite-value flag ACK, queued Pause, alias, restart and bounded child-row
-cleanup regressions.
+pre-upgrade `legacy_revision` ownership fence through cancellation and aliases;
+it cannot establish completion or an already-applied no-op. A fresh confirmed
+field write establishes that baseline. Alias adoption transfers cache values
+with their newer completed or conservatively retained legacy ownership. Keep the
+held opposite-value flag ACK, queued Pause, alias, legacy upgrade, restart and
+bounded child-row cleanup regressions.
 
 Flutter schema26 fences older writers that discard hidden reply originals.
 Retain the immutable quote/account/message identity through text and file saves;

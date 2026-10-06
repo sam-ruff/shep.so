@@ -996,3 +996,255 @@ async fn mixed_individual_ack_cancel_and_newer_group_preserve_wire_flag_baseline
     assert_eq!(values[1].unread, Some(true));
     Ok(())
 }
+
+#[tokio::test]
+async fn legacy_newer_field_choice_survives_upgrade_pending_cancel_and_old_ack_repair() -> Result<()>
+{
+    let (directory, p) = profile().await;
+    seed(&p, 1).await;
+    make_imap(&p).await;
+    let mut provider = MockProvider::new();
+    let mut sequence = mockall::Sequence::new();
+    provider
+        .expect_set_flags()
+        .times(1)
+        .in_sequence(&mut sequence)
+        .returning(|_, _, _, flags| {
+            assert_eq!(flags.unread, Some(false));
+            Ok(())
+        });
+    provider
+        .expect_set_flags()
+        .times(2)
+        .in_sequence(&mut sequence)
+        .returning(|_, _, _, flags| {
+            assert_eq!(flags.unread, Some(true));
+            Ok(())
+        });
+    let provider = Arc::new(provider);
+    *p.operations.provider.lock().expect("provider") = Some(provider.clone());
+    p.database.write(|db|{db.execute_batch("CREATE TRIGGER fail_legacy_cache BEFORE UPDATE OF unread ON mail BEGIN SELECT RAISE(FAIL,'Synthetic legacy cache gap'); END")?;Ok(())}).await?;
+    assert_eq!(request(&p,json!({"op":"mutate","action_id":"legacy-old-ack","id":"fixture:INBOX:0","unread":false,"password":"fixture-only"})).await["status"],"repair");
+    p.database
+        .write(|db| {
+            db.execute_batch("DROP TRIGGER fail_legacy_cache")?;
+            Ok(())
+        })
+        .await?;
+    assert_eq!(request(&p,json!({"op":"mutate","action_id":"legacy-new-completion","id":"fixture:INBOX:0","unread":true,"password":"fixture-only"})).await["status"],"succeeded");
+    let exact=p.database.write(|db|{
+        let receipt:String=db.query_row("SELECT result FROM individual_mail_action_receipts WHERE action='legacy-old-ack'",[],|row|row.get(0))?;
+        let legacy_column:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('mail_intents') WHERE name='legacy_revision')",[],|row|row.get(0))?;
+        if legacy_column {db.execute_batch("ALTER TABLE mail_intents DROP COLUMN legacy_revision")?;}
+        db.execute_batch("ALTER TABLE mail_intents DROP COLUMN applied_revision; PRAGMA user_version=26")?;
+        Ok(receipt)
+    }).await?;
+    drop(p);
+    let p = crate::api::MobileProfile::open(
+        directory
+            .path()
+            .join("mail.sqlite3")
+            .to_string_lossy()
+            .into(),
+    )
+    .await?;
+    *p.operations.provider.lock().expect("provider") = Some(provider);
+    assert_eq!(request(&p,json!({"op":"mutate","action_id":"post-upgrade-cancel","id":"fixture:INBOX:0","unread":false})).await["status"],"waiting");
+    request(
+        &p,
+        json!({"op":"cancel_mail_action","id":"post-upgrade-cancel"}),
+    )
+    .await;
+    assert_eq!(
+        request(
+            &p,
+            json!({"op":"inspect_mail_action","id":"legacy-old-ack"})
+        )
+        .await["status"],
+        "succeeded"
+    );
+    assert!(
+        p.database
+            .read(|db| Ok(crate::operations::stored_mail(db, "fixture:INBOX:0")?.unread))
+            .await?,
+        "Unknown legacy completion must not grant permission to overwrite a newer choice"
+    );
+    assert_eq!(
+        p.database
+            .read(|db| Ok(db.query_row(
+                "SELECT result FROM individual_mail_action_receipts WHERE action='legacy-old-ack'",
+                [],
+                |row| row.get::<_, String>(0)
+            )?))
+            .await?,
+        exact
+    );
+    review(&p, "explicit-legacy-unread", json!({"kind":"unread"})).await;
+    approve(&p, "explicit-legacy-unread").await;
+    assert_eq!(
+        step(&p, Some("fixture-only")).await["outcome"],
+        "done",
+        "An explicit new choice establishes completion instead of inferring a legacy no-op"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn move_cache_repair_alias_keeps_completed_destination_flags_and_rejects_replacement()
+-> Result<()> {
+    for replaced in [false, true] {
+        let (_directory, p) = profile().await;
+        seed(&p, 1).await;
+        make_imap(&p).await;
+        let mut provider = MockProvider::new();
+        provider
+            .expect_move_mail()
+            .times(1)
+            .returning(|_, _, _, _| Ok(Some("destination-uid".into())));
+        provider
+            .expect_set_flags()
+            .times(1)
+            .returning(|_, _, mail, flags| {
+                assert_eq!(mail.remote_id, "destination-uid");
+                assert_eq!(mail.folder, "Archive");
+                assert_eq!(flags.unread, Some(false));
+                Ok(())
+            });
+        *p.operations.provider.lock().expect("provider") = Some(Arc::new(provider));
+        review(&p, "alias-cache", json!({"kind":"archive"})).await;
+        approve(&p, "alias-cache").await;
+        p.database.write(|db|{db.execute_batch("CREATE TRIGGER fail_alias_move_cache BEFORE UPDATE OF folder ON mail BEGIN SELECT RAISE(FAIL,'Synthetic cache gap'); END")?;Ok(())}).await?;
+        assert_eq!(step(&p, Some("fixture-only")).await["outcome"], "repair");
+        p.database.write(|db|{
+            db.execute("INSERT INTO mail(id,account_id,remote_id,folder,sender,recipient,subject,preview,timestamp,unread,starred,attachment_count,body,raw) SELECT 'synced-destination',account_id,'destination-uid','Archive',sender,recipient,subject,preview,timestamp,unread,starred,attachment_count,body,raw FROM mail",[])?;
+            Ok(())
+        }).await?;
+        assert_eq!(request(&p,json!({"op":"mutate","action_id":"destination-read","id":"synced-destination","unread":false,"password":"fixture-only"})).await["status"],"succeeded");
+        p.database
+            .write(move |db| {
+                db.execute_batch("DROP TRIGGER fail_alias_move_cache")?;
+                if replaced {
+                    db.execute(
+                        "UPDATE mail SET raw=?1 WHERE id='synced-destination'",
+                        [b"unrelated replacement".to_vec()],
+                    )?;
+                }
+                Ok(())
+            })
+            .await?;
+        assert_eq!(
+            step(&p, None).await["outcome"],
+            if replaced { "repair" } else { "done" }
+        );
+        let source = p
+            .database
+            .read(|db| crate::operations::stored_mail(db, "fixture:INBOX:0"))
+            .await?;
+        if replaced {
+            assert_eq!(source.folder, "INBOX");
+            assert_eq!(
+                p.database
+                    .read(|db| Ok(db.query_row(
+                        "SELECT COUNT(*) FROM mail_aliases WHERE alias='synced-destination'",
+                        [],
+                        |row| row.get::<_, i64>(0)
+                    )?))
+                    .await?,
+                0
+            );
+        } else {
+            assert_eq!(source.folder, "Archive");
+            assert_eq!(source.remote_id, "destination-uid");
+            assert!(
+                !source.unread,
+                "Completed destination choice must agree with merged ownership"
+            );
+            assert!(
+                p.database
+                    .read(|db| Ok(db.query_row(
+                        "SELECT applied_revision=revision FROM mail_intents WHERE mail='fixture:INBOX:0' AND field='unread'",
+                        [],
+                        |row| row.get::<_, bool>(0)
+                    )?))
+                    .await?,
+                "The merged destination choice must be recorded as completed"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn alias_folding_keeps_legacy_fence_without_inventing_completion() -> Result<()> {
+    let (_directory, p) = profile().await;
+    seed(&p, 1).await;
+    make_imap(&p).await;
+    let mut provider = MockProvider::new();
+    provider
+        .expect_set_flags()
+        .times(1)
+        .returning(|_, _, _, flags| {
+            assert_eq!(flags.unread, Some(false));
+            assert_eq!(flags.starred, None);
+            Ok(())
+        });
+    *p.operations.provider.lock().expect("provider") = Some(Arc::new(provider));
+    // The folded copy carries only migrated revisions; the target has a real
+    // completed star choice. Both predate the current clock.
+    p.database
+        .write(|db| {
+            let tx = db.transaction()?;
+            tx.execute("UPDATE group_clock SET revision=MAX(revision,10) WHERE id=1", [])?;
+            tx.execute("INSERT INTO mail(id,account_id,remote_id,folder,sender,recipient,subject,preview,timestamp,unread,starred,attachment_count,body,raw) SELECT 'legacy-copy',account_id,'legacy-uid','Archive',sender,recipient,subject,preview,timestamp,0,0,attachment_count,body,raw FROM mail WHERE id='fixture:INBOX:0'",[])?;
+            tx.execute("INSERT INTO mail_intents(mail,field,revision,legacy_revision) VALUES('legacy-copy','unread',0,7),('legacy-copy','starred',0,7)",[])?;
+            tx.execute("INSERT INTO mail_intents(mail,field,revision,applied_revision) VALUES('fixture:INBOX:0','starred',9,9)",[])?;
+            crate::operations::adopt_action_alias(&tx, "legacy-copy", "fixture:INBOX:0")?;
+            tx.execute("DELETE FROM mail WHERE id='legacy-copy'", [])?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await?;
+    let merged = p
+        .database
+        .read(|db| {
+            let mail = crate::operations::stored_mail(db, "fixture:INBOX:0")?;
+            let fences = db
+                .prepare("SELECT field,applied_revision,legacy_revision FROM mail_intents WHERE mail='fixture:INBOX:0' ORDER BY field")?
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok((mail.unread, mail.starred, fences))
+        })
+        .await?;
+    assert_eq!(
+        merged,
+        (
+            false,
+            true,
+            vec![("starred".into(), 9, 7), ("unread".into(), 0, 7)]
+        ),
+        "Folding moves the newer legacy value and fence but records no completion"
+    );
+    review(&p, "legacy-alias-read", json!({"kind":"read"})).await;
+    approve(&p, "legacy-alias-read").await;
+    assert_eq!(
+        step(&p, Some("fixture-only")).await["outcome"],
+        "done",
+        "A matching cached value under an unknown legacy fence still needs one write"
+    );
+    review(&p, "legacy-alias-flag", json!({"kind":"flag"})).await;
+    approve(&p, "legacy-alias-flag").await;
+    let skipped = step(&p, Some("fixture-only")).await;
+    assert_eq!(skipped["outcome"], "skipped");
+    assert_eq!(skipped["reason"], "Already up to date");
+    assert!(
+        p.database
+            .read(|db| Ok(db.query_row(
+                "SELECT applied_revision>legacy_revision FROM mail_intents WHERE mail='fixture:INBOX:0' AND field='unread'",
+                [],
+                |row| row.get::<_, bool>(0)
+            )?))
+            .await?,
+        "The confirmed write establishes a known baseline"
+    );
+    Ok(())
+}

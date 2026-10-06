@@ -79,7 +79,7 @@ CREATE INDEX IF NOT EXISTS profile_sync_application_pending ON profile_sync_appl
 CREATE TABLE IF NOT EXISTS profile_sync_reviews(seq INTEGER PRIMARY KEY AUTOINCREMENT,subscription TEXT NOT NULL REFERENCES profile_subscriptions(id),id TEXT NOT NULL UNIQUE,field TEXT NOT NULL,review TEXT NOT NULL,UNIQUE(subscription,field));
 CREATE TABLE IF NOT EXISTS group_clock(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
 INSERT OR IGNORE INTO group_clock VALUES(1,0);
-CREATE TABLE IF NOT EXISTS mail_intents(mail TEXT NOT NULL REFERENCES mail(id) ON DELETE CASCADE,field TEXT NOT NULL,revision INTEGER NOT NULL,applied_revision INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(mail,field));
+CREATE TABLE IF NOT EXISTS mail_intents(mail TEXT NOT NULL REFERENCES mail(id) ON DELETE CASCADE,field TEXT NOT NULL,revision INTEGER NOT NULL,applied_revision INTEGER NOT NULL DEFAULT 0,legacy_revision INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(mail,field));
 CREATE TABLE IF NOT EXISTS individual_mail_actions(id TEXT PRIMARY KEY,mail TEXT NOT NULL,account TEXT NOT NULL,fields TEXT NOT NULL,accepted_fields TEXT,physical TEXT NOT NULL DEFAULT '{}',intent_revision INTEGER NOT NULL DEFAULT 0,credential_slot TEXT,status TEXT NOT NULL CHECK(status IN ('queued','running','waiting','succeeded','rejected','uncertain','repair','cancelled')),error TEXT,created INTEGER NOT NULL,group_job TEXT,group_position INTEGER,group_inverse INTEGER);
 CREATE TABLE IF NOT EXISTS individual_mail_action_receipts(action TEXT PRIMARY KEY REFERENCES individual_mail_actions(id) ON DELETE CASCADE,result TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS individual_mail_action_status ON individual_mail_actions(status,created,id);

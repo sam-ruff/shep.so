@@ -124,6 +124,8 @@ in [PR #63](https://github.com/sam-ruff/shep.so/pull/63), including the saved
 Android quote/file/Outbox flow and final spacing recapture. Destination review
 identified the receipt/cache and inverse ownership prerequisite
 [#64](https://github.com/sam-ruff/shep.so/issues/64); it has its own implementation
-before destination planning #48. The delivery tracker and completion log
+before destination planning #48. Same-account acknowledged successor adoption is
+an explicit follow-up [#66](https://github.com/sam-ruff/shep.so/issues/66), separate
+from cross-account moves #31. The delivery tracker and completion log
 distinguish these changes from the remaining open findings and Apple/provider
 verification.

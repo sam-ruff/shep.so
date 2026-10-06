@@ -6,7 +6,9 @@ cache-only repair before another provider claim. Original approval, captured
 lineage and completed field versions preserve newer choices through Undo and late
 ACKs. Subordinate rows belong exclusively to the group owner. This correction
 precedes destination planning #48; verification and remaining platform limits
-are recorded in [Completion](COMPLETION.md).
+are recorded in [Completion](COMPLETION.md). Review of this lane opened #66:
+a queued same-account successor should follow an exactly proven acknowledged
+MOVE identity instead of skipping, without replaying unknown results.
 
 **6 October reply-original delivery (#30):** Mobile Reply and Reply all gain a
 per-draft Include original message control and searchable new-reply default.
