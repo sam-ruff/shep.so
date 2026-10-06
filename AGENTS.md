@@ -81,6 +81,13 @@ acknowledged event identity and current ownership. Lost replies reuse that inver
 identity. Never recreate a deleted event from portable display fields: restoration
 needs a provider contract preserving fields such as attendees and recurrence.
 
+Flutter event schedules retain canonical all-day pairs as UTC nominal dates and
+legacy non-midnight timestamps until an explicit schedule edit. Keep untouched
+event fields and exact source/ETag/resource identity. Submitted forms pin their
+calendar, retain newer input after older admission replies and leave admitted
+work reachable when closed. Preserve range/DST controls and actual native-journal
+reopen tests; fixture evidence cannot establish live-provider or Apple execution.
+
 `shared/calendar-core` owns portable event/mutation/receipt and typed failure
 contracts. Include it in coordinated version stamping. Flutter schema 21 saves
 calendar intent through the existing native cache owner before token access or
