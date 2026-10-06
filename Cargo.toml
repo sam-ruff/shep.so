@@ -14,11 +14,12 @@ license = "MIT"
 
 [features]
 default = []
-test-support = ["shep-mail-core/test-support", "shep-profile-core/test-support"]
+test-support = ["shep-mail-core/test-support", "shep-profile-core/test-support", "dep:iced_tiny_skia", "iced_tiny_skia/test-support"]
 
 [dependencies]
 shep-mail-core = { path = "shared/mail-core", features = ["staged-receive", "condstore"] }
 iced = { version = "0.14", default-features = false, features = ["tiny-skia", "tokio", "svg", "image-without-codecs", "advanced", "x11", "wayland", "linux-theme-detection"] }
+iced_tiny_skia = { version = "=0.14.0", optional = true }
 image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 rfd = "0.17"
 scraper = "0.27"

@@ -431,7 +431,16 @@ impl Store {
         expected: u64,
         visible: Vec<String>,
     ) -> anyhow::Result<SelectionSnapshot> {
+        #[cfg(feature = "test-support")]
+        let queued = tracing::enabled!(target: "shep::review_timing", tracing::Level::DEBUG)
+            .then(std::time::Instant::now);
         self.run(move |c| {
+            #[cfg(feature = "test-support")]
+            let started = queued.map(|_| std::time::Instant::now());
+            #[cfg(feature = "test-support")]
+            if let Some(queued) = queued {
+                tracing::debug!(target: "shep::review_timing", stage = "worker", queue_ms = queued.elapsed().as_secs_f64() * 1000.);
+            }
             let tx = c.transaction()?;
             let (revision, _) = version(&tx, source)?;
             anyhow::ensure!(
@@ -453,8 +462,16 @@ impl Store {
                 JOIN mail_lineage l ON l.id=s.id WHERE s.selection=?",
                 [id.to_string()],
             )?;
+            #[cfg(feature = "test-support")]
+            let summarising = started.map(|_| std::time::Instant::now());
             let result = snapshot(&tx, id, &visible)?;
             tx.commit()?;
+            #[cfg(feature = "test-support")]
+            if let (Some(started), Some(summarising)) = (started, summarising) {
+                tracing::debug!(target: "shep::review_timing", stage = "snapshot", selected = result.selected,
+                    freeze_ms = summarising.duration_since(started).as_secs_f64() * 1000.,
+                    summary_commit_ms = summarising.elapsed().as_secs_f64() * 1000.);
+            }
             Ok(result)
         })
         .await

@@ -605,7 +605,15 @@ pub fn run(activation: Option<crate::activation::Signal>, mailto: Option<String>
 }
 impl App {
     fn window_view(&self, _window: iced::window::Id) -> Element<'_, Message> {
-        self.view()
+        #[cfg(feature = "test-support")]
+        let started = tracing::enabled!(target: "shep::review_timing", tracing::Level::DEBUG)
+            .then(Instant::now);
+        let view = self.view();
+        #[cfg(feature = "test-support")]
+        if let Some(started) = started {
+            tracing::debug!(target: "shep::review_timing", stage = "view", review_dialog = self.dialog == Some(Dialog::BulkReview), elapsed_ms = started.elapsed().as_secs_f64() * 1000.);
+        }
+        view
     }
 
     fn new() -> (Self, Task<Message>) {
