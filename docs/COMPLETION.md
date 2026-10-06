@@ -21,14 +21,74 @@ reviewed. Normal commit hooks gate the published checkpoint.
 
 Updated Flutter-web and Appium bulk flows reuse the retained selection after
 Cancel. Root Android verification passed the three named light/dark control and
-native-journal restart scenarios with the exact SQLite report. Ordinary Appium
-pixels remain pending: integration captures omit some filled-button labels, so
-those captures are not a visual pass. Flutter-web execution, Apple, live IMAP and
-large-group performance remain separate verification requirements. Pending-group
-Undo (#49), bounded History retention (#50) and common-domain Activity (#45)
-remain active gaps. The existing compose button also overlaps the centre of the
-compact list's paging control; the new paging regression uses its exposed left
-portion with a real pointer tap.
+native-journal restart scenarios with the exact SQLite report. All four Appium
+flows pass, covering selection, declined review, approval/Pause/Resume/Undo and
+dark History. Ordinary light/dark review, completion and History captures were
+visually inspected; their button labels render correctly. Some integration
+captures omit filled-button labels, so those captures alone are not a visual
+pass. The interrupted Android wrapper was resumed at its unchanged Appium stage
+after restarting the owned emulator and installing the harness dependencies.
+Evidence remains under `artifacts/flutter/native/` and `artifacts/logs/` in the
+bulk-selection review worktree.
+
+Implementation: [PR #54](https://github.com/sam-ruff/shep.so/pull/54),
+commit `07f033c`. Primary integration with `main` `f854910` passes all 308 Flutter
+and 206 native tests, native Clippy and strict documentation checks. The reviewed
+implementation is unchanged apart from two formatter indentation corrections.
+Flutter-web execution, Apple, live IMAP and large-group
+performance remain separate verification requirements. Pending-group Undo (#49),
+bounded History retention and stale detail reloads (#50), and common-domain
+Activity (#45) remain active gaps. The existing compose button also overlaps the
+centre of the compact list's paging control; the new paging regression uses its
+exposed left portion with a real pointer tap.
+
+## Mobile foreground sync notices, 6 October 2026 (#28)
+
+Automatic mail checks now publish an account-bound warning only after 30 seconds
+from the first observed failure in a continuous episode. Typed results arrive as
+each account finishes, so another held account cannot delay the notice clock.
+Explicit Refresh remains immediate and retains its origin when queued behind an
+automatic check. Incoming settings and the active credential slot fence results;
+renames retain episodes, while reconnect, reconfiguration, removal and expired
+foreground generations reject stale replies. Successful checks end their own
+episodes. Unrelated action/save failures retain their recovery controls.
+
+The extracted notice model uses an injected clock and a monotonic production
+clock, with a one-shot deadline owned by the foreground workspace. Native account
+snapshots include content-free credential-slot identities and reject older replies.
+Private credential-store and unexpected provider exceptions retain fixed public
+errors. Retry and Dismiss use the existing visible mail controls.
+
+Evidence: 19 new controlled-clock, native orchestration and real Flutter-control
+tests pass, including held-second-account and failed-final-snapshot cases. The
+full Flutter suite passes 293 tests and the native Rust suite passes 203 tests;
+Flutter analysis is clean. Compact light/dark notice goldens were reviewed for
+readable account errors and reachable Retry/Dismiss controls. The actual Rust
+activation/restart regression checks legacy and newly activated snapshot slots.
+Implementation: [PR #53](https://github.com/sam-ruff/shep.so/pull/53),
+commit `2b1d7db`; the primary review checked the complete diff and both captures.
+
+Serial account scheduling and the fixed 15-second polling interval remain tracked
+separately in #35. OS-background scheduling, push/IDLE, live mail providers and
+actual Android/Apple lifecycle execution are unverified by these fixture tests.
+
+## Mobile source audit and issue inventory, 6 October 2026
+
+The [functional audit](agents/MOBILE_FUNCTIONAL_AUDIT.md) compares Flutter
+Android/iOS against desktop `main` `4dec758`, covering all application domains
+and excluding mobile layout adaptations and incomplete shared features.
+[GitHub #51](https://github.com/sam-ruff/shep.so/issues/51) links 24 confirmed
+functional gaps and a separate platform/provider verification issue. Each
+ticket includes baseline source evidence and acceptance criteria.
+
+Existing mobile folder mutations, CalDAV, durable bulk actions and preference
+reconciliation were checked in source, correcting stale broad missing-feature
+claims. The review also found lost selection after a declined bulk review,
+missing Undo before the first group acknowledgement, unbounded History item
+accumulation and the reader's account label being shown as recipient metadata.
+Implementation PRs and their executed checks are recorded separately. This
+inventory does not claim runtime or full-parity completion. The pinned strict
+Zensical documentation build passes.
 
 ## Real-server iced_test coverage, 5 October 2026 (desktop)
 

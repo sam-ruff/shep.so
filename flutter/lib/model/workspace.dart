@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import '../data/repository.dart';
 import '../data/settings_store.dart';
 import '../data/accounts.dart';
+import '../data/incoming_sync.dart';
+import 'sync_notices.dart';
 import '../data/drafts.dart';
 import '../data/outgoing.dart';
 import '../data/printing.dart';
@@ -42,7 +44,9 @@ class Workspace extends ChangeNotifier {
     this.printer = const SystemMessagePrinter(),
     this.google,
     this.profileDiscovery,
-  }) : _mail = List.of(repository.cached),
+    DateTime Function()? syncClock,
+  }) : _syncNotices = SyncNotices(now: syncClock),
+       _mail = List.of(repository.cached),
        _confirmed = {for (final mail in repository.cached) mail.id: mail},
        events = List.of(repository.events);
   final MessagePrinter printer;
@@ -137,11 +141,24 @@ class Workspace extends ChangeNotifier {
   String? preferenceSaveError;
   VoidCallback? _preferenceRetry;
   bool _refreshAgain = false, _disposed = false;
+  final SyncNotices _syncNotices;
+  IncomingSyncRepository? get _incomingSync =>
+      repository is IncomingSyncRepository
+      ? repository as IncomingSyncRepository
+      : null;
+  List<IncomingAccount> get _incomingAccounts =>
+      (_incomingSync?.incomingAccounts ?? const [])
+          .where((account) => !_removedAccounts.contains(account.id))
+          .toList();
+  String? get _syncError => _syncNotices.visibleNotice(_incomingAccounts);
+
   String? _error, notice;
+  String? _refreshOwnedError;
   MoveRecord? _undoErrorOwner;
-  String? get error => _error;
+  String? get error => _error ?? _syncError;
   set error(String? value) {
     _error = value;
+    _refreshOwnedError = null;
     _undoErrorOwner = null;
   }
 
@@ -218,7 +235,11 @@ class Workspace extends ChangeNotifier {
   }
 
   String? _undoId;
-  VoidCallback? retry;
+  VoidCallback? _retry;
+  VoidCallback? get retry => _error == null && _syncError != null
+      ? () => unawaited(refresh())
+      : _retry;
+  set retry(VoidCallback? value) => _retry = value;
   int _revision = 0, _settingsRevision = 0, limit = 50;
   Future<void> _settingsQueue = Future.value();
   final Map<String, int> _preferenceFields = {};
@@ -353,6 +374,7 @@ class Workspace extends ChangeNotifier {
 
   Timer? _searchTimer;
   Timer? _syncTimer;
+  Timer? _syncNoticeTimer;
   int _pageRevision = 0, total = 0, _unread = 0;
   final Set<String> loadingBodies = {};
   final Map<String, Mail> _bodies = {};
@@ -377,6 +399,8 @@ class Workspace extends ChangeNotifier {
     if (_foreground != active) _lifecycleGeneration++;
     if (!active) unawaited(finishReading());
     _foreground = active;
+    _armSyncNotice();
+    if (active) _changed();
     folderCreation?.foreground(active);
   }
 
@@ -568,10 +592,30 @@ class Workspace extends ChangeNotifier {
   }
 
   void _changed() {
-    if (!_disposed) notifyListeners();
+    if (_disposed) return;
+    _armSyncNotice();
+    notifyListeners();
+  }
+
+  void _armSyncNotice() {
+    _syncNoticeTimer?.cancel();
+    if (_disposed || !_foreground) return;
+    final delay = _syncNotices.nextNoticeDelay(_incomingAccounts);
+    if (delay != null) _syncNoticeTimer = Timer(delay, _changed);
+  }
+
+  void _observeIncoming(
+    List<IncomingResult> outcomes, {
+    required bool automatic,
+  }) {
+    _syncNotices.observe(outcomes, _incomingAccounts, automatic: automatic);
+    _changed();
   }
 
   void clearError() {
+    if (_error == null) {
+      _syncNotices.dismiss();
+    }
     error = null;
     retry = null;
     _changed();
@@ -607,7 +651,7 @@ class Workspace extends ChangeNotifier {
       }
       _syncTimer = Timer.periodic(const Duration(seconds: 15), (_) {
         if (_foreground && !syncing && native.mailAccounts.isNotEmpty) {
-          unawaited(refresh());
+          unawaited(refresh(automatic: true));
         }
         if (_foreground && !savingPreferences && _unsavedPreferences.isEmpty) {
           unawaited(profileDiscovery?.syncTick(profileApplication));
@@ -1135,8 +1179,10 @@ class Workspace extends ChangeNotifier {
     _changed();
   }
 
-  Future<void> refresh() async {
+  Future<void> refresh({bool automatic = false}) async {
+    if (_disposed || (automatic && !_foreground)) return;
     if (syncing) {
+      if (automatic) return;
       _refreshAgain = true;
       notice = 'Refresh queued';
       _changed();
@@ -1147,35 +1193,76 @@ class Workspace extends ChangeNotifier {
     do {
       _refreshAgain = false;
       final revision = _revision;
+      final lifecycle = _lifecycleGeneration;
       try {
-        final result = await repository.refresh();
+        final incoming = _incomingSync;
+        final result = incoming == null ? await repository.refresh() : null;
+        if (incoming != null) {
+          final outcomes = await incoming.refreshIncoming(
+            canDispatch: () =>
+                !_disposed && _foreground && lifecycle == _lifecycleGeneration,
+            onResult: (result) {
+              if (_disposed ||
+                  !_foreground ||
+                  lifecycle != _lifecycleGeneration) {
+                return;
+              }
+              _observeIncoming([result], automatic: automatic);
+            },
+          );
+          await accountRepository?.initialize();
+          if (_disposed) break;
+          _observeIncoming(
+            lifecycle == _lifecycleGeneration ? outcomes : const [],
+            automatic: automatic,
+          );
+          if (_refreshOwnedError != null && _error == _refreshOwnedError) {
+            error = null;
+            retry = null;
+          }
+        }
         if (accountRepository != null) {
           await loadPage();
-          error = accountRepository!.warning;
-          retry = error == null ? null : () => unawaited(refresh());
+          if (incoming == null) {
+            error = accountRepository!.warning;
+            retry = error == null ? null : () => unawaited(refresh());
+          }
         }
         // A snapshot requested before any mutation cannot erase newer intent.
         if (accountRepository == null &&
             revision == _revision &&
             pending == 0) {
-          _mail = List.of(result);
+          _mail = List.of(result!);
           _confirmed
             ..clear()
             ..addEntries(result.map((m) => MapEntry(m.id, m)));
         }
-        notice = error != null
-            ? null
-            : repository.preview
-            ? 'Preview refreshed'
-            : 'Mail refreshed';
+        if (!automatic &&
+            lifecycle == _lifecycleGeneration &&
+            (_error == null || _error == _refreshOwnedError)) {
+          notice = error != null
+              ? null
+              : repository.preview
+              ? 'Preview refreshed'
+              : 'Mail refreshed';
+        }
       } catch (e) {
-        error = repository.preview
-            ? 'Preview refresh failed. Retry when ready.'
-            : '$e';
-        retry = () {
-          unawaited(refresh());
-        };
+        if (_disposed) break;
+        if (!automatic &&
+            lifecycle == _lifecycleGeneration &&
+            (_error == null || _error == _refreshOwnedError)) {
+          error = repository.preview
+              ? 'Preview refresh failed. Retry when ready.'
+              : e is MailOperationFailure
+              ? e.message
+              : 'Could not refresh mail. Check the connection and retry.';
+          retry = () {
+            unawaited(refresh());
+          };
+          _refreshOwnedError = _error;
+        }
       }
+      automatic = false;
     } while (_refreshAgain && !_disposed);
     syncing = false;
     _changed();
@@ -2730,6 +2817,7 @@ class Workspace extends ChangeNotifier {
     folderCreation?.dispose();
     _searchTimer?.cancel();
     _syncTimer?.cancel();
+    _syncNoticeTimer?.cancel();
     super.dispose();
   }
 }

@@ -1585,8 +1585,8 @@ class NativeFlows(unittest.TestCase):
         fixture = Path(started["artifacts"]) / "tray attachment.txt"
         fixture.write_text("Fixture bytes to retain through a failed save")
         self.disable_close_to_tray()
-        self.mcp.batch(check("tray.available", True), key("c"), check("composer.visible", True), wait(80),
-                       click(850,279), type_text("Keep my attachment draft"), click(750,633), check("draft_io", True),
+        self.mcp.batch(check("tray.available", True), key("c"), check("composer.visible", True),
+                       check("focused_input", "to"), click(850,279), type_text("Keep my attachment draft"), click(750,633), check("draft_io", True),
                        {"type":"close_request"}, check("close_pending", True), check("tray.visible", True),
                        {"type":"choose_file", "path":str(fixture)}, check("tray.visible", False),
                        check("tray.temporary", True), check("tray_host.notifications.0.title", "Shep is finishing your changes"),
@@ -2501,7 +2501,7 @@ class NativeFlows(unittest.TestCase):
         self.mcp.call("desktop.start", mail_actions="slow")
         self.mcp.batch(key("f"), check("forward_pending", True), check("dialog", None),
                        key("f"), click(400,mail_row_y(1)), check("selected", "Your weekly workspace digest"),
-                       key("c"), check("composer.visible", True), wait(100),
+                       key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850,279), type_text("A different draft"),
                        {**check("forward_pending", False), "timeout_ms":5000},
                        check("composer.visible", True), check("compose_fields.subject", "A different draft"),
@@ -2538,7 +2538,7 @@ class NativeFlows(unittest.TestCase):
         result = self.mcp.call("desktop.start", mail_actions="fail")
         fixture = Path(result["artifacts"]) / "close attachment.txt"
         fixture.write_text("Owned attachment for close failure recovery")
-        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850,279), type_text("Keep attachment draft"),
                        click(750,633), {"type":"choose_file", "path":str(fixture)},
                        check("draft_io", True), {"type":"close_request"}, check("close_pending", True),
@@ -2551,7 +2551,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_close_during_discard_failure_keeps_review_and_draft(self):
         self.mcp.call("desktop.start", discard_failure_once=True)
-        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850,279), type_text("Keep failed discard"), check("draft_count", 1),
                        click(820,633), check("dialog", "DiscardDraft"), key("y"),
                        check("discard_pending", True), {"type":"close_request"}, check("close_pending", True),
@@ -5922,7 +5922,8 @@ class NativeFlows(unittest.TestCase):
                        check("draft_attachments.0.name", fixture.name), shot("inline-reply-after-restart"))
 
     def test_compose_save_and_reopen_draft(self):
-        self.mcp.batch(click(101, 214), check("composer.visible", True), shot("compose"))
+        self.mcp.batch(click(101, 214), check("composer.visible", True), check("focused_input", "to"),
+                       shot("compose"))
         # Actual typing, including M, must remain in the input field.
         self.mcp.batch(click(850, 230), type_text("friend@example.com"),
                        click(850, 279), type_text("Meet me Monday"), check("composer.visible", True),
@@ -5935,7 +5936,7 @@ class NativeFlows(unittest.TestCase):
     def test_compose_session_preserves_fields_through_preferences_and_graceful_restart(self):
         started = self.mcp.call("desktop.start", persistent=True)
         print(f"Composer session restart evidence: {started['artifacts']}", flush=True)
-        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850, 230), type_text("friend@example.test"), click(1350, 230), wait(80),
                        click(850, 278), type_text("copy@example.test"),
                        click(850, 327), type_text("private@example.test"),
@@ -5960,10 +5961,10 @@ class NativeFlows(unittest.TestCase):
                        shot("composer-session-after-restart"))
 
     def test_drafts_collapse_context_cancel_and_discard(self):
-        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850, 279), type_text("First draft to keep"), check("draft_count", 1),
                        key("Escape"), check("composer.visible", False), check("dialog", None),
-                       key("c"), check("composer.visible", True), wait(80),
+                       key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850, 279), type_text("Second draft to discard"), check("draft_count", 2),
                        key("Escape"), check("composer.visible", False), check("dialog", None), wait(80), shot("drafts-expanded"),
                        click(98, 516), check("drafts_collapsed", True), check("saved_drafts_collapsed", True),
@@ -5985,7 +5986,7 @@ class NativeFlows(unittest.TestCase):
         result = self.mcp.call("desktop.start", discard_failure_once=True)
         fixture = Path(result["artifacts"]) / "discard attachment.txt"
         fixture.write_text("Cached bytes to remove with the draft")
-        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850,279), type_text("Draft with an attachment"),
                        click(850,400), type_text("Do not lose this on a failed discard."),
                        click(750,633), {"type":"choose_file","path":str(fixture)},
@@ -6001,13 +6002,13 @@ class NativeFlows(unittest.TestCase):
                        check("draft_count",0), check("dialog",None), check("draft_attachments",[]))
         self.mcp.call("desktop.start", width=900,height=640)
         self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"), click(563,366),check("dark",True),
-                       key("ctrl+1"),check("tab","Mail"), key("c"),check("composer.visible", True),wait(80),
+                       key("ctrl+1"),check("tab","Mail"), key("c"),check("composer.visible", True),check("focused_input", "to"),
                        click(680,279),type_text("Compact draft"),check("draft_count",1),
                        click(729,543),check("dialog","DiscardDraft"),shot("discard-review-dark-compact"),
                        key("Escape"),check("composer.visible", True),check("compose_fields.subject","Compact draft"))
 
     def test_composer_preferences_shortcut_preserves_focused_body(self):
-        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850, 400), type_text("Keep comma, and words"),
                        check("editor", "Keep comma, and words"),
                        key("ctrl+comma"), check("tab", "Preferences"),
@@ -6020,12 +6021,12 @@ class NativeFlows(unittest.TestCase):
     def test_draft_save_feedback_survives_switch_and_retries_latest_text(self):
         result = self.mcp.call("desktop.start", draft_save_failure_once=True, persistent=True)
         print(f"Draft save evidence: {result['artifacts']}", flush=True)
-        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850, 279), type_text("A retained draft"),
                        check("composer.pending", None, "ne"), shot("draft-saving-light"))
         original = self.mcp.call("desktop.state")["composer"]["id"]
         self.mcp.batch(key("Escape"), check("composer.visible", False),
-                       key("c"), check("composer.visible", True), wait(80),
+                       key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850, 279), type_text("B independent draft"),
                        check(f"composer.save_errors.{original}", "Preview storage failure", "contains"),
                        check("draft_count", 1), shot("draft-parked-error-light"),
@@ -6056,7 +6057,7 @@ class NativeFlows(unittest.TestCase):
                        shot("draft-saved-after-restart"))
 
     def test_compose_autosaves_and_move_accepts_typed_folder(self):
-        self.mcp.batch(key("c"), check("composer.visible", True),
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850, 279), type_text("Autosaved thought"),
                        check("draft_count", 1), key("Escape"), check("composer.visible", False), check("dialog", None),
                        key("m"), check("dialog", "Move"), check("focused_input", "folder-search"), type_text("Archive"), key("Return"),
@@ -6065,7 +6066,7 @@ class NativeFlows(unittest.TestCase):
     def test_compose_recipients_and_native_file_picker(self):
         fixture = self.artifacts / "planning notes.txt"
         fixture.write_text("These exact bytes must survive reopening the draft.")
-        self.mcp.batch(key("c"), check("composer.visible", True), wait(80),
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
                        click(850, 230), type_text("friend@example.com"), click(1350, 230), wait(80), shot("compose-recipients"),
                        click(850, 278), type_text("copy@example.com"), click(850, 327), type_text("hidden@example.com"),
                        click(850, 376), type_text("Planning with attachments"),

@@ -317,7 +317,7 @@ class GroupActionBanner extends StatelessWidget {
                       ? null
                       : () => unawaited(
                           review == null
-                        ? groups.retryPending()
+                              ? groups.retryPending()
                               : _showGroupReview(context, workspace, review),
                         ),
                   child: const Text('Retry'),

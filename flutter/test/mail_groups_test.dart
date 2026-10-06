@@ -445,7 +445,7 @@ void main() {
       expect(await preparing, isNull);
       expect(repository.groupPreview.jobs.length, 1);
       expect(h.groups.error, contains('Could not close'));
-    await h.groups.retryPending();
+      await h.groups.retryPending();
       expect(repository.groupPreview.jobs, isEmpty);
       expect(h.groups.error, isNull);
       expect(h.selection.mode, true);
