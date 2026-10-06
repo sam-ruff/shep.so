@@ -179,6 +179,8 @@ impl App {
         self.bulk.review = None;
         self.bulk.action = None;
         self.bulk.error = None;
+        #[cfg(feature = "test-support")]
+        tracing::debug!(target: "shep::review_timing", serial = self.bulk.serial + 1, stage = "begin");
         self.dialog = Some(Dialog::BulkReview);
         self.focused_input = None;
         self.pending_focus = None;
@@ -251,6 +253,8 @@ impl App {
             )) {
                 self.bulk.serial = serial;
                 self.bulk.freeze_pending = Some(serial);
+                #[cfg(feature = "test-support")]
+                tracing::debug!(target: "shep::review_timing", serial, stage = "dispatch");
             }
         }
         self.bulk.tokens.retain(|token, _| {
@@ -494,6 +498,8 @@ impl App {
                 }
             }
             Event::BulkReview(serial, result) if self.bulk.freeze_pending == Some(serial) => {
+                #[cfg(feature = "test-support")]
+                tracing::debug!(target: "shep::review_timing", serial, stage = "received", succeeded = result.is_ok());
                 self.bulk.freeze_pending = None;
                 match result {
                     Ok(review) => {

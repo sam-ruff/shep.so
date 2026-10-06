@@ -32,6 +32,23 @@ class PerformanceGate(unittest.TestCase):
     def test_action_gate_accepts_paired_real_pixel_observations(self):
         self.assertEqual(self.evaluate_actions(self.action_report()), [])
 
+    def test_diagnostic_reports_cannot_validate_required_gates(self):
+        report = self.action_report()
+        report["context"] = {"mode": "diagnostic"}
+        self.assertIn("Diagnostic action timings cannot validate the required gate", self.evaluate_actions(report))
+        backend = {"dataset_messages": 100000, "samples": 20, "metrics_ms": {"test": 3},
+                   "context": {"mode": "diagnostic"}}
+        with contextlib.redirect_stdout(io.StringIO()):
+            errors = gate.evaluate({"dataset_messages": 100000, "minimum_samples": 20,
+                                    "budgets_ms": {"test": 8}}, backend, {"samples": 20})
+        self.assertEqual(errors, ["Diagnostic backend timings cannot validate the required gate"])
+
+    def test_action_gate_keeps_legacy_reports_compatible(self):
+        for context in (None, {}, {"mode": "required"}):
+            report = self.action_report()
+            report["context"] = context
+            self.assertEqual(self.evaluate_actions(report), [])
+
     def test_action_gate_rejects_wrong_fixture_and_observer_conditions(self):
         for field, value in (("schema", True), ("schema", 2), ("binary_sha256", None),
                              ("binary_sha256", "g" * 64), ("binary_sha256", "a" * 63), ("mailbox_messages", 99999),

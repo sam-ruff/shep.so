@@ -66,7 +66,7 @@ python3 scripts/test_profile_core.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 cargo build --locked --release --no-default-features -p shep --bin shep
 cargo build --locked --profile test-ui --features test-support
-cargo bench --locked --bench responsiveness
+bash scripts/ci-performance.sh backend "$shep_source"
 # The functional flows keep their fixture data in memory: SQLite commits on the
 # runner's rotational pool stalled for tens of seconds under shared load. The
 # timing scripts below stay on disk. Evidence is copied back for upload whether
@@ -77,7 +77,7 @@ SHEP_E2E_ARTIFACTS=/e2e python3 scripts/e2e.py
 trap - EXIT
 copy_e2e_evidence
 python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
-python3 scripts/action_latency.py --samples 20 --output artifacts/performance/actions.json
+bash scripts/ci-performance.sh action "$shep_source"
 # The runner renders HTML 3-4x slower than a quiet workstation, so CI reports
 # those pixel timings; scripts/check.sh keeps the strict budgets.
 python3 scripts/performance_gate.py --html-report-only

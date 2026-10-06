@@ -113,6 +113,9 @@ impl Engine {
                     )))
                 })
         {
+            #[cfg(feature = "test-support")]
+            let started = log::log_enabled!(target: "iced_tiny_skia::timing", log::Level::Debug)
+                .then(std::time::Instant::now);
             let radii = fill_border_radius
                 .into_iter()
                 .map(|radius| radius * transformation.scale_factor())
@@ -182,6 +185,11 @@ impl Engine {
                     tiny_skia::Transform::default(),
                     Some(clip_mask),
                 );
+            }
+            #[cfg(feature = "test-support")]
+            if let Some(started) = started {
+                log::debug!(target: "iced_tiny_skia::timing", "shadow pixels={} elapsed_ms={}",
+                    u64::from(width) * u64::from(height), started.elapsed().as_secs_f64() * 1000.);
             }
         }
 

@@ -866,12 +866,20 @@ impl Engine {
                 return self.profiles_command(request, action, output).await;
             }
             Command::ReviewSelection(serial, id, revision, visible) => {
+                #[cfg(feature = "test-support")]
+                let started =
+                    tracing::enabled!(target: "shep::review_timing", tracing::Level::DEBUG)
+                        .then(std::time::Instant::now);
                 let result = self
                     .store
                     .review_selection(id, revision, visible)
                     .await
                     .map(Arc::new)
                     .map_err(|e: anyhow::Error| format!("{e:#}"));
+                #[cfg(feature = "test-support")]
+                if let Some(started) = started {
+                    tracing::debug!(target: "shep::review_timing", serial, stage = "prepared", elapsed_ms = started.elapsed().as_secs_f64() * 1000.);
+                }
                 output.send(Event::BulkReview(serial, result)).await?;
             }
             Command::ReleaseSelection(id) => self.store.release_selection(id).await?,
