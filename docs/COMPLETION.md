@@ -24,11 +24,18 @@ control scenarios cover queued light/dark, paused History/held receipt, partial
 completion and lost status after close. Both compact queued captures are reviewed.
 Full checkpoint host gates pass 376 Flutter and 217 native tests, with clean
 analysis/native Clippy and pinned strict documentation. Normal checkpoint hooks
-pass. Main integration and final hooks remain pending. Android,
+pass. Merging main `0858706` leaves native/shared source unchanged and the final
+Flutter suite passes 395 tests, with two zone-conditional Calendar skips covered
+separately in London/Los Angeles. The first combined run hit the previously
+reported existing group FFI settle timeout; its unchanged isolated and full
+reruns pass, with the failed log retained and no timeout changes. Final merged
+analysis/documentation and merge hooks are recorded with the PR. Android,
 Apple and live-provider evidence remain separate; no performance-under-load
 claim follows from controlled held-provider tests.
 
 ## Mobile bulk History checkpoint, 6 October 2026 (#50)
+
+Implementation: [PR #57](https://github.com/sam-ruff/shep.so/pull/57).
 
 The Flutter History control now keeps one 20-group page and one 50-item page,
 with visible cursor navigation and exact older recovery targets. Schema25
@@ -40,10 +47,11 @@ one indexed eligible item per active group. No provider dispatcher was added.
 Recovery callbacks keep their group/item/page generation through held Retry or
 Accept, another group, another page and same-group away-and-back. Page and owner
 observations fence local command revisions, including two removals during a held
-read, including stale failed replies. Iterative group, detail and owner
+read and stale failed replies. Iterative group, detail and owner
 one-read/latest-replacement loops share idle futures, avoiding recursive refresh
-chains and queued reads from rapid group choices. Failed detail reads retain a scoped Retry above the
-scroller; group controls and closing remain independent of those reads.
+chains and queued reads from rapid group choices. Failed detail reads retain a
+scoped Retry above the scroller; group controls and closing remain independent of
+those reads.
 Accept, Retry and Remove refresh independent attention state, including older
 off-page targets; actual banner controls cover accepting and removing that group.
 
@@ -62,6 +70,74 @@ Checkpoint normal hooks and pinned strict documentation pass. Final merged
 Clippy/documentation and merge hooks are recorded with the PR. Android/Apple,
 live providers and large-active-group performance remain separate requirements.
 Pending-group Undo stays in #49.
+
+Primary integration with `main` `31d004a` passes 378 Flutter tests, with the two
+existing zone-specific cases covered by the Calendar evidence below. Analysis
+and four Android report-guard tests pass. Native Rust and History production
+sources are unchanged from the reviewed head with 213 native tests and clean
+Clippy. The saved Android bulk runner passes all three native scenarios and all
+four Appium preview flows. Root reviewed the light/dark native History captures,
+the Appium light review and dark History captures. Evidence is under ignored
+`artifacts/logs/history-integrated-*` and `artifacts/flutter/native/`.
+
+An independent agent reviewed the complete change and found no #50 blockers.
+Its separate pre-existing final-observation scheduling finding was reproduced
+for Undo, Resume and Retry and is tracked in #58 alongside #49. Final integration
+hooks and strict documentation results are recorded in PR #57. Apple, live
+providers and large-active-group performance remain unverified.
+
+## Mobile calendar scheduling, 6 October 2026 (#29)
+
+Implementation: [PR #56](https://github.com/sam-ruff/shep.so/pull/56),
+commit `b20ad45`.
+
+The event editor now has native Start date, Last date, From and To pickers and
+an All day switch. It supports timed and multi-day events, rejects invalid ranges
+and nonexistent spring-DST times, and keeps read-only/expanded recurring events
+view-only. Last date is inclusive for all-day events; the stored end is the next
+nominal date at UTC midnight. Month and day projections include spanning events
+without exposing a canonical all-day event on neighbouring local dates.
+
+Canonical midnight all-day pairs remain UTC nominal dates when decoded. Older
+non-midnight pairs retain their previous local instant interpretation and exact
+serialised timestamps. Title/location-only edits preserve the original start/end;
+only an explicit schedule edit adopts the nominal date representation. No journal
+history is migrated and no previously sent provider event is corrected implicitly.
+Descriptions, source, ETag and resource URL remain intact; desktop also lacks a
+description editor.
+
+Submitted input is frozen through the existing journal owner. Later text/time/date
+input stays open after an older completion. The calendar becomes fixed after the
+first submission so an unknown save cannot create another event on a different
+source. Closing a submitted form keeps admitted work reachable through Calendar.
+Exact retries and conditional provider/cache recovery remain owned by Workspace.
+
+Evidence: the default-zone full Flutter suite passes 293 tests, with two
+zone-specific cases run separately. London and Los Angeles each pass 29 focused
+tests, including actual spring-gap controls, nominal DST ranges and retained
+legacy/timed timestamps. Nine host FFI tests include explicit native profile
+disposal before reopening and exact admitted-request comparisons. The native
+calendar Rust filter passes 37 tests, native Clippy and Flutter analysis are clean,
+and four harness tests retain independent calendar/bulk completion guards.
+
+The saved `android_e2e.py --calendar-only` scenario passes timed and all-day saves
+in light/dark through the production Workspace/native journal, followed by owned
+profile close/reopen. Both Android captures and compact light/dark/view-only
+goldens were reviewed. The first Android run read the journal before admission;
+its logs/capture remain under ignored `artifacts/calendar-failed-before`. The
+saved test now observes the actual journal and form outcome with bounded waits
+and visible failure diagnostics. Live Google/CalDAV, Apple execution, full
+recurrence editing and acknowledged Calendar Undo remain unverified or unfinished.
+
+Primary integration with `main` `22d6bbc` passes 349 Flutter tests, with the two
+zone-specific cases covered by 20 model/control tests in each of London and Los
+Angeles. All four report-guard tests pass. Native Rust sources are identical to
+the main revision whose 210 tests and Clippy passed during PR #55 integration.
+The first combined Flutter run could not load suites because its generated
+package configuration lacked the newly merged Preferences dependency; resolving
+packages left the lockfile and source unchanged, and the full rerun passes.
+The complete source diff, both compact scheduling goldens, the recurring view-only
+golden and both Android captures were reviewed before integration.
 
 ## Mobile Preferences search, 6 October 2026 (#26)
 
