@@ -24,6 +24,7 @@ class MailActionBanner extends StatelessWidget {
           Semantics(
             liveRegion: true,
             child: ToastCard(
+              icon: workspace.moves.pending ? 'clock' : 'check',
               trailing: [
                 if (workspace.undo != null)
                   TextButton(
@@ -44,6 +45,7 @@ class MailActionBanner extends StatelessWidget {
           Semantics(
             liveRegion: true,
             child: ToastCard(
+              icon: 'clock',
               trailing: [
                 if (action.canResume)
                   TextButton(

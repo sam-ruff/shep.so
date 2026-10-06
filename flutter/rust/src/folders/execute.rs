@@ -8,6 +8,9 @@ use shep_mail_core::{
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub(crate) trait CreationApi: Send + Sync {
+    async fn catalogue(&self) -> Result<Vec<Mailbox>> {
+        anyhow::bail!("The folder catalogue is unavailable.")
+    }
     async fn plan(&self, parent: Option<String>, name: String) -> Result<Mailbox>;
     async fn inspect(&self, target: Mailbox) -> Result<Option<Mailbox>>;
     /// An error means connection setup failed before CREATE was dispatched.
@@ -21,6 +24,13 @@ pub(crate) struct ImapCreation {
 
 #[async_trait::async_trait]
 impl CreationApi for ImapCreation {
+    async fn catalogue(&self) -> Result<Vec<Mailbox>> {
+        use shep_mail_core::folder_actions::Connection;
+        ImapFolders::open(&self.account, &self.password)
+            .await?
+            .catalog()
+            .await
+    }
     async fn plan(&self, parent: Option<String>, name: String) -> Result<Mailbox> {
         ImapFolders::open(&self.account, &self.password)
             .await?
@@ -117,6 +127,19 @@ pub(crate) async fn execute(
         "This folder request needs a decision before continuing."
     );
     if !checking {
+        let id = job.id.clone();
+        if !db
+            .read(move |db| crate::destinations::allow_creation(db, &id))
+            .await?
+        {
+            return attention(
+                db,
+                &job,
+                "cancelled",
+                "The linked mail intent was cancelled before CREATE.",
+            )
+            .await;
+        }
         job = attention(db, &job, "planning", "Preparing the folder on the server.").await?;
     }
     if job.target.is_none() {
@@ -169,7 +192,26 @@ pub(crate) async fn execute(
             .await;
         }
     }
-    job = attention(db, &job, "running", "Creating the folder.").await?;
+    let before = job.clone();
+    job = db
+        .write(move |db| {
+            let tx = db.transaction()?;
+            let mut after = before.clone();
+            if crate::destinations::allow_creation(&tx, &before.id)? {
+                after.status = "running".into();
+                after.error = Some("Creating the folder.".into());
+            } else {
+                after.status = "cancelled".into();
+                after.error = Some("The linked mail intent was cancelled before CREATE.".into());
+            }
+            let saved = save(&tx, &before, &after)?;
+            tx.commit()?;
+            Ok(saved)
+        })
+        .await?;
+    if job.status != "running" {
+        return Ok(job);
+    }
     match api.create(target.clone()).await {
         Ok(CreateOutcome::Acknowledged) => {
             let mut after = job.clone();

@@ -56,6 +56,7 @@ pub fn preview(db: &Connection, id: &str) -> Result<Removal> {
         "SELECT json_array(job,position,state) FROM group_items WHERE account=?1 ORDER BY job,position",
         "SELECT json_array(id,mail,fields,status,error) FROM individual_mail_actions WHERE account=?1 ORDER BY id",
         "SELECT json_array(id,revision,status,target,receipt,acknowledged,mutation) FROM folder_creations WHERE account_id=?1 ORDER BY id",
+        "SELECT json_array(owner_kind,owner,role,connection,credential_slot,creation_id,phase,target,revision) FROM logical_mail_destinations WHERE account=?1 ORDER BY owner_kind,owner",
     ] {
         let mut statement = db.prepare(query)?;
         let mut rows = statement.query([id])?;

@@ -3,6 +3,13 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "mobile-provider-logical-destinations",
+      "contract": "Archive, Trash and Spam retain cached-catalogue-first resolution, first-sync LIST and an uncached literal candidate on failed LIST. Validate and freeze exact selectable names, namespace and encoding. Missing folders require one locally admitted CREATE dependency and acknowledgement before MOVE; LIST or checked existence cannot acknowledge an unknown CREATE.",
+      "desktop": "Existing exact-name/SPECIAL-USE ordering and cached-catalogue fallback policy remain the reference; POP3 filing remains local.",
+      "mobile": "Issue #48 work in progress: focused native planner and individual mutation/receipt/Undo tests cover special-use names, POP3, rejected namespace, failed discovery, lost CREATE acknowledgement, cache repair and held cancellation. The isolated TLS host runner presses rendered Undo during a real held CREATE, retains its acknowledged receipt and sends neither original nor inverse MOVE. Compact light/dark pending controls and Spam selected review Cancel pass. Group receipt/lineage integration depends on schema27 prerequisite #64; final combined/Android/live-provider evidence is pending.",
+      "browser": "Existing shared folder and bulk owners remain the reference; this Flutter increment does not establish new browser provider evidence."
+    },
+    {
       "id": "mobile-bulk-queued-undo",
       "contract": "Approved groups offer Undo before any acknowledgement, including queued, paused and in-flight first steps. Cancel only unsent membership, preserve actual receipts and newer fields, and inspect/retry the same durable Undo after lost replies. Removal fences held replies and capacity rejection keeps visible exact Retry.",
       "desktop": "Existing completed-plus-remaining Undo control and retained group journal remain the reference.",

@@ -313,13 +313,9 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
                 "The server's folder encoding changed. Refresh the saved request.".into(),
             );
         }
-        connection(
-            &mut self.session,
-            self.encoding,
-            self.extensions.without_special_use(),
-        )
-        .create(target.name.clone(), None)
-        .await
+        connection(&mut self.session, self.encoding, self.extensions)
+            .create(target.name.clone(), target.role)
+            .await
     }
 
     pub async fn find_planned_folder(
@@ -635,6 +631,56 @@ mod tests {
             },
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn planned_logical_roles_need_advertised_special_use_and_generic_creation_stays_plain() {
+        for (capabilities, role, command) in [
+            (
+                "* CAPABILITY IMAP4rev1 CREATE-SPECIAL-USE\r\n$TAG OK done\r\n",
+                None,
+                "CREATE \"INBOX.Archive\"",
+            ),
+            (
+                "* CAPABILITY IMAP4rev1\r\n$TAG OK done\r\n",
+                Some(FolderRole::Archive),
+                "CREATE \"INBOX.Archive\"",
+            ),
+            (
+                "* CAPABILITY IMAP4rev1 CREATE-SPECIAL-USE\r\n$TAG OK done\r\n",
+                Some(FolderRole::Archive),
+                "CREATE \"INBOX.Archive\" (USE (\\Archive))",
+            ),
+        ] {
+            script(
+                vec![
+                    ("CAPABILITY", capabilities),
+                    (command, "$TAG OK created\r\n"),
+                ],
+                async move |folders| {
+                    let capabilities = folders
+                        .session
+                        .capabilities()
+                        .await
+                        .expect("advertised capabilities");
+                    folders.extensions = Extensions::from(&capabilities);
+                    let target = Mailbox {
+                        name: "INBOX.Archive".into(),
+                        delimiter: Some('.'),
+                        selectable: true,
+                        encoding: NameEncoding::ImapUtf7,
+                        no_inferiors: false,
+                        non_existent: false,
+                        role,
+                    };
+                    assert!(matches!(
+                        folders.create_planned_folder(&target).await,
+                        CreateOutcome::Acknowledged
+                    ));
+                },
+            )
+            .await;
+        }
     }
 
     #[tokio::test]

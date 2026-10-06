@@ -19,13 +19,14 @@ pub const PAGE: usize = 50;
 pub(crate) const ACTIVE_CAPACITY_QUERY: &str = "SELECT COUNT(*) FROM (SELECT 1 FROM group_jobs INDEXED BY group_job_state WHERE state IN ('staging','review','running','undoing','paused') LIMIT 21)";
 pub(crate) const ATTENTION_COUNT_QUERY: &str = "SELECT COUNT(*) FROM group_items INDEXED BY group_item_attention WHERE state IN ('failed','uncertain','undo_failed','undo_uncertain')";
 pub(crate) const ATTENTION_TARGET_QUERY: &str = "SELECT job FROM group_items INDEXED BY group_item_attention WHERE state IN ('failed','uncertain','undo_failed','undo_uncertain') LIMIT 1";
-pub(crate) const NEXT_ITEM_QUERY: &str = "SELECT j.id,j.state,COALESCE(CASE WHEN j.state='undoing' THEN j.undone ELSE j.approved END,0),j.fields,i.position,i.mail,i.account,i.folder,i.remote_id,i.unread,i.starred,i.receipt FROM group_jobs j INDEXED BY group_job_state CROSS JOIN group_items i ON i.job=j.id AND i.position=(SELECT position FROM group_items INDEXED BY group_item_state WHERE job=j.id AND state=CASE j.state WHEN 'running' THEN 'pending' ELSE 'undoing' END ORDER BY position LIMIT 1) WHERE j.state IN ('running','undoing') ORDER BY j.seq LIMIT 1";
+pub(crate) const NEXT_ITEM_QUERY: &str = "SELECT j.id,j.state,COALESCE(CASE WHEN j.state='undoing' THEN j.undone ELSE j.approved END,0),j.fields,i.position,i.mail,i.account,i.folder,i.remote_id,i.unread,i.starred,i.lineage,i.receipt FROM group_jobs j INDEXED BY group_job_state CROSS JOIN group_items i ON i.job=j.id AND i.position=(SELECT position FROM group_items INDEXED BY group_item_state WHERE job=j.id AND state=CASE j.state WHEN 'running' THEN 'pending' ELSE 'undoing' END ORDER BY position LIMIT 1) WHERE j.state IN ('running','undoing') ORDER BY j.seq LIMIT 1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
     Archive,
     Delete,
+    Spam,
     Move { folder: String },
     Read,
     Unread,
@@ -49,6 +50,15 @@ impl Fields {
     }
 }
 impl Action {
+    fn logical_role(&self) -> Option<crate::destinations::Role> {
+        use crate::destinations::Role;
+        match self {
+            Self::Archive => Some(Role::Archive),
+            Self::Delete => Some(Role::Trash),
+            Self::Spam => Some(Role::Spam),
+            _ => None,
+        }
+    }
     pub fn fields(&self) -> Fields {
         match self {
             Action::Archive => Fields {
@@ -57,6 +67,10 @@ impl Action {
             },
             Action::Delete => Fields {
                 folder: Some("Trash".into()),
+                ..Default::default()
+            },
+            Action::Spam => Fields {
+                folder: Some("Spam".into()),
                 ..Default::default()
             },
             Action::Move { folder } => Fields {
@@ -617,6 +631,8 @@ async fn stage(profile: &MobileProfile, id: &str, selection: &str, expected: u64
                 let tx = db.transaction()?;
                 let (state, _) = job_state(&tx, &job)?;
                 ensure!(state == "staging", "This review was cancelled.");
+                let action: Action = serde_json::from_str(&tx.query_row("SELECT action FROM group_jobs WHERE id=?1", [&job], |row|row.get::<_,String>(0))?)?;
+                let mut accounts = std::collections::BTreeSet::new();
                 for row in rows {
                     let position = row["position"].as_i64().context("Invalid selection page.")?;
                     let mail_id = row["id"].as_str().context("Invalid selection page.")?;
@@ -628,10 +644,17 @@ async fn stage(profile: &MobileProfile, id: &str, selection: &str, expected: u64
                     );
                     let current = stored_mail(&tx, mail_id).ok();
                     match current {
-                        Some(mail) => tx.execute(
-                            "INSERT INTO group_items(job,position,mail,account,folder,remote_id,unread,starred,state) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'pending')",
-                            params![job,position,mail.id,mail.account_id,mail.folder,mail.remote_id,mail.unread,mail.starred],
-                        )?,
+                        Some(mail) => {
+                            let lineage: String = tx.query_row("SELECT token FROM mail_lineage WHERE id=?1", [&mail.id], |row|row.get(0))?;
+                            let changed = tx.execute(
+                                "INSERT INTO group_items(job,position,mail,account,folder,remote_id,unread,starred,state,lineage) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'pending',?9)",
+                                params![job,position,mail.id,mail.account_id,mail.folder,mail.remote_id,mail.unread,mail.starred,lineage],
+                            )?;
+                            if let Some(role)=action.logical_role() && accounts.insert(mail.account_id.clone()) {
+                                crate::destinations::admit(&tx,"group",&job,&mail.account_id,role)?;
+                            }
+                            changed
+                        },
                         None => tx.execute(
                             "INSERT INTO group_items(job,position,mail,account,folder,remote_id,unread,starred,state,reason) VALUES(?1,?2,?3,?4,?5,'',?6,?7,'skipped','Message is no longer cached')",
                             params![job,position,mail_id,account,folder,unread,starred],
@@ -791,6 +814,163 @@ struct Identity {
     remote_id: String,
     unread: bool,
     starred: bool,
+    #[serde(default)]
+    lineage: Option<String>,
+    #[serde(default)]
+    encoding: Option<shep_mail_core::folders::NameEncoding>,
+}
+
+#[derive(Clone)]
+pub(crate) struct DispatchClaim {
+    job: String,
+    position: i64,
+    attempt: String,
+    account: String,
+    inverse: bool,
+    approved: i64,
+    fields: Fields,
+    source: Identity,
+}
+
+pub(crate) enum Dispatch {
+    Send(Fields),
+    Stop { outcome: &'static str, idle: bool },
+}
+
+pub(crate) fn dispatch(
+    db: &Connection,
+    claim: &DispatchClaim,
+    current: &shep_mail_core::model::Mail,
+) -> Result<Dispatch> {
+    let saved: Option<(String, Option<String>)> = db
+        .query_row(
+            "SELECT state,attempt FROM group_items WHERE job=?1 AND position=?2",
+            params![claim.job, claim.position],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((state, attempt)) = saved else {
+        return Ok(Dispatch::Stop {
+            outcome: "cancelled",
+            idle: true,
+        });
+    };
+    ensure!(
+        state
+            == (if claim.inverse {
+                "reversing"
+            } else {
+                "sending"
+            })
+            && attempt.as_deref() == Some(claim.attempt.as_str()),
+        "This group step lost its exact claim before dispatch."
+    );
+    let (job_state, undo) = job_state(db, &claim.job)?;
+    if !claim.inverse && undo {
+        finish_item(
+            db,
+            &claim.job,
+            claim.position,
+            "cancelled",
+            Some("Cancelled before provider dispatch"),
+            None,
+        )?;
+        return Ok(Dispatch::Stop {
+            outcome: "cancelled",
+            idle: false,
+        });
+    }
+    if job_state == "paused" {
+        db.execute(
+            "UPDATE group_items SET state=?3,attempt=NULL,fields=NULL WHERE job=?1 AND position=?2",
+            params![
+                claim.job,
+                claim.position,
+                if claim.inverse { "undoing" } else { "pending" }
+            ],
+        )?;
+        touch(db, &claim.job)?;
+        return Ok(Dispatch::Stop {
+            outcome: "deferred",
+            idle: true,
+        });
+    }
+    let continuity = if let Some(lineage) = claim.source.lineage.as_deref() {
+        crate::operations::observed_lineage_matches(db, &current.id, lineage)?
+    } else {
+        same_folder(&current.folder, &claim.source.folder)
+            && current.remote_id == claim.source.remote_id
+    };
+    let binding = crate::destinations::get(db, "group", &claim.job, &claim.account)?
+        .map_or(Ok(()), |destination| {
+            crate::destinations::binding(db, &destination)
+        });
+    let reason = if current.account_id != claim.account || !continuity {
+        Some("The source changed before provider dispatch; skipped")
+    } else if binding.is_err() {
+        Some("The account connection changed after review; skipped")
+    } else {
+        None
+    };
+    if let Some(reason) = reason {
+        let outcome = if claim.inverse {
+            "undo_skipped"
+        } else {
+            "skipped"
+        };
+        finish_item(db, &claim.job, claim.position, outcome, Some(reason), None)?;
+        return Ok(Dispatch::Stop {
+            outcome,
+            idle: false,
+        });
+    }
+    let mut fields = claim.fields.clone();
+    for field in ["folder", "unread", "starred"] {
+        let newer: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND revision>?3)",
+            params![current.id, field, claim.approved],
+            |row| row.get(0),
+        )?;
+        match field {
+            "folder"
+                if newer
+                    || fields
+                        .folder
+                        .as_deref()
+                        .is_some_and(|folder| same_folder(folder, &current.folder)) =>
+            {
+                fields.folder = None
+            }
+            "unread" if newer || fields.unread == Some(current.unread) => fields.unread = None,
+            "starred" if newer || fields.starred == Some(current.starred) => fields.starred = None,
+            _ => {}
+        }
+    }
+    if fields.is_empty() {
+        let outcome = if claim.inverse {
+            "undo_skipped"
+        } else {
+            "skipped"
+        };
+        finish_item(
+            db,
+            &claim.job,
+            claim.position,
+            outcome,
+            Some("A newer choice or current state replaced these fields; skipped"),
+            None,
+        )?;
+        return Ok(Dispatch::Stop {
+            outcome,
+            idle: false,
+        });
+    }
+    db.execute(
+        "UPDATE group_items SET fields=?3 WHERE job=?1 AND position=?2",
+        params![claim.job, claim.position, serde_json::to_string(&fields)?],
+    )?;
+    touch(db, &claim.job)?;
+    Ok(Dispatch::Send(fields))
 }
 #[derive(Clone, Deserialize, Serialize)]
 struct Receipt {
@@ -811,6 +991,7 @@ struct Claim {
     frozen: Identity,
     account: String,
     receipt: Option<Receipt>,
+    approved: i64,
 }
 enum Next {
     Idle,
@@ -864,8 +1045,10 @@ fn next(db: &Connection) -> Result<Next> {
                     remote_id: r.get(8)?,
                     unread: r.get(9)?,
                     starred: r.get(10)?,
+                    lineage: r.get(11)?,
+                    encoding: None,
                 },
-                receipt: r.get(11)?,
+                receipt: r.get(12)?,
             })
         })
         .optional()?;
@@ -888,6 +1071,8 @@ fn next(db: &Connection) -> Result<Next> {
         remote_id,
         unread,
         starred,
+        lineage,
+        encoding,
     } = frozen;
     let inverse = job_state == "undoing";
     let skip = |reason: &str| {
@@ -921,12 +1106,17 @@ fn next(db: &Connection) -> Result<Next> {
             remote_id: remote_id.clone(),
             unread,
             starred,
+            lineage: lineage.clone(),
+            encoding,
         }
     };
     // An acknowledged move whose destination UID is still unresolved keeps its
     // saved receipt; the shared mutation path recovers that identity before
     // the inverse MOVE, so only the folder is compared here.
-    let continuity = if inverse && moved && resolvable {
+    let continuity = if let Some(lineage) = expected.lineage.as_deref() {
+        crate::operations::observed_lineage_matches(db, &current.id, lineage)?
+            && (!moved || resolvable)
+    } else if inverse && moved && resolvable {
         same_folder(&current.folder, &expected.folder)
     } else {
         !moved
@@ -1004,9 +1194,12 @@ fn next(db: &Connection) -> Result<Next> {
             remote_id: current.remote_id.clone(),
             unread: current.unread,
             starred: current.starred,
+            lineage,
+            encoding,
         },
         account,
         receipt,
+        approved,
     })))
 }
 
@@ -1054,7 +1247,7 @@ async fn step(
         .context("A group action step is already in progress.")?;
     let db = &profile.database;
     let decision = db.read(next).await?;
-    let claim = match decision {
+    let mut claim = match decision {
         Next::Idle => {
             // Settle groups whose last step already finished.
             db.write(|db| {
@@ -1109,12 +1302,84 @@ async fn step(
     };
     let remote =
         account.protocol == Protocol::Imap && !claim.frozen.remote_id.starts_with("local-");
+    let mut prepared_destination = None;
+    if !claim.inverse {
+        let job = claim.job.clone();
+        let action: Action = db
+            .read(move |db| {
+                Ok(serde_json::from_str(&db.query_row(
+                    "SELECT action FROM group_jobs WHERE id=?1",
+                    [job],
+                    |row| row.get::<_, String>(0),
+                )?)?)
+            })
+            .await?;
+        if action.logical_role().is_some() {
+            let job = claim.job.clone();
+            let source = claim.account.clone();
+            let destination = db
+                .read(move |db| crate::destinations::get(db, "group", &job, &source))
+                .await?;
+            let resolution = if let Some(destination) = destination {
+                if !remote {
+                    db.write(move |db| crate::destinations::local(db, &destination))
+                        .await
+                        .map(crate::destinations::Resolution::Ready)?
+                } else if let Some(cached) = crate::destinations::cached(db, &destination).await? {
+                    cached
+                } else {
+                    let Some(password) = password.clone() else {
+                        return Ok(
+                            json!({"requires_credentials":account.id,"job":claim.job,"position":claim.position}),
+                        );
+                    };
+                    let (_account, _slot) =
+                        profile.operations.destination_capacity(&account.id).await?;
+                    let id = account.id.clone();
+                    let slot = credential_slot.clone();
+                    db.read(move |db| crate::connections::check_binding(db, &id, slot.as_deref()))
+                        .await?;
+                    crate::destinations::provider(profile, destination, account.clone(), password)
+                        .await?
+                }
+            } else {
+                crate::destinations::Resolution::Rejected { message:"This older group has no saved destination or source proof. Undo queued work and review it again.".into() }
+            };
+            match resolution {
+                crate::destinations::Resolution::Ready(target) => {
+                    claim.fields.folder = Some(target.name.clone());
+                    claim.frozen.encoding = Some(target.encoding);
+                    prepared_destination = Some(target);
+                }
+                crate::destinations::Resolution::Obsolete => return Ok(json!({"idle":true})),
+                crate::destinations::Resolution::Waiting { message, .. }
+                | crate::destinations::Resolution::Rejected { message } => {
+                    let job = claim.job.clone();
+                    let warning = message.clone();
+                    db.write(move |db| {
+                        db.execute("UPDATE group_jobs SET state='paused',error=?2,revision=revision+1 WHERE id=?1 AND state='running' AND undone IS NULL",params![job,warning])?;
+                        Ok(())
+                    }).await?;
+                    return Ok(json!({"idle":true,"destination_error":message}));
+                }
+            }
+        }
+    } else if let Some(encoding) = claim
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.dispatch.encoding)
+        && let Some(folder) = claim.fields.folder.clone()
+    {
+        let mut target = shep_mail_core::folders::Mailbox::flat(folder);
+        target.encoding = encoding;
+        prepared_destination = Some(target);
+    }
     if remote && password.is_none() {
         return Ok(
             json!({"requires_credentials":account.id,"job":claim.job,"position":claim.position}),
         );
     }
-    let (job, position, mail, inverse, fields, frozen) = (
+    let (job, position, mail, inverse, mut fields, frozen) = (
         claim.job.clone(),
         claim.position,
         claim.mail.clone(),
@@ -1170,9 +1435,34 @@ async fn step(
             starred: fields.starred,
             intent: false,
             report: false,
+            logical_role: None,
+            prepared_destination,
+            group_claim: Some(DispatchClaim {
+                job: job.clone(),
+                position,
+                attempt: attempt.clone(),
+                account: claim.account.clone(),
+                inverse,
+                approved: claim.approved,
+                fields: fields.clone(),
+                source: frozen.clone(),
+            }),
         },
     )
     .await;
+    if let Ok(value) = &outcome {
+        if let Some(outcome) = value.get("group_outcome").and_then(Value::as_str) {
+            return Ok(
+                json!({"stepped":value["idle"]!=true,"idle":value["idle"]==true,"job":job,"position":position,"outcome":outcome}),
+            );
+        }
+        if let Some(accepted) = value
+            .get("accepted_fields")
+            .filter(|value| !value.is_null())
+        {
+            fields = serde_json::from_value(accepted.clone())?;
+        }
+    }
     let (state, reason, warning) = match &outcome {
         Ok(value) if value.get("requires_credentials").is_some() => (
             if inverse { "undo_failed" } else { "failed" },
@@ -1238,12 +1528,29 @@ async fn step(
                 && current == if inverse { "reversing" } else { "sending" },
             "This step lost its claim before its receipt was saved."
         );
-        let after = stored_mail(&tx, &mail_id).ok().map(|m| Identity {
-            folder: m.folder,
-            remote_id: m.remote_id,
-            unread: m.unread,
-            starred: m.starred,
-        });
+        let after = stored_mail(&tx, &mail_id)
+            .ok()
+            .map(|m| {
+                let lineage = if frozen.lineage.is_some() {
+                    tx.query_row(
+                        "SELECT token FROM mail_lineage WHERE id=?1",
+                        [&m.id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?
+                } else {
+                    None
+                };
+                Ok::<_, anyhow::Error>(Identity {
+                    folder: m.folder,
+                    remote_id: m.remote_id,
+                    unread: m.unread,
+                    starred: m.starred,
+                    lineage,
+                    encoding: frozen.encoding,
+                })
+            })
+            .transpose()?;
         let receipt = if inverse {
             previous.map(|mut r| {
                 r.warning = warning.clone();

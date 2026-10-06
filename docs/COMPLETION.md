@@ -1,5 +1,39 @@
 # Completion audit
 
+## Mobile provider destinations in progress, 6 October 2026 (#48)
+
+The lane preserves cached-catalogue-first resolution and the deliberate uncached
+literal fallback after failed LIST. Missing targets are frozen under the existing
+folder owner before CREATE. An unknown CREATE remains unconfirmed even after a
+successful existence check; acknowledged folder receipts repair the cache without
+another CREATE or credentials. Individual Archive/Trash/Spam return the actual
+physical destination, retain existing completed wording and use that receipt for
+Undo. Pending logical actions show a clock and progressive wording.
+
+Focused native destination tests pass (16), including the three logical roles,
+POP3, typed/CREATE rejection, unknown CREATE restart, failed discovery, cache
+repair, changed-connection admission and held cancellation/source replacement. Eight
+Dart model/actual control checks pass with compact light/dark Waiting captures.
+The isolated real TLS/FFI test presses rendered Undo while CREATE is held: the
+original and inverse admissions are cancelled, CREATE is retained as acknowledged,
+and neither SELECT nor MOVE reaches the loopback peer. Exact UUIDs and redacted
+commands are in ignored artifacts/logs. Earlier test-only compile/assertion and
+widget scheduling/cleanup failures remain logged alongside corrected passes.
+
+Resolved same-folder actions retain their exact local unchanged disposition and
+newer field choice without MOVE, receipt or inverse. Raw prerequisite Waiting
+reports no committed mail mutation. Fresh rejected-action Retry reconstructs its
+logical request while retaining old accepted physical fields as evidence.
+Host native-response decoding additionally preserves exact Resume identity and
+normalises INBOX for display without changing the backend request/receipt name.
+
+This is not a completed parity claim. Group receipt/source ownership prerequisite
+#64 must be independently reviewed and integrated with actual schema27 before
+destination schema28, followed by combined native/Flutter, Clippy/analyse, strict
+documentation and normal hooks. Reply schema26 must retain its real older-writer
+protection. Android, Apple, live-provider and larger-catalogue/performance coverage
+remain separate requirements. Account removal held-owner admission remains #62.
+
 ## Mobile queued bulk Undo checkpoint, 6 October 2026 (#49/#58)
 
 Approved queued/paused/held-first-step groups now expose Undo in the notice and

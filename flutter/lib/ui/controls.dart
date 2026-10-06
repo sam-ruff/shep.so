@@ -138,9 +138,15 @@ class NoticeBar extends StatelessWidget {
 
 /// Desktop toast: bordered card with a check mark and optional actions.
 class ToastCard extends StatelessWidget {
-  const ToastCard({super.key, required this.child, this.trailing = const []});
+  const ToastCard({
+    super.key,
+    required this.child,
+    this.trailing = const [],
+    this.icon = 'check',
+  });
   final Widget child;
   final List<Widget> trailing;
+  final String icon;
 
   @override
   Widget build(BuildContext context) {
@@ -157,7 +163,7 @@ class ToastCard extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(14, 4, 4, 4),
           child: Row(
             children: [
-              ShepIcon('check', size: 16, color: c.muted),
+              ShepIcon(icon, size: 16, color: c.muted),
               const SizedBox(width: 10),
               Expanded(
                 child: DefaultTextStyle.merge(

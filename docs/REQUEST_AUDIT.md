@@ -1,5 +1,23 @@
 # Conversation request audit
 
+**6 October mobile provider destinations (#48):** Continue parity delivery for
+individual and bulk Archive, Trash and Spam. Preserve Sam's cached catalogue first,
+LIST before first sync and uncached literal candidate on failed LIST policy.
+Validate selectable special-use and namespaced destinations before dispatch,
+freezing exact physical/encoded targets without adding new account settings.
+Missing CREATE must use an admitted durable plan and receipt before MOVE; unknown
+replies cannot infer success from LIST or authorise automatic repeats. Preserve
+local admission before credentials/capacity, POP3 local semantics, newer fields,
+receipt/cache recovery and removed/reconnected/source-replacement fences. Native
+mock, actual FFI and mobile controls must cover rejection, lost acknowledgement,
+restart and held races. Cross-account/ranked chooser work remains #31; CI belongs
+to another lane and the root coordinates Android ownership and final integration.
+Immediate account removal while provider owners are held is tracked separately
+in #62; provider-folder work retains existing removal guards and stale-dispatch
+fences. Schema26 belongs to reply writer protection; destination/lineage work
+uses schema28 after group receipt/source-ownership prerequisite #64 (schema27),
+and must integrate both earlier migrations before publication.
+
 **6 October mobile queued bulk Undo (#49):** Continue parity delivery with Undo
 for approved groups before any acknowledged item, including pending, paused and
 held-first-step work. Keep the immutable saved group and decision revisions;

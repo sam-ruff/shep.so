@@ -155,6 +155,7 @@ class PreviewGroupRepository implements GroupRepository {
   static Map<String, Object?> fieldsOf(Map action) => switch (action['kind']) {
     'archive' => {'folder': 'Archive'},
     'delete' => {'folder': 'Trash'},
+    'spam' => {'folder': 'Spam'},
     'move' => {'folder': action['folder']},
     'read' => {'unread': false},
     'unread' => {'unread': true},

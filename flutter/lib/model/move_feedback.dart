@@ -10,6 +10,7 @@ class MoveRecord {
   bool started = false, cancelled = false, committed = false;
   bool undoRequested = false, blocked = false, restoreCommitted = false;
   bool admissionCancelled = false;
+  bool pending = false;
 }
 
 /// The desktop's six-second, destination-scoped move notification contract.
@@ -23,11 +24,19 @@ class MoveFeedback {
   List<MoveRecord> _records = [];
   List<MoveRecord> get records => _records;
   bool get visible => _records.isNotEmpty;
+  bool get pending => !_restored && _records.any((record) => record.pending);
   bool get canUndo => !_restored && _records.any((r) => !r.blocked);
   String? get label {
     if (!visible) return null;
     final count = _records.length, noun = count == 1 ? 'message' : 'messages';
     if (_restored) return 'Restored $count $noun';
+    if (_records.any((record) => record.pending)) {
+      return switch (_folder?.toLowerCase()) {
+        'archive' => 'Archiving $count $noun',
+        'trash' => 'Deleting $count $noun',
+        _ => 'Moving $count $noun to $_folder',
+      };
+    }
     return switch (_folder?.toLowerCase()) {
       'archive' => 'Archived $count $noun',
       'trash' => 'Deleted $count $noun',

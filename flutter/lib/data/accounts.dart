@@ -169,9 +169,17 @@ class MailOperationFailure implements Exception {
     this.message, {
     this.committed = false,
     this.refreshFirst = false,
+    this.appliedFields,
+    this.pending = false,
+    this.superseded = false,
+    this.unchanged = false,
   });
   final String message;
   final bool committed, refreshFirst;
+  final Map<String, Object>? appliedFields;
+  final bool pending;
+  final bool superseded;
+  final bool unchanged;
   @override
   String toString() => message;
 }

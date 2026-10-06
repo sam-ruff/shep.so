@@ -1,5 +1,10 @@
 # Client parity
 
+Provider-folder work (#48) preserves cached catalogue first, first-sync LIST and
+uncached literal fallback, followed by durable exact destination validation. The
+existing refusal of account removal while provider owners are held remains an
+active desktop/mobile gap in [#62](https://github.com/sam-ruff/shep.so/issues/62).
+
 Mobile queued bulk Undo (#49) is implemented on its lane for pending, paused and
 held-first-step work. The checked local decision removes forward projection and
 cancels only unsent items; actual late receipts retain their same-group inverse.

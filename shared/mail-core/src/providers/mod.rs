@@ -48,6 +48,15 @@ pub trait MailProvider: Send + Sync {
         mail: &Mail,
         folder: &str,
     ) -> anyhow::Result<Option<String>>;
+    async fn move_planned_mail(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        mail: &Mail,
+        target: crate::folders::Mailbox,
+    ) -> anyhow::Result<Option<String>> {
+        self.move_mail(account, password, mail, &target.name).await
+    }
     async fn set_flags(
         &self,
         account: &Account,

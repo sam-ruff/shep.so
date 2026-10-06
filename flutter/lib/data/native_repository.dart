@@ -23,6 +23,13 @@ Map<String, dynamic> _decode(String data) =>
     jsonDecode(data) as Map<String, dynamic>;
 String _encode(Map<String, Object?> data) => jsonEncode(data);
 
+Map<String, Object> _displayMailFields(Map value) {
+  final fields = Map<String, dynamic>.from(value)
+    ..removeWhere((_, value) => value == null);
+  if (fields['folder'] == 'INBOX') fields['folder'] = 'Inbox';
+  return Map<String, Object>.from(fields);
+}
+
 class NativeRepository
     implements
         SelectionRepository,
@@ -45,7 +52,7 @@ class NativeRepository
         DurableCalendarRepository,
         DurableCalDavRepository,
         FolderChangeRepository,
-        DurableMutationRepository {
+        LogicalMutationRepository {
   NativeRepository(this.profile, this.credentials);
   final MobileProfile profile;
   final CredentialStore credentials;
@@ -797,12 +804,14 @@ class NativeRepository
     String actionId, {
     String? observedLineage,
     bool requireObservation = false,
+    String? logicalRole,
   }) => <String, Object?>{
     'op': 'mutate',
     'action_id': actionId,
     'observed_lineage': ?observedLineage,
     if (requireObservation) 'require_observation': true,
     'id': id,
+    'logical_role': ?logicalRole,
     ...fields.map(
       (k, v) => MapEntry(k, k == 'folder' && v == 'Inbox' ? 'INBOX' : v),
     ),
@@ -840,15 +849,58 @@ class NativeRepository
   ) => _mutate(id, fields, actionId);
 
   @override
-  Future<void> cancelAdmittedMutation(String actionId) =>
-      cancelMailAction(actionId);
-
-  Future<void> _mutate(
+  Future<void> admitLogicalMutation(
     String id,
     Map<String, Object> fields,
     String actionId,
+    String observedLineage,
+    String role,
   ) async {
-    final request = _mutationRequest(id, fields, actionId);
+    final result = await call(
+      _mutationRequest(
+        id,
+        fields,
+        actionId,
+        observedLineage: observedLineage,
+        requireObservation: true,
+        logicalRole: role,
+      ),
+    );
+    if (result['warning'] case final String warning) {
+      throw MailOperationFailure(
+        warning,
+        committed: result['committed'] == true,
+      );
+    }
+  }
+
+  @override
+  Future<Map<String, Object>> executeLogicalMutation(
+    String id,
+    Map<String, Object> fields,
+    String actionId,
+    String role,
+  ) async {
+    final result = await _mutate(id, fields, actionId, logicalRole: role);
+    return _displayMailFields(result['applied_fields'] as Map? ?? fields);
+  }
+
+  @override
+  Future<void> cancelAdmittedMutation(String actionId) =>
+      cancelMailAction(actionId);
+
+  Future<Map<String, dynamic>> _mutate(
+    String id,
+    Map<String, Object> fields,
+    String actionId, {
+    String? logicalRole,
+  }) async {
+    final request = _mutationRequest(
+      id,
+      fields,
+      actionId,
+      logicalRole: logicalRole,
+    );
     // Rust decides from the current stored message, including a Sent copy that
     // has since synced. Purely local actions never open device credentials.
     var result = await call(request);
@@ -865,13 +917,28 @@ class NativeRepository
       throw MailOperationFailure(
         message,
         committed: result['committed'] == true,
+        pending:
+            logicalRole != null &&
+            const {'queued', 'waiting'}.contains(result['status']),
+        appliedFields: result['applied_fields'] is Map
+            ? _displayMailFields(result['applied_fields'] as Map)
+            : null,
+      );
+    }
+    if (result['unchanged'] == true) {
+      throw MailOperationFailure(
+        'This message is already in its destination.',
+        unchanged: true,
+        appliedFields: _displayMailFields(result['applied_fields'] as Map),
       );
     }
     if (result['status'] == 'cancelled') {
       throw const MailOperationFailure(
         'A newer mail decision replaced this queued change.',
+        superseded: true,
       );
     }
+    return Map<String, dynamic>.from(result as Map);
   }
 
   @override
@@ -899,8 +966,12 @@ class NativeRepository
           .toList();
 
   @override
-  Future<void> resumeMailAction(MailActivity action) async =>
-      _mutate(action.mail, action.fields, action.id);
+  Future<void> resumeMailAction(MailActivity action) async => _mutate(
+    action.mail,
+    action.requestedFields,
+    action.id,
+    logicalRole: action.logicalRole,
+  );
 
   @override
   Future<List<FolderAccount>> folderOptions() async =>

@@ -750,6 +750,16 @@ impl MailProvider for Imap {
         move_imap_session(imap(account, password).await?, mail, folder).await
     }
 
+    async fn move_planned_mail(
+        &self,
+        account: &Account,
+        password: &SecretString,
+        mail: &Mail,
+        target: crate::folders::Mailbox,
+    ) -> anyhow::Result<Option<String>> {
+        move_planned_imap_session(imap(account, password).await?, mail, target).await
+    }
+
     async fn set_flags(
         &self,
         account: &Account,
@@ -837,6 +847,24 @@ async fn flags_imap_session<
     // Acknowledged STORE is committed even if the connection closes on logout.
     let _ = session.logout().await;
     Ok(())
+}
+
+async fn move_planned_imap_session<
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::Debug,
+>(
+    mut session: async_imap::Session<T>,
+    mail: &Mail,
+    target: crate::folders::Mailbox,
+) -> anyhow::Result<Option<String>> {
+    let capabilities = session.capabilities().await?;
+    if folders::encoding(&capabilities) != target.encoding {
+        return Err(crate::mail_actions::MoveRefused(
+            "The server folder encoding changed. Review this saved destination before moving mail."
+                .into(),
+        )
+        .into());
+    }
+    move_imap_session(session, mail, &target.name).await
 }
 
 async fn move_imap_session<
@@ -1577,6 +1605,65 @@ mod tests {
             );
             server.await.expect("mock server");
         }
+    }
+
+    #[tokio::test]
+    async fn planned_destination_encoding_change_refuses_before_select_or_move()
+    -> anyhow::Result<()> {
+        for (capabilities, encoding) in [
+            ("IMAP4rev1 MOVE", crate::folders::NameEncoding::Utf8),
+            (
+                "IMAP4rev1 UTF8=ONLY MOVE",
+                crate::folders::NameEncoding::ImapUtf7,
+            ),
+        ] {
+            let (client, server) = tokio::io::duplex(4096);
+            let server = tokio::spawn(async move {
+                let mut server = BufReader::new(server);
+                for expected in ["LOGIN \"fixture\" \"secret\"", "CAPABILITY"] {
+                    let mut line = String::new();
+                    server.read_line(&mut line).await.expect("command");
+                    let (tag, command) = line.trim_end().split_once(' ').expect("tag");
+                    assert_eq!(command, expected);
+                    let prefix = if command == "CAPABILITY" {
+                        format!("* CAPABILITY {capabilities}\r\n")
+                    } else {
+                        String::new()
+                    };
+                    server
+                        .get_mut()
+                        .write_all(format!("{prefix}{tag} OK completed\r\n").as_bytes())
+                        .await
+                        .expect("response");
+                }
+                let mut line = String::new();
+                assert_eq!(
+                    server.read_line(&mut line).await.expect("closed session"),
+                    0,
+                    "No SELECT or MOVE after an encoding mismatch"
+                );
+            });
+            let session = async_imap::Client::new(client)
+                .login("fixture", "secret")
+                .await
+                .map_err(|(error, _)| anyhow::anyhow!(error))?;
+            let mail = parse_mail(
+                "fixture",
+                "42.7",
+                "INBOX",
+                b"Subject: Encoding fixture\r\n\r\nBody".to_vec(),
+                true,
+                false,
+            )?;
+            let mut target = crate::folders::Mailbox::flat("INBOX.Archive".into());
+            target.encoding = encoding;
+            let error = move_planned_imap_session(session, &mail.summary, target)
+                .await
+                .expect_err("changed encoding");
+            assert!(error.is::<crate::mail_actions::MoveRefused>(), "{error:#}");
+            server.await?;
+        }
+        Ok(())
     }
 
     #[tokio::test]

@@ -54,6 +54,28 @@ Undo. Keep both results and visual evidence.
 
 ## Flutter
 
+Provider destination host integration uses
+`python3 scripts/clients/provider_folders_fixture.py --run`. It supplies the
+existing fictional localhost certificate through process-scoped `SSL_CERT_FILE`
+and runs `native_logical_mail_actions_test.dart`; ordinary suites skip this
+explicit TLS fixture. The server accepts loopback only and the production native
+adapter still validates the certificate and hostname. Workspace starts Archive,
+then the test presses the rendered production Undo while CREATE is held. Both
+mail admissions must finish cancelled, with one acknowledged CREATE receipt and
+no SELECT or MOVE command. Logs report exact saved identities and redact LOGIN
+payloads. This is host FFI/Undo/provider orchestration evidence, separate from
+Android, Apple and live-provider verification.
+
+`logical_mail_controls_test.dart` retains compact light/dark Waiting notices and
+visible Undo, without completed MOVE wording, plus frozen Spam group review
+Cancel. Native destination tests additionally cover special-use/encoded physical
+receipts and exact Undo, local POP3 roles, failed LIST without caching, typed plan
+rejection, unknown CREATE inspection, acknowledged cache-only repair and held
+catalogue/plan/inspect/CREATE cancellation. Shared protocol checks retain ordinary
+CREATE for generic folders and require advertised CREATE-SPECIAL-USE for logical
+roles; changed dispatch encoding refuses before SELECT/MOVE. These focused checks
+do not establish complete bulk receipt integration or platform parity.
+
 Preferences search is covered by `preferences_search_test.dart`,
 `preferences_search_controls_test.dart` and `preferences_search_native_test.dart`:
 conditional catalogue coverage, shared native accent/abbreviation/typo/numeric

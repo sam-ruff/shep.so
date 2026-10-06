@@ -17,6 +17,16 @@ CREATE INDEX IF NOT EXISTS folder_creation_retired ON folder_creations(id)
 CREATE TABLE IF NOT EXISTS folder_catalogues (
  account_id TEXT PRIMARY KEY REFERENCES accounts(id), mailboxes TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS folder_role_names(
+ account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,role TEXT NOT NULL,
+ name TEXT NOT NULL,encoding TEXT NOT NULL,observed INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(account_id,role,name)
+);
+CREATE INDEX IF NOT EXISTS folder_role_lookup ON folder_role_names(role,account_id,name);
+INSERT OR IGNORE INTO folder_role_names(account_id,role,name,encoding)
+ SELECT c.account_id,json_extract(m.value,'$.role'),json_extract(m.value,'$.name'),COALESCE(json_extract(m.value,'$.encoding'),'Utf8')
+ FROM folder_catalogues c,json_each(c.mailboxes) m
+ WHERE json_extract(m.value,'$.selectable')=1 AND COALESCE(json_extract(m.value,'$.non_existent'),0)=0
+ AND json_extract(m.value,'$.role') IN ('Archive','Trash','Junk');
 CREATE TABLE IF NOT EXISTS folder_change_members (
  job TEXT NOT NULL REFERENCES folder_creations(id) ON DELETE CASCADE,
  id TEXT NOT NULL, folder TEXT NOT NULL, remote_id TEXT NOT NULL, lineage TEXT NOT NULL,
@@ -79,5 +89,5 @@ BEGIN SELECT RAISE(ABORT,'Finish saved folder changes before changing Sent roles
 CREATE TRIGGER IF NOT EXISTS folder_fence_discovered_sent BEFORE INSERT ON discovered_sent
 WHEN EXISTS(SELECT 1 FROM folder_creations WHERE account_id=new.account_id AND mutation IS NOT NULL AND status IN ('queued','waiting','planning','running','checking','repair','rejected','uncertain'))
 BEGIN SELECT RAISE(ABORT,'Finish saved folder changes before changing Sent roles.'); END;
-PRAGMA user_version=25;
+PRAGMA user_version=28;
 COMMIT;

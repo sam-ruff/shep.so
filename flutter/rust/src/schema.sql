@@ -88,12 +88,26 @@ CREATE INDEX IF NOT EXISTS individual_mail_action_history ON individual_mail_act
 CREATE TABLE IF NOT EXISTS group_jobs(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,action TEXT NOT NULL,fields TEXT NOT NULL,state TEXT NOT NULL,scope TEXT NOT NULL,created INTEGER NOT NULL,approved INTEGER,undone INTEGER,total INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 0,error TEXT);
 CREATE INDEX IF NOT EXISTS group_job_state ON group_jobs(state,seq);
 CREATE INDEX IF NOT EXISTS group_history_cursor ON group_jobs(seq DESC) WHERE state IN ('staging','review','running','undoing','paused','finished');
-CREATE TABLE IF NOT EXISTS group_items(job TEXT NOT NULL REFERENCES group_jobs(id) ON DELETE CASCADE,position INTEGER NOT NULL,mail TEXT NOT NULL,account TEXT NOT NULL,folder TEXT NOT NULL,remote_id TEXT NOT NULL,unread INTEGER NOT NULL,starred INTEGER NOT NULL,state TEXT NOT NULL,fields TEXT,attempt TEXT,receipt TEXT,reason TEXT,PRIMARY KEY(job,position));
+CREATE TABLE IF NOT EXISTS group_items(job TEXT NOT NULL REFERENCES group_jobs(id) ON DELETE CASCADE,position INTEGER NOT NULL,mail TEXT NOT NULL,account TEXT NOT NULL,folder TEXT NOT NULL,remote_id TEXT NOT NULL,unread INTEGER NOT NULL,starred INTEGER NOT NULL,state TEXT NOT NULL,fields TEXT,attempt TEXT,receipt TEXT,reason TEXT,lineage TEXT,PRIMARY KEY(job,position));
 CREATE INDEX IF NOT EXISTS group_item_state ON group_items(job,state,position);
 CREATE INDEX IF NOT EXISTS group_item_mail ON group_items(mail,state);
 CREATE INDEX IF NOT EXISTS group_item_account ON group_items(account,state);
 CREATE INDEX IF NOT EXISTS group_item_active ON group_items(state,job) WHERE state IN ('pending','sending','undoing','reversing');
 CREATE INDEX IF NOT EXISTS group_item_attention ON group_items(state,job) WHERE state IN ('failed','uncertain','undo_failed','undo_uncertain');
+CREATE TABLE IF NOT EXISTS logical_mail_destinations(
+ owner_kind TEXT NOT NULL CHECK(owner_kind IN ('individual','group')),owner TEXT NOT NULL,
+ account TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,role TEXT NOT NULL,
+ connection TEXT NOT NULL,credential_slot TEXT,creation_id TEXT NOT NULL UNIQUE,
+ phase TEXT NOT NULL DEFAULT 'queued',target TEXT,candidate TEXT,error TEXT,
+ revision INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(owner_kind,owner,account)
+);
+CREATE INDEX IF NOT EXISTS logical_destination_account ON logical_mail_destinations(account,owner_kind,owner);
+CREATE TRIGGER IF NOT EXISTS logical_destination_action_delete AFTER DELETE ON individual_mail_actions BEGIN
+ UPDATE logical_mail_destinations SET phase='cancelled',error=NULL,revision=revision+1 WHERE owner_kind='individual' AND owner=old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS logical_destination_group_delete AFTER DELETE ON group_jobs BEGIN
+ UPDATE logical_mail_destinations SET phase='cancelled',error=NULL,revision=revision+1 WHERE owner_kind='group' AND owner=old.id;
+END;
 CREATE TABLE IF NOT EXISTS calendar_events(source_id TEXT NOT NULL,id TEXT NOT NULL,event TEXT NOT NULL,PRIMARY KEY(source_id,id));
 CREATE TABLE IF NOT EXISTS calendar_connections(id TEXT PRIMARY KEY,config TEXT NOT NULL,credential_slot TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_connection_attempts(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,request TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('prepared','probing','waiting','active','cancelled')),error TEXT,created INTEGER NOT NULL);
@@ -111,5 +125,5 @@ CREATE TABLE IF NOT EXISTS calendar_intents(source_id TEXT NOT NULL,event_id TEX
 CREATE INDEX IF NOT EXISTS calendar_action_status ON calendar_actions(status,created,id);
 CREATE INDEX IF NOT EXISTS calendar_action_history ON calendar_actions(created DESC,id);
 CREATE INDEX IF NOT EXISTS calendar_action_attention ON calendar_actions(created DESC,id) WHERE status NOT IN ('succeeded','cancelled');
-PRAGMA user_version=25;
+PRAGMA user_version=28;
 COMMIT;
