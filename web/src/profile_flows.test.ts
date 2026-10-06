@@ -295,8 +295,8 @@ describe("publication", () => {
     expect(discovery.page[0]).toMatchObject({
       name: "Browser profile",
       accounts: 2,
-      // Six portable browser settings, one deselected in the review.
-      settings: 5,
+      // One portable browser setting is deselected in the review.
+      settings: 6,
       initialized: true,
     });
     // Reopened, the same review and receipts are visible.
@@ -510,6 +510,92 @@ describe("enrollment", () => {
 });
 
 describe("preference device", () => {
+  test("reply default preserves false, field intent and legacy receipts across restart", () => {
+    const storage = new MemoryStorage();
+    const inner = new MemorySettings();
+    const settings = new ProfileSettingsStore(inner, "reply", storage);
+    const { workspace, device: dev } = device(settings);
+    const original = dev.capture();
+    expect(original.values.reply_include_original).toBe(true);
+    const receipt = dev.apply({
+      id: "reply-false",
+      baseline: original,
+      changes: { reply_include_original: false },
+    });
+    expect(receipt.applied).toEqual(["reply_include_original"]);
+    expect(workspace.preferences.replyIncludeOriginal).toBe(false);
+    const restarted = new ProfileSettingsStore(inner, "reply", storage);
+    expect(restarted.read().replyIncludeOriginal).toBe(false);
+    expect(
+      device(restarted).device.apply({
+        id: "reply-false",
+        baseline: original,
+        changes: { reply_include_original: false },
+      }),
+    ).toEqual(receipt);
+    dev.acknowledge(receipt.id);
+    const baseline = dev.capture();
+    workspace.savePreferences({
+      ...workspace.preferences,
+      replyIncludeOriginal: true,
+    });
+    workspace.savePreferences({
+      ...workspace.preferences,
+      replyIncludeOriginal: false,
+    });
+    expect(
+      dev.apply({
+        id: "newer-intent",
+        baseline,
+        changes: { reply_include_original: true },
+      }).kept,
+    ).toEqual(["reply_include_original"]);
+    expect(workspace.preferences.replyIncludeOriginal).toBe(false);
+    dev.acknowledge("newer-intent");
+    const legacy = JSON.parse(JSON.stringify(original)) as typeof original;
+    Reflect.deleteProperty(legacy.values, "reply_include_original");
+    Reflect.deleteProperty(legacy.revisions, "reply_include_original");
+    expect(() =>
+      dev.apply({
+        id: "not-reviewed",
+        baseline: legacy,
+        changes: { reply_include_original: false },
+      }),
+    ).toThrow(/not part/);
+    const oldReceipt = {
+      id: "legacy",
+      applied: ["appearance"],
+      kept: [],
+      revisions: legacy.revisions,
+    } as ApplyReceipt;
+    storage.setItem(
+      "old",
+      JSON.stringify({
+        preferences: { appearance: "dark" },
+        revisions: legacy.revisions,
+        receipt: oldReceipt,
+      }),
+    );
+    const old = new ProfileSettingsStore(inner, "old", storage);
+    expect(old.read().replyIncludeOriginal).toBe(true);
+    expect(old.capture().revisions.reply_include_original).toBe(0);
+    expect(
+      device(old).device.apply({
+        id: "legacy",
+        baseline: legacy,
+        changes: { appearance: "Dark" },
+      }),
+    ).toEqual(oldReceipt);
+    expect(old.receipt()?.revisions).not.toHaveProperty(
+      "reply_include_original",
+    );
+    const captured = old.capture();
+    old.write(old.read(), ["replyIncludeOriginal"]);
+    expect(old.capture().revisions.reply_include_original).toBe(
+      captured.revisions.reply_include_original + 1,
+    );
+  });
+
   test("revisions advance on change and revert, receipts are reused after a lost reply and newer edits are kept", () => {
     const settings = new ProfileSettingsStore(
       new MemorySettings(),

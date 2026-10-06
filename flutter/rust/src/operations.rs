@@ -1131,7 +1131,10 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let raw:Vec<u8>=db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?;
             let mut accounts=db.prepare("SELECT settings FROM accounts")?;
             let accounts=accounts.query_map([],|r|r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?.into_iter().map(|s|serde_json::from_str::<Account>(&s)).collect::<std::result::Result<Vec<_>,_>>()?;
-            Ok(serde_json::to_value(shep_mail_core::compose::reply_from_raw(summary,&raw,&accounts,all)?)?)
+            let mail_id=summary.id.clone();
+            let mut draft=shep_mail_core::compose::reply_from_raw(summary,&raw,&accounts,all)?;
+            draft.reply_context=Some(ReplyContext{account_id:draft.account_id.clone(),mail_id,quote:std::mem::take(&mut draft.body),include_quote:true});
+            Ok(serde_json::to_value(draft)?)
         }).await,
         Request::Forward{id,draft_id} => {
             anyhow::ensure!(uuid::Uuid::parse_str(&draft_id).is_ok(),"Choose a new forward identity before retrying.");

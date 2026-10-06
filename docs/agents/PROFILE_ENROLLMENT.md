@@ -3,7 +3,7 @@
 Reviewed enrollment is implemented on the client review branch; the completion log
 records exact execution and shipping evidence. Publication and
 continuous reconciliation remain separate operations. The current enrollment
-path reviews account metadata and eight mobile preferences; it does not transfer
+path reviews account metadata and nine mobile preferences; it does not transfer
 passwords, mail, drafts or Google grants.
 
 ## Review and application
@@ -43,8 +43,9 @@ account, its independent empty credential slot, Reconnect marker, shared mapping
 and receipt together under the account operation lock. Unrelated provider jobs do
 not own this cache-only work.
 
-The eight portable preferences are appearance, left/right swipe, preview lines,
-sender pictures, unified inbox, quoted history and tooltips. Explicit removal means
+The nine portable preferences are appearance, left/right swipe, preview lines,
+sender pictures, unified inbox, quoted history, tooltips and the new-reply original
+message default. Explicit removal means
 reset to the mobile default. Device preferences retain per-field revisions and a
 review receipt in the same platform preference write. Normal local saves merge
 changed fields, including dirty values retained after a failed save. Application
@@ -53,7 +54,7 @@ then changed back. UI generations also protect edits made while storage is pendi
 callbacks read current state so two changes before repaint retain both edits.
 Only one enrollment can await a preference receipt across Google scopes.
 
-Each platform receipt now freezes the eight field revisions from the original
+Each platform receipt freezes the reviewed field revisions from the original
 application. Retrying returns current preferences for display and those original
 revisions for native acknowledgment. Rust validates and saves the exact receipt;
 a different retry cannot replace it. Legacy receipts omit the revision map: a

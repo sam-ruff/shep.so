@@ -106,7 +106,7 @@ Future<void> profileCreationReviewControls(
   await t.enterText(find.byKey(const ValueKey('profile-name')), 'Shared work');
   await _tap(t, find.text('Review profile'));
   final id = d.creation!.id;
-  expect(d.creation!.settings, 8);
+  expect(d.creation!.settings, 9);
   expect(d.creation!.accounts, 52);
   await _show(t, find.text('Appearance'));
   await capture?.call('profile-creation-review-light');

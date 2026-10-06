@@ -1,5 +1,29 @@
 # Client testing
 
+Mobile reply-original checks use `flutter/test/reply_quote_test.dart` and the
+saved Android `--compose-only` scenario in `scripts/clients/android_e2e.py`.
+The Android case changes the default through Preferences, preserves typed text
+through quote toggles and DocumentsUI operations, checks exact context/references
+after owned handle close/reopen, then observes Waiting Outbox and uses Cancel.
+Keep its existing bounds and named completion report; a stale widget or driver
+exit alone cannot prove an asynchronous admission finished.
+
+Schema26 protects hidden reply originals from older native writers. Native
+`schema25_upgrade_preserves_exact_reply_payloads_and_current_legacy_autosave`
+checks exact old JSON/files and current omitted-context saves. For the actual
+older-binary boundary, run a separate Flutter process with a verified schema25
+library:
+
+```sh
+CARGO_BUILD_JOBS=4 flutter test test/legacy_quote_writer_test.dart --dart-define=SHEP_LEGACY_QUOTE_LIBRARY=/absolute/path/to/schema25/libshep_mobile_native.so
+```
+
+The probe reproduces context loss in an unfenced fixture, then requires the same
+older library to refuse schema26 without changing its bytes. It skips explicitly
+when no prior library is supplied; record the exact source revision/hash and
+execution separately from the normal Flutter suite. All profiles and addresses
+are fictional, and neither preparation nor the probe sends mail.
+
 The `first-download-composer-focus` contract holds the first nonempty mail page
 while New message is open on an empty Inbox. Release the page while To, Subject
 or Message owns focus; keep the same draft, editor, caret and typing target.

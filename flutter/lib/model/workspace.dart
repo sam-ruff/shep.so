@@ -1637,11 +1637,19 @@ class Workspace extends ChangeNotifier {
 
   Future<Draft?> reply(String id, bool all) async {
     unawaited(finishReading());
+    final includeOriginal = preferences.replyIncludeOriginal;
     try {
       final original = mail(id);
       if (original == null) return null;
       if (repository case final DraftRepository drafts) {
-        return await drafts.reply(id, all);
+        final prepared = await drafts.reply(id, all);
+        if (prepared.replyContext == null) return prepared;
+        return Draft.fromJson({
+          ...prepared.toJson(),
+          'reply_context': prepared.replyContext!
+              .including(includeOriginal)
+              .toJson(),
+        });
       }
       return Draft(
         id: 'reply-${DateTime.now().microsecondsSinceEpoch}',
@@ -1650,7 +1658,12 @@ class Workspace extends ChangeNotifier {
         subject: original.subject.toLowerCase().startsWith('re:')
             ? original.subject
             : 'Re: ${original.subject}',
-        body: '\n\n> ${original.body.replaceAll('\n', '\n> ')}',
+        replyContext: ReplyContext(
+          accountId: original.accountId,
+          mailId: original.id,
+          quote: '\n\n> ${original.body.replaceAll('\n', '\n> ')}',
+          includeQuote: includeOriginal,
+        ),
       );
     } catch (e) {
       error = '$e';

@@ -280,11 +280,30 @@ pub fn save_text(db: &mut Connection, mut draft: Draft) -> Result<()> {
         .optional()?;
     // Creation owns the immutable original quote. Text autosave can change its
     // displayed body but cannot replace or erase the hidden formatting source.
-    draft.forward = current
+    let saved_draft = current
         .as_ref()
         .map(|(_, s)| serde_json::from_str::<Draft>(s))
-        .transpose()?
-        .and_then(|d| d.forward);
+        .transpose()?;
+    if let Some(context) = saved_draft
+        .as_ref()
+        .and_then(|draft| draft.reply_context.as_ref())
+    {
+        if let Some(submitted) = draft.reply_context.as_ref() {
+            anyhow::ensure!(
+                context.account_id == submitted.account_id
+                    && context.mail_id == submitted.mail_id
+                    && context.quote == submitted.quote,
+                "The original reply changed. Reopen this draft before retrying."
+            );
+        } else {
+            draft.reply_context = Some(context.clone());
+        }
+    }
+    draft.forward = saved_draft.and_then(|draft| draft.forward);
+    anyhow::ensure!(
+        draft.forward.is_none() || draft.reply_context.is_none(),
+        "A forwarded message cannot replace its original with reply content."
+    );
     draft.attachments = attachments(&tx, &draft.id)?;
     let encoded = serde_json::to_string(&draft)?;
     if let Some((saved_revision, saved)) = current

@@ -1,5 +1,15 @@
 # Conversation request audit
 
+**6 October reply-original delivery (#30):** Mobile Reply and Reply all gain a
+per-draft Include original message control and searchable new-reply default.
+Typed text remains independent of the saved original through files, autosave,
+reopen and reviewed uncertain Outbox recovery. The R97 default becomes one
+portable profile key across desktop/mobile/browser adapters; old mobile
+eight-field snapshots, exact requests and receipts do not approve the ninth
+field. Forward and legacy inline-quote drafts retain their established content.
+Browser composer application remains an explicit active gap. Verification and
+device/provider limits are recorded in [Completion](COMPLETION.md).
+
 **6 October reader metadata continuation (#47):** Flutter now displays exact
 cached From/To independently of receiving-account identity and exposes selectable
 headers with visible Copy controls before body completion. Host native FFI,

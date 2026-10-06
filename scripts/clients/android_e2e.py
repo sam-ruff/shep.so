@@ -20,6 +20,8 @@ def run(name, args, cwd=ROOT, env=None):
         subprocess.run(args, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
 
 def compose(device, flutter, env):
+    report = ROOT/'artifacts/flutter/native/integration-compose-result.json'
+    report.unlink(missing_ok=True)
     with (LOGS/'android-compose-picker.log').open('w') as log:
         picker = subprocess.Popen([sys.executable,str(ROOT/'scripts/clients/android_compose_fixture.py'),'--device',device],stdout=log,stderr=subprocess.STDOUT)
         try:
@@ -45,6 +47,8 @@ def compose(device, flutter, env):
                 picker.terminate()
                 try: picker.wait(timeout=5)
                 except subprocess.TimeoutExpired: picker.kill();picker.wait()
+    if not report.exists() or json.loads(report.read_text()).get('scenarios') != ['native-reply-original-default-files-reopen']:
+        raise RuntimeError('Reply controls did not report completion; an interrupted driver is not a pass')
 
 def outbox(device, flutter, env):
     with (LOGS/'android-outbox-fixture.log').open('w') as log:

@@ -282,6 +282,35 @@ class ForwardQuote {
   };
 }
 
+class ReplyContext {
+  const ReplyContext({
+    required this.accountId,
+    required this.mailId,
+    required this.quote,
+    this.includeQuote = true,
+  });
+  final String accountId, mailId, quote;
+  final bool includeQuote;
+  ReplyContext including(bool value) => ReplyContext(
+    accountId: accountId,
+    mailId: mailId,
+    quote: quote,
+    includeQuote: value,
+  );
+  Map<String, Object?> toJson() => {
+    'account_id': accountId,
+    'mail_id': mailId,
+    'quote': quote,
+    'include_quote': includeQuote,
+  };
+  factory ReplyContext.fromJson(Map<String, dynamic> value) => ReplyContext(
+    accountId: value['account_id'],
+    mailId: value['mail_id'],
+    quote: value['quote'],
+    includeQuote: value['include_quote'],
+  );
+}
+
 class Draft {
   const Draft({
     required this.id,
@@ -294,6 +323,7 @@ class Draft {
     this.revision = 0,
     this.fileRevision = 0,
     this.forward,
+    this.replyContext,
     this.inReplyTo,
     this.references = const [],
     this.attachments = const [],
@@ -303,6 +333,7 @@ class Draft {
   final int revision, fileRevision;
   final String? inReplyTo;
   final ForwardQuote? forward;
+  final ReplyContext? replyContext;
   final List<String> references;
   final List<DraftAttachment> attachments;
   Map<String, Object?> toJson() => {
@@ -318,6 +349,7 @@ class Draft {
     'references': references,
     'file_revision': fileRevision,
     'forward': forward?.toJson(),
+    'reply_context': replyContext?.toJson(),
     'attachments': attachments.map((a) => a.toJson()).toList(),
   };
   factory Draft.fromJson(Map<String, dynamic> json) => Draft(
@@ -333,6 +365,9 @@ class Draft {
     forward: json['forward'] == null
         ? null
         : ForwardQuote.fromJson(json['forward']),
+    replyContext: json['reply_context'] == null
+        ? null
+        : ReplyContext.fromJson(json['reply_context']),
     inReplyTo: json['in_reply_to'],
     references: (json['references'] as List? ?? []).cast<String>(),
     attachments: (json['attachments'] as List? ?? [])

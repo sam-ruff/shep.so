@@ -93,8 +93,10 @@ class DeviceSettings implements SettingsStore, ProfileSettingsStore {
       }
       // Validate even an already committed retry; an ID cannot acquire new meaning.
       baseline.preferences.applyProfile(selected);
-      final keys = baseline.preferences.profileSettings().keys.toSet();
-      if (baseline.revisions.keys.toSet().difference(keys).isNotEmpty ||
+      final keys = baseline.values.keys.toSet();
+      if (!validProfileFieldSet(keys) ||
+          selected.keys.any((key) => !keys.contains(key)) ||
+          baseline.revisions.keys.toSet().difference(keys).isNotEmpty ||
           keys.difference(baseline.revisions.keys.toSet()).isNotEmpty ||
           baseline.revisions.values.any(
             (v) => v < 0 || v > _Ledger.maximumRevision,
@@ -107,7 +109,7 @@ class DeviceSettings implements SettingsStore, ProfileSettingsStore {
         for (final key in value.keys.toList()..sort()) key: value[key],
       };
       final request = jsonEncode({
-        'values': ordered(baseline.preferences.profileSettings()),
+        'values': ordered(baseline.values),
         'revisions': ordered(baseline.revisions),
         'changes': ordered(selected),
       });
@@ -124,7 +126,7 @@ class DeviceSettings implements SettingsStore, ProfileSettingsStore {
       for (final entry in selected.entries) {
         if (current.revisions[entry.key] == baseline.revisions[entry.key] &&
             current.preferences.profileSettings()[entry.key] ==
-                baseline.preferences.profileSettings()[entry.key]) {
+                baseline.values[entry.key]) {
           applied[entry.key] = entry.value;
         } else {
           kept.add(entry.key);
@@ -136,7 +138,7 @@ class DeviceSettings implements SettingsStore, ProfileSettingsStore {
         'request': request,
         'applied': applied.keys.toList(),
         'kept': kept,
-        'revisions': Map<String, int>.of(next.revisions),
+        'revisions': {for (final key in keys) key: next.revisions[key]!},
       };
       try {
         await _storage.write(next.encode());
@@ -215,7 +217,7 @@ class _Ledger {
         final originalRevisions = receipt['revisions'];
         if (originalRevisions != null) {
           if (originalRevisions is! Map ||
-              originalRevisions.length != revisions.length ||
+              !validProfileFieldSet(originalRevisions.keys.cast<String>()) ||
               originalRevisions.entries.any(
                 (entry) =>
                     !revisions.containsKey(entry.key) ||

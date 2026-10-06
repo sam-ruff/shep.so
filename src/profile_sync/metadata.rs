@@ -10,6 +10,7 @@ use uuid::Uuid;
 pub const SETTINGS: &[codec::SettingKey] = &[
     codec::SettingKey::Appearance,
     codec::SettingKey::ReplyDisplay,
+    codec::SettingKey::ReplyIncludeOriginal,
     codec::SettingKey::ImagePolicy,
     codec::SettingKey::UnifiedInbox,
     codec::SettingKey::CrossAccountMoves,
@@ -31,6 +32,7 @@ pub fn setting_value(
     Some(match key {
         Appearance => serde_json::json!(preferences.appearance),
         ReplyDisplay => serde_json::json!(preferences.reply_display),
+        ReplyIncludeOriginal => serde_json::json!(preferences.reply_include_original),
         ImagePolicy => serde_json::json!(preferences.image_policy),
         UnifiedInbox => serde_json::json!(preferences.unified_inbox),
         CrossAccountMoves => serde_json::json!(preferences.cross_account_moves),
@@ -63,6 +65,7 @@ pub fn apply_setting(preferences: &mut Preferences, change: &Change) -> Result<b
     match key {
         Appearance => preferences.appearance = serde_json::from_value(value)?,
         ReplyDisplay => preferences.reply_display = serde_json::from_value(value)?,
+        ReplyIncludeOriginal => preferences.reply_include_original = serde_json::from_value(value)?,
         ImagePolicy => preferences.image_policy = serde_json::from_value(value)?,
         UnifiedInbox => preferences.unified_inbox = serde_json::from_value(value)?,
         CrossAccountMoves => preferences.cross_account_moves = serde_json::from_value(value)?,
@@ -227,4 +230,42 @@ pub fn review_account(connection: &wire::Connection, name: &str) -> Result<Accou
         .validate()
         .context("The synced account is not valid. Keep the local setup and review it.")?;
     Ok(account)
+}
+
+#[cfg(test)]
+mod reply_default_tests {
+    use super::*;
+    #[test]
+    fn portable_reply_default_preserves_false_and_reset() -> Result<()> {
+        let mut preferences = Preferences {
+            reply_include_original: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            setting_value(codec::SettingKey::ReplyIncludeOriginal, &preferences),
+            Some(false.into())
+        );
+        apply_setting(
+            &mut preferences,
+            &Change {
+                action: Action::SettingRemoved {
+                    key: codec::SettingKey::ReplyIncludeOriginal,
+                },
+                extra: Default::default(),
+            },
+        )?;
+        assert!(preferences.reply_include_original);
+        apply_setting(
+            &mut preferences,
+            &Change {
+                action: Action::Setting {
+                    key: codec::SettingKey::ReplyIncludeOriginal,
+                    value: false.into(),
+                },
+                extra: Default::default(),
+            },
+        )?;
+        assert!(!preferences.reply_include_original);
+        Ok(())
+    }
 }

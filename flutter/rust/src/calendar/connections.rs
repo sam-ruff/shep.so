@@ -864,7 +864,7 @@ mod tests {
             })
             .await
             .expect("state");
-        assert_eq!(state, (25, None, (None, None, None)));
+        assert_eq!(state, (26, None, (None, None, None)));
         drop(database);
         let _ = std::fs::remove_file(path);
     }

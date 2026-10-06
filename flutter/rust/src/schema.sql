@@ -111,5 +111,5 @@ CREATE TABLE IF NOT EXISTS calendar_intents(source_id TEXT NOT NULL,event_id TEX
 CREATE INDEX IF NOT EXISTS calendar_action_status ON calendar_actions(status,created,id);
 CREATE INDEX IF NOT EXISTS calendar_action_history ON calendar_actions(created DESC,id);
 CREATE INDEX IF NOT EXISTS calendar_action_attention ON calendar_actions(created DESC,id) WHERE status NOT IN ('succeeded','cancelled');
-PRAGMA user_version=25;
+PRAGMA user_version=26;
 COMMIT;
