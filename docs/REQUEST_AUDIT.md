@@ -9,6 +9,16 @@ eight-field snapshots, exact requests and receipts do not approve the ninth
 field. Forward and legacy inline-quote drafts retain their established content.
 Browser composer application remains an explicit active gap. Verification and
 device/provider limits are recorded in [Completion](COMPLETION.md).
+
+**6 October reader metadata continuation (#47):** Flutter now displays exact
+cached From/To independently of receiving-account identity and exposes selectable
+headers with visible Copy controls before body completion. Host native FFI,
+actual reader controls and the saved compact browser clipboard/frame scenario
+pass. Android's synthetic repository and actual platform clipboard controls pass
+in light and dark separately from host FFI; Apple and live provider execution
+remain open in the platform audit. See
+[completion](COMPLETION.md) for exact verification and preserved failures.
+
 **6 October mobile queued bulk Undo (#49):** Continue parity delivery with Undo
 for approved groups before any acknowledged item, including pending, paused and
 held-first-step work. Keep the immutable saved group and decision revisions;
@@ -46,9 +56,12 @@ Initial fixes are account-bound notices in
 in [PR #54](https://github.com/sam-ruff/shep.so/pull/54) and Preferences search
 in [PR #55](https://github.com/sam-ruff/shep.so/pull/55) and calendar scheduling
 in [PR #56](https://github.com/sam-ruff/shep.so/pull/56), with bounded History
-in [PR #57](https://github.com/sam-ruff/shep.so/pull/57). Reader headers,
-reply quote controls and queued Undo remain active implementation lanes;
-the tracker retains the remaining functional and platform gaps.
+in [PR #57](https://github.com/sam-ruff/shep.so/pull/57) and queued Undo in
+[PR #60](https://github.com/sam-ruff/shep.so/pull/60). Reader headers are in
+[PR #59](https://github.com/sam-ruff/shep.so/pull/59); reply quote controls and
+provider folder destinations remain active implementation lanes. The user also
+requested a separate agent investigate and fix failing CI. The tracker retains
+the remaining functional and platform gaps.
 
 **6 October mobile calendar scheduling (#29):** Native Start date, Last date,
 From, To and All day controls now support timed and multi-day events. Validation,

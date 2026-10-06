@@ -71,12 +71,19 @@ void main() {
           null;
       Future<void> editable() => wait(saveEnabled);
       Future<void> show(Finder target, {bool back = false}) async {
-        await tester.scrollUntilVisible(
-          target,
-          back ? -250 : 250,
-          scrollable: find.byType(Scrollable).first,
-        );
-        await tester.pumpAndSettle();
+        final end = DateTime.now().add(const Duration(seconds: 45));
+        do {
+          await tester.scrollUntilVisible(
+            target,
+            back ? -250 : 250,
+            scrollable: find.byType(Scrollable).first,
+          );
+          await tester.pumpAndSettle();
+          if (target.hitTestable().evaluate().isNotEmpty) return;
+          if (DateTime.now().isAfter(end)) {
+            fail('Native compose control did not remain visible: $target');
+          }
+        } while (true);
       }
 
       Map<String, dynamic>? originalSnapshot;
@@ -238,7 +245,7 @@ void main() {
       final queued = (await repository.outbox()).rows.single;
       expect(queued.state, 'waiting');
       expect(queued.subject, 'Re: Shared reply');
-      expect(queued.accountId, originalSnapshot!['account_id']);
+      expect(queued.accountId, originalSnapshot['account_id']);
       expect(credentials.values, isEmpty);
       await binding.takeScreenshot('native-reply-outbox-waiting');
       await tester.tap(find.text('Cancel'));

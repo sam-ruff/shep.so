@@ -446,6 +446,8 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
             ),
           if (replyContext != null && widget.draft.forward == null)
             originalPreview(),
+          if (replyContext != null && widget.draft.forward == null)
+            const SizedBox(height: 16),
           if (widget.workspace.repository.preview)
             const Padding(
               padding: EdgeInsets.only(bottom: 16),

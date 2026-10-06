@@ -104,11 +104,13 @@ mod preferences_search_tests {
             .await?;
         assert_eq!(profile.operations.slots.available_permits(), 0);
         assert_eq!(profile.operations.admitted.available_permits(), 0);
-        let request = || {
-            Request::SearchPreferences {
-            catalogue: serde_json::json!([{"label":"Theme", "section":"Appearance", "description":"", "synonyms":""}]).to_string(),
+        let request = || Request::SearchPreferences {
+            catalogue: serde_json::json!([{
+                "label": "Theme", "section": "Appearance",
+                "description": "", "synonyms": ""
+            }])
+            .to_string(),
             query: "APPEARÁNCE".into(),
-        }
         };
         let positions =
             tokio::time::timeout(std::time::Duration::from_secs(1), run(&profile, request()))
@@ -1094,7 +1096,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
                     if let Some(starred)=starred { summary.starred=starred; }
                 }
                 let (text,raw,lineage):(String,Vec<u8>,String)=db.query_row("SELECT m.body,m.raw,l.token FROM mail m JOIN mail_lineage l ON l.id=m.id WHERE m.id=?1",[&summary.id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
-                let mut summary=serde_json::to_value(summary)?;
+                let mut summary=crate::headers::display_metadata(&summary)?;
                 summary["lineage"]=lineage.into();
                 Ok((summary,text,raw))
             }).await?;

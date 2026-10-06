@@ -12,13 +12,14 @@ import urllib.request
 ROOT=Path(__file__).resolve().parents[2]
 LOGS=ROOT/'artifacts/logs'
 
-def main(formatted=False, discovery=False, creation=False, enrollment=False, sync=False, bulk=False):
+def main(formatted=False, discovery=False, creation=False, enrollment=False, sync=False, bulk=False, headers=False):
     LOGS.mkdir(parents=True,exist_ok=True)
     prefix='bulk-native-web' if bulk else 'flutter-sync-web' if sync else 'flutter-enrollment-web' if enrollment else 'flutter-creation-web' if creation else 'flutter-discovery-web' if discovery else 'flutter-formatted-web' if formatted else 'flutter-web'
+    if headers:prefix='reader-headers-web'
     if formatted:
         subprocess.run([sys.executable,str(ROOT/'scripts/clients/generate_html_fixture.py'),'--check'],cwd=ROOT,check=True)
     with (LOGS/f'{prefix}-build.log').open('w') as log:
-        subprocess.run(['flutter','build','web','--target','test/bulk_main.dart' if bulk else 'test/profile_sync_main.dart' if sync else 'test/profile_enrollment_main.dart' if enrollment else 'test/profile_creation_main.dart' if creation else 'test/profile_discovery_main.dart' if discovery else 'test/formatted_main.dart' if formatted else 'test/preview_main.dart','--no-web-resources-cdn'],cwd=ROOT/'flutter',stdout=log,stderr=subprocess.STDOUT,check=True)
+        subprocess.run(['flutter','build','web','--target','test/reader_headers_main.dart' if headers else 'test/bulk_main.dart' if bulk else 'test/profile_sync_main.dart' if sync else 'test/profile_enrollment_main.dart' if enrollment else 'test/profile_creation_main.dart' if creation else 'test/profile_discovery_main.dart' if discovery else 'test/formatted_main.dart' if formatted else 'test/preview_main.dart','--no-web-resources-cdn'],cwd=ROOT/'flutter',stdout=log,stderr=subprocess.STDOUT,check=True)
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     with (LOGS/f'{prefix}-server.log').open('w') as log:
@@ -35,7 +36,7 @@ def main(formatted=False, discovery=False, creation=False, enrollment=False, syn
             bulk_result=ROOT/'artifacts/flutter/web/bulk/result.json'
             if bulk:bulk_result.unlink(missing_ok=True)
             with (LOGS/f'{prefix}-e2e.log').open('w') as log:
-                subprocess.run(['node','flutter/e2e/bulk.mjs'] if bulk else ['node','flutter/e2e/profile_sync.mjs','web'] if sync else ['node','flutter/e2e/profile_enrollment.mjs','web'] if enrollment else ['node','flutter/e2e/profile_creation.mjs','web'] if creation else ['node','flutter/e2e/profile_discovery.mjs','web'] if discovery else ['node','flutter/e2e/formatted.mjs'] if formatted else ['npm','--prefix','flutter/e2e','run','web'],cwd=ROOT,env=env,stdout=log,stderr=subprocess.STDOUT,check=True)
+                subprocess.run(['node','flutter/e2e/reader_headers.mjs'] if headers else ['node','flutter/e2e/bulk.mjs'] if bulk else ['node','flutter/e2e/profile_sync.mjs','web'] if sync else ['node','flutter/e2e/profile_enrollment.mjs','web'] if enrollment else ['node','flutter/e2e/profile_creation.mjs','web'] if creation else ['node','flutter/e2e/profile_discovery.mjs','web'] if discovery else ['node','flutter/e2e/formatted.mjs'] if formatted else ['npm','--prefix','flutter/e2e','run','web'],cwd=ROOT,env=env,stdout=log,stderr=subprocess.STDOUT,check=True)
             if bulk:
                 result=json.loads(bulk_result.read_text()) if bulk_result.exists() else {}
                 if result.get('scenarios')!=['select-checkbox-range-all-clear','review-counts-decline','approve-progress-pause-resume-undo','dark-read-group-history-items']:
@@ -50,4 +51,5 @@ if __name__=='__main__':
     group=parser.add_mutually_exclusive_group()
     group.add_argument('--formatted',action='store_true'); group.add_argument('--discovery',action='store_true'); group.add_argument('--creation',action='store_true'); group.add_argument('--enrollment',action='store_true'); group.add_argument('--sync',action='store_true')
     group.add_argument('--bulk',action='store_true',help='Run the saved group selection/review/execution/Undo/History controls in light and dark')
-    args=parser.parse_args(); main(args.formatted,args.discovery,args.creation,args.enrollment,args.sync,args.bulk)
+    group.add_argument('--headers',action='store_true',help='Run cached reader header copy and retained formatted-frame controls')
+    args=parser.parse_args(); main(args.formatted,args.discovery,args.creation,args.enrollment,args.sync,args.bulk,args.headers)

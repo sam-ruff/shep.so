@@ -9,6 +9,122 @@ use shep_mail_core::model::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[tokio::test]
+async fn schema25_upgrade_preserves_exact_reply_payloads_and_current_legacy_autosave()
+-> anyhow::Result<()> {
+    let (dir, profile) = profile().await;
+    let context = ReplyContext {
+        account_id: account().id,
+        mail_id: "cached-source".into(),
+        quote: "\n\nOriginal retained exactly.\n> Earlier thread".into(),
+        include_quote: true,
+    };
+    let reply = Draft {
+        id: "modern-reply".into(),
+        account_id: account().id,
+        body: "Typed answer".into(),
+        revision: 1,
+        bcc: "private@example.test".into(),
+        in_reply_to: Some("<original@example.test>".into()),
+        references: vec![
+            "<root@example.test>".into(),
+            "<original@example.test>".into(),
+        ],
+        reply_context: Some(context.clone()),
+        ..Default::default()
+    };
+    let exact = serde_json::to_string_pretty(&reply)?;
+    let legacy = "{\"id\":\"flat-reply\", \"body\":\"Typed old reply\\n\\n> Old inline original\", \"revision\":1}".to_owned();
+    let before = exact.clone();
+    let old = legacy.clone();
+    profile.database.write(move |db| {
+        db.execute("INSERT INTO accounts VALUES(?1,?2)", params![account().id,serde_json::to_string(&account())?])?;
+        db.execute("INSERT INTO drafts VALUES('modern-reply',1,?1)", [&before])?;
+        db.execute("INSERT INTO drafts VALUES('flat-reply',1,?1)", [&old])?;
+        db.execute("INSERT INTO draft_files VALUES('exact-file','modern-reply','proof.bin','application/octet-stream',?1)", [vec![0u8,255,13,10]])?;
+        db.execute_batch("PRAGMA user_version=25")?;
+        Ok(())
+    }).await?;
+    drop(profile);
+    let reopened =
+        MobileProfile::open(dir.path().join("mail.sqlite3").to_string_lossy().into()).await?;
+    let (version, preserved, flat, bytes) = reopened
+        .database
+        .read(|db| {
+            Ok((
+                db.query_row("PRAGMA user_version", [], |r| r.get::<_, u32>(0))?,
+                db.query_row(
+                    "SELECT content FROM drafts WHERE id='modern-reply'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )?,
+                db.query_row(
+                    "SELECT content FROM drafts WHERE id='flat-reply'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )?,
+                db.query_row(
+                    "SELECT bytes FROM draft_files WHERE id='exact-file'",
+                    [],
+                    |r| r.get::<_, Vec<u8>>(0),
+                )?,
+            ))
+        })
+        .await?;
+    assert_eq!(version, 26);
+    assert_eq!(preserved, exact);
+    assert_eq!(flat, legacy);
+    assert_eq!(bytes, [0, 255, 13, 10]);
+    let mut input = serde_json::to_value(&reply)?;
+    input
+        .as_object_mut()
+        .context("Draft object")?
+        .remove("reply_context");
+    input["revision"] = 2.into();
+    input["body"] = "New typed answer".into();
+    operations::run(
+        &reopened,
+        serde_json::from_value(json!({"op":"save_draft", "draft":input}))?,
+    )
+    .await?;
+    let rows = request(&reopened, json!({"op":"drafts"})).await;
+    let modern = rows
+        .as_array()
+        .context("Draft rows")?
+        .iter()
+        .find(|d| d["id"] == "modern-reply")
+        .context("Saved reply")?;
+    assert_eq!(modern["reply_context"], serde_json::to_value(context)?);
+    assert_eq!(
+        modern["references"],
+        serde_json::to_value(reply.references)?
+    );
+    assert_eq!(modern["in_reply_to"], "<original@example.test>");
+    assert_eq!(modern["bcc"], "private@example.test");
+    assert_eq!(modern["body"], "New typed answer");
+    assert_eq!(modern["attachments"][0]["id"], "exact-file");
+    assert_eq!(
+        rows.as_array()
+            .context("Draft rows")?
+            .iter()
+            .find(|d| d["id"] == "flat-reply")
+            .context("Flat reply")?["reply_context"],
+        Value::Null
+    );
+    assert_eq!(
+        reopened
+            .database
+            .read(|db| Ok(db.query_row(
+                "SELECT content FROM drafts WHERE id='flat-reply'",
+                [],
+                |r| r.get::<_, String>(0)
+            )?))
+            .await?,
+        legacy
+    );
+    Ok(())
+}
+
 pub(crate) async fn profile() -> (tempfile::TempDir, MobileProfile) {
     let directory = tempfile::tempdir().unwrap();
     let profile = MobileProfile::open(

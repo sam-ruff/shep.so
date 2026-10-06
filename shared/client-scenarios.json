@@ -6,7 +6,7 @@
       "id": "reply-original-choice-and-profile-default",
       "contract": "Reply and Reply all keep typed text separate from the immutable original. Include original message controls delivery without changing text, exact references or the private Bcc envelope. Capture the default before asynchronous preparation; it affects only new replies. Files, autosave, restart and reviewed uncertain Outbox recovery preserve the saved choice. Forward always carries the original. Old inline-quote drafts are not reinterpreted. The portable boolean reply_include_original retains explicit false, unknown extensions and per-field intent; legacy reviews/receipts do not observe or approve a missing field.",
       "desktop": "Existing ReplyContext, delivery_body and composer controls; the default is now in portable field-intent and metadata mappings. Shared MIME/codec and desktop change-revert/mapping tests cover the contract.",
-      "mobile": "ReplyContext JSON uses additive draft metadata. Real checkbox/default controls, held preparation/autosave, compact light/dark goldens, native file/reopen and uncertain Outbox recovery tests. Legacy eight-key application/review/receipt tests preserve original request bytes through restart and reject unreviewed ninth-field writes. Android execution is recorded separately in COMPLETION.",
+      "mobile": "Schema26 protects ReplyContext JSON from older cache writers. Native tests preserve exact25-to26 draft/file bytes and current legacy-input autosaves; a separate FFI process proves actual schema25 quote loss without the fence and refusal with it. Real checkbox/default controls, held preparation/autosave, compact light/dark goldens, native file/reopen and uncertain Outbox recovery tests. Legacy eight-key application/review/receipt tests preserve original request bytes through restart and reject unreviewed ninth-field writes. Android execution is recorded separately in COMPLETION.",
       "browser": "Shared codec plus default/profile mappings retain false, reset, change-revert and old receipt fields. OPEN: per-reply composer control and new-reply default application; codec support does not establish composer parity."
     },
     {
@@ -69,8 +69,15 @@
       "id": "reader-selection-and-recovered-mail-actions",
       "contract": "Double-click selects a word, triple-click selects a line and drag selects across HTML markup using established text-selection semantics. Subjects are selectable and copyable. A rediscovered provider original can receive a fresh Move/Delete after a retained local recovery copy, without removing the local copy or replaying uncertain work.",
       "desktop": "cosmic-text word/line selection and iced selectable subjects; transactional fresh recovery reservations preserve original/local copies. Rust regressions and real native selection, copy, Move/Delete and recovery controls pass; exact evidence belongs in COMPLETION.",
-      "mobile": "OPEN: verify native subject selection and recovered-original actions alongside platform HTML selection.",
+      "mobile": "Selectable cached subjects/From/To and exact-value Copy controls are covered before body completion, through failure, metadata refresh and aliases; native FFI preserves recipient metadata independently of the receiving account. Recovered-original actions and broader platform HTML selection remain OPEN.",
       "browser": "OPEN: verify subject selection and recovered-original actions alongside browser HTML selection."
+    },
+    {
+      "id": "reader-cached-header-metadata",
+      "contract": "Subject, From and actual cached To metadata remain selectable/copyable before body completion and through failure, refresh and alias adoption. Preserve exact strings and Unicode; display receiving-account identity separately, without inferred recipients or Bcc. Header updates retain the message frame and footer ownership.",
+      "desktop": "Selectable subjects/sender controls and cached detail.summary.recipient; sender address copy is available.",
+      "mobile": "Exact raw From and cached To flow through native page/alias/detail metadata and the preview adapter. Shared bounded address parsing refuses ambiguous/invalid From. Model, actual FFI and real compact reader controls cover Copy, empty/Unicode/multiple recipients, held body/error, refresh/alias and footer ownership. Actual browser clipboard/frame checks and synthetic Android light/dark system-clipboard controls pass separately from host FFI; Apple/live-provider verification remains OPEN.",
+      "browser": "Actual recipient and subject selection exist; exact header clipboard and refresh ownership verification remains OPEN."
     },
     {
       "id": "standard-spam-folder",
