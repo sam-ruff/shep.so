@@ -167,15 +167,20 @@ class PreviewGroupRepository implements GroupRepository {
     calls.add(kind);
     switch (kind) {
       case 'prepare':
-        final finished = jobs.values
-            .where((j) => j.state == 'finished')
-            .toList();
-        while (jobs.length >= 20 && finished.isNotEmpty) {
-          jobs.remove(finished.removeAt(0).id);
-        }
-        if (jobs.length >= 20) {
+        if (jobs.values
+                .where(
+                  (j) => {
+                    'staging',
+                    'review',
+                    'running',
+                    'undoing',
+                    'paused',
+                  }.contains(j.state),
+                )
+                .length >=
+            20) {
           throw StateError(
-            'History keeps 20 group actions. Finish or remove older ones first.',
+            'There are already 20 active group actions. Finish or remove an open review first.',
           );
         }
         final action = Map<String, Object?>.from(command['action'] as Map);
@@ -320,8 +325,51 @@ class PreviewGroupRepository implements GroupRepository {
       case 'history':
         final listed = jobs.values.where((j) => j.state != 'cancelled').toList()
           ..sort((a, b) => b.seq.compareTo(a.seq));
+        final before = command['before'] as int?;
+        final page = listed
+            .where((j) => before == null || j.seq < before)
+            .take(20)
+            .toList();
+        final newer = listed
+            .where(
+              (j) => page.isNotEmpty
+                  ? j.seq > page.first.seq
+                  : before != null && j.seq >= before,
+            )
+            .toList()
+            .reversed
+            .take(21)
+            .toList();
+        final attention = listed
+            .where(
+              (j) => j.items.any((i) => groupAttentionStates.contains(i.state)),
+            )
+            .toList();
         return {
-          'jobs': listed.take(20).map(_summary).toList(),
+          'jobs': page.map(_summary).toList(),
+          'next_before':
+              page.isNotEmpty && listed.any((j) => j.seq < page.last.seq)
+              ? page.last.seq
+              : null,
+          'has_previous': newer.isNotEmpty,
+          'previous_before': newer.length > 20 ? newer.last.seq : null,
+          'active': listed
+              .where((j) => {'running', 'undoing', 'paused'}.contains(j.state))
+              .map(_summary)
+              .toList(),
+          'attention': attention.fold<int>(
+            0,
+            (n, j) =>
+                n +
+                j.items
+                    .where((i) => groupAttentionStates.contains(i.state))
+                    .length,
+          ),
+          'attention_job': attention.isEmpty ? null : _summary(attention.first),
+          'tracked': (command['tracked'] as List? ?? [])
+              .where(jobs.containsKey)
+              .map((id) => _summary(jobs[id]!))
+              .toList(),
           'runnable': jobs.values.any(
             (j) =>
                 (j.state == 'running' && j.count('pending') > 0) ||
@@ -350,7 +398,29 @@ class PreviewGroupRepository implements GroupRepository {
         }).toList();
         return {
           'rows': rows,
-          'next_after': rows.length == 50 ? rows.last['position'] : null,
+          'next_after':
+              rows.isNotEmpty &&
+                  job.items.any(
+                    (i) => i.position > (rows.last['position'] as int),
+                  )
+              ? rows.last['position']
+              : null,
+          'has_previous': job.items.any(
+            (i) =>
+                i.position <
+                (rows.isNotEmpty ? rows.first['position'] as int : after),
+          ),
+          'previous_after': job.items
+              .where(
+                (i) =>
+                    i.position <
+                    (rows.isNotEmpty ? rows.first['position'] as int : after),
+              )
+              .toList()
+              .reversed
+              .skip(50)
+              .firstOrNull
+              ?.position,
         };
       case 'remove':
         final job = _job(command['id'] as String);

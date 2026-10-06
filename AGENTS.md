@@ -139,6 +139,16 @@ and remain distinct from success.
 
 ## Monorepo and feature parity
 
+Flutter schema25 retains completed group receipts until explicit removal.
+Keep indexed 20-active admission separate from 20-group History pages and one
+50-item detail page. Seek active/attention state independently of the displayed
+page and preserve exact older targets. Screen and owner observations coalesce
+one read and its latest replacement, fencing local command revisions before
+publishing state or waking execution. Recovery callbacks retain the group, item
+and page generation through group/page changes, close and same-group re-entry.
+Retain cursor-boundary, held-read/two-removal, actual-control and 100,000 completed
+history seek regressions; these are not large-active-group timing evidence.
+
 The Rust + iced desktop application stays at the repository root. `flutter/` is the Android/iOS client; `web/` is the separate browser client matching the desktop behavior; `website/` is the promotional website. The earlier separate `shep.flutter` repository and hosted Flutter-client proposals are superseded. Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is the single integration branch for the desktop, mobile and website sessions: desktop changes reach the client branch through merges from `main`, never through hand-ported commits, and root desktop code follows `main` when the two disagree. Mobile/web/website development continues in Git worktrees; combining agent work inside a review worktree is allowed. The shipping request authorizes committing and pushing combined client work promptly to `feat/mobile-web-clients` for review, without waiting for full parity; keep incomplete features tracked, and treat merging client work into `main` as an explicit integrator step rather than part of a checkpoint push. The latest request authorizes installing the Rust beta service on the email VPS once its target and OAuth/owner configuration are supplied; do not invent another permission step.
 
 `shared/mail-core` owns common mail/MIME/reply and IMAP/POP3/SMTP contracts. `shared/mail-content` owns MIME representation/CID selection, cached attachment identities, filenames and exact decoding for native Rust and browser WASM workers. Untrusted raw input must pass `mime::parse`; its iterative boundary preflight is coupled to pinned mailparse 0.16.1 and must be reviewed when upgrading that dependency. RawHtmlPart/message_body is untrusted sender HTML, never safe to insert directly into a page or WebView. Formatted rendering requires resource confinement and sanitizer/CSP tests. Keep shared byte fixtures in agreement; browser builds generate ignored WASM glue using the pinned CLI in docs/CLIENT_TESTING.md. Include both shared crates in coordinated version stamping. Root compatibility exports and the VPS service use this crate; platform credentials/cache/UI stay outside it. Keep gateway endpoint pinning and TLS hostname validation intact. Browser mail/drafts/submission IDs belong in per-Google-identity client storage, passwords in tab memory until secure remembered credentials are implemented. Persist a reserved SMTP identity before sending and never turn an unknown/uncertain delivery into a new automatic send.

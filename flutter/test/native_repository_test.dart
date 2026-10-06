@@ -472,6 +472,31 @@ void main() {
       final items = await groups.items(job);
       expect(items.rows.single.subject, 'Incoming files fixture');
       expect(items.rows.single.state, 'done');
+      expect(items.nextAfter, isNull);
+      final emptyItems = await groups.items(
+        job,
+        after: items.rows.single.position,
+      );
+      expect(emptyItems.rows, isEmpty);
+      expect(emptyItems.hasPrevious, true);
+      final restoredPage = await groups.items(
+        job,
+        after: emptyItems.previousAfter,
+      );
+      expect(restoredPage.rows.single.mail, items.rows.single.mail);
+      final latest = await repository.groups({'kind': 'history'});
+      expect(latest['active'], isEmpty);
+      final emptyHistory = await repository.groups({
+        'kind': 'history',
+        'before': latest['jobs'][0]['seq'],
+      });
+      expect(emptyHistory['jobs'], isEmpty);
+      expect(emptyHistory['has_previous'], true);
+      final previousHistory = await repository.groups({
+        'kind': 'history',
+        'before': emptyHistory['previous_before'],
+      });
+      expect(previousHistory['jobs'][0]['id'], job.id);
       await groups.undo(job);
       await settled(() => !groups.running && groups.jobs.single.finished);
       expect(groups.jobs.single.count('undone'), 1);

@@ -1,5 +1,58 @@
 # Completion audit
 
+## Mobile bulk History checkpoint, 6 October 2026 (#50)
+
+Implementation: [PR #57](https://github.com/sam-ruff/shep.so/pull/57).
+
+The Flutter History control now keeps one 20-group page and one 50-item page,
+with visible cursor navigation and exact older recovery targets. Schema25
+separates a 20-active admission bound from retained completed history and fences
+older binaries that would delete those records. The existing owner reads active
+and attention state independently of the displayed page; next-step lookup seeks
+one indexed eligible item per active group. No provider dispatcher was added.
+
+Recovery callbacks keep their group/item/page generation through held Retry or
+Accept, another group, another page and same-group away-and-back. Page and owner
+observations fence local command revisions, including two removals during a held
+read and stale failed replies. Iterative group, detail and owner
+one-read/latest-replacement loops share idle futures, avoiding recursive refresh
+chains and queued reads from rapid group choices. Failed detail reads retain a
+scoped Retry above the scroller; group controls and closing remain independent of
+those reads.
+Accept, Retry and Remove refresh independent attention state, including older
+off-page targets; actual banner controls cover accepting and removing that group.
+
+Before current-main integration, the full host gates pass 317 Flutter and 206
+native tests, with clean analysis/native Clippy and reviewed compact light/dark
+captures. Focused native evidence includes 100,000 completed groups: next-item
+92 VM steps, active admission 66, attention count 48 and target 34, all with zero
+full-scan steps. That query-plan regression is not latency/performance evidence.
+The actual FFI case covers final and empty-boundary cursors. Attention counting
+still scans matching failed/uncertain entries, and group summaries aggregate
+their members; the completed-history regression does not establish fixed cost
+for large attention sets or large groups. Integration with main `22d6bbc` passes
+all 359 Flutter and 213 native tests, including the final read-coalescing and
+attention-banner regressions, with clean analysis and reviewed captures.
+Checkpoint normal hooks and pinned strict documentation pass. Final merged
+Clippy/documentation and merge hooks are recorded with the PR. Android/Apple,
+live providers and large-active-group performance remain separate requirements.
+Pending-group Undo stays in #49.
+
+Primary integration with `main` `31d004a` passes 378 Flutter tests, with the two
+existing zone-specific cases covered by the Calendar evidence below. Analysis
+and four Android report-guard tests pass. Native Rust and History production
+sources are unchanged from the reviewed head with 213 native tests and clean
+Clippy. The saved Android bulk runner passes all three native scenarios and all
+four Appium preview flows. Root reviewed the light/dark native History captures,
+the Appium light review and dark History captures. Evidence is under ignored
+`artifacts/logs/history-integrated-*` and `artifacts/flutter/native/`.
+
+An independent agent reviewed the complete change and found no #50 blockers.
+Its separate pre-existing final-observation scheduling finding was reproduced
+for Undo, Resume and Retry and is tracked in #58 alongside #49. Final integration
+hooks and strict documentation results are recorded in PR #57. Apple, live
+providers and large-active-group performance remain unverified.
+
 ## Mobile calendar scheduling, 6 October 2026 (#29)
 
 Implementation: [PR #56](https://github.com/sam-ruff/shep.so/pull/56),

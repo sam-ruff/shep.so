@@ -53,6 +53,7 @@ class GroupJob {
       undo = data['undo'] == true,
       total = data['total'] ?? 0,
       revision = data['revision'] ?? 0,
+      sequence = data['seq'] ?? 0,
       created = data['created'] ?? 0,
       error = data['error'],
       action = Map<String, dynamic>.from(data['action'] as Map? ?? {}),
@@ -62,7 +63,7 @@ class GroupJob {
       groups = (data['groups'] as List? ?? []).cast<Map<String, dynamic>>();
   final String id, state;
   final bool undo;
-  final int total, revision, created;
+  final int total, revision, created, sequence;
   final String? error;
   final Map<String, dynamic> action;
   final Map<String, int> counts;
