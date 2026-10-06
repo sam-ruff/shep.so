@@ -106,19 +106,50 @@ Future<void> bulkControlsScenario(
     await tap(find.text('Cancel'));
     await wait(() => groups.review == null, 'declined review');
     expect(journal.jobs, isEmpty);
-    expect(selection.mode, false);
+    expect(selection.mode, true);
+    expect(selection.count, 130);
     expect(workspace.resultCount, 130);
 
+    final selectedCapture = selection.snapshot!.id;
+    await tester.scrollUntilVisible(
+      find.text('Load next 50 messages'),
+      500,
+      scrollable: find.byType(Scrollable).last,
+      maxScrolls: 30,
+    );
+    await tester.pumpAndSettle();
+    final more = find.widgetWithText(TextButton, 'Load next 50 messages');
+    final moreBounds = tester.getRect(more);
+    await tester.tapAt(moreBounds.topLeft + const Offset(20, 10));
+    await wait(() => workspace.visible.length == 100, 'second page');
+    expect(selection.snapshot!.id, selectedCapture);
+    expect(selection.count, 130);
+
+    final captureId = selection.snapshot!.id;
+    await tap(find.byTooltip('Archive selected'));
+    await wait(() => groups.review != null, 'back review');
+    await tester.binding.handlePopRoute();
+    await wait(() => groups.review == null, 'back dismissal');
+    expect(journal.jobs, isEmpty);
+    expect(selection.snapshot!.id, captureId);
+    expect(selection.count, 130);
+
+    await tap(find.byTooltip('Archive selected'));
+    await wait(() => groups.review != null, 'barrier review');
+    await tester.tapAt(const Offset(5, 5));
+    await wait(() => groups.review == null, 'barrier dismissal');
+    expect(journal.jobs, isEmpty);
+    expect(selection.snapshot!.id, captureId);
+    expect(selection.count, 130);
+
     // Approve: intent paints immediately, one owned step at a time.
-    await tap(find.byTooltip('Select'));
-    await tap(find.text('Select all'));
-    await wait(() => selection.ready && selection.count == 130, 'select all');
     final hold = Completer<void>(), started = Completer<void>();
     journal.hold = hold;
     journal.stepStarted = started;
     await tap(find.byTooltip('Archive selected'));
     await wait(() => groups.review != null, 'review');
     await tap(find.widgetWithText(FilledButton, 'Archive'));
+    expect(selection.mode, false);
     await wait(() => started.isCompleted, 'first step');
     expect(workspace.resultCount, 0, reason: 'approved intent paints');
     expect(find.text('All clear'), findsOneWidget);

@@ -224,12 +224,10 @@ class PreviewGroupRepository implements GroupRepository {
           after = page['next_after'] as int;
         }
         await selection.selection({'kind': 'release', 'id': frozen['id']});
-        await selection.selection({
-          'kind': 'release',
-          'id': command['selection'],
-        });
         job.state = 'review';
         return _summary(job);
+      case 'inspect':
+        return _summary(_job(command['id'] as String));
       case 'approve':
         final job = _job(command['id'] as String);
         if (job.state != 'review') {

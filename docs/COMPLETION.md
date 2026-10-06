@@ -21,10 +21,92 @@ native tests, with clean analysis/native Clippy and reviewed compact light/dark
 captures. Focused native evidence includes 100,000 completed groups: next-item
 92 VM steps, active admission 66, attention count 48 and target 34, all with zero
 full-scan steps. That query-plan regression is not latency/performance evidence.
-The actual FFI case covers final and empty-boundary cursors. Full merged checks,
-normal hooks and pinned strict documentation are still to follow; Android/Apple,
+The actual FFI case covers final and empty-boundary cursors. Attention counting
+still scans matching failed/uncertain entries, and group summaries aggregate
+their members; the completed-history regression does not establish fixed cost
+for large attention sets or large groups. Integration with main `22d6bbc` passes
+all 354 Flutter and 213 native tests, with clean analysis and reviewed captures.
+Checkpoint normal hooks and pinned strict documentation pass. Final merged
+Clippy/documentation and merge hooks are recorded with the PR. Android/Apple,
 live providers and large-active-group performance remain separate requirements.
 Pending-group Undo stays in #49.
+
+## Mobile Preferences search, 6 October 2026 (#26)
+
+Implementation [PR #55](https://github.com/sam-ruff/shep.so/pull/55), commit
+`24ca8a8`, implements issue #26. Its available-control
+catalogue reveals actual local, mail, Google, profile and CalDAV settings while
+retaining save/Retry ownership and open form input. Installed native builds use
+the shared WordMatcher off-thread through the existing request boundary; bounded
+coalescing rejects older input and replaced catalogue identities. The preview
+matcher has explicitly narrower typo/recomposition/ranking support.
+
+Validation passes 296 Flutter tests with serial workers, 207 Flutter Rust tests,
+four shared-matching/bounds/capacity checks, native all-target Clippy with warnings
+denied, Flutter analysis, strict Zensical and eight real-input preview flows.
+Normal commit hooks pass. Root also executed the saved Android native FFI/control
+scenario and reviewed its accent-result and revealed-dark captures; the report
+contains exactly `native-preferences-shared-search-controls` and both images.
+Evidence is in `artifacts/logs/preferences-android-captures-root.log`,
+`artifacts/flutter/native/` and `artifacts/flutter/web/`.
+
+Primary integration with `main` `021d093` passes all 330 Flutter and 210 native
+Rust tests. Flutter analysis and strict documentation checks pass. The primary
+review inspected the complete implementation and all four changed recovery/save
+goldens. Source is unchanged by integration; both completion records are retained.
+The first native integration compile failed with conflicting cached dependency
+identities in a target previously shared with the desktop workspace. The unchanged
+source passes in a dedicated native target; the failed log is retained.
+
+Earlier normal-hook compilation was interrupted with exit 143; the unchanged
+rerun passes. Existing native selection/group settle checks intermittently failed
+in parallel host suites; isolated and complete unchanged reruns pass, and the
+final serial suite passes without changing deadlines. Failed logs are retained.
+These checks use temporary profiles and fixtures, not personal provider access.
+Browser search, absent desktop controls (#41), wider Android/iOS scenarios, live
+Google/provider parity and final latency measurements remain separate work.
+
+## Mobile bulk review selection, 6 October 2026 (#27)
+
+Preparing, cancelling or dismissing a Flutter bulk review keeps the original
+native capture, including off-page membership. Preparation releases its frozen
+copy. Durable approval releases only the matching selection generation and scope.
+Lost preparation/approval replies inspect the reserved job without creating a
+second review or dispatching work. Failed decisions retain the exact review;
+Retry reopens it or retries failed cleanup, and obsolete preparations retire
+through the existing journal. Back and barrier dismissal share that cleanup.
+
+Host verification passes 289 Flutter tests, including the updated actual FFI
+group case and light/dark paged controls, plus four focused failure/held-decision
+controls. The standalone native suite passes 206 tests; its 11 group cases also
+cover read-only inspection of live/removed jobs, invalid identities and a
+transaction-aborted review page that retains the original capture and releases
+its frozen copy. Analysis and standalone Clippy are clean. Two compact captures
+with packaged fonts show failed approval and visible cleanup recovery; both were
+reviewed. Normal commit hooks gate the published checkpoint.
+
+Updated Flutter-web and Appium bulk flows reuse the retained selection after
+Cancel. Root Android verification passed the three named light/dark control and
+native-journal restart scenarios with the exact SQLite report. All four Appium
+flows pass, covering selection, declined review, approval/Pause/Resume/Undo and
+dark History. Ordinary light/dark review, completion and History captures were
+visually inspected; their button labels render correctly. Some integration
+captures omit filled-button labels, so those captures alone are not a visual
+pass. The interrupted Android wrapper was resumed at its unchanged Appium stage
+after restarting the owned emulator and installing the harness dependencies.
+Evidence remains under `artifacts/flutter/native/` and `artifacts/logs/` in the
+bulk-selection review worktree.
+
+Implementation: [PR #54](https://github.com/sam-ruff/shep.so/pull/54),
+commit `07f033c`. Primary integration with `main` `f854910` passes all 308 Flutter
+and 206 native tests, native Clippy and strict documentation checks. The reviewed
+implementation is unchanged apart from two formatter indentation corrections.
+Flutter-web execution, Apple, live IMAP and large-group
+performance remain separate verification requirements. Pending-group Undo (#49),
+bounded History retention and stale detail reloads (#50), and common-domain
+Activity (#45) remain active gaps. The existing compose button also overlaps the
+centre of the compact list's paging control; the new paging regression uses its
+exposed left portion with a real pointer tap.
 
 ## Mobile foreground sync notices, 6 October 2026 (#28)
 

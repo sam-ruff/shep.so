@@ -130,14 +130,12 @@ try {
   await waitText("Work · Inbox: 44");
   await capture("bulk-review-light");
   await clickText("Cancel");
+  await waitText("All 130 selected");
   await page.waitForTimeout(300);
   assert.equal(await hasText("Archive 130 messages"), false);
   scenarios.push("review-counts-decline");
 
   // Approve: immediate paint, Pause/Resume while steps run, completion, Undo.
-  await clickText("Select");
-  await clickText("Select all");
-  await waitText("All 130 selected");
   await clickText("Archive selected");
   await waitText("Archive 130 messages");
   await clickText("Archive");
@@ -185,7 +183,7 @@ try {
   await waitText("Skipped · Already up to date");
   await capture("bulk-history-dark");
   const more = page.getByRole("button", {
-    name: "Load next 50 messages",
+    name: "Next 50 messages",
     exact: true,
   });
   for (let i = 0; i < 40 && !(await more.count()); i++) {

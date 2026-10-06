@@ -3,6 +3,13 @@ import '../data/groups.dart';
 import 'mail.dart' show newDraftIdentity;
 import 'mail_selection.dart';
 
+class _Review {
+  _Review(this.job, this.selection, this.capture);
+  final GroupJob job;
+  final MailSelection selection;
+  final SelectionCapture capture;
+}
+
 /// Drives the durable group journal: one frozen review at a time, one owned
 /// step at a time, bounded History pages and explicit failure decisions.
 /// Membership stays in the repository; this controller holds counts only.
@@ -22,7 +29,11 @@ class MailGroups {
   GroupJob? attentionTarget, updatedJob;
   String? removedJob;
   int updateRevision = 0;
-  GroupJob? review;
+  _Review? _review;
+  GroupJob? get review => _review?.job;
+  bool deciding = false;
+  bool _approvalUnknown = false;
+  String? _cleanup;
   GroupJob? completed;
   bool preparing = false, running = false, historyLoading = false;
   bool _disposed = false, _pumpAgain = false, _historyAgain = false;
@@ -41,67 +52,191 @@ class MailGroups {
     GroupAction action, {
     String? folder,
   }) async {
-    final snapshot = selection.snapshot;
-    if (preparing || snapshot == null || !selection.ready) return null;
+    final capture = selection.capture;
+    if (_disposed ||
+        preparing ||
+        deciding ||
+        review != null ||
+        capture == null) {
+      return null;
+    }
+    final snapshot = capture.snapshot;
+    final id = newDraftIdentity();
     preparing = true;
     error = null;
     changed();
     try {
-      final data = await repository.groups({
-        'kind': 'prepare',
-        'id': newDraftIdentity(),
-        'selection': snapshot.id,
-        'expected': snapshot.revision,
-        'action': action.toJson(folder: folder),
-        'scope': selection.scope(),
-      });
-      if (_disposed) return null;
-      review = GroupJob(data as Map<String, dynamic>);
-      // The frozen review owns the captured membership from here on.
-      selection.done();
+      if (_cleanup case final old?) {
+        if (!await _retire(old)) return null;
+      }
+      if (!selection.owns(capture) || _disposed) return null;
+      GroupJob job;
+      try {
+        job = GroupJob(
+          await repository.groups({
+                'kind': 'prepare',
+                'id': id,
+                'selection': snapshot.id,
+                'expected': snapshot.revision,
+                'action': action.toJson(folder: folder),
+                'scope': capture.scope,
+              })
+              as Map<String, dynamic>,
+        );
+      } catch (_) {
+        // Recover the reserved identity rather than creating another review.
+        job = await _inspect(id);
+        if (job.state != 'review') rethrow;
+      }
+      if (_disposed || !selection.owns(capture)) {
+        await _retire(id);
+        return null;
+      }
+      _review = _Review(job, selection, capture);
+      _approvalUnknown = false;
       return review;
     } catch (e) {
-      error = 'Could not prepare this action. $e';
+      await _retire(id);
+      if (!_disposed && selection.owns(capture)) {
+        error = 'Could not prepare this action. $e';
+      }
       return null;
     } finally {
       preparing = false;
-      changed();
+      if (!_disposed) changed();
     }
   }
 
-  Future<bool> approve() async {
-    final current = review;
-    if (current == null) return false;
+  Future<GroupJob> _inspect(String id) async => GroupJob(
+    await repository.groups({'kind': 'inspect', 'id': id})
+        as Map<String, dynamic>,
+  );
+
+  Future<bool> _retire(String id) async {
     try {
-      final data = await repository.groups({
-        'kind': 'approve',
-        'id': current.id,
-      });
-      if (_disposed) return false;
-      review = null;
-      _replace(GroupJob(data as Map<String, dynamic>));
-      changed();
-      // Approved intent paints from the repository before any step runs.
-      unawaited(refreshMail());
-      unawaited(pump());
+      await repository.groups({'kind': 'decline', 'id': id});
+      if (_cleanup == id) _cleanup = null;
       return true;
     } catch (e) {
-      error = '$e';
-      review = null;
-      changed();
+      _cleanup = id;
+      if (!_disposed) {
+        error = 'Could not close the saved review. Retry this action. $e';
+      }
       return false;
     }
   }
 
-  Future<void> decline() async {
-    final current = review;
-    if (current == null) return;
-    review = null;
+  Future<bool> approve({String? expected}) async {
+    final current = _review;
+    if (_disposed ||
+        deciding ||
+        current == null ||
+        (expected != null && expected != current.job.id)) {
+      return false;
+    }
+    if (!current.selection.owns(current.capture)) {
+      await decline(expected: current.job.id);
+      if (_disposed || (_review != null && _review != current)) return false;
+      error = 'The selection changed. Review the selected messages again.';
+      changed();
+      return false;
+    }
+    deciding = true;
+    error = null;
     changed();
     try {
-      await repository.groups({'kind': 'decline', 'id': current.id});
-    } catch (_) {
-      // A retired review is swept by the journal on its next prepare/open.
+      GroupJob job;
+      final saved = _approvalUnknown ? await _inspect(current.job.id) : null;
+      if (saved != null && !saved.inReview) {
+        job = saved;
+      } else {
+        _approvalUnknown = true;
+        try {
+          job = GroupJob(
+            await repository.groups({'kind': 'approve', 'id': current.job.id})
+                as Map<String, dynamic>,
+          );
+        } catch (_) {
+          job = await _inspect(current.job.id);
+          _approvalUnknown = false;
+          if (job.inReview) rethrow;
+        }
+      }
+      if (!job.active && !job.finished) {
+        throw StateError(
+          'This saved review is no longer open. Cancel and review again.',
+        );
+      }
+      _approved(current, job);
+      return true;
+    } catch (e) {
+      if (!_disposed && _review == current) {
+        error =
+            'Could not confirm this action. Retry checks its saved status. $e';
+      }
+      return false;
+    } finally {
+      deciding = false;
+      if (!_disposed) changed();
+    }
+  }
+
+  void _approved(_Review current, GroupJob job) {
+    _approvalUnknown = false;
+    if (_cleanup == current.job.id) _cleanup = null;
+    current.selection.complete(current.capture);
+    if (_disposed || _review != current) return;
+    _review = null;
+    _replace(job);
+    unawaited(refreshMail());
+    unawaited(pump());
+  }
+
+  Future<bool> decline({String? expected}) async {
+    final current = _review;
+    if (deciding ||
+        current == null ||
+        (expected != null && expected != current.job.id)) {
+      return false;
+    }
+    deciding = true;
+    changed();
+    try {
+      if (_approvalUnknown) {
+        final job = await _inspect(current.job.id);
+        if (job.active || job.finished) {
+          _approved(current, job);
+          return true;
+        }
+        _approvalUnknown = false;
+      }
+      if (!await _retire(current.job.id)) return false;
+      if (_review == current) _review = null;
+      error = null;
+      return true;
+    } catch (e) {
+      if (!_disposed) error = 'Could not check the saved action. Retry. $e';
+      return false;
+    } finally {
+      deciding = false;
+      if (!_disposed) changed();
+    }
+  }
+
+  Future<void> retryPending() async {
+    if (_disposed || deciding) return;
+    final cleanup = _cleanup;
+    if (cleanup == null) {
+      if (review == null) await pump();
+      return;
+    }
+    deciding = true;
+    changed();
+    try {
+      if (await _retire(cleanup)) error = null;
+    } finally {
+      deciding = false;
+      if (!_disposed) changed();
     }
   }
 
@@ -360,5 +495,7 @@ class MailGroups {
     _disposed = true;
     _toast?.cancel();
     _repaint?.cancel();
+    final id = !deciding && !_approvalUnknown ? review?.id ?? _cleanup : null;
+    if (id != null) unawaited(_retire(id));
   }
 }
