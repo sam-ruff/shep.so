@@ -1,5 +1,14 @@
 # Conversation request audit
 
+**6 October mobile review and parallel delivery:** Review Android/iOS
+functionality against current desktop behaviour, excluding mobile usability
+adaptations; file GitHub issues and assign GPT-6.1 Sol agents at high reasoning.
+The primary thread reviews PRs, answers questions, tests combined changes and
+handles merging. The [source audit](agents/MOBILE_FUNCTIONAL_AUDIT.md) links
+24 functional gaps and a separate platform-evidence issue. This session permits
+three concurrent child agents, so delivery uses waves within the requested
+maximum of five. Existing unrelated changes remain outside these PRs.
+
 **28 September sync notice, tray and reader report:** The user's screenshot
 shows an account sync no-progress timeout and a blank formatted reader. It does
 not establish the provider cause or a renderer defect. The user asked that a
