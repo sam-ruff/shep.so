@@ -4336,7 +4336,11 @@ class NativeFlows(unittest.TestCase):
         checkpoint=self.profile_checkpoint(started)
         self.assertEqual(len(checkpoint["accounts"]),2)
         self.assertEqual(checkpoint["local_only"],[])
-        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),10)
+        # Every key in profile_sync::metadata::SETTINGS.
+        self.assertEqual(sorted(t for t in checkpoint["fields"] if t.startswith("setting:")),
+                         [f"setting:{key}" for key in ("appearance","cross_account_moves","desktop_badges",
+                          "foreign_move_folders","group_conversations","help_icons","image_policy",
+                          "reply_display","reply_include_original","tooltips","unified_inbox")])
         self.assertIsNone(checkpoint["pending"])
 
     def test_profile_sync_native_failure_retry_and_opt_out(self):
