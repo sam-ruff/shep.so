@@ -26,7 +26,7 @@ the corresponding request in the main TODO.
 | Preferences search | No mobile catalogue or result-to-control navigation | [#26](https://github.com/sam-ruff/shep.so/issues/26) |
 | Bulk review | Preparing a review releases the original selection, including when declined | [#27](https://github.com/sam-ruff/shep.so/issues/27) |
 | Background error notices | Automatic checks use the immediate explicit-refresh error path | [#28](https://github.com/sam-ruff/shep.so/issues/28) |
-| Calendar editor | Date/time/All day controls, range validation, nominal all-day projection and exact admission/source fences are implemented; see the completion record. Live providers and Apple execution remain separate. | [#29](https://github.com/sam-ruff/shep.so/issues/29) |
+| Calendar editor | New events are all-day; dates, start/end times and all-day status cannot be changed | [#29](https://github.com/sam-ruff/shep.so/issues/29) |
 | Reply composition | No separate original-message toggle or configurable starting choice | [#30](https://github.com/sam-ruff/shep.so/issues/30) |
 | Move destinations | No ranked chooser or safe account-qualified transfer | [#31](https://github.com/sam-ruff/shep.so/issues/31) |
 | Mail search | Current-folder prefix matching/date order instead of cross-folder ranked search | [#32](https://github.com/sam-ruff/shep.so/issues/32) |
@@ -46,7 +46,7 @@ the corresponding request in the main TODO.
 | Reader metadata | To displays an account label; subject and sender name cannot be selected | [#47](https://github.com/sam-ruff/shep.so/issues/47) |
 | Logical mail folders | Archive/Trash/Spam use literal names without the desktop destination lifecycle | [#48](https://github.com/sam-ruff/shep.so/issues/48) |
 | Pending bulk Undo | Controls require an acknowledged item before offering Undo for unsent work | [#49](https://github.com/sam-ruff/shep.so/issues/49) |
-| History bounds | Loading item pages appends all rows to Dart state | [#50](https://github.com/sam-ruff/shep.so/issues/50) |
+| History bounds and identity | Item pages accumulate in Dart, older completed groups are deleted, and delayed recovery can load details for a previously selected group | [#50](https://github.com/sam-ruff/shep.so/issues/50) |
 
 ## Implemented foundations
 
@@ -105,3 +105,12 @@ primary thread reviews the complete diff and tests before merging each PR,
 then checks the combined revision. Each PR must update the shared scenario
 registry, parity status and completion evidence without claiming unexecuted
 device/provider checks.
+
+The table records the audit baseline. Account-bound delayed notices (#28) are
+implemented in [PR #53](https://github.com/sam-ruff/shep.so/pull/53), retained
+bulk selection (#27) in [PR #54](https://github.com/sam-ruff/shep.so/pull/54),
+Preferences search (#26) in [PR #55](https://github.com/sam-ruff/shep.so/pull/55),
+and calendar scheduling (#29) in [PR #56](https://github.com/sam-ruff/shep.so/pull/56).
+Follow-up inspection expanded #50 to retain older completed receipts and fence
+late recovery details to the exact selected group and page. The delivery tracker
+and completion log distinguish these changes from the remaining open findings.

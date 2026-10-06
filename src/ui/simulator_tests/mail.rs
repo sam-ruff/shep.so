@@ -236,7 +236,20 @@ async fn dropdown_escape_keeps_composer_and_frees_the_covered_field() {
     h.expect("composer.visible", false).await;
 }
 
+/// `test_archive_hides_immediately_and_commits_while_other_mail_is_readable`
+/// with the body still loading. On the CI runner the first click reached the
+/// "Opening conversation…" placeholder, because the toolbar waited for the body.
+async fn reader_toolbar_archives_before_the_body_loads() {
+    let mut h = Harness::start().await;
+    h.expect("selected", "A little more room to think").await;
+    h.unload_body();
+    h.click_at(652., 100.).await;
+    h.expect("total", 119).await;
+    h.expect("selected", "Your weekly workspace digest").await;
+}
+
 scenarios!(
+    reader_toolbar_archives_before_the_body_loads,
     move_mouse_and_keyboard_and_typing_protection,
     delete_archive_defaults_and_mail_returns_to_inbox,
     search_mouse_focus_blocks_default_and_remapped_delete_chords,

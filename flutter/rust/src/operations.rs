@@ -26,6 +26,7 @@ pub struct Operations {
     admitted: Arc<Semaphore>,
     slots: Arc<Semaphore>,
     search: Arc<Semaphore>,
+    settings_search: Arc<Semaphore>,
     rendering: Arc<Semaphore>,
     forwarding: Arc<Semaphore>,
     printing: Arc<Semaphore>,
@@ -72,6 +73,33 @@ mod calendar_capacity_tests {
         let (_calendar_owner, _calendar_slot) = waiting.await.expect("capacity");
     }
 }
+
+#[cfg(test)]
+mod preferences_search_tests {
+    use super::{MobileProfile, Request, run};
+
+    #[tokio::test]
+    async fn settings_search_is_independent_of_provider_capacity() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let profile = MobileProfile::open(directory.path().join("mail.sqlite3").to_string_lossy().into_owned()).await?;
+        let _providers = profile.operations.slots.clone().acquire_many_owned(8).await?;
+        let admission_capacity = u32::try_from(profile.operations.admitted.available_permits())?;
+        let _admission = profile.operations.admitted.clone().acquire_many_owned(admission_capacity).await?;
+        assert_eq!(profile.operations.slots.available_permits(), 0);
+        assert_eq!(profile.operations.admitted.available_permits(), 0);
+        let request = || Request::SearchPreferences {
+            catalogue: serde_json::json!([{"label":"Theme", "section":"Appearance", "description":"", "synonyms":""}]).to_string(),
+            query: "APPEARÁNCE".into(),
+        };
+        let positions = tokio::time::timeout(std::time::Duration::from_secs(1), run(&profile, request())).await??;
+        assert_eq!(positions, serde_json::json!([0]));
+        let occupied = profile.operations.settings_search.clone().acquire_owned().await?;
+        assert!(run(&profile, request()).await.is_err());
+        drop(occupied);
+        assert_eq!(run(&profile, request()).await?, serde_json::json!([0]));
+        Ok(())
+    }
+}
 impl Operations {
     pub(crate) fn try_connection_capacity(
         &self,
@@ -97,6 +125,7 @@ impl Operations {
     }
     pub fn new() -> Self {
         Self {
+            settings_search: Arc::new(Semaphore::new(1)),
             profile_history: crate::profile_history::Runtime::default(),
             profile_discovery: crate::profile_discovery::Runtime::default(),
             admitted: Arc::new(Semaphore::new(40)),
@@ -171,6 +200,10 @@ impl Operations {
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
+    SearchPreferences {
+        catalogue: String,
+        query: String,
+    },
     OpenProfileDiscovery {
         session: uuid::Uuid,
         access_token: String,
@@ -774,6 +807,16 @@ async fn value<T: serde::Serialize>(result: Result<T>) -> Result<Value> {
 pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
     let db = &profile.database;
     match request {
+        Request::SearchPreferences { catalogue, query } => {
+            let permit = profile.operations.settings_search.clone().try_acquire_owned()
+                .context("Preferences search is busy. Retry search.")?;
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                crate::preferences_search::rank(&catalogue, &query)
+                    .map(|positions| json!(positions))
+                    .map_err(|_| anyhow::anyhow!("Preferences search could not complete. Retry search."))
+            }).await.context("Preferences search stopped. Retry search.")?
+        }
         Request::FolderCreations => db.write(|db| { crate::folders::changes::cleanup(db)?; Ok(serde_json::to_value(crate::folders::history(db)?)?) }).await,
         Request::FolderOptions => db.read(crate::folders::options).await,
         Request::ReviewFolderChange { account, source, action } => db.read(move |db| Ok(serde_json::to_value(crate::folders::changes::review(db,&account,&source,action)?)?)).await,
@@ -950,7 +993,8 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let mut folders=db.prepare("SELECT account_id,names FROM folders")?;
             let folders=folders.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?.into_iter().map(|(id,s)|Ok((id,serde_json::from_str::<Vec<String>>(&s)?))).collect::<Result<HashMap<_,_>>>()?;
             let reconnect = db.prepare("SELECT account_id FROM profile_reconnect ORDER BY account_id")?.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok(json!({"accounts":accounts,"folders":folders,"reconnect":reconnect}))
+            let incoming_slots = accounts.iter().map(|account| Ok((account.id.clone(), crate::connections::stored_slot(db, &account.id)?))).collect::<Result<HashMap<_, _>>>()?;
+            Ok(json!({"accounts":accounts,"folders":folders,"reconnect":reconnect,"incoming_slots":incoming_slots}))
         }).await).await,
         Request::SaveSentPreferences{id,policy,folder} => {
             let _guard=profile.operations.account(&id).await;

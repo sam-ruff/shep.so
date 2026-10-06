@@ -81,6 +81,13 @@ acknowledged event identity and current ownership. Lost replies reuse that inver
 identity. Never recreate a deleted event from portable display fields: restoration
 needs a provider contract preserving fields such as attendees and recurrence.
 
+Flutter event schedules retain canonical all-day pairs as UTC nominal dates and
+legacy non-midnight timestamps until an explicit schedule edit. Keep untouched
+event fields and exact source/ETag/resource identity. Submitted forms pin their
+calendar, retain newer input after older admission replies and leave admitted
+work reachable when closed. Preserve range/DST controls and actual native-journal
+reopen tests; fixture evidence cannot establish live-provider or Apple execution.
+
 `shared/calendar-core` owns portable event/mutation/receipt and typed failure
 contracts. Include it in coordinated version stamping. Flutter schema 21 saves
 calendar intent through the existing native cache owner before token access or
@@ -145,6 +152,22 @@ Native reconnect stages an independently keyed credential pair before atomically
 Whenever a desktop feature, setting, default, provider contract or failure/recovery behavior changes, review its mobile and browser equivalents. Update `docs/CLIENT_PARITY.md` and the shared client scenarios in the same change. Implement and test the equivalents, or add an explicit active parity gap to TODO.md; never silently allow the clients to diverge or claim that fixture tests establish provider parity. The mobile layout may adapt for touch and configurable K-9-style swipes; browser behavior must match desktop. Every gesture also needs a visible accessible control.
 
 Client selection prerequisites live in `flutter/rust/src/selection.rs` and `flutter/lib/model/mail_selection.dart`. Keep captured IDs/ranks in background SQLite, use the common paging query plan, return at most 50 observed rows, and preserve the separate 32-slot FIFO and cancellation ownership. Keep the scope/revision/alias/arrival, failed recapture, lost acknowledgment, stale observation and cleanup tests. Browser selection uses `web/src/selection_store.ts`: worker-owned temporary SQLite, a readonly IndexedDB mailbox snapshot and at most 1024 cache-change records. Never put temporary selection membership in a readwrite transaction on the mail database: real Chromium tests show it blocks independent draft saves. Keep metadata/journal writes atomic with mail/aliases, preserve newer Sent roles on schema upgrades, and retain the 100,000-row concurrent-save, queue, rollback and tab-isolation browser contracts. Worker loss expires ephemeral captures; durable bulk jobs require a separate journal. Browser controls now use `web/src/mail_selection.ts` with one request in flight, at most 32 gestures and 50 observed rows. Preserve pending offscreen intent, unknown-rank target feedback, lost replies, refresh generations and abandoned-capture release. Exclude Select all from formatted-reader shortcut interception so Ctrl+A continues selecting text; never let selection mode dispatch a single-reader shortcut. Keep typed search text while exiting mode before the debounce. Native controls and durable bulk execution remain open: wire rendered-row observations without retaining an entire inbox in Dart, and never implement captured Select All by looping over loaded rows.
+
+Flutter group preparation releases only its temporary frozen copy. Keep the
+original capture through Cancel, Back, barrier dismissal and failed decisions.
+Approval releases only its matching generation and scope after durable status
+confirmation. Lost replies inspect the exact saved job; inspection cannot
+approve, recover a live owner or dispatch work. Retry reopens that review or
+retries its cleanup. Retire obsolete preparations through the existing journal,
+retain failed cleanup and fence newer selections through disposal and late replies.
+Preserve native page-copy rollback, FFI and actual failure/dismissal controls.
+
+Flutter Preferences search uses the available-control catalogue and shared native
+WordMatcher on independent background capacity. Keep one query and its latest
+replacement, fence changed input/catalogue identities, and retain real controls
+through search so unsaved credentials and save Retry survive. Add catalogue and
+rendered-control coverage when adding preferences. Preview matching is narrower;
+retain separate shared Rust, actual FFI and Android control evidence.
 
 Browser mailbox queries live in `web/src/mailbox_store.ts` and its bounded worker/client. IndexedDB mail schema 12 preserves the authoritative cache incarnation UUID and indexes account/folder/server identities for metadata scans while preserving its change revision/floor, intents and acknowledged Sent roles. Derived SQLite/OPFS storage must compare both incarnation and revision, replay at most 1024 changes or rebuild from a readonly cursor, and never hold a mail readwrite transaction while indexing. Own the per-profile Web Lock before installing/unpausing the SAH pool; close every SQLite handle and pause the VFS before releasing that lock. Retain one source body while indexing, at most 50 returned metadata rows, and separate single-body reads. Failed index work must roll back its checkpoint. The Gateway/Workspace now uses this path for list/startup reads. Keep one running page request plus its latest replacement, independent foreground body/metadata workers, separate speculative/scan capacity, a 50-row metadata page, the active reader and at most eight cached bodies/32 MiB. Failed projections must retire before a late query can overwrite rollback. Individual counted Undo may retrieve evicted metadata; an absent source must remain an explicit review failure. Schema upgrades preserve cache clocks/epoch and protected intents. Sync scans return at most 50 metadata entries and flag batches retain one body at a time. Preserve real controls, query/body Retry, stale data/errors, held row/footer input, cross-page selection and account removal. Whole-client bounds are not established: Outbox/drafts/account-removal snapshots, provider known-ID/reconciliation arrays, group projection performance, fuzzy relevance, large-message parsing/streaming and final performance remain open. Derived account removal is applied by the next successful query/rebuild; physical cleanup retry/lifecycle remains tracked.
 
@@ -256,7 +279,11 @@ pause release publishing with it rather than shipping Linux alone.
 Linux quality runs inside the owned Ubuntu 24.04 image with pinned Rust, Node
 and sandboxed Chrome, matching the runner UID/GID. Preserve the restricted
 seccomp profile, namespace/browser preflight, four Cargo jobs and native timing
-budgets. Windows uses the provisioned MSVC/Python toolchain. Documentation uses
+budgets. The functional `scripts/e2e.py` run keeps its fixture data on a bounded
+tmpfs (`SHEP_E2E_ARTIFACTS=/e2e`) because SQLite commits on the runner's
+rotational pool stalled for tens of seconds under shared load; its evidence is
+copied back to `artifacts/e2e/` for upload. Timing scripts stay on disk. Never
+lengthen a wait to absorb a slow disk instead. Windows uses the provisioned MSVC/Python toolchain. Documentation uses
 the installed Python in a private virtual environment because setup-python has
 no matching Debian 13 Python build. Keep the CI image free of profile data and
 checkout credentials.

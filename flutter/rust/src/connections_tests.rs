@@ -15,6 +15,10 @@ async fn prepare(p: &crate::api::MobileProfile) -> Value {
 async fn credential_activation_rolls_back_retries_and_survives_restart() {
     let (dir, p) = profile().await;
     seed(&p, 1).await;
+    assert_eq!(
+        request(&p, json!({"op":"accounts"})).await["incoming_slots"]["fixture"],
+        "fixture"
+    );
     let staged = prepare(&p).await;
     let slot = staged["slot"].as_str().unwrap();
     assert_eq!(
@@ -48,6 +52,10 @@ async fn credential_activation_rolls_back_retries_and_survives_restart() {
         .unwrap();
     request(&p, json!({"op":"activate_account","slot":slot})).await;
     request(&p, json!({"op":"activate_account","slot":slot})).await;
+    assert_eq!(
+        request(&p, json!({"op":"accounts"})).await["incoming_slots"]["fixture"],
+        slot
+    );
     assert_eq!(
         request(&p, json!({"op":"credential_cleanup"})).await,
         json!(["fixture"])
