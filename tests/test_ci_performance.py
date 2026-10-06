@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SHA = "a" * 40
 
 
+@unittest.skipUnless(sys.platform == "linux", "Linux performance wrapper")
 class PerformanceWrapperTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="shep timing checkout ")
@@ -25,6 +26,8 @@ class PerformanceWrapperTests(unittest.TestCase):
         self.calls = self.root / "calls.jsonl"
         self.env = dict(os.environ, PATH=str(self.tools) + os.pathsep + os.environ["PATH"],
                         TIMING_TEST_CALLS=str(self.calls), TIMING_REQUIRED_EXIT="0", TIMING_DIAGNOSTIC_EXIT="0")
+        for name in ("RUST_LOG", "SHEP_E2E_ARTIFACTS"):
+            self.env.pop(name, None)
         body = """import json, os, pathlib, sys
 mode = os.environ['SHEP_PERFORMANCE_MODE']
 args = sys.argv[1:]

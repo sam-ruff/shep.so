@@ -84,7 +84,7 @@ impl Database {
                     .map_err(|_| anyhow::anyhow!("Cache connection failed. Reopen Shep."))?
                     .query_row("PRAGMA user_version", [], |r| r.get(0))?;
                 anyhow::ensure!(
-                    version <= 25,
+                    version <= 26,
                     "This cache requires a newer Shep version. Update before reopening it."
                 );
                 return Ok(profile);
@@ -107,7 +107,7 @@ impl Database {
             )?;
             let version: u32 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             anyhow::ensure!(
-                version <= 25,
+                version <= 26,
                 "This cache requires a newer Shep version. Update before reopening it."
             );
             if version > 0 && version < 24 {

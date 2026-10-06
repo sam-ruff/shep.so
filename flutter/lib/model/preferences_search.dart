@@ -106,6 +106,12 @@ const mobilePreferenceEntries = [
         'conversation thread collapsed expanded latest only original message',
   ),
   PreferenceSearchEntry(
+    target: 'preference-reply-original',
+    label: 'Include the original message in new replies',
+    section: 'Composing',
+    synonyms: 'reply reply all quote quoted thread include original default',
+  ),
+  PreferenceSearchEntry(
     target: 'preference-images',
     label: 'External images blocked',
     section: 'Reading',

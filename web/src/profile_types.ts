@@ -29,6 +29,7 @@ export interface PortableConnection {
 export type SettingKey =
   | "appearance"
   | "reply_display"
+  | "reply_include_original"
   | "image_policy"
   | "unified_inbox"
   | "cross_account_moves"

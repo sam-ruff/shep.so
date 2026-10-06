@@ -139,6 +139,14 @@ and remain distinct from success.
 
 ## Monorepo and feature parity
 
+Flutter schema26 fences older writers that discard hidden reply originals.
+Retain the immutable quote/account/message identity through text and file saves;
+an omitted reply context cannot erase the saved context. The Include original
+choice is per draft and the portable default affects only new replies. Upgrade
+without rewriting old draft/file bytes or guessing boundaries in flat legacy
+drafts. Keep the actual schema25 writer rejection probe and legacy eight-field
+profile reviews/receipts, whose absent ninth field is never consent.
+
 Flutter schema25 retains completed group receipts until explicit removal.
 Keep indexed 20-active admission separate from 20-group History pages and one
 50-item detail page. Seek active/attention state independently of the displayed

@@ -51,6 +51,10 @@ fn main() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
         let report_context = context();
+        std::fs::create_dir_all(report_directory()).unwrap();
+        let completed_report=report_directory().join("backend.json");
+        if completed_report.exists(){std::fs::remove_file(completed_report).unwrap();}
+        std::fs::write(report_directory().join("backend-progress.json"),serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"dataset_messages":100000,"samples":60,"context":report_context,"phases":[]})).unwrap()).unwrap();
         let dir=tempfile::tempdir().unwrap();let store=Store::open(dir.path().join("bench.sqlite")).unwrap();
         let count=100_000;
         for batch in 0..100 {
@@ -66,10 +70,6 @@ fn main() {
             assert!(p95<limit,"{name} exceeded its performance budget");p95
         }
         println!("Responsiveness budget: {count} cached messages, 4 accounts, page size {PAGE_SIZE}");
-        std::fs::create_dir_all(report_directory()).unwrap();
-        let completed_report=report_directory().join("backend.json");
-        if completed_report.exists(){std::fs::remove_file(completed_report).unwrap();}
-        std::fs::write(report_directory().join("backend-progress.json"),serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"dataset_messages":count,"samples":60,"context":report_context,"phases":[]})).unwrap()).unwrap();
         let inbox=measure(&store,MailQuery{folder:"INBOX".into(),..Default::default()},"Inbox page",50.).await;
         let account=measure(&store,MailQuery{folder:"INBOX".into(),account:Some("account-1".into()),..Default::default()},"Account page",50.).await;
         let search=measure(&store,MailQuery{search:"milestone 17".into(),sort:MailSort::Relevance,..Default::default()},"FTS search",125.).await;

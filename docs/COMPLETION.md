@@ -1,6 +1,125 @@
 # Completion audit
 
+## Mobile reply original and portable default, 6 October 2026 (#30)
+
+Reply and Reply all now retain an immutable original separately from typed text,
+with an Include original message checkbox and a bounded read-only preview.
+Preferences exposes the searchable default-on choice, captured before reply
+preparation and applied only to new replies. Existing saved choices and Forward
+content remain unchanged. Schema26 fences older native writers that would erase
+the new hidden original during autosave. Upgrading schema25 preserves exact
+draft JSON and file bytes. Old inline-quote drafts remain unchanged without
+guessing a quotation boundary; omitted context in current text saves preserves
+the saved original and choice.
+
+The R97 default is now the shared `reply_include_original` boolean across
+desktop, mobile and browser profile adapters. Explicit false and per-field
+change/revert ownership survive application and restart. Known legacy eight-field
+mobile reviews, exact application requests and receipts retain their original
+fields; absence cannot observe or approve the ninth field. Raw profile operations
+and optional extensions retain the existing history ownership.
+
+Integrated main `5461d23` passes 415 Flutter tests and 223 native tests, native
+Clippy and clean Flutter analysis. The three normal-suite skips are two
+zone-conditional Calendar cases and the optional older-library probe; their
+separate execution is recorded below. Both London and Los Angeles Calendar
+suites pass 20 cases. Browser verification passes 305 tests,
+a production build and 33 actual WASM profile fixtures. Shared MIME/codec and
+desktop metadata/field-intent tests pass, with strict documentation and normal
+hooks required before shipping.
+Compact reply and changed Preferences failure goldens have been inspected.
+The first full Flutter run exposed five expected fixture/capture updates for the
+new field and section; corrected focused cases pass. Failed captures remain under
+ignored `artifacts/reply-first-failures/`.
+
+The saved Android scenario now changes the default and reply choice through real
+controls, uses DocumentsUI for attachment changes and releases the old opaque
+handle before reopen. Its first run passed the new quote/default controls, then
+the attachment fixture incorrectly inspected an offscreen field; the corrected
+fixture observes the fixed Save control's lock. The rerun built/installed but
+timed out before application launch at the unchanged 600-second bound. Logs and
+platform state are retained in `artifacts/reply-android-launch-failure/`; the owned
+emulator is rebooted without a wipe before another unchanged attempt. Normal
+checkpoint hooks pass, including 1,203 desktop library tests. The saved Android
+scenario passes with exactly `native-reply-original-default-files-reopen` in
+`artifacts/flutter/native/integration-compose-result.json`. Its reply and Waiting
+Outbox PNGs are retained there; a final spacing recapture is pending on the larger
+dedicated emulator under the primary thread; the final 16-pixel separation is
+covered by passing compact host goldens. Earlier normal-hook failures and the
+first Android control failure are retained under ignored artifacts. The third
+run completed quote/default, picker/removal and three owned close/reopen checks,
+then exposed the fixture's obsolete immediate Send-error assumption. It now
+checks durable Waiting Outbox, visible Cancel and retained files/context instead;
+production Send ownership is unchanged. A later IME caret layout displaced a
+scrolled checkbox in the next run; the fixture now observes its actual visible
+target after layout before tapping, within the unchanged bound.
+
+The native exact25-to26 upgrade/current legacy-autosave regression passes. A
+separate Dart process loaded the verified prior schema25 native library from
+`ccbd5c9`: it reproduced quote loss on an unfenced legacy autosave, then rejected
+schema26 without changing draft/file bytes. Its hash and passing log are retained
+in `artifacts/logs/reply-schema25-library.sha256` and `reply-old-writer-proof.log`.
+The library SHA-256 is
+`ecef436e99050ac9d22b493350964c1cff66567d213bf73482d53bc75907b27c`.
+The optional saved probe runs when supplied that library; normal suites skip it
+explicitly. Browser composer control/default
+application, Apple runtime and live provider execution remain active gaps.
+
+## Mobile cached reader headers, 6 October 2026 (#47)
+
+Implementation: [PR #59](https://github.com/sam-ruff/shep.so/pull/59).
+
+Flutter carries cached To and exact From through metadata pages, confirmed alias
+rows and detail reads. Receiving-account identity has its own line. Subject,
+From, single parsed sender address and To use selectable controls with visible
+Copy actions before body completion and through failure. Empty fields have
+noncopyable placeholders; no recipient or Bcc is inferred. The separate address
+uses the existing bounded shared mailbox parser and stays empty for invalid or
+ambiguous From values, preserving the exact original header independently.
+
+Focused model, actual FFI and reader/footer checks pass all 13 cases, including
+quoted angle brackets, surrounding whitespace, Unicode, multiple recipients,
+body failure/Retry, metadata refresh, alias adoption and late clipboard replies.
+Both native parser regressions pass and Flutter analysis is clean. The saved
+Flutter-web harness passes `header-copy-before-body` and
+`metadata-refresh-retains-frame`, checking actual clipboard values and the same
+formatted frame through two metadata refreshes. Three compact light/loading/dark
+captures were visually reviewed under `artifacts/flutter/reader-headers/`.
+
+The first native FFI failure exposed whitespace handling in parsed addresses;
+the unchanged exact From assertion already passed. That failure is retained in
+`reader-headers-parser-ffi.log`, with the passing corrected run in
+`reader-headers-ffi-fixed.log`. Browser observation/navigation failures are also
+preserved; the final real clipboard-based flow passes without relaxed deadlines.
+Full baseline verification passes 318 Flutter tests and all 208 native tests;
+native Clippy denies warnings and pinned strict documentation builds cleanly.
+Android execution passes `reader-headers-clipboard-refresh-light` and
+`reader-headers-clipboard-refresh-dark` with a synthetic repository and the actual
+system clipboard, separately from host FFI. Both saved native captures were
+visually reviewed. The first dark test read the clipboard before asynchronous
+Copy completion; its log, partial report and light capture are retained. The
+shared helper now awaits the current field's rendered Copy completion, with a
+host assertion rejecting existing same-label feedback. Its six focused host
+controls pass. The normal checkpoint hooks pass. Integration with `main`
+`0858706` passes 388 Flutter tests with the two existing zone-specific Calendar
+skips, and all 215 native tests, retaining Calendar scheduling, Preferences search
+and History changes. Native formatting also corrects the existing Preferences
+capacity test without changing its data or assertions. Final analysis, native
+Clippy, formatting, strict documentation and the current-main browser rerun pass.
+Normal merge hooks gate publication. Apple and live-provider verification remain
+open.
+
+Root integration with `main` at `9939956` retains queued Undo and the History
+wake fix, passing 405 Flutter tests and all 219 native tests. The two existing
+Calendar timezone skips remain covered by the unchanged London/Los Angeles
+cases from the preceding integration. Native Clippy and Flutter analysis pass.
+Root also reviewed the three saved browser and two Android captures and the
+exact system-clipboard assertions, with the synthetic Android repository kept
+separate from host FFI evidence.
+
 ## Mobile queued bulk Undo checkpoint, 6 October 2026 (#49/#58)
+
+Implementation: [PR #60](https://github.com/sam-ruff/shep.so/pull/60).
 
 Approved queued/paused/held-first-step groups now expose Undo in the notice and
 History. The checked existing local decision cancels unsent membership and clears

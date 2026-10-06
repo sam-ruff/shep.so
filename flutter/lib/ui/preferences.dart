@@ -355,6 +355,16 @@ class _PreferencesViewState extends State<PreferencesView> {
               ),
             ),
           ]),
+          section('Composing', [
+            SwitchListTile(
+              key: const ValueKey('preference-reply-original'),
+              title: const Text('Include the original message in new replies'),
+              value: p.replyIncludeOriginal,
+              onChanged: (value) => workspace.savePreferences(
+                workspace.preferences.copy(replyIncludeOriginal: value),
+              ),
+            ),
+          ]),
           section('Swipe actions', [
             swipe('Swipe left', p.leftSwipe, true),
             const Divider(),
