@@ -11,9 +11,23 @@ maximum of five. Existing unrelated changes remain outside these PRs.
 Initial fixes are account-bound notices in
 [PR #53](https://github.com/sam-ruff/shep.so/pull/53), retained bulk selection
 in [PR #54](https://github.com/sam-ruff/shep.so/pull/54) and Preferences search
-in [PR #55](https://github.com/sam-ruff/shep.so/pull/55). Reader headers,
-calendar scheduling and bounded History remain active implementation lanes;
+in [PR #55](https://github.com/sam-ruff/shep.so/pull/55) and calendar scheduling
+in [PR #56](https://github.com/sam-ruff/shep.so/pull/56). Reader headers,
+reply quote controls and bounded History remain active implementation lanes;
 the tracker retains the remaining functional and platform gaps.
+
+**6 October mobile calendar scheduling (#29):** Native Start date, Last date,
+From, To and All day controls now support timed and multi-day events. Validation,
+nominal all-day projection, preserved event metadata and exact held/lost
+admissions have host control/FFI and positive/negative-offset evidence. The
+calendar remains fixed after the first submission so an unknown save cannot
+become another CREATE on a different source. Untouched legacy non-midnight
+all-day timestamps retain their existing interpretation; no history migration
+or automatic provider correction is performed. Descriptions remain preserved;
+desktop has no description editor either. Saved Android date/time/all-day and
+native journal close/reopen controls pass; captures are reviewed. Apple and live
+provider execution, full recurrence editing and shared Calendar Undo remain
+separately tracked.
 
 **28 September sync notice, tray and reader report:** The user's screenshot
 shows an account sync no-progress timeout and a blank formatted reader. It does

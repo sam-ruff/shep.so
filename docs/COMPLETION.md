@@ -1,5 +1,58 @@
 # Completion audit
 
+## Mobile calendar scheduling, 6 October 2026 (#29)
+
+Implementation: [PR #56](https://github.com/sam-ruff/shep.so/pull/56),
+commit `b20ad45`.
+
+The event editor now has native Start date, Last date, From and To pickers and
+an All day switch. It supports timed and multi-day events, rejects invalid ranges
+and nonexistent spring-DST times, and keeps read-only/expanded recurring events
+view-only. Last date is inclusive for all-day events; the stored end is the next
+nominal date at UTC midnight. Month and day projections include spanning events
+without exposing a canonical all-day event on neighbouring local dates.
+
+Canonical midnight all-day pairs remain UTC nominal dates when decoded. Older
+non-midnight pairs retain their previous local instant interpretation and exact
+serialised timestamps. Title/location-only edits preserve the original start/end;
+only an explicit schedule edit adopts the nominal date representation. No journal
+history is migrated and no previously sent provider event is corrected implicitly.
+Descriptions, source, ETag and resource URL remain intact; desktop also lacks a
+description editor.
+
+Submitted input is frozen through the existing journal owner. Later text/time/date
+input stays open after an older completion. The calendar becomes fixed after the
+first submission so an unknown save cannot create another event on a different
+source. Closing a submitted form keeps admitted work reachable through Calendar.
+Exact retries and conditional provider/cache recovery remain owned by Workspace.
+
+Evidence: the default-zone full Flutter suite passes 293 tests, with two
+zone-specific cases run separately. London and Los Angeles each pass 29 focused
+tests, including actual spring-gap controls, nominal DST ranges and retained
+legacy/timed timestamps. Nine host FFI tests include explicit native profile
+disposal before reopening and exact admitted-request comparisons. The native
+calendar Rust filter passes 37 tests, native Clippy and Flutter analysis are clean,
+and four harness tests retain independent calendar/bulk completion guards.
+
+The saved `android_e2e.py --calendar-only` scenario passes timed and all-day saves
+in light/dark through the production Workspace/native journal, followed by owned
+profile close/reopen. Both Android captures and compact light/dark/view-only
+goldens were reviewed. The first Android run read the journal before admission;
+its logs/capture remain under ignored `artifacts/calendar-failed-before`. The
+saved test now observes the actual journal and form outcome with bounded waits
+and visible failure diagnostics. Live Google/CalDAV, Apple execution, full
+recurrence editing and acknowledged Calendar Undo remain unverified or unfinished.
+
+Primary integration with `main` `22d6bbc` passes 349 Flutter tests, with the two
+zone-specific cases covered by 20 model/control tests in each of London and Los
+Angeles. All four report-guard tests pass. Native Rust sources are identical to
+the main revision whose 210 tests and Clippy passed during PR #55 integration.
+The first combined Flutter run could not load suites because its generated
+package configuration lacked the newly merged Preferences dependency; resolving
+packages left the lockfile and source unchanged, and the full rerun passes.
+The complete source diff, both compact scheduling goldens, the recurring view-only
+golden and both Android captures were reviewed before integration.
+
 ## Mobile Preferences search, 6 October 2026 (#26)
 
 Implementation [PR #55](https://github.com/sam-ruff/shep.so/pull/55), commit
