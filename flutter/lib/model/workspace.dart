@@ -1357,7 +1357,6 @@ class Workspace extends ChangeNotifier {
     _patchMail(id, fields);
     _projection.putIfAbsent(id, () => {}).addAll(fields);
     if (move != null) {
-      move.pending = logicalRole != null;
       _flagUndo = null;
       _undoId = null;
       notice = null;

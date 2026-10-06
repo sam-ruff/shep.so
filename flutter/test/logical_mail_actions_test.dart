@@ -123,6 +123,25 @@ void main() {
   });
 
   test(
+    'in-flight logical action keeps the optimistic Archive wording',
+    () async {
+      final repository = LogicalRepository()..hold = Completer<void>();
+      final workspace = await start(repository);
+      final mail = workspace.visible.first;
+      final archived = workspace.action(mail.id, MailAction.archive);
+      for (var n = 0; repository.requests.length < 2; n++) {
+        if (n == 100) fail('logical action did not start');
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(workspace.moves.records.single.pending, false);
+      expect(workspace.moves.label, 'Archived 1 message');
+      repository.hold!.complete();
+      await archived;
+      expect(workspace.moves.label, 'Archived 1 message');
+    },
+  );
+
+  test(
     'CREATE Waiting remains pending and Undo cancels the original admission',
     () async {
       final repository = LogicalRepository()..waiting = true;

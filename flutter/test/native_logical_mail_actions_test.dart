@@ -227,7 +227,7 @@ void main() {
       final original = workspace.moves.records.single;
       expect(original.started, true);
       expect(original.committed, false);
-      expect(find.text('Archiving 1 message'), findsOneWidget);
+      expect(find.text('Archived 1 message'), findsOneWidget);
       await tester.tap(find.widgetWithText(TextButton, 'Undo'));
       await tester.pump();
       expect(workspace.mail(mail.id)!.folder, 'Inbox');
