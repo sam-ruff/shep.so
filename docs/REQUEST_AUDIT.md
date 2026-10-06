@@ -16,7 +16,28 @@ Immediate account removal while provider owners are held is tracked separately
 in #62; provider-folder work retains existing removal guards and stale-dispatch
 fences. Schema26 belongs to reply writer protection; destination/lineage work
 uses schema28 after group receipt/source-ownership prerequisite #64 (schema27),
-and must integrate both earlier migrations before publication.
+and must integrate both earlier migrations before publication. The individual
+action lane is ready for review; group destinations wait for #64 to merge and
+stay open in TODO.
+
+**6 October reply-original delivery (#30):** Mobile Reply and Reply all gain a
+per-draft Include original message control and searchable new-reply default.
+Typed text remains independent of the saved original through files, autosave,
+reopen and reviewed uncertain Outbox recovery. The R97 default becomes one
+portable profile key across desktop/mobile/browser adapters; old mobile
+eight-field snapshots, exact requests and receipts do not approve the ninth
+field. Forward and legacy inline-quote drafts retain their established content.
+Browser composer application remains an explicit active gap. Verification and
+device/provider limits are recorded in [Completion](COMPLETION.md).
+
+**6 October reader metadata continuation (#47):** Flutter now displays exact
+cached From/To independently of receiving-account identity and exposes selectable
+headers with visible Copy controls before body completion. Host native FFI,
+actual reader controls and the saved compact browser clipboard/frame scenario
+pass. Android's synthetic repository and actual platform clipboard controls pass
+in light and dark separately from host FFI; Apple and live provider execution
+remain open in the platform audit. See
+[completion](COMPLETION.md) for exact verification and preserved failures.
 
 **6 October mobile queued bulk Undo (#49):** Continue parity delivery with Undo
 for approved groups before any acknowledged item, including pending, paused and
@@ -55,9 +76,12 @@ Initial fixes are account-bound notices in
 in [PR #54](https://github.com/sam-ruff/shep.so/pull/54) and Preferences search
 in [PR #55](https://github.com/sam-ruff/shep.so/pull/55) and calendar scheduling
 in [PR #56](https://github.com/sam-ruff/shep.so/pull/56), with bounded History
-in [PR #57](https://github.com/sam-ruff/shep.so/pull/57). Reader headers,
-reply quote controls and queued Undo remain active implementation lanes;
-the tracker retains the remaining functional and platform gaps.
+in [PR #57](https://github.com/sam-ruff/shep.so/pull/57) and queued Undo in
+[PR #60](https://github.com/sam-ruff/shep.so/pull/60). Reader headers are in
+[PR #59](https://github.com/sam-ruff/shep.so/pull/59); reply quote controls and
+provider folder destinations remain active implementation lanes. The user also
+requested a separate agent investigate and fix failing CI. The tracker retains
+the remaining functional and platform gaps.
 
 **6 October mobile calendar scheduling (#29):** Native Start date, Last date,
 From, To and All day controls now support timed and multi-day events. Validation,

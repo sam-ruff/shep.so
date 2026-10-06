@@ -25,6 +25,7 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
   late final bcc = TextEditingController(text: widget.draft.bcc);
   late final subject = TextEditingController(text: widget.draft.subject);
   late final body = TextEditingController(text: widget.draft.body);
+  late ReplyContext? replyContext = widget.draft.replyContext;
   late String accountId = widget.draft.accountId.isNotEmpty
       ? widget.draft.accountId
       : widget.workspace.accountRepository?.mailAccounts.firstOrNull?.id ?? '';
@@ -38,6 +39,7 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
       ? widget.workspace.repository as DraftRepository
       : null;
   bool busy = false, showCopy = false, checking = false;
+  bool originalExpanded = true;
   String? error, delivery;
   _DraftSavePhase savePhase = _DraftSavePhase.idle;
   int statusRevision = -1;
@@ -48,6 +50,28 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
   Future<void> writes = Future.value();
   late Draft latestDraft;
   bool get locked => busy || checking || delivery != null;
+  Widget originalPreview() {
+    final context = replyContext;
+    if (context == null) return const SizedBox.shrink();
+    final preview = String.fromCharCodes(context.quote.runes.take(4096));
+    return ExpansionTile(
+      title: const Text('Original message'),
+      initiallyExpanded: true,
+      trailing: ShepIcon(originalExpanded ? 'up' : 'down'),
+      onExpansionChanged: (value) => setState(() => originalExpanded = value),
+      children: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 160),
+          child: SingleChildScrollView(child: SelectableText(preview)),
+        ),
+        if (preview.length < context.quote.length)
+          const Text(
+            'Preview shortened. The complete original stays saved with this reply.',
+          ),
+      ],
+    );
+  }
+
   Draft get draft => Draft(
     id: widget.draft.id,
     accountId: accountId,
@@ -60,6 +84,7 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
     inReplyTo: widget.draft.inReplyTo,
     references: widget.draft.references,
     forward: widget.draft.forward,
+    replyContext: replyContext,
     attachments: fileState.attachments,
     fileRevision: fileState.revision,
   );
@@ -370,7 +395,13 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
     },
     child: Scaffold(
       appBar: AppBar(
-        title: Text(widget.draft.forward != null ? 'Forward' : 'New message'),
+        title: Text(
+          widget.draft.forward != null
+              ? 'Forward'
+              : replyContext != null
+              ? 'Reply'
+              : 'New message',
+        ),
         leading: IconButton(
           tooltip: 'Save and close',
           onPressed: busy || checking ? null : () => finish(false),
@@ -397,6 +428,26 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
       body: ListView(
         padding: const EdgeInsets.all(18),
         children: [
+          if (replyContext != null && widget.draft.forward == null)
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Include original message'),
+              value: replyContext!.includeQuote,
+              onChanged: locked
+                  ? null
+                  : (value) {
+                      setState(
+                        () => replyContext = replyContext!.including(
+                          value ?? false,
+                        ),
+                      );
+                      edited();
+                    },
+            ),
+          if (replyContext != null && widget.draft.forward == null)
+            originalPreview(),
+          if (replyContext != null && widget.draft.forward == null)
+            const SizedBox(height: 16),
           if (widget.workspace.repository.preview)
             const Padding(
               padding: EdgeInsets.only(bottom: 16),

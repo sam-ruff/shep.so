@@ -139,6 +139,14 @@ and remain distinct from success.
 
 ## Monorepo and feature parity
 
+Flutter schema26 fences older writers that discard hidden reply originals.
+Retain the immutable quote/account/message identity through text and file saves;
+an omitted reply context cannot erase the saved context. The Include original
+choice is per draft and the portable default affects only new replies. Upgrade
+without rewriting old draft/file bytes or guessing boundaries in flat legacy
+drafts. Keep the actual schema25 writer rejection probe and legacy eight-field
+profile reviews/receipts, whose absent ninth field is never consent.
+
 Flutter schema25 retains completed group receipts until explicit removal.
 Keep indexed 20-active admission separate from 20-group History pages and one
 50-item detail page. Seek active/attention state independently of the displayed
@@ -339,6 +347,15 @@ The latest user priority is HTML opening latency (R72). They explicitly authoriz
 During development run targeted tests after backend changes, the benchmark after storage/scheduling changes, and the MCP E2E suite after UI changes. Run the complete relevant set before pushing. Do not claim live Google, IMAP, POP3, SMTP, CalDAV, Windows or macOS verification based solely on fixture tests.
 
 ## MCP testing and automated equivalents
+
+Linux CI uses `scripts/ci-performance.sh` for required backend/action timings.
+Backend phases persist raw samples to `artifacts/performance/backend-progress.json`
+before enforcing their unchanged budgets. A failed required phase replays with
+opt-in numeric test-support tracing under `artifacts/diagnostics/`, then exits
+with the original failure status. Diagnostic reports never validate required
+gates. Query tracing includes extra read-only COUNT comparisons, so its timings
+are deliberately ineligible; phase sums also exclude worker scheduling and
+ordinary read-transaction drop. Keep original reports and screenshots separate.
 
 `scripts/action_latency.py` measures real ten-of-100,000 review and confirmation
 pixels separately, with held provider capacity and unchanged 100 ms p95 budgets.

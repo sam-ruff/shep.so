@@ -12,11 +12,12 @@ class Preferences {
     this.unified = true,
     this.quoteMode = 'Collapsed',
     this.tooltips = true,
+    this.replyIncludeOriginal = true,
   });
   final ThemeMode appearance;
   final MailAction leftSwipe, rightSwipe;
   final int previewLines;
-  final bool avatars, unified, tooltips;
+  final bool avatars, unified, tooltips, replyIncludeOriginal;
   final String quoteMode;
 
   Preferences copy({
@@ -28,6 +29,7 @@ class Preferences {
     bool? unified,
     String? quoteMode,
     bool? tooltips,
+    bool? replyIncludeOriginal,
   }) => Preferences(
     appearance: appearance ?? this.appearance,
     leftSwipe: leftSwipe ?? this.leftSwipe,
@@ -37,6 +39,7 @@ class Preferences {
     unified: unified ?? this.unified,
     quoteMode: quoteMode ?? this.quoteMode,
     tooltips: tooltips ?? this.tooltips,
+    replyIncludeOriginal: replyIncludeOriginal ?? this.replyIncludeOriginal,
   );
 
   Map<String, Object?> profileSettings() => {
@@ -49,6 +52,7 @@ class Preferences {
     'unified_inbox': unified,
     'reply_display': quoteMode == 'Latest only' ? 'LatestOnly' : quoteMode,
     'tooltips': tooltips,
+    'reply_include_original': replyIncludeOriginal,
   };
 
   /// Apply only explicitly reviewed portable fields. Null is an explicit reset.
@@ -102,6 +106,7 @@ class Preferences {
         'LatestOnly': 'Latest only',
       }, 'reply_display'),
       tooltips: flag('tooltips'),
+      replyIncludeOriginal: flag('reply_include_original'),
     );
   }
 
@@ -115,6 +120,7 @@ class Preferences {
     'unified': unified,
     'quoteMode': quoteMode,
     'tooltips': tooltips,
+    'replyIncludeOriginal': replyIncludeOriginal,
   });
 
   static Preferences decode(String? raw) {
@@ -137,6 +143,7 @@ class Preferences {
           ? data['quoteMode'] as String
           : 'Collapsed',
       tooltips: data['tooltips'] as bool? ?? true,
+      replyIncludeOriginal: data['replyIncludeOriginal'] as bool? ?? true,
     );
   }
 }

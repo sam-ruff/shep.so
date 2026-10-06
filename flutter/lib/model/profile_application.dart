@@ -53,8 +53,7 @@ class WorkspaceProfileApplication implements ProfileEnrollmentDevice {
     );
     final prior = workspace.preferences;
     final before = Map<String, int>.of(workspace._preferenceFields);
-    final current = prior.profileSettings(),
-        original = baseline.preferences.profileSettings();
+    final current = prior.profileSettings(), original = baseline.values;
     // Immediate projection requires the same captured local intent. Values alone
     // cannot distinguish an untouched field from an edit changed back. A resumed
     // review after restart has no UI proof: show progress until storage checks its

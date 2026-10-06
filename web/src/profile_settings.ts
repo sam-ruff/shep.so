@@ -11,6 +11,7 @@ export const BROWSER_SETTINGS = [
   "preview_lines",
   "sender_pictures",
   "reply_display",
+  "reply_include_original",
   "cross_account_moves",
   "foreign_move_folders",
 ] as const satisfies readonly SettingKey[];
@@ -46,6 +47,7 @@ export function portableValues(
     preview_lines: p.previewLines,
     sender_pictures: p.avatars,
     reply_display: quoteToWire[p.quoteMode],
+    reply_include_original: p.replyIncludeOriginal,
     cross_account_moves: p.crossAccountMoves,
     foreign_move_folders: p.foreignMoveFolders,
   };
@@ -75,6 +77,8 @@ export function applyPortable(
       return typeof value === "string" && value in wireToQuote
         ? { ...p, quoteMode: wireToQuote[value] }
         : null;
+    case "reply_include_original":
+      return typeof value === "boolean" ? { ...p, replyIncludeOriginal: value } : null;
     case "cross_account_moves":
       return typeof value === "boolean"
         ? { ...p, crossAccountMoves: value }
@@ -92,6 +96,7 @@ export function describeSetting(key: SettingKey, value: unknown): string {
   const labels: Record<SettingKey, string> = {
     appearance: "Theme",
     reply_display: "Quoted history",
+    reply_include_original: "Include original message in new replies",
     image_policy: "Remote images",
     unified_inbox: "Unified inbox",
     cross_account_moves: "Cross-account moves",
@@ -139,6 +144,7 @@ export class ProfileSettingsStore implements SettingsStore {
     const localKeys: Record<BrowserSettingKey, keyof Preferences> = {
       appearance: "appearance", preview_lines: "previewLines",
       sender_pictures: "avatars", reply_display: "quoteMode",
+      reply_include_original: "replyIncludeOriginal",
       cross_account_moves: "crossAccountMoves",
       foreign_move_folders: "foreignMoveFolders",
     };
@@ -181,7 +187,7 @@ export class ProfileSettingsStore implements SettingsStore {
       if (!raw) return fresh;
       const parsed = JSON.parse(raw) as Partial<Revisions>;
       if (parsed.preferences && typeof parsed.preferences === "object")
-        fresh.preferences = parsed.preferences;
+        fresh.preferences = { ...defaults, ...parsed.preferences };
       for (const key of BROWSER_SETTINGS) {
         const value = parsed.revisions?.[key];
         if (Number.isInteger(value) && (value as number) >= 0)
@@ -229,6 +235,10 @@ export class ProfilePreferenceDevice {
       throw new Error(
         "Another profile application is still awaiting acknowledgment. Finish or cancel it first.",
       );
+    for (const key of BROWSER_SETTINGS)
+      if (key in request.changes &&
+          (!(key in request.baseline.values) || !(key in request.baseline.revisions)))
+        throw Error("This setting was not part of the saved profile review. Review it before applying.");
     const current = this.settings.capture();
     let next = this.workspace.preferences;
     const applied: BrowserSettingKey[] = [];
@@ -259,7 +269,8 @@ export class ProfilePreferenceDevice {
       id: request.id,
       applied,
       kept,
-      revisions: { ...this.settings.capture().revisions },
+      revisions: Object.fromEntries(Object.keys(request.baseline.revisions)
+        .map(key => [key, this.settings.capture().revisions[key as BrowserSettingKey]])) as Record<BrowserSettingKey, number>,
     };
     this.settings.saveReceipt(receipt);
     return receipt;

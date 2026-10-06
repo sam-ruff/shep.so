@@ -236,7 +236,10 @@ pub(super) fn finish_fields(db: &mut Connection, key: &str, id: Uuid) -> Result<
                         Action::Setting { key, value } => {
                             let key = serde_json::to_value(key)?;
                             ensure!(
-                                SETTINGS.contains(&key.as_str().unwrap_or("")),
+                                review
+                                    .baseline
+                                    .values
+                                    .contains_key(key.as_str().unwrap_or("")),
                                 "This preference is not available in Flutter yet. Its original value is retained in the profile."
                             );
                             row.value = value;
@@ -244,7 +247,10 @@ pub(super) fn finish_fields(db: &mut Connection, key: &str, id: Uuid) -> Result<
                         Action::SettingRemoved { key } => {
                             let key = serde_json::to_value(key)?;
                             ensure!(
-                                SETTINGS.contains(&key.as_str().unwrap_or("")),
+                                review
+                                    .baseline
+                                    .values
+                                    .contains_key(key.as_str().unwrap_or("")),
                                 "This preference is not available in Flutter yet."
                             );
                             row.value = Value::Null;

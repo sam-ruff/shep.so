@@ -519,6 +519,14 @@ impl Store {
         self.run(move |c| read_page(c, query, projection)).await
     }
 }
+#[cfg(feature = "test-support")]
+fn trace_query_phase(clock: &mut Option<std::time::Instant>, phase: &'static str) {
+    if let Some(started) = clock {
+        tracing::debug!(target: "shep::query_timing", phase, elapsed_ms = started.elapsed().as_secs_f64() * 1000.);
+        *started = std::time::Instant::now();
+    }
+}
+
 /// One page and its counts in a single read transaction; the ordinary path for
 /// every list query, shared by the test-support store-truth view.
 fn read_page(
@@ -526,6 +534,9 @@ fn read_page(
     query: MailQuery,
     projection: Option<(String, u64, Arc<crate::folder_actions::Review>)>,
 ) -> anyhow::Result<MailPage> {
+    #[cfg(feature = "test-support")]
+    let mut clock = tracing::enabled!(target: "shep::query_timing", tracing::Level::DEBUG)
+        .then(std::time::Instant::now);
     let transaction = c.transaction()?;
     let c = &transaction;
     read_moves::prepare(c, &query.project_moves)?;
@@ -535,11 +546,20 @@ fn read_page(
     } else {
         "data,unread,starred,folder,account,messages.pending_move"
     };
+    #[cfg(feature = "test-support")]
+    trace_query_phase(&mut clock, "plan");
     let (page_rows, total, unread) = if let Some(page) = plan.counted_page(c, columns)? {
+        #[cfg(feature = "test-support")]
+        trace_query_phase(&mut clock, "ranked_page");
         page
     } else {
         let (total, unread) = plan.counts(c)?;
-        (plan.page(c, columns, total)?, total, unread)
+        #[cfg(feature = "test-support")]
+        trace_query_phase(&mut clock, "scope_counts");
+        let page = plan.page(c, columns, total)?;
+        #[cfg(feature = "test-support")]
+        trace_query_phase(&mut clock, "metadata_page");
+        (page, total, unread)
     };
     let folder_count = if let Some((token, revision, review)) = &projection {
         folder_projection::capture(c, token, review, *revision, &query)?;
@@ -563,6 +583,8 @@ fn read_page(
             Ok(m)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+    #[cfg(feature = "test-support")]
+    trace_query_phase(&mut clock, "decode");
     let source = read_moves::source(c)?;
     let (inbox_unread, removed) = mail_query::inbox_unread_query(c, source)?;
     let inbox_unread = c
@@ -571,6 +593,8 @@ fn read_page(
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
         })?
         .collect::<rusqlite::Result<_>>()?;
+    #[cfg(feature = "test-support")]
+    trace_query_phase(&mut clock, "badge_counts");
     let mut observed = std::collections::HashMap::new();
     let mut relocated = std::collections::HashMap::new();
     let mut statement = c.prepare(&format!(
@@ -615,6 +639,8 @@ fn read_page(
         }
     }
     let mut move_recovery = std::collections::HashMap::new();
+    #[cfg(feature = "test-support")]
+    trace_query_phase(&mut clock, "observations");
     for mail in &mut rows {
         if let Some(record) = move_journal::for_cache(c, &mail.id)? {
             mail.remote_id.clear();
@@ -671,11 +697,15 @@ fn read_page(
         bulk_placeholders,
         bulk_revision: get(c, "bulk_revision")?,
     };
+    #[cfg(feature = "test-support")]
+    trace_query_phase(&mut clock, "recovery_lineages");
     drop(statement);
     if projection.is_some() {
         read_moves::prepare(c, &[])?;
         transaction.commit()?;
     }
+    #[cfg(feature = "test-support")]
+    trace_query_phase(&mut clock, "finalize");
     Ok(page)
 }
 impl Store {

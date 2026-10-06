@@ -4,8 +4,10 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import statistics
+import subprocess
 import time
 
 from e2e import (LARGE_SELECTION_SECONDS, McpClient, ROOT, check, click, mail_row_y, shot,
@@ -101,6 +103,9 @@ def measure(samples, prepare_only=False):
         if hashlib.sha256(binary.read_bytes()).hexdigest() != fingerprint:
             raise RuntimeError("The measured binary changed; rebuild and repeat the quiet run.")
         return {"schema": 1, "timestamp": time.time(), "binary_sha256": fingerprint,
+                "context": {"mode": os.environ.get("SHEP_PERFORMANCE_MODE", "required"),
+                            "source": os.environ.get("SHEP_PERFORMANCE_SOURCE", "unknown"),
+                            "toolchain": subprocess.check_output(["rustc", "--version"], text=True).strip()},
                 "mailbox_messages": 100000, "selected_messages": 10,
                 "provider_capacity": "held throughout", "store_truth_oracle": False,
                 "artifacts": started["artifacts"],
