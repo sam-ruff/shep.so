@@ -1,6 +1,6 @@
 # Client parity
 
-Mobile queued bulk Undo (#49) is implemented on its lane for pending, paused and
+Mobile queued bulk Undo (#49) is merged for pending, paused and
 held-first-step work. The checked local decision removes forward projection and
 cancels only unsent items; actual late receipts retain their same-group inverse.
 Unknown replies keep exact status inspection/Retry, including visible capacity
@@ -191,7 +191,9 @@ toast label yet; these remain active parity gaps.
 copy's original reappears, library-backed HTML word/line selection, selectable
 subjects, large-message receipt and the standard Spam shortcut. Browser and
 Flutter retain their native selection controls. Browser subjects are native `h1`
-text; Flutter subjects still use `Text` and need selectable controls. Both clients
+text; Flutter subjects and cached From/To fields use selectable controls with
+visible exact-value Copy actions. Native metadata keeps the actual receiving
+account separate and never reconstructs missing recipients. Both clients
 already list `Spam`, but mapping the reported server's `Junk` folder and equivalent
 recovery/large-mail controls require explicit verification. Desktop Spam opens
 the existing `Junk` mailbox, including the reported account; discovery of other

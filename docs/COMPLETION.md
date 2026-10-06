@@ -1,6 +1,60 @@
 # Completion audit
 
+## Mobile cached reader headers, 6 October 2026 (#47)
+
+Implementation: [PR #59](https://github.com/sam-ruff/shep.so/pull/59).
+
+Flutter carries cached To and exact From through metadata pages, confirmed alias
+rows and detail reads. Receiving-account identity has its own line. Subject,
+From, single parsed sender address and To use selectable controls with visible
+Copy actions before body completion and through failure. Empty fields have
+noncopyable placeholders; no recipient or Bcc is inferred. The separate address
+uses the existing bounded shared mailbox parser and stays empty for invalid or
+ambiguous From values, preserving the exact original header independently.
+
+Focused model, actual FFI and reader/footer checks pass all 13 cases, including
+quoted angle brackets, surrounding whitespace, Unicode, multiple recipients,
+body failure/Retry, metadata refresh, alias adoption and late clipboard replies.
+Both native parser regressions pass and Flutter analysis is clean. The saved
+Flutter-web harness passes `header-copy-before-body` and
+`metadata-refresh-retains-frame`, checking actual clipboard values and the same
+formatted frame through two metadata refreshes. Three compact light/loading/dark
+captures were visually reviewed under `artifacts/flutter/reader-headers/`.
+
+The first native FFI failure exposed whitespace handling in parsed addresses;
+the unchanged exact From assertion already passed. That failure is retained in
+`reader-headers-parser-ffi.log`, with the passing corrected run in
+`reader-headers-ffi-fixed.log`. Browser observation/navigation failures are also
+preserved; the final real clipboard-based flow passes without relaxed deadlines.
+Full baseline verification passes 318 Flutter tests and all 208 native tests;
+native Clippy denies warnings and pinned strict documentation builds cleanly.
+Android execution passes `reader-headers-clipboard-refresh-light` and
+`reader-headers-clipboard-refresh-dark` with a synthetic repository and the actual
+system clipboard, separately from host FFI. Both saved native captures were
+visually reviewed. The first dark test read the clipboard before asynchronous
+Copy completion; its log, partial report and light capture are retained. The
+shared helper now awaits the current field's rendered Copy completion, with a
+host assertion rejecting existing same-label feedback. Its six focused host
+controls pass. The normal checkpoint hooks pass. Integration with `main`
+`0858706` passes 388 Flutter tests with the two existing zone-specific Calendar
+skips, and all 215 native tests, retaining Calendar scheduling, Preferences search
+and History changes. Native formatting also corrects the existing Preferences
+capacity test without changing its data or assertions. Final analysis, native
+Clippy, formatting, strict documentation and the current-main browser rerun pass.
+Normal merge hooks gate publication. Apple and live-provider verification remain
+open.
+
+Root integration with `main` at `9939956` retains queued Undo and the History
+wake fix, passing 405 Flutter tests and all 219 native tests. The two existing
+Calendar timezone skips remain covered by the unchanged London/Los Angeles
+cases from the preceding integration. Native Clippy and Flutter analysis pass.
+Root also reviewed the three saved browser and two Android captures and the
+exact system-clipboard assertions, with the synthetic Android repository kept
+separate from host FFI evidence.
+
 ## Mobile queued bulk Undo checkpoint, 6 October 2026 (#49/#58)
+
+Implementation: [PR #60](https://github.com/sam-ruff/shep.so/pull/60).
 
 Approved queued/paused/held-first-step groups now expose Undo in the notice and
 History. The checked existing local decision cancels unsent membership and clears

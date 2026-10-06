@@ -504,7 +504,7 @@ class NativeRepository
     return {'credential_slot': slot, 'password': await _readPassword(slot)};
   }
 
-  Mail mailFrom(
+  Mail _mail(
     Map<String, dynamic> m, {
     String body = '',
     List<String>? attachments,
@@ -512,16 +512,18 @@ class NativeRepository
     bool? loaded,
     String? fileError,
   }) {
-    final sender = (m['sender'] as String).trim().isEmpty
+    final senderHeader = m['sender'] as String;
+    final sender = senderHeader.trim().isEmpty
         ? 'Unknown sender'
-        : m['sender'] as String;
-    final address =
-        RegExp(r'<([^<>]+)>').firstMatch(sender)?.group(1) ?? sender;
+        : senderHeader;
+    final address = m['sender_address'] as String? ?? '';
     return Mail(
       id: m['id'],
       sender: sender
           .replaceFirst(RegExp(r'\s*<[^<>]+>$'), '')
           .replaceAll('"', ''),
+      senderHeader: senderHeader,
+      recipient: m['recipient'] as String? ?? '',
       address: address,
       subject: m['subject'],
       preview: m['preview'],
@@ -646,7 +648,7 @@ class NativeRepository
               'projection': projection,
             })
             as Map<String, dynamic>;
-    final mail = (data['mail'] as List).map((m) => mailFrom(m)).toList();
+    final mail = (data['mail'] as List).map((m) => _mail(m)).toList();
     cached = mail;
     return MailPage(
       mail,
@@ -654,7 +656,7 @@ class NativeRepository
       data['unread'],
       confirmed: {
         for (final m in data['confirmed'] as List? ?? [])
-          m['id'] as String: mailFrom(m),
+          m['id'] as String: _mail(m),
       },
       aliases: (data['aliases'] as Map<String, dynamic>? ?? {})
           .cast<String, String>(),
@@ -674,7 +676,7 @@ class NativeRepository
   @override
   Future<Mail> detail(String id) async {
     final data = await call({'op': 'detail', 'id': id});
-    return mailFrom(
+    return _mail(
       data['summary'],
       body: data['body'],
       attachments: (data['attachments'] as List).cast<String>(),

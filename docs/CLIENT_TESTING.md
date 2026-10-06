@@ -99,6 +99,28 @@ flutter build web --target test/preview_main.dart --no-web-resources-cdn
 
 The host suite includes an actual FFI/SQLite reopen test. It also uses the same generated Outbox fixture as Android to test local IMAP Sent flag/read/move/reopen without touching a locked credential store, and missing/locked credential refusal for server-backed mail. Python 3 prepares each temporary profile before the native bridge opens it. It loads the library from Flutter’s native-assets output because the bridge’s legacy widget-test loader still expects Cargo’s old target directory. Run `cargo test --manifest-path flutter/rust/Cargo.toml` from the root for paging/search, POP3 local state, FIFO/cancellation, draft/discard and outgoing contracts. Outgoing tests hold an SMTP operation open, reject a second process, inject terminal-record/Sent-cache write failures, and verify immutable recovery, paging and no repeated send. These tests use temporary profiles and fictional data.
 
+Reader header metadata has focused host coverage in `mail_headers_test.dart`,
+`mail_headers_native_test.dart` and `reader_headers_test.dart`. The FFI case seeds
+an isolated profile before opening it, preserving exact From/To separately from
+the receiving account and checking quoted angle brackets through the shared
+address parser. The controls cover clipboard values, empty metadata, aliases,
+late body replies, copy failure and native text selection.
+
+Run the compact formatted-frame and clipboard scenario from the root with
+`python3 scripts/clients/flutter_web_e2e.py --headers`. Its synthetic repository
+holds the body while actual controls copy cached headers, then refreshes metadata
+while the same formatted frame stays mounted; saved captures include dark mode.
+The Android clipboard/control harness is separate from that browser preview:
+
+```sh
+cd flutter
+CARGO_BUILD_JOBS=4 SHEP_NATIVE_REPORT=integration-reader-headers-result flutter drive --flavor preview --driver test_driver/native_driver.dart --target integration_test/reader_headers_android_test.dart --device-id emulator-5554
+```
+
+Use the owned test emulator and coordinate device access. This Android scenario
+uses a synthetic repository and the platform clipboard; the host FFI case proves
+the native mapping separately. Neither establishes live provider or Apple parity.
+
 From the root, run the self-contained browser runner:
 
 ```sh
