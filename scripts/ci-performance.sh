@@ -10,6 +10,21 @@ fi
 shep_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$shep_root"
 
+# Hypervisor steal and guest load at the start, every two seconds and at exit, so a
+# slow run can be told apart from a contended host. The samples never feed a gate.
+shep_cpu_log="artifacts/logs/runner-cpu-$shep_phase.log"
+runner_cpu_sample() {
+  local stat load
+  read -r stat < /proc/stat && read -r load < /proc/loadavg &&
+    printf '%(%s)T %s | %s\n' -1 "$stat" "$load" >> "$shep_cpu_log"
+}
+mkdir -p artifacts/logs
+: > "$shep_cpu_log"
+runner_cpu_sample || true
+while sleep 2; do runner_cpu_sample || break; done > /dev/null 2>&1 &
+shep_cpu_sampler=$!
+trap 'kill "$shep_cpu_sampler" 2> /dev/null || true; runner_cpu_sample || true' EXIT
+
 export SHEP_PERFORMANCE_SOURCE="$shep_source"
 export SHEP_PERFORMANCE_MODE=required
 if [[ "$shep_phase" == backend ]]; then

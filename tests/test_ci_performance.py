@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -104,6 +105,23 @@ sys.exit(int(os.environ['TIMING_REQUIRED_EXIT' if mode == 'required' else 'TIMIN
                 self.assertEqual(diagnostic["mode"], "diagnostic")
                 self.assertEqual(diagnostic["screenshots"], str(self.root / "artifacts/diagnostics/action/e2e"))
                 self.assertTrue((Path(diagnostic["screenshots"]) / "frame.webp").exists())
+
+    def test_runner_cpu_samples_stop_with_the_wrapper_and_stay_out_of_reports(self):
+        for phase, status in (("backend", "0"), ("action", "1")):
+            with self.subTest(phase=phase):
+                self.env["TIMING_REQUIRED_EXIT"] = status
+                result = self.run_script(phase)
+                self.assertEqual(result.returncode, int(status), result.stderr)
+                log = self.root / f"artifacts/logs/runner-cpu-{phase}.log"
+                samples = log.read_text().splitlines()
+                # The start and exit samples bound the whole phase even between periodic ones.
+                self.assertGreaterEqual(len(samples), 2)
+                for sample in (samples[0], samples[-1]):
+                    self.assertRegex(sample, r"^\d+ cpu +\d+( \d+){6,} \| [0-9.]+ [0-9.]+ [0-9.]+ ")
+                time.sleep(2.5)
+                self.assertEqual(log.read_text().splitlines(), samples)
+                reports = [path for path in (self.root / "artifacts").rglob("*runner-cpu*") if path.parent.name != "logs"]
+                self.assertEqual(reports, [])
 
     def test_invalid_source_or_phase_never_starts_measurement(self):
         for phase, source in (("backend", "main"), ("unknown", SHA)):

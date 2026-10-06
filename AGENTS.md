@@ -358,6 +358,9 @@ with the original failure status. Diagnostic reports never validate required
 gates. Query tracing includes extra read-only COUNT comparisons, so its timings
 are deliberately ineligible; phase sums also exclude worker scheduling and
 ordinary read-transaction drop. Keep original reports and screenshots separate.
+The wrapper also saves `/proc/stat` and load at the start, every two seconds and
+at exit in `artifacts/logs/runner-cpu-<phase>.log`, so hypervisor steal can be
+compared with a slow run. Those samples never decide a gate.
 
 `scripts/action_latency.py` measures real ten-of-100,000 review and confirmation
 pixels separately, with held provider capacity and unchanged 100 ms p95 budgets.
