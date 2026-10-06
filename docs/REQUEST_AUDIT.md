@@ -21,8 +21,14 @@ episode, bind results to each account's incoming connection identity, and keep
 mail sync, calendar refresh, unattended automatic backup and automatic
 move-recovery failures from reopening a hidden window or cancelling Quit while
 user-started writes keep their recovery. Desktop
-is implemented with the evidence in [the completion log](COMPLETION.md); Flutter
-and browser parity and the blank-reader question remain open.
+is implemented with the evidence in [the completion log](COMPLETION.md).
+Flutter's foreground notice policy is implemented in
+[PR #53](https://github.com/sam-ruff/shep.so/pull/53), including exact incoming
+identities, delayed automatic episodes, immediate Refresh and owned recovery.
+Its independent scheduling and OS lifecycle work remain in
+[#35](https://github.com/sam-ruff/shep.so/issues/35) and
+[#46](https://github.com/sam-ruff/shep.so/issues/46). Browser notice parity and
+the blank-reader question remain open.
 
 The next architecture continuation integrates checked Flutter folder changes and
 desktop Activity through existing owners. Mobile integrated gates pass198 Rust
