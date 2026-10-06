@@ -53,6 +53,7 @@ void main() {
     HistoryRepository repository,
     Future<void> Function(Workspace) run, {
     bool dark = false,
+    bool attentionBanner = false,
   }) async {
     tester.view.physicalSize = const Size(1080, 2280);
     tester.view.devicePixelRatio = 2.625;
@@ -60,20 +61,32 @@ void main() {
     await loadPreviewFonts();
     final workspace = Workspace(repository, MemorySettings());
     try {
+      if (attentionBanner) await workspace.groups!.refreshHistory();
       await tester.pumpWidget(
         MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: shepTheme(dark ? Brightness.dark : Brightness.light),
           home: Builder(
             builder: (context) => Scaffold(
-              body: TextButton(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => GroupHistoryScreen(workspace: workspace),
+              body: Column(
+                children: [
+                  if (attentionBanner)
+                    AnimatedBuilder(
+                      animation: workspace,
+                      builder: (_, _) =>
+                          GroupActionBanner(workspace: workspace),
+                    ),
+                  TextButton(
+                    onPressed: () => Navigator.push(
+                      context,
+                      MaterialPageRoute<void>(
+                        builder: (_) =>
+                            GroupHistoryScreen(workspace: workspace),
+                      ),
+                    ),
+                    child: const Text('Open group History'),
                   ),
-                ),
-                child: const Text('Open group History'),
+                ],
               ),
             ),
           ),
@@ -298,6 +311,92 @@ void main() {
       });
     },
   );
+
+  testWidgets('rapid real group choices coalesce held detail reads', (
+    tester,
+  ) async {
+    final repository = HistoryRepository();
+    await scenario(tester, repository, (workspace) async {
+      repository.heldItemsJob = 'group-064';
+      repository.itemsHold = Completer<void>();
+      await tap(tester, find.text('Move to group-064 125 messages'));
+      for (var n = 0; n < 3; n++) {
+        await tap(tester, find.text('Move to group-063 125 messages'));
+        await tap(
+          tester,
+          find.text('Move to group-064 125 messages'),
+          delta: -500,
+        );
+      }
+      await tap(tester, find.text('Move to group-063 125 messages'));
+      expect(repository.calls.where((c) => c['kind'] == 'items').length, 1);
+      repository.itemsHold!.completeError(StateError('Old item failure'));
+      await wait(tester, () => !observation(tester).itemsLoading);
+      expect(repository.calls.where((c) => c['kind'] == 'items').length, 2);
+      expect(observation(tester).itemsError, isNull);
+      await tap(tester, rowAction('group-063', 'Retry'));
+      await wait(tester, () => repository.decisions.isNotEmpty);
+      expect(repository.decisions.single, (
+        'retry',
+        'group-063',
+        0,
+        'group-063-mail-0',
+      ));
+    });
+  });
+
+  testWidgets('older attention banner clears through real Accept and Remove', (
+    tester,
+  ) async {
+    final repository = HistoryRepository();
+    for (final rows in repository.members.values) {
+      for (final row in rows) {
+        row['state'] = 'done';
+      }
+    }
+    repository.members['group-000']![0]['state'] = 'uncertain';
+    repository.members['group-000']![1]['state'] = 'failed';
+    await scenario(tester, repository, (workspace) async {
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('2 group action steps need review.'), findsOneWidget);
+      await tap(tester, find.widgetWithText(TextButton, 'History'));
+      await wait(
+        tester,
+        () =>
+            find.byType(GroupHistoryScreen).evaluate().isNotEmpty &&
+            !observation(tester).itemsLoading &&
+            !observation(tester).loading,
+      );
+      await tester.pumpAndSettle();
+      expect(observation(tester).selected, 'group-000');
+      await tap(tester, rowAction('group-000', 'Accept current state'));
+      await wait(tester, () => workspace.groups!.attentionCount == 1);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('1 group action step needs review.'), findsOneWidget);
+      await tap(tester, find.widgetWithText(TextButton, 'History'));
+      await wait(
+        tester,
+        () =>
+            find.byType(GroupHistoryScreen).evaluate().isNotEmpty &&
+            !observation(tester).loading,
+      );
+      await tester.pumpAndSettle();
+      await tap(tester, rowAction('group-000', 'Remove'));
+      await wait(tester, () => workspace.groups!.attentionCount == 0);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('group action step'), findsNothing);
+      expect(workspace.groups!.attentionTarget, isNull);
+      expect(repository.decisions.single, (
+        'accept',
+        'group-000',
+        0,
+        'group-000-mail-0',
+      ));
+    }, attentionBanner: true);
+  });
 
   testWidgets('two real Remove controls fence a held Refresh page', (
     tester,

@@ -35,14 +35,18 @@ Account removal takes `Operations.groups` before the account lock so no owned st
 visible Newer/Older groups and Previous/Next messages controls. Indexed native
 cursors report exact last pages and retain surviving boundary rows after
 removals. Details keep their exact group, item and page generation through
-delayed Retry/Accept, page changes and same-group re-entry. One running page read
-and its latest replacement share an idle future; command revisions reject old
-results after removal or newer decisions. Detail failures keep their scoped Retry
+delayed Retry/Accept, page changes and same-group re-entry. Group pages and detail
+pages each keep one running read and its latest replacement with a shared idle
+future. Command revisions reject old page results and errors after removal or
+newer decisions. Detail failures keep their scoped Retry
 above the scroller while group controls remain available.
 
 The existing `MailGroups` owner observes active/attention records separately from
 the displayed page, including exact older targets. Its iterative observation
-loop has the same command fence and coalescing bound. Status indexes keep
+loop has the same command fence and coalescing bound.
+Accept, Retry and Remove refresh this independent attention snapshot through the
+same coalesced owner; accepting checked state still does not claim server success.
+Status indexes keep
 completed history out of admission and next-step seeks; each active group offers
 one indexed eligible item before the next-step choice. This does not introduce
 another dispatcher or authorise replay of an uncertain provider step.

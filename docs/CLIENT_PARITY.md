@@ -4,8 +4,8 @@ Mobile bulk History schema25 separates retained durable history from its
 20-active admission bound. The control keeps one 20-group page and one 50-item
 page, with indexed cursors and exact older recovery targets. Page generations
 fence late Retry/Accept completions, including same-group away-and-back, and local
-command revisions fence held screen/owner observations. Both readers coalesce
-one request and its latest replacement. Failed detail reads retain visible Retry
+command revisions fence held screen/owner results and errors. Group, detail and
+owner readers each coalesce one request and its latest replacement. Failed detail reads retain visible Retry
 without blocking group controls. Host/native evidence is recorded in Completion;
 Android/Apple, live providers and large-active-group performance remain separate.
 

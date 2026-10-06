@@ -416,6 +416,9 @@ class MailGroups {
       if (_disposed) return;
       if (data is Map<String, dynamic> && data['id'] is String) {
         _replace(GroupJob(data));
+        if (command['kind'] == 'accept' || command['kind'] == 'retry') {
+          unawaited(refreshHistory());
+        }
       }
       error = null;
     } catch (e) {
@@ -458,6 +461,7 @@ class MailGroups {
       updateRevision++;
       error = null;
       changed();
+      unawaited(refreshHistory());
       return true;
     } catch (e) {
       if (_disposed) return false;

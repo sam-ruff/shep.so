@@ -232,6 +232,82 @@ void main() {
   );
 
   test(
+    'a stale page failure after removal reads the current page instead',
+    () async {
+      await history.load();
+      repository.historyHold = Completer<void>();
+      final held = history.load(preserve: true);
+      final removed = history.jobs.first;
+      await history.remove(removed);
+      repository.historyHold!.completeError(StateError('Old page failure'));
+      await held;
+      expect(history.error, isNull);
+      expect(history.jobs.any((job) => job.id == removed.id), false);
+      expect(history.jobs.length, 20);
+      expect(repository.calls.where((c) => c.containsKey('before')).length, 3);
+    },
+  );
+
+  test(
+    'rapid detail choices share one read and its latest replacement',
+    () async {
+      await history.load();
+      final first = history.jobs.first;
+      final latest = history.jobs[1];
+      repository.heldItemsJob = first.id;
+      repository.itemsHold = Completer<void>();
+      history.toggle(first);
+      history.toggle(latest);
+      final held = history.loadItems(latest);
+      for (var n = 0; n < 100; n++) {
+        history.toggle(first);
+        history.toggle(latest);
+        expect(identical(history.loadItems(latest, cursor: 49), held), true);
+      }
+      expect(repository.calls.where((c) => c['kind'] == 'items').length, 1);
+      repository.itemsHold!.completeError(StateError('Old item failure'));
+      await held;
+      expect(repository.calls.where((c) => c['kind'] == 'items').length, 2);
+      expect(history.selected, latest.id);
+      expect(history.after, 49);
+      expect(history.rows.first.mail, '${latest.id}-mail-50');
+      expect(history.rows.length, 50);
+      expect(history.itemsError, isNull);
+      expect(history.itemsLoading, false);
+    },
+  );
+
+  test('off-page attention refreshes after Accept, Retry and Remove', () async {
+    for (final rows in repository.members.values) {
+      for (final row in rows) {
+        row['state'] = 'done';
+      }
+    }
+    final rows = repository.members['group-000']!;
+    rows[0]['state'] = 'uncertain';
+    rows[1]['state'] = 'failed';
+    await groups.refreshHistory();
+    expect(groups.jobs.any((j) => j.id == 'group-000'), false);
+    final job = groups.attentionTarget!;
+    final page = await groups.items(job);
+    await groups.accept(job, page.rows[0]);
+    await settled(() => !groups.historyLoading);
+    expect(groups.attentionCount, 1);
+    await groups.retry(job, page.rows[1]);
+    await settled(() => !groups.historyLoading && !groups.running);
+    expect(groups.attentionCount, 0);
+    expect(groups.attentionTarget, isNull);
+    repository.records[job.id]!['state'] = 'finished';
+    rows[2]['state'] = 'uncertain';
+    await groups.refreshHistory();
+    expect(groups.attentionCount, 1);
+    expect(await groups.remove(groups.attentionTarget!), true);
+    await settled(() => !groups.historyLoading);
+    expect(groups.attentionCount, 0);
+    expect(groups.attentionTarget, isNull);
+  });
+
+  test(
     'failed older-page read retains usable known navigation and explicit retry',
     () async {
       await history.load();

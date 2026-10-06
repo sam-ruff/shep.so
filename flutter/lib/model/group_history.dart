@@ -23,6 +23,9 @@ class GroupHistory {
   ({int? cursor, int generation})? _requestedPage;
   bool _pageRunning = false;
   Completer<void> _pageIdle = Completer<void>()..complete();
+  ({GroupJob job, int? cursor, int generation})? _requestedItems;
+  bool _itemsRunning = false;
+  Completer<void> _itemsIdle = Completer<void>()..complete();
   final _decisions = <(String, int)>{};
   GroupJob? get selectedJob => jobs.where((j) => j.id == selected).firstOrNull;
 
@@ -41,6 +44,7 @@ class GroupHistory {
 
   void _clearDetails() {
     _detailGeneration++;
+    _requestedItems = null;
     rows = [];
     after = nextAfter = previousAfter = null;
     itemsError = null;
@@ -99,6 +103,10 @@ class GroupHistory {
           }
         } catch (e) {
           if (!_disposed && request.generation == _pageGeneration) {
+            if (revision != groups.updateRevision) {
+              _requestedPage ??= request;
+              continue;
+            }
             error =
                 'Could not read History. Retry the requested page or choose another page. $e';
           }
@@ -169,8 +177,8 @@ class GroupHistory {
     if (!closing) unawaited(loadItems(job));
   }
 
-  Future<void> loadItems(GroupJob job, {int? cursor}) async {
-    if (_disposed || selected != job.id) return;
+  Future<void> loadItems(GroupJob job, {int? cursor}) {
+    if (_disposed || selected != job.id) return Future.value();
     final generation = ++_detailGeneration;
     after = cursor;
     rows = [];
@@ -179,27 +187,48 @@ class GroupHistory {
     itemsError = null;
     itemsLoading = true;
     changed();
+    _requestedItems = (job: job, cursor: cursor, generation: generation);
+    if (_itemsRunning) return _itemsIdle.future;
+    _itemsRunning = true;
+    _itemsIdle = Completer<void>();
+    unawaited(_readItems());
+    return _itemsIdle.future;
+  }
+
+  Future<void> _readItems() async {
+    final idle = _itemsIdle;
     try {
-      final page = await groups.items(job, after: cursor);
-      if (_disposed || selected != job.id || generation != _detailGeneration) {
-        return;
-      }
-      if (page.rows.length > 50) {
-        throw StateError('Group details returned more than one page.');
-      }
-      rows = page.rows;
-      nextAfter = page.nextAfter;
-      previousAfter = page.previousAfter;
-      hasPrevious = page.hasPrevious;
-    } catch (e) {
-      if (!_disposed && selected == job.id && generation == _detailGeneration) {
-        itemsError = 'Could not read these messages. Retry this page. $e';
+      while (!_disposed && _requestedItems != null) {
+        final request = _requestedItems!;
+        _requestedItems = null;
+        bool owns() =>
+            !_disposed &&
+            selected == request.job.id &&
+            request.generation == _detailGeneration;
+        try {
+          final page = await groups.items(request.job, after: request.cursor);
+          if (!owns()) continue;
+          if (page.rows.length > 50) {
+            throw StateError('Group details returned more than one page.');
+          }
+          rows = page.rows;
+          nextAfter = page.nextAfter;
+          previousAfter = page.previousAfter;
+          hasPrevious = page.hasPrevious;
+        } catch (e) {
+          if (owns()) {
+            itemsError = 'Could not read these messages. Retry this page. $e';
+          }
+        } finally {
+          if (owns()) {
+            itemsLoading = false;
+            changed();
+          }
+        }
       }
     } finally {
-      if (!_disposed && selected == job.id && generation == _detailGeneration) {
-        itemsLoading = false;
-        changed();
-      }
+      _itemsRunning = false;
+      idle.complete();
     }
   }
 

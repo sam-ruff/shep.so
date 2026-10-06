@@ -12,9 +12,12 @@ one indexed eligible item per active group. No provider dispatcher was added.
 Recovery callbacks keep their group/item/page generation through held Retry or
 Accept, another group, another page and same-group away-and-back. Page and owner
 observations fence local command revisions, including two removals during a held
-read. Iterative one-read/latest-replacement loops share idle futures, avoiding
-recursive refresh chains. Failed detail reads retain a scoped Retry above the
+read, including stale failed replies. Iterative group, detail and owner
+one-read/latest-replacement loops share idle futures, avoiding recursive refresh
+chains and queued reads from rapid group choices. Failed detail reads retain a scoped Retry above the
 scroller; group controls and closing remain independent of those reads.
+Accept, Retry and Remove refresh independent attention state, including older
+off-page targets; actual banner controls cover accepting and removing that group.
 
 Before current-main integration, the full host gates pass 317 Flutter and 206
 native tests, with clean analysis/native Clippy and reviewed compact light/dark
@@ -25,7 +28,8 @@ The actual FFI case covers final and empty-boundary cursors. Attention counting
 still scans matching failed/uncertain entries, and group summaries aggregate
 their members; the completed-history regression does not establish fixed cost
 for large attention sets or large groups. Integration with main `22d6bbc` passes
-all 354 Flutter and 213 native tests, with clean analysis and reviewed captures.
+all 359 Flutter and 213 native tests, including the final read-coalescing and
+attention-banner regressions, with clean analysis and reviewed captures.
 Checkpoint normal hooks and pinned strict documentation pass. Final merged
 Clippy/documentation and merge hooks are recorded with the PR. Android/Apple,
 live providers and large-active-group performance remain separate requirements.
