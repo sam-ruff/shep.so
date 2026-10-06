@@ -1,5 +1,18 @@
 # Client testing
 
+Desktop Linux CI retains backend samples in
+`artifacts/performance/backend-progress.json` before each assertion, including
+source, executable fingerprint and toolchain. Failed backend/action runs use
+`scripts/ci-performance.sh` to collect a separate diagnostic replay under
+`artifacts/diagnostics/` and still fail with the original exit status. The action
+replay uses real XTest input and its own screenshot directory. Numeric query,
+review and software-render traces require `test-support` and explicit debug
+logging; production builds do not expose them. Diagnostic query tracing performs
+extra read-only counts, and its phase sum excludes transaction drop and worker
+scheduling. Neither replay can validate a required gate. This investigation is
+tracked in [#61](https://github.com/sam-ruff/shep.so/issues/61); it does not establish
+a latency fix or client performance parity.
+
 Mobile reply-original checks use `flutter/test/reply_quote_test.dart` and the
 saved Android `--compose-only` scenario in `scripts/clients/android_e2e.py`.
 The Android case changes the default through Preferences, preserves typed text

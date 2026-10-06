@@ -72,6 +72,15 @@ impl Renderer {
         damage: &[Rectangle],
         background_color: Color,
     ) {
+        #[cfg(feature = "test-support")]
+        let started = log::log_enabled!(target: "iced_tiny_skia::timing", log::Level::Debug)
+            .then(std::time::Instant::now);
+        #[cfg(feature = "test-support")]
+        let mut quads = std::time::Duration::ZERO;
+        #[cfg(feature = "test-support")]
+        let mut text = std::time::Duration::ZERO;
+        #[cfg(feature = "test-support")]
+        let mut images = std::time::Duration::ZERO;
         let scale_factor = viewport.scale_factor();
 
         self.layers.flush();
@@ -114,6 +123,8 @@ impl Renderer {
                 engine::adjust_clip_mask(clip_mask, layer_bounds);
 
                 if !layer.quads.is_empty() {
+                    #[cfg(feature = "test-support")]
+                    let phase = started.map(|_| std::time::Instant::now());
                     let render_span = debug::render(debug::Primitive::Quad);
                     for (quad, background) in &layer.quads {
                         self.engine.draw_quad(
@@ -126,6 +137,10 @@ impl Renderer {
                         );
                     }
                     render_span.finish();
+                    #[cfg(feature = "test-support")]
+                    if let Some(phase) = phase {
+                        quads += phase.elapsed();
+                    }
                 }
 
                 if !layer.primitives.is_empty() {
@@ -160,6 +175,8 @@ impl Renderer {
                 }
 
                 if !layer.images.is_empty() {
+                    #[cfg(feature = "test-support")]
+                    let phase = started.map(|_| std::time::Instant::now());
                     let render_span = debug::render(debug::Primitive::Image);
 
                     for image in &layer.images {
@@ -173,9 +190,15 @@ impl Renderer {
                     }
 
                     render_span.finish();
+                    #[cfg(feature = "test-support")]
+                    if let Some(phase) = phase {
+                        images += phase.elapsed();
+                    }
                 }
 
                 if !layer.text.is_empty() {
+                    #[cfg(feature = "test-support")]
+                    let phase = started.map(|_| std::time::Instant::now());
                     let render_span = debug::render(debug::Primitive::Image);
 
                     for group in &layer.text {
@@ -192,11 +215,22 @@ impl Renderer {
                     }
 
                     render_span.finish();
+                    #[cfg(feature = "test-support")]
+                    if let Some(phase) = phase {
+                        text += phase.elapsed();
+                    }
                 }
             }
         }
 
         self.engine.trim();
+        #[cfg(feature = "test-support")]
+        if let Some(started) = started {
+            log::debug!(target: "iced_tiny_skia::timing",
+                "frame total_ms={} quads_ms={} text_ms={} images_ms={} damage_regions={}",
+                started.elapsed().as_secs_f64() * 1000., quads.as_secs_f64() * 1000.,
+                text.as_secs_f64() * 1000., images.as_secs_f64() * 1000., damage.len());
+        }
     }
 }
 

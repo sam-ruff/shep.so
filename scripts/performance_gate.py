@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def evaluate(budgets, backend, ui):
     errors = []
+    if isinstance(backend.get("context"), dict) and backend["context"].get("mode") == "diagnostic":
+        errors.append("Diagnostic backend timings cannot validate the required gate")
     if backend.get("dataset_messages", 0) < budgets["dataset_messages"]:
         errors.append("Backend benchmark used too few messages")
     for report in (backend, ui):
@@ -64,6 +66,8 @@ def evaluate_actions(budgets, report):
     if not isinstance(report, dict) or type(report.get("schema")) is not int or report["schema"] != 1:
         return ["Action report has no supported schema"]
     errors = []
+    if isinstance(report.get("context"), dict) and report["context"].get("mode") == "diagnostic":
+        errors.append("Diagnostic action timings cannot validate the required gate")
     messages = report.get("mailbox_messages")
     fingerprint = report.get("binary_sha256")
     if (not isinstance(fingerprint, str) or len(fingerprint) != 64
