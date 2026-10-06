@@ -60,6 +60,94 @@ class Harness {
 
 void main() {
   test(
+    'queued and paused groups expose Undo before any acknowledgement',
+    () async {
+      final repository = _ReviewRepository();
+      final h = Harness(repository: repository);
+      addTearDown(h.dispose);
+      repository.providerHold = Completer<void>();
+      final reviewed = await h.reviewAll(GroupAction.archive);
+      await h.groups.approve();
+      final pending = h.job(reviewed.id);
+      expect(pending.count('done'), 0);
+      expect(pending.canUndo, true);
+      expect(h.inbox, isEmpty);
+      await h.groups.pause(pending);
+      expect(h.job(pending.id).canUndo, true);
+      await h.groups.undo(h.job(pending.id));
+      expect(h.job(pending.id).undo, true);
+      expect(h.job(pending.id).count('cancelled'), 130);
+      expect(h.inbox.length, 130);
+      repository.providerHold!.complete();
+      await h.finished();
+      expect(repository.groupPreview.calls.where((c) => c == 'undo').length, 1);
+      expect(h.job(pending.id).count('done'), 0);
+    },
+  );
+
+  test('lost Undo and inspection replies retain the exact old group', () async {
+    final repository = _ReviewRepository();
+    final h = Harness(repository: repository);
+    addTearDown(h.dispose);
+    repository.providerHold = Completer<void>();
+    final reviewed = await h.reviewAll(GroupAction.archive);
+    await h.groups.approve();
+    repository.loseReply = 'undo';
+    repository.failBefore = 'inspect';
+    await h.groups.undo(h.job(reviewed.id));
+    expect(h.groups.failedUndo!.id, reviewed.id);
+    expect(h.groups.undoError, contains('Retry checks this saved group'));
+    final newer = await h.reviewAll(GroupAction.flag);
+    await h.groups.approve();
+    expect(h.groups.active!.id, newer.id);
+    await h.groups.undo(h.groups.failedUndo!);
+    expect(h.groups.failedUndo, isNull);
+    expect(h.groups.active!.id, newer.id);
+    final requests = repository.requests
+        .where((c) => c['kind'] == 'undo')
+        .toList();
+    expect(requests.length, 1);
+    expect(requests.single['id'], reviewed.id);
+    repository.providerHold!.complete();
+    await h.finished();
+    expect(
+      h.job(newer.id).count('done') + h.job(newer.id).count('skipped'),
+      130,
+    );
+  });
+
+  test(
+    'uncommitted Undo retries the same decision without cancelling a review',
+    () async {
+      final repository = _ReviewRepository();
+      final h = Harness(repository: repository);
+      addTearDown(h.dispose);
+      final review = await h.reviewAll(GroupAction.archive);
+      expect(review.canUndo, false);
+      await h.groups.undo(review);
+      expect(h.groups.review!.id, review.id);
+      expect(repository.requests.where((c) => c['kind'] == 'undo'), isEmpty);
+      repository.providerHold = Completer<void>();
+      await h.groups.approve();
+      repository.failBefore = 'undo';
+      await h.groups.undo(h.job(review.id));
+      expect(h.groups.undoError, isNotNull);
+      expect(h.job(review.id).undo, false);
+      await h.groups.undo(h.groups.failedUndo!);
+      expect(h.groups.undoError, isNull);
+      expect(h.job(review.id).undo, true);
+      expect(
+        repository.requests
+            .where((c) => c['kind'] == 'undo')
+            .map((c) => c['id']),
+        [review.id, review.id],
+      );
+      repository.providerHold!.complete();
+      await h.finished();
+    },
+  );
+
+  test(
     'frozen review counts per account, approval executes every step',
     () async {
       final h = Harness();
@@ -492,10 +580,13 @@ class _ReviewRepository extends PreviewRepository {
   _ReviewRepository() : super(delay: Duration.zero, extra: bulkFixtureMail());
   String? failBefore, loseReply, holdKind;
   Completer<void>? hold;
+  Completer<void>? providerHold;
+  final requests = <Map<String, Object?>>[];
   final started = Completer<void>();
 
   @override
   Future<dynamic> groups(Map<String, Object?> command) async {
+    requests.add(Map.of(command));
     final kind = command['kind'];
     if (failBefore == kind) {
       failBefore = null;
@@ -511,6 +602,12 @@ class _ReviewRepository extends PreviewRepository {
       throw StateError('Lost saved review reply');
     }
     return result;
+  }
+
+  @override
+  Future<Map<String, dynamic>> groupStep() async {
+    await providerHold?.future;
+    return super.groupStep();
   }
 }
 

@@ -1,5 +1,17 @@
 # Conversation request audit
 
+**6 October mobile queued bulk Undo (#49):** Continue parity delivery with Undo
+for approved groups before any acknowledged item, including pending, paused and
+held-first-step work. Keep the immutable saved group and decision revisions;
+inspect/retry the same Undo after lost replies. Clear its forward projection from
+the checked decision while preserving newer fields and actual in-flight receipts.
+Real notice/History controls, occupied provider capacity, partial completion,
+restart and native/model regressions are required. Root owns integration and
+Android execution; selection retention and bounded History remain intact.
+Independent review additionally reproduced #58: Undo, Resume or Retry requested
+during the pump's final held History observation loses its wake. Preserve that
+checked request after observation completes, using the same existing owner.
+
 **6 October mobile bulk History (#50):** Keep one 50-item detail page and one
 20-group History page, with visible navigation to older retained records.
 Recovery controls must keep their exact group/item identity through delayed

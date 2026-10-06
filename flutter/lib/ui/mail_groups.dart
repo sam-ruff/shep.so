@@ -280,6 +280,32 @@ class GroupReviewDialog extends StatelessWidget {
   }
 }
 
+class _UndoNotice extends StatelessWidget {
+  const _UndoNotice(this.groups);
+  final MailGroups groups;
+  @override
+  Widget build(BuildContext context) {
+    final job = groups.failedUndo;
+    final error = groups.undoError;
+    if (job == null || error == null) return const SizedBox.shrink();
+    return Semantics(
+      liveRegion: true,
+      child: NoticeBar(
+        error: true,
+        trailing: [
+          TextButton(
+            onPressed: groups.undoDeciding(job)
+                ? null
+                : () => unawaited(groups.undo(job)),
+            child: const Text('Retry Undo'),
+          ),
+        ],
+        child: Text(error),
+      ),
+    );
+  }
+}
+
 /// Progress, completion and attention notices for group actions.
 class GroupActionBanner extends StatelessWidget {
   const GroupActionBanner({super.key, required this.workspace});
@@ -308,6 +334,7 @@ class GroupActionBanner extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
+        _UndoNotice(groups),
         if (groups.error case final error?)
           Semantics(
             liveRegion: true,
@@ -347,7 +374,9 @@ class GroupActionBanner extends StatelessWidget {
                 ),
                 if (active.canUndo)
                   TextButton(
-                    onPressed: () => unawaited(groups.undo(active)),
+                    onPressed: groups.undoPending(active)
+                        ? null
+                        : () => unawaited(groups.undo(active)),
                     child: const Text('Undo'),
                   ),
                 IconButton(
@@ -368,6 +397,13 @@ class GroupActionBanner extends StatelessWidget {
                   onPressed: () => unawaited(groups.resume(paused)),
                   child: const Text('Resume'),
                 ),
+                if (paused.canUndo)
+                  TextButton(
+                    onPressed: groups.undoPending(paused)
+                        ? null
+                        : () => unawaited(groups.undo(paused)),
+                    child: const Text('Undo'),
+                  ),
                 TextButton(
                   onPressed: () => openHistory(context, target: paused),
                   child: const Text('History'),
@@ -408,7 +444,9 @@ class GroupActionBanner extends StatelessWidget {
               trailing: [
                 if (completed.canUndo)
                   TextButton(
-                    onPressed: () => unawaited(groups.undo(completed)),
+                    onPressed: groups.undoPending(completed)
+                        ? null
+                        : () => unawaited(groups.undo(completed)),
                     child: const Text('Undo'),
                   ),
                 IconButton(
@@ -590,7 +628,9 @@ class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
                   ),
                 if (job.canUndo)
                   TextButton(
-                    onPressed: () => unawaited(groups.undo(job)),
+                    onPressed: groups.undoPending(job)
+                        ? null
+                        : () => unawaited(groups.undo(job)),
                     child: const Text('Undo'),
                   ),
                 if (job.canRemove)
@@ -659,6 +699,7 @@ class _GroupHistoryScreenState extends State<GroupHistoryScreen> {
         ),
         body: Column(
           children: [
+            _UndoNotice(groups),
             if (groups.error case final error?)
               NoticeBar(
                 error: true,

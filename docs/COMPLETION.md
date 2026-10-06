@@ -1,5 +1,38 @@
 # Completion audit
 
+## Mobile queued bulk Undo checkpoint, 6 October 2026 (#49/#58)
+
+Approved queued/paused/held-first-step groups now expose Undo in the notice and
+History. The checked existing local decision cancels unsent membership and clears
+forward projection while preserving sending items and their later actual receipt.
+Native same-group retries keep the original Undo revision; unknown Dart replies
+inspect that exact saved group before another request. Dedicated Retry Undo
+feedback survives close and other owner errors, with bounded pending decisions,
+visible capacity recovery and exact removal fences.
+
+Independent review also reproduced a lost owner wake (#58): Undo, Resume and
+Retry during the final held History read each left one step call instead of the
+expected second call. The failed-before log is retained. Explicit wakes now
+restart the existing pump after its final observation, without authorising an
+automatic retry of failed or uncertain provider work.
+
+Focused model/actual controls, native provider fixtures and actual Dart FFI pass.
+The native fixture holds all admission/provider slots for local queued Undo and
+holds a real first MOVE reply through Undo, receipt and restart. It also retains
+unknown replies without replay and preserves newer read/star fields. Five real
+control scenarios cover queued light/dark, paused History/held receipt, partial
+completion and lost status after close. Both compact queued captures are reviewed.
+Full checkpoint host gates pass 376 Flutter and 217 native tests, with clean
+analysis/native Clippy and pinned strict documentation. Normal checkpoint hooks
+pass. Merging main `0858706` leaves native/shared source unchanged and the final
+Flutter suite passes 395 tests, with two zone-conditional Calendar skips covered
+separately in London/Los Angeles. The first combined run hit the previously
+reported existing group FFI settle timeout; its unchanged isolated and full
+reruns pass, with the failed log retained and no timeout changes. Final merged
+analysis/documentation and merge hooks are recorded with the PR. Android,
+Apple and live-provider evidence remain separate; no performance-under-load
+claim follows from controlled held-provider tests.
+
 ## Mobile bulk History checkpoint, 6 October 2026 (#50)
 
 Implementation: [PR #57](https://github.com/sam-ruff/shep.so/pull/57).
