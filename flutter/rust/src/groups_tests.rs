@@ -961,7 +961,7 @@ async fn history_upgrade_preserves_receipts_and_exact_item_cursor_boundaries() {
         .read(|db| Ok(db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?))
         .await
         .expect("version");
-    assert_eq!(version, 25);
+    assert_eq!(version, 28);
 }
 
 #[tokio::test]

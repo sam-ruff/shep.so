@@ -1520,7 +1520,11 @@ class Workspace extends ChangeNotifier {
         }
         if (e is MailOperationFailure &&
             e.superseded &&
-            move?.undoRequested == true) {
+            (move?.undoRequested == true ||
+                fields.keys.every(
+                  (field) => _versions['$target:$field'] != revision,
+                ))) {
+          if (move != null && !move.undoRequested) moves.failed(move);
           return;
         }
         if (e is MailOperationFailure && e.pending) {

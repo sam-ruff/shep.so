@@ -117,11 +117,6 @@ impl Database {
                     writer.execute("ALTER TABLE folder_creations ADD COLUMN mutation TEXT", [])?;
                 }
             }
-            if version > 0 && version < 27 {
-                let existing: bool = writer.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='group_items')", [], |row|row.get(0))?;
-                let column: bool = writer.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('group_items') WHERE name='lineage')", [], |row|row.get(0))?;
-                if existing && !column { writer.execute("ALTER TABLE group_items ADD COLUMN lineage TEXT", [])?; }
-            }
             if version > 0 && version < 17 {
                 let has_actions: bool = writer.query_row(
                     "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='individual_mail_actions')",

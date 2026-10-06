@@ -48,7 +48,6 @@ pub(crate) struct Destination {
     pub account: String,
     pub role: Role,
     pub connection: String,
-    pub credential_slot: Option<String>,
     pub creation: String,
     pub phase: String,
     pub target: Option<Mailbox>,
@@ -76,29 +75,18 @@ pub(crate) fn get(
     account: &str,
 ) -> Result<Option<Destination>> {
     let row = db.query_row(
-        "SELECT role,connection,credential_slot,creation_id,phase,target,candidate,error,revision FROM logical_mail_destinations WHERE owner_kind=?1 AND owner=?2 AND account=?3",
+        "SELECT role,connection,creation_id,phase,target,candidate,error,revision FROM logical_mail_destinations WHERE owner_kind=?1 AND owner=?2 AND account=?3",
         params![kind, owner, account],
-        |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,Option<String>>(2)?,row.get::<_,String>(3)?,row.get::<_,String>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,Option<String>>(7)?,row.get::<_,i64>(8)?)),
+        |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,Option<String>>(4)?,row.get::<_,Option<String>>(5)?,row.get::<_,Option<String>>(6)?,row.get::<_,i64>(7)?)),
     ).optional()?;
     row.map(
-        |(
-            role,
-            connection,
-            credential_slot,
-            creation,
-            phase,
-            target,
-            candidate,
-            error,
-            revision,
-        )| {
+        |(role, connection, creation, phase, target, candidate, error, revision)| {
             Ok(Destination {
                 kind: kind.into(),
                 owner: owner.into(),
                 account: account.into(),
                 role: serde_json::from_str(&role)?,
                 connection,
-                credential_slot,
                 creation,
                 phase,
                 target: target
@@ -131,53 +119,39 @@ pub(crate) fn admit(
     }
     crate::accounts::available(db, account)?;
     let settings = operations::stored_account(db, account)?;
-    let slot: Option<String> = db
-        .query_row(
-            "SELECT slot FROM account_credentials WHERE account_id=?1",
-            [account],
-            |row| row.get(0),
-        )
-        .optional()?;
-    db.execute("INSERT INTO logical_mail_destinations(owner_kind,owner,account,role,connection,credential_slot,creation_id) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-        params![kind,owner,account,serde_json::to_string(&role)?,connection_key(&settings),slot,uuid::Uuid::new_v4().to_string()])?;
+    db.execute("INSERT INTO logical_mail_destinations(owner_kind,owner,account,role,connection,creation_id) VALUES(?1,?2,?3,?4,?5,?6)",
+        params![kind,owner,account,serde_json::to_string(&role)?,connection_key(&settings),uuid::Uuid::new_v4().to_string()])?;
     get(db, kind, owner, account)?.context("The destination prerequisite was not saved.")
 }
 
+/// The mailbox identity must be unchanged; a reconnect with a new credential
+/// slot keeps it, and dispatch checks the current slot separately.
 pub(crate) fn binding(db: &Connection, destination: &Destination) -> Result<()> {
     crate::accounts::available(db, &destination.account)?;
     let settings = operations::stored_account(db, &destination.account)?;
-    let slot: Option<String> = db
-        .query_row(
-            "SELECT slot FROM account_credentials WHERE account_id=?1",
-            [&destination.account],
-            |row| row.get(0),
-        )
-        .optional()?;
     ensure!(
-        connection_key(&settings) == destination.connection && slot == destination.credential_slot,
+        connection_key(&settings) == destination.connection,
         "The account connection changed. Cancel this mail action and review its destination again."
     );
     Ok(())
 }
 
+/// Only a waiting individual action that still owns its folder intent and
+/// exact source may continue its destination.
 pub(crate) fn owns(db: &Connection, destination: &Destination) -> Result<bool> {
-    binding(db, destination)?;
-    if destination.phase == "cancelled" {
+    if destination.phase == "cancelled" || destination.kind != "individual" {
         return Ok(false);
     }
-    if destination.kind == "individual" {
-        let saved: Option<(String,String)> = db.query_row("SELECT a.mail,a.physical FROM individual_mail_actions a JOIN mail_intents i ON i.mail=a.mail AND i.field='folder' AND i.revision=a.intent_revision WHERE a.id=?1 AND a.account=?2 AND a.status IN ('queued','waiting')",
-            params![destination.owner,destination.account], |row|Ok((row.get(0)?,row.get(1)?))).optional()?;
-        let Some((id, physical)) = saved else {
-            return Ok(false);
-        };
-        let Ok(mail) = operations::stored_mail(db, &id) else {
-            return Ok(false);
-        };
-        return operations::action_source_matches(db, &mail, &serde_json::from_str(&physical)?);
-    }
-    Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM group_jobs j JOIN group_items i INDEXED BY group_item_state ON i.job=j.id AND i.account=?2 AND i.state='pending' JOIN mail m ON m.id=COALESCE((SELECT id FROM mail_aliases WHERE alias=i.mail),i.mail) AND m.account_id=i.account JOIN mail_lineage l ON l.id=m.id AND i.lineage IS NOT NULL AND (l.token=i.lineage OR l.token=(SELECT target FROM mail_lineage_aliases WHERE source=i.lineage)) LEFT JOIN mail_intents f ON f.mail=m.id AND f.field='folder' WHERE j.id=?1 AND j.state='running' AND j.undone IS NULL AND COALESCE(f.revision,0)<=j.approved)",
-        params![destination.owner,destination.account], |row|row.get(0))?)
+    let saved: Option<(String,String)> = db.query_row("SELECT a.mail,a.physical FROM individual_mail_actions a JOIN mail_intents i ON i.mail=a.mail AND i.field='folder' AND i.revision=a.intent_revision WHERE a.id=?1 AND a.account=?2 AND a.status IN ('queued','waiting')",
+        params![destination.owner,destination.account], |row|Ok((row.get(0)?,row.get(1)?))).optional()?;
+    let Some((id, physical)) = saved else {
+        return Ok(false);
+    };
+    binding(db, destination)?;
+    let Ok(mail) = operations::stored_mail(db, &id) else {
+        return Ok(false);
+    };
+    operations::action_source_matches(db, &mail, &serde_json::from_str(&physical)?)
 }
 
 fn save(db: &Connection, before: &Destination, after: &Destination) -> Result<Destination> {

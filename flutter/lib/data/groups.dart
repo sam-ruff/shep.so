@@ -11,7 +11,6 @@ abstract interface class GroupRepository {
 enum GroupAction {
   archive('Archive', 'archive'),
   delete('Delete', 'trash'),
-  spam('Mark spam', 'shield'),
   move('Move', 'move'),
   read('Mark read', 'mail-open'),
   unread('Mark unread', 'mail'),
@@ -95,7 +94,6 @@ class GroupJob {
   String get verb => switch (kind) {
     'archive' => 'Archive',
     'delete' => 'Delete',
-    'spam' => 'Mark spam',
     'move' => 'Move to ${folder == 'INBOX' ? 'Inbox' : folder}',
     'read' => 'Mark read',
     'unread' => 'Mark unread',
@@ -106,7 +104,6 @@ class GroupJob {
   String get past => switch (kind) {
     'archive' => 'Archived',
     'delete' => 'Deleted',
-    'spam' => 'Marked spam',
     'move' => 'Moved',
     'read' => 'Marked read',
     'unread' => 'Marked unread',
@@ -117,7 +114,6 @@ class GroupJob {
   String get progressive => switch (kind) {
     'archive' => 'Archiving',
     'delete' => 'Deleting',
-    'spam' => 'Marking spam',
     'move' => 'Moving',
     'read' => 'Marking read',
     'unread' => 'Marking unread',

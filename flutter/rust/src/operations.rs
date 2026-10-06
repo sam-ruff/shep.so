@@ -222,16 +222,6 @@ impl Operations {
         self.accounts.lock().await.entry(id.to_owned()).or_default().clone()
             .try_lock_owned().context("This account has an operation in progress. Wait for it to finish, then check Outbox.")
     }
-    pub(crate) async fn destination_capacity(
-        &self,
-        id: &str,
-    ) -> Result<(
-        tokio::sync::OwnedMutexGuard<()>,
-        tokio::sync::OwnedSemaphorePermit,
-    )> {
-        let slot = self.slots.clone().acquire_owned().await?;
-        Ok((self.account(id).await, slot))
-    }
 }
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -1206,7 +1196,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::RecoverOutgoing{id,action,confirmed} => crate::outgoing::recover(profile,id,action,confirmed).await,
         Request::Mutate{action_id,observed_lineage,require_observation,credential_slot,id,password,folder,unread,starred,logical_role} => {
             let report=action_id.is_some();
-            mutate(profile,Mutation{action_id:action_id.unwrap_or_else(||uuid::Uuid::new_v4().to_string()),parent_action:None,observed_lineage,require_observation,credential_slot,id,password,folder,unread,starred,logical_role,prepared_destination:None,group_claim:None,intent:true,report}).await
+            mutate(profile,Mutation{action_id:action_id.unwrap_or_else(||uuid::Uuid::new_v4().to_string()),parent_action:None,observed_lineage,require_observation,credential_slot,id,password,folder,unread,starred,logical_role,intent:true,report}).await
         }
         Request::Groups{command} => crate::groups::run(profile,command).await,
         Request::AdmitCalendarAction{id,mutation,subject} => db.write(move|db| {
@@ -1369,7 +1359,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let folder=fields.get("folder").filter(|v|!v.is_null()).map(|_|physical.get("folder").and_then(Value::as_str).map(str::to_owned).context("This older move has no saved Undo folder.")).transpose()?;
             let unread=fields.get("unread").filter(|v|!v.is_null()).map(|_|physical.get("unread").and_then(Value::as_bool).context("This older flag change has no saved Undo value.")).transpose()?;
             let starred=fields.get("starred").filter(|v|!v.is_null()).map(|_|physical.get("starred").and_then(Value::as_bool).context("This older flag change has no saved Undo value.")).transpose()?;
-            mutate(profile,Mutation{action_id:undo_id,parent_action:Some(id),observed_lineage:None,require_observation:false,credential_slot,id:mail,password,folder,unread,starred,logical_role:None,prepared_destination:None,group_claim:None,intent:true,report:true}).await
+            mutate(profile,Mutation{action_id:undo_id,parent_action:Some(id),observed_lineage:None,require_observation:false,credential_slot,id:mail,password,folder,unread,starred,logical_role:None,intent:true,report:true}).await
         }
         Request::InspectMailAction{id,credential_slot,password} => inspect_mail_action(profile,id,credential_slot,password).await,
         request => network(profile,request).await,
@@ -1556,8 +1546,6 @@ pub(crate) struct Mutation {
     pub unread: Option<bool>,
     pub starred: Option<bool>,
     pub logical_role: Option<crate::destinations::Role>,
-    pub prepared_destination: Option<shep_mail_core::folders::Mailbox>,
-    pub group_claim: Option<crate::groups::DispatchClaim>,
     pub intent: bool,
     pub report: bool,
 }
@@ -1880,10 +1868,7 @@ async fn mutate_impl(profile: &MobileProfile, mutation: Mutation) -> Result<Valu
     let credential_slot = mutation.credential_slot.clone();
     let report = mutation.report;
     let logical_role = mutation.logical_role;
-    let group_claim = mutation.group_claim.clone();
-    let local_group_claim = group_claim.clone();
-    let prepared_destination = mutation.prepared_destination.clone();
-    let (id, mut folder, mut unread, mut starred, has_password, intent) = (
+    let (id, mut folder, unread, starred, has_password, intent) = (
         mutation.id.clone(),
         mutation.folder.clone(),
         mutation.unread,
@@ -2000,12 +1985,6 @@ async fn mutate_impl(profile: &MobileProfile, mutation: Mutation) -> Result<Valu
             tx.commit()?;
             return Ok(if has_password {None} else {Some(if report {json!({"action_id":action_id,"status":"waiting","requires_credentials":account.id})} else {json!({"requires_credentials":account.id})})});
         }
-        if let Some(claim)=local_group_claim.as_ref() {
-            match crate::groups::dispatch(&tx,claim,&message)? {
-                crate::groups::Dispatch::Send(fields) => { folder=fields.folder;unread=fields.unread;starred=fields.starred; },
-                crate::groups::Dispatch::Stop { outcome,idle } => { tx.commit()?;return Ok(Some(json!({"group_outcome":outcome,"idle":idle}))); },
-            }
-        }
         if logical_role.is_some() {
             let destination=crate::destinations::get(&tx,"individual",&action_id,&message.account_id)?.context("The local destination was not admitted.")?;
             let target=crate::destinations::local(&tx,&destination)?;
@@ -2049,7 +2028,7 @@ async fn mutate_impl(profile: &MobileProfile, mutation: Mutation) -> Result<Valu
         }
     }
     let final_action = mutation.action_id.clone();
-    let result = network_with_claim(
+    let result = network(
         profile,
         Request::Mutate {
             action_id: mutation.intent.then(|| mutation.action_id.clone()),
@@ -2063,8 +2042,6 @@ async fn mutate_impl(profile: &MobileProfile, mutation: Mutation) -> Result<Valu
             starred: mutation.starred,
             logical_role: mutation.logical_role,
         },
-        prepared_destination,
-        group_claim,
     )
     .await;
     if !mutation.intent {
@@ -2156,14 +2133,6 @@ pub(crate) fn delivery(db: &Connection, id: &str) -> Result<Value> {
     })
 }
 async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
-    network_with_claim(profile, request, None, None).await
-}
-async fn network_with_claim(
-    profile: &MobileProfile,
-    request: Request,
-    mut prepared_destination: Option<shep_mail_core::folders::Mailbox>,
-    group_claim: Option<crate::groups::DispatchClaim>,
-) -> Result<Value> {
     let operations = &profile.operations;
     let _admission = operations
         .admitted
@@ -2281,6 +2250,7 @@ async fn network_with_claim(
             mut starred,
             logical_role,
         } => {
+            let mut prepared_destination = None;
             let identity = id.clone();
             let account = db
                 .read(move |db| {
@@ -2487,33 +2457,11 @@ async fn network_with_claim(
                 None
             };
             let durable_action = action_id.clone();
-            if let Some(claim) = group_claim.as_ref() {
-                let claim = claim.clone();
-                let source = message.clone();
-                let dispatched = db
-                    .write(move |db| {
-                        let tx = db.transaction()?;
-                        let result = crate::groups::dispatch(&tx, &claim, &source)?;
-                        tx.commit()?;
-                        Ok(result)
-                    })
-                    .await?;
-                match dispatched {
-                    crate::groups::Dispatch::Send(fields) => {
-                        folder = fields.folder;
-                        unread = fields.unread;
-                        starred = fields.starred;
-                    }
-                    crate::groups::Dispatch::Stop { outcome, idle } => {
-                        return Ok(json!({"group_outcome":outcome,"idle":idle}));
-                    }
-                }
-            }
             if let Some(action_id) = action_id {
                 let source = message.clone();
                 let slot = credential_slot.clone();
                 let dispatch_physical = serde_json::to_string(
-                    &json!({"account":source.account_id,"folder":source.folder,"remote_id":source.remote_id,"unread":source.unread,"starred":source.starred,"fingerprint":fingerprint.clone(),"lineage":dispatch_lineage,"folder_encoding":prepared_destination.as_ref().map(|target|target.encoding)}),
+                    &json!({"account":source.account_id,"folder":source.folder,"remote_id":source.remote_id,"unread":source.unread,"starred":source.starred,"fingerprint":fingerprint.clone(),"lineage":dispatch_lineage}),
                 )?;
                 let claim_fingerprint = fingerprint.clone();
                 let claim_lineage = dispatch_lineage.clone();
@@ -2661,9 +2609,6 @@ async fn network_with_claim(
             }
             let identity = id.clone();
             let pending_receipt = receipt.clone();
-            let accepted = group_claim
-                .as_ref()
-                .map(|_| json!({"folder":folder,"unread":unread,"starred":starred}));
             let saved = if let Some(action) = durable_action {
                 db.write(move |db| {
                     anyhow::ensure!(
@@ -2687,7 +2632,7 @@ async fn network_with_claim(
             };
             if remote && saved.is_err() {
                 return Ok(
-                    json!({"committed":true,"accepted_fields":accepted,"warning":"The server acknowledged the change, but the cache could not save it. Refresh before another action."}),
+                    json!({"committed":true,"warning":"The server acknowledged the change, but the cache could not save it. Refresh before another action."}),
                 );
             }
             saved?;
@@ -2713,7 +2658,7 @@ async fn network_with_claim(
                     json!({"committed":true,"warning":"The message moved, but its destination identity needs recovery. Refresh the destination before another action."}),
                 );
             }
-            Ok(json!({"committed":true,"accepted_fields":accepted}))
+            Ok(json!({"committed":true}))
         }
         Request::SentOutgoing {
             credential_slot,

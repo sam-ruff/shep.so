@@ -16,6 +16,9 @@ class LogicalRepository extends PreviewRepository
   Completer<void>? hold;
   bool waiting = false;
   bool unchanged = false;
+  bool superseded = false;
+  Completer<void>? physicalHold;
+  MailOperationFailure? nextPhysicalFailure;
   String physical = 'Corbeille';
   @override
   Future<void> admitLogicalMutation(
@@ -38,6 +41,12 @@ class LogicalRepository extends PreviewRepository
   ) async {
     requests.add(('execute', action, role));
     await hold?.future;
+    if (superseded) {
+      throw const MailOperationFailure(
+        'Older logical action was replaced',
+        superseded: true,
+      );
+    }
     if (waiting) {
       throw const MailOperationFailure(
         'Destination CREATE needs review',
@@ -76,7 +85,15 @@ class LogicalRepository extends PreviewRepository
     String id,
     Map<String, Object> fields,
     String action,
-  ) => super.mutate(id, fields);
+  ) async {
+    final held = physicalHold;
+    physicalHold = null;
+    await held?.future;
+    final failure = nextPhysicalFailure;
+    nextPhysicalFailure = null;
+    if (failure != null) throw failure;
+    await super.mutate(id, fields);
+  }
   @override
   Future<void> cancelAdmittedMutation(String id) async {
     cancelled.add(id);
@@ -175,6 +192,52 @@ void main() {
         repository.requests.where((r) => r.$1 == 'physical-admit'),
         isEmpty,
       );
+    },
+  );
+  test(
+    'older logical cancellation cannot publish an error over newer folder input',
+    () async {
+      final repository = LogicalRepository()
+        ..hold = Completer<void>()
+        ..superseded = true;
+      final workspace = await start(repository);
+      final mail = workspace.visible.first;
+      final older = workspace.action(mail.id, MailAction.trash);
+      await Future<void>.delayed(Duration.zero);
+      final newer = workspace.change(mail.id, {'folder': 'Projects'});
+      expect(workspace.mail(mail.id)!.folder, 'Projects');
+      repository.hold!.complete();
+      await older;
+      await newer;
+      expect(workspace.mail(mail.id)!.folder, 'Projects');
+      expect(workspace.error, isNull);
+      expect(workspace.moves.records.single.id, mail.id);
+    },
+  );
+  test(
+    'superseded Undo restore stays quiet and offers no Retry Undo',
+    () async {
+      final repository = LogicalRepository();
+      final workspace = await start(repository);
+      final mail = workspace.visible.first;
+      await workspace.action(mail.id, MailAction.trash);
+      expect(workspace.mail(mail.id)!.folder, 'Corbeille');
+      repository
+        ..physicalHold = Completer<void>()
+        ..nextPhysicalFailure = const MailOperationFailure(
+          'Older restore was replaced',
+          superseded: true,
+        );
+      final hold = repository.physicalHold!;
+      workspace.undoMoves(workspace.moves.records);
+      await Future<void>.delayed(Duration.zero);
+      expect(workspace.mail(mail.id)!.folder, 'Inbox');
+      final newer = workspace.change(mail.id, {'folder': 'Projects'});
+      hold.complete();
+      await newer;
+      expect(workspace.mail(mail.id)!.folder, 'Projects');
+      expect(workspace.error, isNull);
+      expect(workspace.undoFailures, isEmpty);
     },
   );
   test(

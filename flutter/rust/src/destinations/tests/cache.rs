@@ -126,3 +126,44 @@ async fn fresh_catalogue_removes_stale_roles_and_logical_views_use_current_physi
     assert_eq!(page["folder_membership"]["fixture"][0], "Bin");
     Ok(())
 }
+
+#[tokio::test]
+async fn pruned_action_history_removes_its_finished_destinations() -> Result<()> {
+    let (_dir, profile) = crate::tests::profile().await;
+    seed(&profile, 1).await;
+    for n in 0..110 {
+        let role = if n % 2 == 0 {
+            Role::Archive
+        } else {
+            Role::Trash
+        };
+        let mail = profile
+            .database
+            .read(|db| Ok(db.query_row("SELECT id FROM mail", [], |row| row.get::<_, String>(0))?))
+            .await?;
+        let result = request(
+            &profile,
+            json!({"op":"mutate","action_id":uuid::Uuid::new_v4().to_string(),"id":mail,"folder":role.local(),"logical_role":role}),
+        )
+        .await;
+        assert_eq!(result["status"], "succeeded");
+    }
+    let (actions, destinations) = profile
+        .database
+        .read(|db| {
+            Ok((
+                db.query_row("SELECT COUNT(*) FROM individual_mail_actions", [], |row| {
+                    row.get::<_, i64>(0)
+                })?,
+                db.query_row(
+                    "SELECT COUNT(*) FROM logical_mail_destinations",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?,
+            ))
+        })
+        .await?;
+    assert_eq!(actions, 101);
+    assert_eq!(destinations, actions);
+    Ok(())
+}

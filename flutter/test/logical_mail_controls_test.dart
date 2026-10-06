@@ -5,7 +5,6 @@ import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/ui/app.dart';
 import 'logical_mail_actions_test.dart' show LogicalRepository;
 import 'mail_activity_visual_test.dart' show loadPreviewFonts;
-import 'support/preview_repository.dart';
 import 'workspace_test.dart' show MemorySettings;
 
 void main() {
@@ -74,34 +73,4 @@ void main() {
       },
     );
   }
-
-  testWidgets(
-    'Mark spam selected admits its logical group and keeps the frozen review',
-    (tester) async {
-      final repository = PreviewRepository(delay: Duration.zero);
-      final workspace = Workspace(repository, MemorySettings());
-      await workspace.initialize();
-      workspace.setForeground(false);
-      try {
-        await tester.pumpWidget(ShepApp(workspace: workspace));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byTooltip('Select'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Select all'));
-        await wait(tester, () => workspace.selection!.ready);
-        final selected = workspace.selection!.count;
-        await tester.tap(find.byTooltip('Mark spam selected'));
-        await wait(tester, () => workspace.groups!.review != null);
-        expect(workspace.groups!.review!.kind, 'spam');
-        expect(find.text('Mark spam $selected messages'), findsOneWidget);
-        await tester.tap(find.text('Cancel'));
-        await wait(tester, () => workspace.groups!.review == null);
-        expect(workspace.selection!.count, selected);
-        expect(repository.groupPreview.jobs, isEmpty);
-      } finally {
-        await tester.pumpWidget(const SizedBox());
-        workspace.dispose();
-      }
-    },
-  );
 }

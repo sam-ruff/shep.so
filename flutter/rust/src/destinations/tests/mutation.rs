@@ -248,6 +248,65 @@ async fn changed_connection_waiting_reports_no_mail_commit_and_never_contacts_pr
 }
 
 #[tokio::test]
+async fn credential_reconnect_keeps_the_admitted_destination_for_the_same_mailbox() -> Result<()> {
+    let (_dir, profile, destination, mail) = setup(Role::Trash).await?;
+    let planned = target("INBOX.Corbeille", FolderRole::Trash);
+    let catalogue = vec![planned.clone()];
+    profile
+        .database
+        .write(move |db| {
+            folders::save_catalogue(db, "fixture", &catalogue)?;
+            db.execute(
+                "INSERT INTO credential_slots(slot,account_id,state) VALUES('reconnected-slot','fixture','active')",
+                [],
+            )?;
+            db.execute(
+                "INSERT INTO account_credentials(account_id,slot) VALUES('fixture','reconnected-slot')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await?;
+    let mut creation = MockCreationApi::new();
+    creation.expect_catalogue().times(0);
+    creation.expect_plan().times(0);
+    creation.expect_create().times(0);
+    let found = planned.clone();
+    creation
+        .expect_inspect()
+        .with(eq(planned.clone()))
+        .times(1)
+        .returning(move |_| Ok(Some(found.clone())));
+    *profile
+        .operations
+        .folder_provider
+        .lock()
+        .expect("fixture folder provider") = Some(Arc::new(creation));
+    let mut provider = MockDestinationProvider::new();
+    provider.expect_move_mail().times(0);
+    provider.expect_set_flags().times(0);
+    let expected = planned.clone();
+    provider
+        .expect_move_planned_mail()
+        .withf(move |_, _, _, target| *target == expected)
+        .times(1)
+        .returning(|_, _, _, _| Ok(Some("1.900".into())));
+    *profile
+        .operations
+        .provider
+        .lock()
+        .expect("fixture mail provider") = Some(Arc::new(provider));
+    let result = request(
+        &profile,
+        json!({"op":"mutate","action_id":destination.owner,"id":mail,"folder":"Trash","logical_role":"trash","password":"fixture-password","credential_slot":"reconnected-slot"}),
+    )
+    .await;
+    assert_eq!(result["status"], "succeeded", "{result}");
+    assert_eq!(result["applied_fields"]["folder"], "INBOX.Corbeille");
+    Ok(())
+}
+
+#[tokio::test]
 async fn logical_mutation_and_undo_use_actual_special_use_identity_and_receipt() -> Result<()> {
     for (role, physical) in [
         (Role::Archive, "INBOX.Archiv"),

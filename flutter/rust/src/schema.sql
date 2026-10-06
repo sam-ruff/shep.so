@@ -97,16 +97,14 @@ CREATE INDEX IF NOT EXISTS group_item_attention ON group_items(state,job) WHERE 
 CREATE TABLE IF NOT EXISTS logical_mail_destinations(
  owner_kind TEXT NOT NULL CHECK(owner_kind IN ('individual','group')),owner TEXT NOT NULL,
  account TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,role TEXT NOT NULL,
- connection TEXT NOT NULL,credential_slot TEXT,creation_id TEXT NOT NULL UNIQUE,
+ connection TEXT NOT NULL,creation_id TEXT NOT NULL UNIQUE,
  phase TEXT NOT NULL DEFAULT 'queued',target TEXT,candidate TEXT,error TEXT,
  revision INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(owner_kind,owner,account)
 );
 CREATE INDEX IF NOT EXISTS logical_destination_account ON logical_mail_destinations(account,owner_kind,owner);
 CREATE TRIGGER IF NOT EXISTS logical_destination_action_delete AFTER DELETE ON individual_mail_actions BEGIN
+ DELETE FROM logical_mail_destinations WHERE owner_kind='individual' AND owner=old.id AND NOT EXISTS(SELECT 1 FROM folder_creations f WHERE f.id=creation_id AND f.status IN ('queued','waiting','planning'));
  UPDATE logical_mail_destinations SET phase='cancelled',error=NULL,revision=revision+1 WHERE owner_kind='individual' AND owner=old.id;
-END;
-CREATE TRIGGER IF NOT EXISTS logical_destination_group_delete AFTER DELETE ON group_jobs BEGIN
- UPDATE logical_mail_destinations SET phase='cancelled',error=NULL,revision=revision+1 WHERE owner_kind='group' AND owner=old.id;
 END;
 CREATE TABLE IF NOT EXISTS calendar_events(source_id TEXT NOT NULL,id TEXT NOT NULL,event TEXT NOT NULL,PRIMARY KEY(source_id,id));
 CREATE TABLE IF NOT EXISTS calendar_connections(id TEXT PRIMARY KEY,config TEXT NOT NULL,credential_slot TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL);
