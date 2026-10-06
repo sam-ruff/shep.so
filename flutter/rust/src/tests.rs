@@ -2,6 +2,7 @@ use crate::{
     api::MobileProfile,
     operations::{self, Request},
 };
+use anyhow::Context;
 use rusqlite::{StatementStatus, params};
 use serde_json::{Value, json};
 use shep_mail_core::model::*;
@@ -2703,16 +2704,83 @@ async fn cached_reply_all_uses_reply_to_and_excludes_every_configured_sender() {
         json!(["<root@example.test>", "<original@example.test>"])
     );
     assert!(
-        reply["body"]
+        reply["reply_context"]["quote"]
             .as_str()
             .unwrap()
             .contains("> Hello\n> Second line")
     );
+    assert_eq!(reply["body"], "");
+    assert_eq!(reply["reply_context"]["include_quote"], true);
     request(&p, json!({"op":"save_draft","draft":reply})).await;
     assert_eq!(
         request(&p, json!({"op":"drafts"})).await[0]["in_reply_to"],
         "<original@example.test>"
     );
+}
+
+#[tokio::test]
+async fn reply_context_choice_survives_files_legacy_autosave_and_profile_reopen()
+-> anyhow::Result<()> {
+    let (dir, p) = profile().await;
+    seed(&p, 1).await;
+    let id = request(&p, page(0)).await["mail"][0]["id"]
+        .as_str()
+        .context("Mail id")?
+        .to_owned();
+    let mut reply = request(&p, json!({"op":"reply","id":id,"all":false})).await;
+    reply["revision"] = json!(1);
+    reply["body"] = json!("Typed answer");
+    reply["reply_context"]["include_quote"] = json!(false);
+    let expected = reply["reply_context"].clone();
+    request(&p, json!({"op":"save_draft","draft":reply})).await;
+    let file = dir.path().join("reply-file.txt");
+    std::fs::write(&file, b"Reply file")?;
+    request(&p, json!({"op":"add_draft_files","id":reply["id"],"paths":[{"path":file,"name":"reply-file.txt"}]})).await;
+    let mut legacy = reply.clone();
+    legacy
+        .as_object_mut()
+        .context("Draft")?
+        .remove("reply_context");
+    legacy["revision"] = json!(2);
+    legacy["body"] = json!("Newer typed answer");
+    request(&p, json!({"op":"save_draft","draft":legacy})).await;
+    let saved = request(&p, json!({"op":"drafts"})).await[0].clone();
+    assert_eq!(saved["reply_context"], expected);
+    assert_eq!(saved["body"], "Newer typed answer");
+    assert_eq!(saved["attachments"].as_array().context("Files")?.len(), 1);
+    let mut corrupt = saved.clone();
+    corrupt["revision"] = json!(3);
+    corrupt["reply_context"]["quote"] = json!("Replacement original");
+    let rejected: Value = serde_json::from_str(
+        &p.request(json!({"op":"save_draft","draft":corrupt}).to_string())
+            .await?,
+    )?;
+    assert!(
+        rejected["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("original reply changed"))
+    );
+    drop(p);
+    let reopened = MobileProfile::open(
+        dir.path()
+            .join("mail.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .await?;
+    let restored = request(&reopened, json!({"op":"drafts"})).await[0].clone();
+    assert_eq!(restored["reply_context"], expected);
+    assert_eq!(restored["body"], "Newer typed answer");
+    request(
+        &reopened,
+        json!({"op":"remove_draft_file","id":reply["id"],"file":restored["attachments"][0]["id"]}),
+    )
+    .await;
+    assert_eq!(
+        request(&reopened, json!({"op":"drafts"})).await[0]["reply_context"],
+        expected
+    );
+    Ok(())
 }
 
 #[tokio::test]

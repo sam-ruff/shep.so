@@ -1,5 +1,15 @@
 # Conversation request audit
 
+**6 October reply-original delivery (#30):** Mobile Reply and Reply all gain a
+per-draft Include original message control and searchable new-reply default.
+Typed text remains independent of the saved original through files, autosave,
+reopen and reviewed uncertain Outbox recovery. The R97 default becomes one
+portable profile key across desktop/mobile/browser adapters; old mobile
+eight-field snapshots, exact requests and receipts do not approve the ninth
+field. Forward and legacy inline-quote drafts retain their established content.
+Browser composer application remains an explicit active gap. Verification and
+device/provider limits are recorded in [Completion](COMPLETION.md).
+
 **6 October mobile review and parallel delivery:** Review Android/iOS
 functionality against current desktop behaviour, excluding mobile usability
 adaptations; file GitHub issues and assign GPT-6.1 Sol agents at high reasoning.

@@ -1,5 +1,42 @@
 # Completion audit
 
+## Mobile reply original and portable default, 6 October 2026 (#30)
+
+Reply and Reply all now retain an immutable original separately from typed text,
+with an Include original message checkbox and a bounded read-only preview.
+Preferences exposes the searchable default-on choice, captured before reply
+preparation and applied only to new replies. Existing saved choices and Forward
+content remain unchanged. Additive draft JSON needs no cache schema change;
+old inline-quote drafts are kept without guessing a quotation boundary.
+
+The R97 default is now the shared `reply_include_original` boolean across
+desktop, mobile and browser profile adapters. Explicit false and per-field
+change/revert ownership survive application and restart. Known legacy eight-field
+mobile reviews, exact application requests and receipts retain their original
+fields; absence cannot observe or approve the ninth field. Raw profile operations
+and optional extensions retain the existing history ownership.
+
+Focused verification passes 32 Flutter tests, 213 native tests and native Clippy,
+305 browser tests and a production browser build, shared MIME/codec tests,
+desktop metadata/field-intent tests, clean Flutter analysis and strict Zensical.
+Compact reply and changed Preferences failure goldens have been inspected.
+The first full Flutter run exposed five expected fixture/capture updates for the
+new field and section; corrected focused cases pass. Failed captures remain under
+ignored `artifacts/reply-first-failures/`.
+
+The saved Android scenario now changes the default and reply choice through real
+controls, uses DocumentsUI for attachment changes and releases the old opaque
+handle before reopen. Its first run passed the new quote/default controls, then
+the attachment fixture incorrectly inspected an offscreen field; the corrected
+fixture observes the fixed Save control's lock. The rerun built/installed but
+timed out before application launch at the unchanged 600-second bound. Logs and
+platform state are retained in `artifacts/reply-android-launch-failure/`; the owned
+emulator is rebooted without a wipe before another unchanged attempt. Normal
+repository hooks now pass, including 1,203 desktop library tests. Final combined
+gates and Android execution are pending. Earlier normal-hook failures and the
+first Android control failure are retained under ignored artifacts. Browser composer control/default
+application, Apple runtime and live provider execution remain active gaps.
+
 ## Mobile Preferences search, 6 October 2026 (#26)
 
 Implementation [PR #55](https://github.com/sam-ruff/shep.so/pull/55), commit

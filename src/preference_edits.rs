@@ -52,6 +52,7 @@ macro_rules! portable {
 portable! {
     appearance: Appearance,
     reply_display: ReplyDisplay,
+    reply_include_original: bool,
     image_policy: ImagePolicy,
     unified_inbox: bool,
     cross_account_moves: bool,
@@ -87,5 +88,30 @@ impl std::ops::Deref for Write {
     type Target = Preferences;
     fn deref(&self) -> &Preferences {
         &self.value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newer_reply_default_and_revert_survive_an_older_save() {
+        let mut live = Preferences::default();
+        let mut tracker = Tracker::new(&live);
+        live.reply_include_original = false;
+        tracker.capture(&live, 1);
+        let saved = live.clone();
+        live.reply_include_original = true;
+        tracker.capture(&live, 2);
+        tracker.observe(&saved, &mut live, 1);
+        assert!(live.reply_include_original);
+        assert_eq!(tracker.edits(&live, 1).reply_include_original, Some(true));
+        let merged = Write {
+            value: saved,
+            portable: tracker.edits(&live, 1),
+        }
+        .merge(&Preferences::default());
+        assert!(merged.reply_include_original);
     }
 }

@@ -76,7 +76,7 @@ establish live Google or Apple execution.
 
 [First-profile publication](PROFILE_PUBLICATION.md) now adds frozen reviews,
 initialized history and owned upload receipts. [Reviewed enrollment](PROFILE_ENROLLMENT.md)
-applies accounts and the eight preferences. Ongoing preference reconciliation
+applies accounts and the nine preferences. Ongoing preference reconciliation
 is described below. Keep local mail/drafts and device identity; changed endpoints
 require reviewed credential activation. Google-only credential sync (decided on
 11 September 2026), legacy migration, browser integration, Apple and live
@@ -134,7 +134,7 @@ foreground timer runs a silent tick when the grant is connected, sync is enabled
 no preference save is pending. Google disconnect or a changed grant clears the
 in-memory status and stops cycles without touching the durable subscription or
 other devices; reconnecting the same account resumes it. Preferences shows the
-master switch, eight per-preference switches, status, Sync now, the conflict entry
+master switch, nine per-preference switches, status, Sync now, the conflict entry
 and an explicit paused message while Drive is not connected.
 
 Rust tests cover seeding rules, admission before pull, two-device convergence,

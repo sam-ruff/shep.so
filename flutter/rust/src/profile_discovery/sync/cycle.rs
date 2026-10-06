@@ -240,6 +240,23 @@ async fn pass(owner: &mut Owner<'_>, source: &dyn Source, local: &Preferences) -
         current.initialized && !current.removed,
         "This shared profile is incomplete or removed. Local preferences have been kept."
     );
+    if local.values.contains_key("reply_include_original")
+        && !owner
+            .subscription
+            .bases
+            .contains_key("reply_include_original")
+    {
+        owner.subscription.bases.insert(
+            "reply_include_original".into(),
+            Basis {
+                operation: None,
+                value: Value::Null,
+                native_revision: None,
+                observed: 0,
+            },
+        );
+        owner.save().await?;
+    }
     // Lost acknowledgments retry the same operation before any new intent.
     for edit in owner.edit("staged").await? {
         if owner.admit(&edit, local).await? {
@@ -249,7 +266,7 @@ async fn pass(owner: &mut Owner<'_>, source: &dyn Source, local: &Preferences) -
         }
     }
     let mut admitted = 0;
-    for field in SETTINGS {
+    for field in local.fields() {
         if admitted >= BATCH || !owner.subscription.field_enabled(field) {
             continue;
         }
@@ -384,7 +401,10 @@ async fn observe(owner: &mut Owner<'_>, local: &Preferences, report: &mut Report
             let Some(field) = entry.target.strip_prefix("setting:") else {
                 continue;
             };
-            if !SETTINGS.contains(&field) || !owner.subscription.field_enabled(field) {
+            if !SETTINGS.contains(&field)
+                || !owner.subscription.field_enabled(field)
+                || !local.values.contains_key(field)
+            {
                 continue;
             }
             let versions = versions(owner.history, field).await?;

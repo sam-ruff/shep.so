@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shep_mobile/data/native_repository.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/ui/app.dart';
+import 'package:shep_mobile/ui/composer.dart';
 import '../test/native_repository_test.dart' show FixtureCredentials;
 import '../test/workspace_test.dart' show MemorySettings;
 
@@ -45,7 +46,8 @@ void main() {
         path,
         credentials: credentials,
       );
-      var workspace = Workspace(repository, MemorySettings());
+      final settings = MemorySettings();
+      var workspace = Workspace(repository, settings);
       await workspace.initialize();
       workspace.setForeground(false);
       await tester.pumpWidget(ShepApp(key: UniqueKey(), workspace: workspace));
@@ -61,19 +63,30 @@ void main() {
         await tester.pumpAndSettle();
       }
 
-      Future<void> editable() => wait(
-        () => !tester
-            .widget<TextField>(find.widgetWithText(TextField, 'To'))
-            .readOnly,
-      );
+      bool saveEnabled() =>
+          tester
+              .widget<TextButton>(find.widgetWithText(TextButton, 'Save draft'))
+              .onPressed !=
+          null;
+      Future<void> editable() => wait(saveEnabled);
+      Future<void> show(Finder target, {bool back = false}) async {
+        await tester.scrollUntilVisible(
+          target,
+          back ? -250 : 250,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.pumpAndSettle();
+      }
+
       Future<void> reopen() async {
         await tester.pumpWidget(const SizedBox());
         workspace.dispose();
+        repository.profile.dispose();
         repository = await NativeRepository.open(
           path,
           credentials: credentials,
         );
-        workspace = Workspace(repository, MemorySettings());
+        workspace = Workspace(repository, settings);
         await workspace.initialize();
         workspace.setForeground(false);
         await tester.pumpWidget(
@@ -89,6 +102,16 @@ void main() {
         await editable();
       }
 
+      await tester.tap(find.text('Preferences').last);
+      await tester.pumpAndSettle();
+      final defaultControl = find.byKey(
+        const ValueKey('preference-reply-original'),
+      );
+      await tester.ensureVisible(defaultControl);
+      await tester.tap(defaultControl);
+      await wait(() => !workspace.preferences.replyIncludeOriginal);
+      await tester.tap(find.text('Mail').last);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Shared reply'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Reply all'));
@@ -109,24 +132,32 @@ void main() {
             .text,
         'Copy <copy@example.test>',
       );
+      final toggle = find.byType(CheckboxListTile);
+      expect(tester.widget<CheckboxListTile>(toggle).value, isFalse);
+      expect(find.textContaining('On 06 Sep 2026'), findsOneWidget);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      final message = find.widgetWithText(TextField, 'Message');
+      await show(message);
+      expect(tester.widget<TextField>(message).controller!.text, isEmpty);
+      await tester.enterText(
+        message,
+        'Typed answer survives toggling the original.',
+      );
+      await show(toggle, back: true);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      await show(message);
       expect(
-        tester
-            .widget<TextField>(find.widgetWithText(TextField, 'Message'))
-            .controller!
-            .text,
-        contains('On 06 Sep 2026'),
+        tester.widget<TextField>(message).controller!.text,
+        'Typed answer survives toggling the original.',
       );
       Future<void> attach() async {
-        await tester.ensureVisible(find.text('Attach files'));
-        await tester.pumpAndSettle();
+        await show(find.text('Attach files'), back: true);
         await tester.tap(find.text('Attach files'));
         await tester.pump();
         // Observe the lock while the helper drives native DocumentsUI controls.
-        await wait(
-          () => tester
-              .widget<TextField>(find.widgetWithText(TextField, 'To'))
-              .readOnly,
-        );
+        await wait(() => !saveEnabled());
         await editable();
       }
 
@@ -138,19 +169,22 @@ void main() {
       expect(find.byTooltip('Remove shep-e2e-first.txt'), findsOneWidget);
       expect(find.byTooltip('Remove shep-e2e-binary.bin'), findsOneWidget);
       await tester.tap(find.text('Save draft'));
-      await wait(() => find.text('New message').evaluate().isEmpty);
+      await wait(() => find.byType(Composer).evaluate().isEmpty);
       await reopen();
+      expect(tester.widget<CheckboxListTile>(toggle).value, isFalse);
+      await show(message);
       await tester.enterText(
         find.widgetWithText(TextField, 'Message'),
         'Pending text survives removing a file.',
       );
-      await tester.ensureVisible(find.byTooltip('Remove shep-e2e-first.txt'));
-      await tester.pumpAndSettle();
+      await show(find.byTooltip('Remove shep-e2e-first.txt'), back: true);
       await tester.tap(find.byTooltip('Remove shep-e2e-first.txt'));
       await editable();
       expect(find.byTooltip('Remove shep-e2e-first.txt'), findsNothing);
       // Reopen without Save/Close: file removal also flushes pending text.
       await reopen();
+      expect(tester.widget<CheckboxListTile>(toggle).value, isFalse);
+      await show(message);
       expect(
         tester
             .widget<TextField>(find.widgetWithText(TextField, 'Message'))
@@ -163,10 +197,13 @@ void main() {
         'Saved reply with one binary attachment.',
       );
       await tester.tap(find.text('Save draft'));
-      await wait(() => find.text('New message').evaluate().isEmpty);
+      await wait(() => find.byType(Composer).evaluate().isEmpty);
       await reopen();
+      expect(tester.widget<CheckboxListTile>(toggle).value, isFalse);
+      await show(find.byTooltip('Remove shep-e2e-binary.bin'));
       expect(find.byTooltip('Remove shep-e2e-first.txt'), findsNothing);
       expect(find.byTooltip('Remove shep-e2e-binary.bin'), findsOneWidget);
+      await show(message);
       expect(
         tester
             .widget<TextField>(find.widgetWithText(TextField, 'Message'))
@@ -178,14 +215,19 @@ void main() {
       await editable();
       expect(workspace.error, contains('Reconnect'));
       expect(find.byTooltip('Remove shep-e2e-binary.bin'), findsOneWidget);
-      await tester.ensureVisible(find.text('Attach files'));
+      await show(toggle, back: true);
       await binding.convertFlutterSurfaceToImage();
       await tester.pumpAndSettle();
       await binding.takeScreenshot('native-reply-attachments');
+      binding.reportData = {
+        ...?binding.reportData,
+        'scenarios': ['native-reply-original-default-files-reopen'],
+      };
       expect(credentials.values, isEmpty);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       workspace.dispose();
+      repository.profile.dispose();
     },
   );
 }

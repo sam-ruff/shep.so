@@ -1,7 +1,7 @@
 # Flutter profile publication
 
 **Profiles and sync → Create profile** saves a named set of account definitions
-and the eight current Flutter preferences to private Google app data. The user
+and the nine current Flutter preferences to private Google app data. The user
 chooses accounts and settings, reviews the frozen values, then publishes. Account
 reviews page through 50 rows; each row opens connection details. Passwords, OAuth
 grants, mail, drafts, device paths and window geometry are excluded.
