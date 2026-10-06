@@ -1,5 +1,33 @@
 # Completion audit
 
+## Mobile foreground sync notices, 6 October 2026 (#28)
+
+Automatic mail checks now publish an account-bound warning only after 30 seconds
+from the first observed failure in a continuous episode. Typed results arrive as
+each account finishes, so another held account cannot delay the notice clock.
+Explicit Refresh remains immediate and retains its origin when queued behind an
+automatic check. Incoming settings and the active credential slot fence results;
+renames retain episodes, while reconnect, reconfiguration, removal and expired
+foreground generations reject stale replies. Successful checks end their own
+episodes. Unrelated action/save failures retain their recovery controls.
+
+The extracted notice model uses an injected clock and a monotonic production
+clock, with a one-shot deadline owned by the foreground workspace. Native account
+snapshots include content-free credential-slot identities and reject older replies.
+Private credential-store and unexpected provider exceptions retain fixed public
+errors. Retry and Dismiss use the existing visible mail controls.
+
+Evidence: 19 new controlled-clock, native orchestration and real Flutter-control
+tests pass, including held-second-account and failed-final-snapshot cases. The
+full Flutter suite passes 293 tests and the native Rust suite passes 203 tests;
+Flutter analysis is clean. Compact light/dark notice goldens were reviewed for
+readable account errors and reachable Retry/Dismiss controls. The actual Rust
+activation/restart regression checks legacy and newly activated snapshot slots.
+
+Serial account scheduling and the fixed 15-second polling interval remain tracked
+separately in #35. OS-background scheduling, push/IDLE, live mail providers and
+actual Android/Apple lifecycle execution are unverified by these fixture tests.
+
 ## Real-server iced_test coverage, 5 October 2026 (desktop)
 
 The opt-in desktop suite drives actual widgets through `iced_test` with the
