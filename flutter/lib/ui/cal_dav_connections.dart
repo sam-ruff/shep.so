@@ -3,8 +3,13 @@ import '../data/repository.dart';
 import '../model/workspace.dart';
 
 class CalDavConnectionsCard extends StatefulWidget {
-  const CalDavConnectionsCard({super.key, required this.workspace});
+  const CalDavConnectionsCard({
+    super.key,
+    required this.workspace,
+    this.revealField,
+  });
   final Workspace workspace;
+  final String? revealField;
 
   @override
   State<CalDavConnectionsCard> createState() => _CalDavConnectionsCardState();
@@ -31,6 +36,19 @@ class _CalDavConnectionsCardState extends State<CalDavConnectionsCard> {
     username.dispose();
     password.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(CalDavConnectionsCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.revealField != oldWidget.revealField &&
+        const {
+          'caldav-url',
+          'caldav-username',
+          'caldav-password',
+        }.contains(widget.revealField)) {
+      expanded = true;
+    }
   }
 
   Future<void> connect() async {
@@ -131,15 +149,18 @@ class _CalDavConnectionsCardState extends State<CalDavConnectionsCard> {
           ),
           if (expanded) ...[
             TextField(
+              key: const ValueKey('caldav-url'),
               controller: url,
               keyboardType: TextInputType.url,
               decoration: const InputDecoration(labelText: 'Calendar URL'),
             ),
             TextField(
+              key: const ValueKey('caldav-username'),
               controller: username,
               decoration: const InputDecoration(labelText: 'Username'),
             ),
             TextField(
+              key: const ValueKey('caldav-password'),
               controller: password,
               obscureText: true,
               decoration: const InputDecoration(labelText: 'Password'),
@@ -151,6 +172,7 @@ class _CalDavConnectionsCardState extends State<CalDavConnectionsCard> {
           ],
           if (widget.workspace.calDavCleanupError case final cleanupError?)
             ListTile(
+              key: const ValueKey('caldav-cleanup'),
               contentPadding: EdgeInsets.zero,
               title: const Text('Credential cleanup waiting'),
               subtitle: Text(cleanupError),
@@ -161,6 +183,7 @@ class _CalDavConnectionsCardState extends State<CalDavConnectionsCard> {
             ),
           for (final connection in widget.workspace.calDavConnections)
             ListTile(
+              key: ValueKey('caldav-connection-${connection.id}'),
               contentPadding: EdgeInsets.zero,
               title: Text(connection.username),
               subtitle: Text(connection.url),
@@ -185,6 +208,7 @@ class _CalDavConnectionsCardState extends State<CalDavConnectionsCard> {
             }.contains(attempt.status),
           ))
             _AttemptRow(
+              key: ValueKey('caldav-attempt-${attempt.id}'),
               attempt: attempt,
               workspace: widget.workspace,
               onRetry: () => retry(attempt),
@@ -197,6 +221,7 @@ class _CalDavConnectionsCardState extends State<CalDavConnectionsCard> {
 
 class _AttemptRow extends StatelessWidget {
   const _AttemptRow({
+    super.key,
     required this.attempt,
     required this.workspace,
     required this.onRetry,

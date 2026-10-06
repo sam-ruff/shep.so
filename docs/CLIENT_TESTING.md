@@ -54,6 +54,32 @@ Undo. Keep both results and visual evidence.
 
 ## Flutter
 
+Preferences search is covered by `preferences_search_test.dart`,
+`preferences_search_controls_test.dart` and `preferences_search_native_test.dart`:
+conditional catalogue coverage, shared native accent/abbreviation/typo/numeric
+contracts through actual FFI, bounded/coalesced/stale/error/retry matching, real
+reveal/destination activation, compact layouts, retained save errors/Retry and
+CalDAV form input, and search during held Google consent. Rust
+`preferences_search` tests hold all provider/admission slots while matching.
+The standard `flutter_web_e2e.py` preview flow also drives the search field,
+no-results/clear, a synonym result and the revealed checkbox using real input.
+The preview matcher supports common accents/abbreviations/numeric contracts but
+omits OSA and native Unicode recomposition/ranking. These host/preview checks do
+not establish Android/iOS execution.
+
+The saved native Android search scenario builds the shared fuzzy feature and
+checks its actual FFI accent/abbreviation/typo/mixed-numeric matches before driving
+Preferences search, reveal and Theme in an isolated temporary profile. After
+coordinating the owned emulator with other drivers, run from `flutter/`:
+
+```sh
+SHEP_NATIVE_REPORT=integration-preferences-search-result CARGO_BUILD_JOBS=4 flutter drive --driver=test_driver/native_driver.dart --target=integration_test/preferences_search_android_test.dart -d emulator-5554 --flavor preview
+```
+
+Require `native-preferences-shared-search-controls` in the saved report and review
+the `native-preferences-search-*` captures. This scenario is saved for review;
+Android execution remains open until that run succeeds.
+
 Google calendar HTTP contracts run explicitly with
 `cargo test -p shep-calendar-core --features http,test-support -- --include-ignored`.
 They use owned loopback sockets and fictional tokens to check reserved create IDs,

@@ -1,5 +1,37 @@
 # Preferences search
 
+Flutter uses its own available-control catalogue in
+`flutter/lib/ui/preferences_catalogue.dart` and pure matching in
+`flutter/lib/model/preferences_search.dart`. Add a catalogue entry and matching
+`ValueKey` to each new Preferences row; actual-widget coverage rejects uncovered
+rows, checkbox captions and missing targets. Connection/profile entries follow
+the current capabilities and state. Search keeps the existing settings form
+mounted, reveals controls inside its scroll view and opens the existing CalDAV
+form for a field result without clearing entered credentials. Local saves and
+Retry still belong to Workspace. The Flutter catalogue does not expose absent
+desktop controls; those remain tracked in issue #41. Android/iOS execution and
+the separate browser client search remain open.
+
+Native Flutter runs the shared `mail-content::fuzzy::WordMatcher` through the
+existing native request boundary. Catalogue encoding, decoding and ranking run
+off the UI thread without account, database or provider capacity. One native
+search slot bounds matching independently; the view coalesces one running query
+and its latest replacement, rejects stale catalogue/input replies and offers
+Retry after a search failure. It preserves shared Latin accent folding,
+Japanese/Hangul recomposition, Nucleo abbreviations, OSA typos and exact tokens
+containing numbers. Exact labels rank above supporting text. Queries stop at 256
+Unicode characters, fuzzy word comparisons at 64 characters and encoded
+catalogues at 2 MiB; exact long words and prefixes remain searchable.
+
+The isolated Flutter preview uses the Dart `diacritic` library with literal,
+prefix and subsequence matching. Common accent, abbreviation and mixed-numeric
+cases are tested there too. This preview fallback does not correct typos or
+guarantee native Unicode recomposition/rank scores. It is not the installed
+client matcher or the separate browser client. Actual native bridge/widget tests
+exercise the shared matcher separately from preview pointer/keyboard evidence.
+
+The remaining details describe the desktop implementation.
+
 Preferences search uses a static catalogue of section titles, actual control
 captions, descriptions and common synonyms. Search includes controls in account,
 calendar, Google, profile and backup forms. It indexes no personal names,
