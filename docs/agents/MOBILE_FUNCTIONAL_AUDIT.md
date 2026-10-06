@@ -107,8 +107,9 @@ registry, parity status and completion evidence without claiming unexecuted
 device/provider checks.
 
 The table records the audit baseline. Account-bound delayed notices (#28) are
-implemented in [PR #53](https://github.com/sam-ruff/shep.so/pull/53), and retained
-bulk selection (#27) in [PR #54](https://github.com/sam-ruff/shep.so/pull/54).
+implemented in [PR #53](https://github.com/sam-ruff/shep.so/pull/53), retained
+bulk selection (#27) in [PR #54](https://github.com/sam-ruff/shep.so/pull/54),
+and Preferences search (#26) in [PR #55](https://github.com/sam-ruff/shep.so/pull/55).
 Follow-up inspection expanded #50 to retain older completed receipts and fence
 late recovery details to the exact selected group and page. The delivery tracker
 and completion log distinguish these changes from the remaining open findings.
