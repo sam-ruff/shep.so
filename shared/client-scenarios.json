@@ -3,6 +3,13 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "mobile-bulk-receipt-before-cache-and-original-ownership",
+      "contract": "Persist the exact saved attempt's provider acknowledgement before local cache repair. Block later group provider claims until acknowledged identity/cache gaps reconcile, without replaying unknown MOVE or flag replies. Only the group owner may access subordinate action rows. Freeze source lineage and original approval; newer pending/completed field choices survive late ACK, restart and inverse admission. Pause cancels only unstarted children, and explicit retirement drains at most 50 actual child rows per transaction.",
+      "desktop": "Existing grouped receipt-first owner and per-field version contracts remain authoritative; this native mobile correction does not change desktop execution.",
+      "mobile": "Schema27 group-owned existing action/receipt rows and mail_intents.applied_revision. Native tests cover forward/inverse ACK/cache rollback/restart, unknown UID inspection, replaced source/fingerprint, lost flag ACK, newer same/opposite group input, newer completed/cancelled individual input, original Undo approval, private public-route/GC exclusion, held account/Pause and bounded child retirement. FFI/control evidence and unexecuted platform work are recorded in COMPLETION.",
+      "browser": "Existing receipt-before-cache, cache-only repair and per-field applied-version journal contract. No browser source change or new provider parity claim."
+    },
+    {
       "id": "reply-original-choice-and-profile-default",
       "contract": "Reply and Reply all keep typed text separate from the immutable original. Include original message controls delivery without changing text, exact references or the private Bcc envelope. Capture the default before asynchronous preparation; it affects only new replies. Files, autosave, restart and reviewed uncertain Outbox recovery preserve the saved choice. Forward always carries the original. Old inline-quote drafts are not reinterpreted. The portable boolean reply_include_original retains explicit false, unknown extensions and per-field intent; legacy reviews/receipts do not observe or approve a missing field.",
       "desktop": "Existing ReplyContext, delivery_body and composer controls; the default is now in portable field-intent and metadata mappings. Shared MIME/codec and desktop change-revert/mapping tests cover the contract.",

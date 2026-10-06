@@ -84,7 +84,7 @@ impl Database {
                     .map_err(|_| anyhow::anyhow!("Cache connection failed. Reopen Shep."))?
                     .query_row("PRAGMA user_version", [], |r| r.get(0))?;
                 anyhow::ensure!(
-                    version <= 26,
+                    version <= 27,
                     "This cache requires a newer Shep version. Update before reopening it."
                 );
                 return Ok(profile);
@@ -107,7 +107,7 @@ impl Database {
             )?;
             let version: u32 = writer.query_row("PRAGMA user_version", [], |r| r.get(0))?;
             anyhow::ensure!(
-                version <= 26,
+                version <= 27,
                 "This cache requires a newer Shep version. Update before reopening it."
             );
             if version > 0 && version < 24 {
@@ -115,6 +115,27 @@ impl Database {
                 let column: bool = writer.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('folder_creations') WHERE name='mutation')", [], |row| row.get(0))?;
                 if existing && !column {
                     writer.execute("ALTER TABLE folder_creations ADD COLUMN mutation TEXT", [])?;
+                }
+            }
+            if version > 0 && version < 27 {
+                writer.execute("DROP INDEX IF EXISTS group_item_attention", [])?;
+                for (table, column, definition) in [
+                    ("mail_intents", "applied_revision", "INTEGER NOT NULL DEFAULT 0"),
+                    ("group_items", "lineage", "TEXT"),
+                    ("group_items", "connection", "TEXT"),
+                    ("individual_mail_actions", "group_job", "TEXT"),
+                    ("individual_mail_actions", "group_position", "INTEGER"),
+                    ("individual_mail_actions", "group_inverse", "INTEGER"),
+                ] {
+                    let exists: bool = writer.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                        [table], |row| row.get(0))?;
+                    let present: bool = writer.query_row(
+                        &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+                        [column], |row| row.get(0))?;
+                    if exists && !present {
+                        writer.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])?;
+                    }
                 }
             }
             if version > 0 && version < 17 {

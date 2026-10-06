@@ -1,5 +1,16 @@
 # Client parity
 
+Mobile bulk schema27 retains exact provider acknowledgements in group-owned
+existing action rows before cache repair. An acknowledged cache gap stops further
+provider steps; Retry repairs local state and unknown replies remain unconfirmed.
+Original approval and captured source lineage fence inverse work, replacements
+and newer same-value choices. Completed field revisions preserve newer cache
+ownership while an older flag ACK repairs the baseline for a newer pending
+opposite choice. Native mocked-provider/restart coverage passes; bridge/control,
+integration and platform evidence is recorded separately in Completion. Browser
+already retains receipt-before-cache and applied-field ownership; destination
+planning #48 remains open.
+
 Mobile queued bulk Undo (#49) is merged for pending, paused and
 held-first-step work. The checked local decision removes forward projection and
 cancels only unsent items; actual late receipts retain their same-group inverse.

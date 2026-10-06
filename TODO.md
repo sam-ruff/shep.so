@@ -6,6 +6,8 @@ Since the 2026-09-09 merge of `main` into `feat/mobile-web-clients`, `main` is t
 
 ## Highest priority - mail sync speed and reliable moves
 
+- [ ] **Mobile bulk acknowledgement and ownership #64:** Schema27 retains exact group-owned subordinate receipts before cache repair, original source lineage/approval and completed field versions. Native provider/cache/restart, opposite-value held flag and private-route regressions pass. Complete actual bridge/control and normal-hook verification before root review and merge. Move destination planning #48 depends on this owner; Apple, live-provider and large-active-group performance remain separate requirements.
+
 - [ ] **Mobile queued bulk Undo #49/#58:** Expose Undo before the first acknowledgement, including queued, paused and held-first-step work. Keep the exact saved group/Undo decision through lost replies and status inspection, cancel only unsent membership, invert actual late receipts and clear forward projection without overwriting newer fields. Preserve an explicit Undo/Resume/Retry pump wake arriving during final History observation (#58). Add real notice/History controls and native/model/FFI restart regressions; root reviews and merges this lane.
 
 - [ ] **Mobile bulk History #50:** Retain one 20-group page and one 50-item page, with visible cursor navigation to older durable receipts. Fence delayed Retry/Accept follow-up reads through group/page changes, including away-and-back to the same group. Keep indexed execution/attention ownership independent of displayed pages, explicit failed-page Retry, actual target/cardinality controls and compact captures. Pending-group Undo remains #49; root reviews and merges this lane.

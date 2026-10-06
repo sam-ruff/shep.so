@@ -26,7 +26,7 @@ pub struct Removal {
 
 /// Group work that removal must discard explicitly: queued, in-flight,
 /// failed, uncertain and inverse steps, never completed receipts.
-pub(crate) const ACTIVE_GROUP_ITEMS: &str = "('pending','sending','undoing','reversing','failed','uncertain','undo_failed','undo_uncertain')";
+pub(crate) const ACTIVE_GROUP_ITEMS: &str = "('pending','sending','undoing','reversing','failed','uncertain','undo_failed','undo_uncertain','repair','undo_repair')";
 
 pub fn available(db: &Connection, id: &str) -> Result<()> {
     let removed: bool = db.query_row(

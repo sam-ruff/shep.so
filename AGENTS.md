@@ -139,6 +139,18 @@ and remain distinct from success.
 
 ## Monorepo and feature parity
 
+Flutter schema27 binds subordinate mail action rows to exact group attempts.
+Only the existing group owner can dispatch, inspect, repair or retire them;
+public individual controls, projections and history collection exclude them.
+Persist provider receipts before cache writes and repair acknowledged gaps before
+another group provider claim. Unknown replies never authorise replay. Captured
+selection lineage cannot acquire proof from a later replacement. Preserve the
+original approval through inverse admission and newer field choices, including
+same-value decisions. `mail_intents.applied_revision` records actual cache
+completion independently of reserved input; legacy zero is unknown. Keep the
+held opposite-value flag ACK, queued Pause, alias, restart and bounded child-row
+cleanup regressions.
+
 Flutter schema26 fences older writers that discard hidden reply originals.
 Retain the immutable quote/account/message identity through text and file saves;
 an omitted reply context cannot erase the saved context. The Include original

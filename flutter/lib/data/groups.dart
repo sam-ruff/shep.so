@@ -44,6 +44,8 @@ const groupAttentionStates = {
   'uncertain',
   'undo_failed',
   'undo_uncertain',
+  'repair',
+  'undo_repair',
 };
 
 class GroupJob {
@@ -82,7 +84,7 @@ class GroupJob {
   bool get canUndo =>
       !undo &&
       (active || finished) &&
-      count('done') + count('pending') + count('sending') > 0;
+      count('done') + count('pending') + count('sending') + count('repair') > 0;
   bool get canPause => state == 'running' || state == 'undoing';
   bool get canRemove =>
       state == 'finished' || state == 'cancelled' || state == 'interrupted';
@@ -160,7 +162,11 @@ class GroupItem {
   final String mail, state, subject, sender, folder, account;
   final String? reason;
   bool get needsAttention => groupAttentionStates.contains(state);
-  bool get canRetry => state == 'failed' || state == 'undo_failed';
+  bool get canRetry =>
+      state == 'failed' ||
+      state == 'undo_failed' ||
+      state == 'repair' ||
+      state == 'undo_repair';
   bool get canAccept => state == 'uncertain' || state == 'undo_uncertain';
   String get label => switch (state) {
     'pending' => 'Waiting',
@@ -169,6 +175,7 @@ class GroupItem {
     'skipped' => 'Skipped',
     'failed' => 'Failed',
     'uncertain' => 'Unconfirmed',
+    'repair' => 'Acknowledged, saving locally',
     'cancelled' => 'Cancelled',
     'accepted' => 'Accepted',
     'undoing' => 'Waiting for Undo',
@@ -177,6 +184,7 @@ class GroupItem {
     'undo_skipped' => 'Undo skipped',
     'undo_failed' => 'Undo failed',
     'undo_uncertain' => 'Undo unconfirmed',
+    'undo_repair' => 'Undo acknowledged, saving locally',
     _ => state,
   };
 }

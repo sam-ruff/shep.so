@@ -60,7 +60,7 @@ pub(crate) fn schema(db: &Connection) -> Result<()> {
         CREATE TEMP TABLE selection_sessions(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,
           frozen INTEGER NOT NULL,scope TEXT NOT NULL);
         CREATE TEMP TABLE selection_rows(session TEXT NOT NULL REFERENCES selection_sessions(id)
-          ON DELETE CASCADE,id TEXT NOT NULL,position INTEGER NOT NULL,selected INTEGER NOT NULL,
+          ON DELETE CASCADE,id TEXT NOT NULL,position INTEGER NOT NULL,selected INTEGER NOT NULL,lineage TEXT,account TEXT,
           PRIMARY KEY(session,id),UNIQUE(session,position));
         CREATE INDEX temp.selection_chosen ON selection_rows(session,selected,position);",
     )?;
@@ -117,36 +117,46 @@ fn reconcile(db: &Connection, session: &str) -> Result<()> {
             if old == target {
                 continue;
             }
-            let original: Option<(i64, bool)> = db
+            let original: Option<(i64, bool, Option<String>, Option<String>)> = db
                 .query_row(
-                    "SELECT position,selected FROM selection_rows WHERE session=? AND id=?",
+                    "SELECT position,selected,lineage,account FROM selection_rows WHERE session=? AND id=?",
                     params![session, old],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
                 )
                 .optional()?;
-            let Some((ordinal, selected)) = original else {
+            let Some((ordinal, selected, lineage, account)) = original else {
                 continue;
             };
-            let existing: Option<(i64, bool)> = db
+            let Some(proof) = lineage.as_deref() else {
+                continue;
+            };
+            if !crate::operations::observed_lineage_matches(db, &target, proof)? {
+                continue;
+            }
+            let existing: Option<(i64, bool, Option<String>)> = db
                 .query_row(
-                    "SELECT position,selected FROM selection_rows WHERE session=? AND id=?",
+                    "SELECT position,selected,lineage FROM selection_rows WHERE session=? AND id=?",
                     params![session, target],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
                 .optional()?;
             db.execute(
                 "DELETE FROM selection_rows WHERE session=? AND id=?",
                 params![session, old],
             )?;
-            if let Some((next, chosen)) = existing {
+            if let Some((next, chosen, other_lineage)) = existing {
+                let other_proven = match other_lineage.as_deref() {
+                    Some(proof) => crate::operations::observed_lineage_matches(db, &target, proof)?,
+                    None => false,
+                };
                 db.execute(
-                    "UPDATE selection_rows SET position=?,selected=? WHERE session=? AND id=?",
-                    params![next.min(ordinal), chosen || selected, session, target],
+                    "UPDATE selection_rows SET position=?,selected=?,lineage=?,account=? WHERE session=? AND id=?",
+                    params![next.min(ordinal), (chosen && other_proven) || selected, if ordinal < next || !other_proven {lineage} else {other_lineage}, account, session, target],
                 )?;
             } else {
                 db.execute(
-                    "INSERT INTO selection_rows VALUES(?,?,?,?)",
-                    params![session, target, ordinal, selected],
+                    "INSERT INTO selection_rows VALUES(?,?,?,?,?,?)",
+                    params![session, target, ordinal, selected, lineage, account],
                 )?;
             }
         }
@@ -160,8 +170,8 @@ fn snapshot(db: &Connection, id: &str, observed: &[String]) -> Result<Value> {
         [id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    let (available, unread, starred): (i64,i64,i64) = db.query_row("SELECT COUNT(*),COALESCE(SUM(m.unread),0),COALESCE(SUM(m.starred),0) FROM selection_rows s JOIN mail m ON m.id=s.id WHERE s.session=? AND s.selected=1 AND m.moved=0",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
-    let groups = db.prepare("SELECT m.account_id,m.folder,COUNT(*),SUM(m.unread),SUM(m.starred) FROM selection_rows s JOIN mail m ON m.id=s.id WHERE s.session=? AND s.selected=1 AND m.moved=0 GROUP BY m.account_id,m.folder ORDER BY m.account_id,m.folder")?
+    let (available, unread, starred): (i64,i64,i64) = db.query_row("SELECT COUNT(*),COALESCE(SUM(m.unread),0),COALESCE(SUM(m.starred),0) FROM selection_rows s JOIN mail m ON m.id=s.id JOIN mail_lineage l ON l.id=m.id WHERE s.session=? AND s.selected=1 AND m.moved=0 AND (l.token=s.lineage OR l.token=(SELECT target FROM mail_lineage_aliases WHERE source=s.lineage))",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+    let groups = db.prepare("SELECT m.account_id,m.folder,COUNT(*),SUM(m.unread),SUM(m.starred) FROM selection_rows s JOIN mail m ON m.id=s.id JOIN mail_lineage l ON l.id=m.id WHERE s.session=? AND s.selected=1 AND m.moved=0 AND (l.token=s.lineage OR l.token=(SELECT target FROM mail_lineage_aliases WHERE source=s.lineage)) GROUP BY m.account_id,m.folder ORDER BY m.account_id,m.folder")?
         .query_map([id],|r|Ok(json!({"account":r.get::<_,String>(0)?,"folder":r.get::<_,String>(1)?,"total":r.get::<_,i64>(2)?,"unread":r.get::<_,i64>(3)?,"starred":r.get::<_,i64>(4)?})))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut positions = BTreeMap::new();
@@ -172,7 +182,7 @@ fn snapshot(db: &Connection, id: &str, observed: &[String]) -> Result<Value> {
         if target != *original {
             aliases.insert(original.clone(), target.clone());
         }
-        let row: Option<(i64,bool,bool)> = db.query_row("SELECT s.position,s.selected,EXISTS(SELECT 1 FROM mail WHERE id=s.id AND moved=0) FROM selection_rows s WHERE session=? AND id=?",params![id,target],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
+        let row: Option<(i64,bool,bool)> = db.query_row("SELECT s.position,s.selected,EXISTS(SELECT 1 FROM mail m JOIN mail_lineage l ON l.id=m.id WHERE m.id=s.id AND moved=0 AND (l.token=s.lineage OR l.token=(SELECT target FROM mail_lineage_aliases WHERE source=s.lineage))) FROM selection_rows s WHERE session=? AND id=?",params![id,target],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
         if let Some((ordinal, chosen, present)) = row {
             positions.insert(target.clone(), ordinal);
             if chosen && present {
@@ -218,7 +228,7 @@ pub(crate) fn run(db: &mut Connection, command: Command, observed: Vec<String>) 
             let order = if scope.oldest { "ASC" } else { "DESC" };
             let mut values = plan.values();
             values.extend([id.clone().into(), (all as i64).into()]);
-            tx.execute(&format!("{}INSERT INTO selection_rows SELECT ?7,id,row_number() OVER(ORDER BY timestamp {order},id)-1,?8 FROM {} WHERE {} AND ?5>=0 AND length(?6)>=0",plan.prefix,plan.table,plan.conditions),params_from_iter(values))?;
+            tx.execute(&format!("{}INSERT INTO selection_rows SELECT ?7,id,row_number() OVER(ORDER BY timestamp {order},id)-1,?8,(SELECT token FROM mail_lineage WHERE mail_lineage.id={}.id),account_id FROM {} WHERE {} AND ?5>=0 AND length(?6)>=0",plan.prefix,plan.table,plan.table,plan.conditions),params_from_iter(values))?;
             id
         }
         Command::Change {
@@ -261,7 +271,7 @@ pub(crate) fn run(db: &mut Connection, command: Command, observed: Vec<String>) 
                         values.push(mail.clone().into());
                         let matches: bool=tx.query_row(&format!("{}SELECT EXISTS(SELECT 1 FROM {} WHERE {} AND id=?7 AND ?5>=0 AND length(?6)>=0)",plan.prefix,plan.table,plan.conditions),params_from_iter(values),|r|r.get(0))?;
                         ensure!(matches, "This message is outside the current mailbox view.");
-                        tx.execute("INSERT INTO selection_rows SELECT ?1,?2,COALESCE(MAX(position),-1)+1,0 FROM selection_rows WHERE session=?1",params![id,mail])?;
+                        tx.execute("INSERT INTO selection_rows SELECT ?1,?2,COALESCE(MAX(position),-1)+1,0,(SELECT token FROM mail_lineage WHERE id=?2),(SELECT account_id FROM mail WHERE id=?2) FROM selection_rows WHERE session=?1",params![id,mail])?;
                     }
                     if clear_others {
                         tx.execute(
@@ -320,7 +330,7 @@ pub(crate) fn run(db: &mut Connection, command: Command, observed: Vec<String>) 
             token(&target)?;
             reconcile(&tx, &id)?;
             tx.execute("INSERT INTO selection_sessions SELECT ?,0,1,scope FROM selection_sessions WHERE id=?",params![target,id])?;
-            tx.execute("INSERT INTO selection_rows SELECT ?,id,position,1 FROM selection_rows WHERE session=? AND selected=1",params![target,id])?;
+            tx.execute("INSERT INTO selection_rows SELECT ?,id,position,1,lineage,account FROM selection_rows WHERE session=? AND selected=1",params![target,id])?;
             target
         }
         Command::Page {
@@ -335,8 +345,8 @@ pub(crate) fn run(db: &mut Connection, command: Command, observed: Vec<String>) 
             );
             reconcile(&tx, &id)?;
             let after = after.map(i64::try_from).transpose()?.unwrap_or(-1);
-            let rows=tx.prepare("SELECT s.position,s.id,m.account_id,m.folder,m.unread,m.starred FROM selection_rows s JOIN mail m ON m.id=s.id WHERE s.session=? AND s.selected=1 AND m.moved=0 AND s.position>? ORDER BY s.position LIMIT 50")?
-                .query_map(params![id,after],|r|Ok(json!({"position":r.get::<_,i64>(0)?,"id":r.get::<_,String>(1)?,"account":r.get::<_,String>(2)?,"folder":r.get::<_,String>(3)?,"unread":r.get::<_,bool>(4)?,"starred":r.get::<_,bool>(5)?})))?
+            let rows=tx.prepare("SELECT s.position,s.id,COALESCE(m.account_id,s.account),m.folder,m.unread,m.starred,s.lineage FROM selection_rows s LEFT JOIN mail m ON m.id=s.id WHERE s.session=? AND s.selected=1 AND s.position>? ORDER BY s.position LIMIT 50")?
+                .query_map(params![id,after],|r|Ok(json!({"position":r.get::<_,i64>(0)?,"id":r.get::<_,String>(1)?,"account":r.get::<_,Option<String>>(2)?,"folder":r.get::<_,Option<String>>(3)?,"unread":r.get::<_,Option<bool>>(4)?,"starred":r.get::<_,Option<bool>>(5)?,"lineage":r.get::<_,Option<String>>(6)?})))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             let next_after = (rows.len() == 50).then(|| rows.last().unwrap()["position"].clone());
             tx.commit()?;

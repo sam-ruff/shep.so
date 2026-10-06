@@ -79,5 +79,5 @@ BEGIN SELECT RAISE(ABORT,'Finish saved folder changes before changing Sent roles
 CREATE TRIGGER IF NOT EXISTS folder_fence_discovered_sent BEFORE INSERT ON discovered_sent
 WHEN EXISTS(SELECT 1 FROM folder_creations WHERE account_id=new.account_id AND mutation IS NOT NULL AND status IN ('queued','waiting','planning','running','checking','repair','rejected','uncertain'))
 BEGIN SELECT RAISE(ABORT,'Finish saved folder changes before changing Sent roles.'); END;
-PRAGMA user_version=26;
+PRAGMA user_version=27;
 COMMIT;

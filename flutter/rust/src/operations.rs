@@ -17,8 +17,10 @@ use std::{
 };
 use tokio::sync::{Mutex, Semaphore, mpsc};
 
-pub(crate) const RUNNABLE_ACTIONS_FIRST: &str = "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions INDEXED BY individual_mail_action_runnable WHERE status IN ('queued','waiting') ORDER BY created,id LIMIT 50";
-pub(crate) const RUNNABLE_ACTIONS_AFTER: &str = "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions INDEXED BY individual_mail_action_runnable WHERE status IN ('queued','waiting') AND (created,id)>(?1,?2) ORDER BY created,id LIMIT 50";
+pub(crate) mod group;
+
+pub(crate) const RUNNABLE_ACTIONS_FIRST: &str = "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions INDEXED BY individual_mail_action_public_runnable WHERE group_job IS NULL AND status IN ('queued','waiting') ORDER BY created,id LIMIT 50";
+pub(crate) const RUNNABLE_ACTIONS_AFTER: &str = "SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions INDEXED BY individual_mail_action_public_runnable WHERE group_job IS NULL AND status IN ('queued','waiting') AND (created,id)>(?1,?2) ORDER BY created,id LIMIT 50";
 
 pub struct Operations {
     profile_history: crate::profile_history::Runtime,
@@ -737,8 +739,8 @@ pub(crate) fn adopt_action_alias(db: &Connection, source: &str, target: &str) ->
     db.execute("UPDATE mail_lineage_aliases SET target=(SELECT token FROM mail_lineage WHERE id=?2) WHERE target=(SELECT token FROM mail_lineage WHERE id=?1)",params![source,target])?;
     db.execute("INSERT INTO mail_lineage_aliases(source,target) SELECT s.token,t.token FROM mail_lineage s,mail_lineage t WHERE s.id=?1 AND t.id=?2 ON CONFLICT(source) DO UPDATE SET target=excluded.target",params![source,target])?;
     db.execute(
-        "INSERT INTO mail_intents(mail,field,revision) SELECT ?2,field,revision FROM mail_intents WHERE mail=?1
-         ON CONFLICT(mail,field) DO UPDATE SET revision=MAX(mail_intents.revision,excluded.revision)",
+        "INSERT INTO mail_intents(mail,field,revision,applied_revision) SELECT ?2,field,revision,applied_revision FROM mail_intents WHERE mail=?1
+         ON CONFLICT(mail,field) DO UPDATE SET revision=MAX(mail_intents.revision,excluded.revision),applied_revision=MAX(mail_intents.applied_revision,excluded.applied_revision)",
         params![source,target],
     )?;
     db.execute(
@@ -1086,7 +1088,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let (summary,text,raw)=db.read(move |db| {
                 let mut summary=stored_mail(db,&id)?;
                 let desired:Option<(Option<String>,Option<bool>,Option<bool>)>=db.query_row(
-                    "SELECT MAX(CASE WHEN mi.field='folder' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.folder') END),MAX(CASE WHEN mi.field='unread' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.unread') END),MAX(CASE WHEN mi.field='starred' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.starred') END) FROM individual_mail_actions a JOIN mail_intents mi ON mi.mail=a.mail WHERE a.mail=?1 AND a.status IN ('queued','waiting','running','uncertain','repair') GROUP BY a.mail",
+                    "SELECT MAX(CASE WHEN mi.field='folder' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.folder') END),MAX(CASE WHEN mi.field='unread' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.unread') END),MAX(CASE WHEN mi.field='starred' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.starred') END) FROM individual_mail_actions a JOIN mail_intents mi ON mi.mail=a.mail WHERE a.mail=?1 AND a.group_job IS NULL AND a.status IN ('queued','waiting','running','uncertain','repair') GROUP BY a.mail",
                     [&summary.id],
                     |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
                 ).optional()?;
@@ -1331,7 +1333,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
                         .collect::<rusqlite::Result<Vec<_>>>()?
                 }
             } else {
-                db.prepare("SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions ORDER BY created DESC,id LIMIT 50 OFFSET ?1")?
+                db.prepare("SELECT id,mail,account,COALESCE(accepted_fields,fields),status,error,created FROM individual_mail_actions INDEXED BY individual_mail_action_public_history WHERE group_job IS NULL ORDER BY created DESC,id LIMIT 50 OFFSET ?1")?
                     .query_map([offset],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,i64>(6)?)))?
                     .collect::<rusqlite::Result<Vec<_>>>()?
             };
@@ -1343,6 +1345,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         }).await,
         Request::CancelMailAction{id} => db.write(move|db|{
             let tx=db.transaction()?;
+            group::require_public(&tx,&id)?;
             let changed=tx.execute("UPDATE individual_mail_actions SET status='cancelled',error=NULL WHERE id=?1 AND status IN ('queued','waiting')",[&id])?;
             anyhow::ensure!(changed==1,"This action has already started. Refresh its status before Undo.");
             release_action_intent(&tx,&id)?;
@@ -1353,6 +1356,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let lookup=id.clone();
             let undo_id=format!("{id}:undo");
             let (mail,fields,physical)=db.read(move|db|{
+                group::require_public(db,&lookup)?;
                 let (mail,fields,physical,status):(String,String,String,String)=db.query_row("SELECT mail,COALESCE(accepted_fields,fields),physical,status FROM individual_mail_actions WHERE id=?1",[lookup],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
                 anyhow::ensure!(status=="succeeded","Only a confirmed mail change can be undone.");
                 let fields=serde_json::from_str::<Value>(&fields)?;
@@ -1374,6 +1378,11 @@ async fn inspect_mail_action(
     credential_slot: Option<String>,
     password: Option<SecretString>,
 ) -> Result<Value> {
+    let public = id.clone();
+    profile
+        .database
+        .read(move |db| group::require_public(db, &public))
+        .await?;
     let repair = id.clone();
     if profile
         .database
@@ -1553,7 +1562,7 @@ pub(crate) struct Mutation {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-enum IndividualReceipt {
+pub(super) enum IndividualReceipt {
     Move { receipt: Box<MoveReceipt> },
     Flags,
 }
@@ -1577,7 +1586,7 @@ fn save_individual_receipt(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ReceiptApplication {
+pub(crate) enum ReceiptApplication {
     Missing,
     NeedsInspection,
     Complete,
@@ -1600,15 +1609,8 @@ fn apply_individual_receipt(db: &Connection, action: &str) -> Result<ReceiptAppl
     let receipt: IndividualReceipt = serde_json::from_str(&receipt)?;
     let current = stored_mail(&tx, &mail)?;
     let mut needs_inspection = false;
-    let owns = |field: &str| -> Result<bool> {
-        Ok(tx
-            .query_row(
-                "SELECT revision=?3 FROM mail_intents WHERE mail=?1 AND field=?2",
-                params![mail, field, revision],
-                |row| row.get(0),
-            )
-            .optional()?
-            .unwrap_or(false))
+    let cache_owned = |field: &str| -> Result<bool> {
+        Ok(!tx.query_row("SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND applied_revision>?3)",params![mail,field,revision],|row|row.get::<_,bool>(0))?)
     };
     match receipt {
         IndividualReceipt::Move { receipt } => {
@@ -1622,7 +1624,24 @@ fn apply_individual_receipt(db: &Connection, action: &str) -> Result<ReceiptAppl
                     && target.folder == current.folder
                     && target.remote_id == current.remote_id
             }) && continuous;
-            let at_unresolved_target = receipt.current.is_none()
+            let cached_unresolved = tx
+                .query_row(
+                    "SELECT receipt FROM move_receipts WHERE id=?1",
+                    [&mail],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .map(|raw| serde_json::from_str::<MoveReceipt>(&raw))
+                .transpose()?;
+            let resolved_group_receipt = !group::public_action(&tx, action)?
+                && cached_unresolved.as_ref().is_some_and(|cached| {
+                    cached.current.is_none()
+                        && cached.account == receipt.account
+                        && cached.folder == receipt.folder
+                        && cached.fingerprint.is_some()
+                        && cached.fingerprint == receipt.fingerprint
+                });
+            let at_unresolved_target = (receipt.current.is_none() || resolved_group_receipt)
                 && receipt.account == current.account_id
                 && receipt.folder == current.folder
                 && continuous;
@@ -1630,7 +1649,7 @@ fn apply_individual_receipt(db: &Connection, action: &str) -> Result<ReceiptAppl
                 at_source || at_receipt || at_unresolved_target,
                 "The acknowledged move no longer matches this cached message. Refresh and review it."
             );
-            if at_source {
+            if at_source || (at_unresolved_target && receipt.current.is_some()) {
                 mark_local_sent_edit(&tx, &current)?;
                 save_move(&tx, &mail, &receipt)?;
             }
@@ -1641,12 +1660,12 @@ fn apply_individual_receipt(db: &Connection, action: &str) -> Result<ReceiptAppl
                 action_source_matches(&tx, &current, &physical)?,
                 "The acknowledged flag change no longer matches this cached message. Refresh and review it."
             );
-            let unread = if owns("unread")? {
+            let unread = if cache_owned("unread")? {
                 fields.get("unread").and_then(Value::as_bool)
             } else {
                 None
             };
-            let starred = if owns("starred")? {
+            let starred = if cache_owned("starred")? {
                 fields.get("starred").and_then(Value::as_bool)
             } else {
                 None
@@ -1666,6 +1685,12 @@ fn apply_individual_receipt(db: &Connection, action: &str) -> Result<ReceiptAppl
                     params![mail, unread, starred],
                 )?)
             })?;
+            for field in [unread.map(|_| "unread"), starred.map(|_| "starred")]
+                .into_iter()
+                .flatten()
+            {
+                record_applied(&tx, &mail, field, revision)?;
+            }
         }
     }
     if !needs_inspection {
@@ -1680,6 +1705,19 @@ fn apply_individual_receipt(db: &Connection, action: &str) -> Result<ReceiptAppl
     } else {
         ReceiptApplication::Complete
     })
+}
+pub(crate) fn record_applied(
+    db: &Connection,
+    mail: &str,
+    field: &str,
+    revision: i64,
+) -> Result<()> {
+    anyhow::ensure!(
+        !db.is_autocommit(),
+        "Field completion requires an atomic cache write."
+    );
+    db.execute("INSERT INTO mail_intents(mail,field,revision,applied_revision) VALUES(?1,?2,0,?3) ON CONFLICT(mail,field) DO UPDATE SET applied_revision=MAX(mail_intents.applied_revision,excluded.applied_revision)",params![mail,field,revision])?;
+    Ok(())
 }
 pub(crate) fn record_intent(db: &Connection, id: &str, fields: &[&str]) -> Result<()> {
     if fields.is_empty() {
@@ -1706,7 +1744,11 @@ fn release_action_intent(db: &Connection, action: &str) -> Result<()> {
     for field in ["folder", "unread", "starred"] {
         if fields.get(field).is_some_and(|value| !value.is_null()) {
             db.execute(
-                "DELETE FROM mail_intents WHERE mail=?1 AND field=?2 AND revision=?3",
+                "DELETE FROM mail_intents WHERE mail=?1 AND field=?2 AND revision=?3 AND applied_revision=0",
+                params![mail, field, revision],
+            )?;
+            db.execute(
+                "UPDATE mail_intents SET revision=0 WHERE mail=?1 AND field=?2 AND revision=?3",
                 params![mail, field, revision],
             )?;
         }
@@ -1809,7 +1851,11 @@ pub(crate) fn observed_lineage_matches(db: &Connection, id: &str, observed: &str
         |row| row.get(0),
     )?)
 }
-fn action_source_matches(db: &Connection, message: &Mail, physical: &Value) -> Result<bool> {
+pub(crate) fn action_source_matches(
+    db: &Connection,
+    message: &Mail,
+    physical: &Value,
+) -> Result<bool> {
     if physical["account"].as_str() != Some(message.account_id.as_str()) {
         return Ok(false);
     }
@@ -1853,6 +1899,10 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
         // A local edit and the handover eligibility marker commit
         // together, before any account lock or provider admission.
         let tx=db.transaction()?;
+        if intent {
+            group::require_public(&tx,&action_id)?;
+            if let Some(parent) = parent_action.as_deref() { group::require_public(&tx,parent)?; }
+        }
         let payload=serde_json::to_string(&json!({"folder":folder,"unread":unread,"starred":starred}))?;
         let saved:Option<(String,String,String,i64,String,Option<String>)>=if intent {
             tx.query_row("SELECT mail,fields,physical,intent_revision,status,error FROM individual_mail_actions WHERE id=?1",[&action_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?
@@ -1889,7 +1939,9 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
                     if !action_source_matches(&tx,&message,&frozen)? {
                         let warning="This message changed identity while the action was waiting. Refresh and review it before retrying.";
                         tx.execute("UPDATE individual_mail_actions SET status='rejected',error=?2 WHERE id=?1",params![&action_id,warning])?;
-                        release_action_intent(&tx,&action_id)?;
+                        if group::public_action(&tx,&action_id)? {
+                            release_action_intent(&tx,&action_id)?;
+                        }
                         tx.commit()?;
                         return Ok(Some(json!({"action_id":action_id,"status":"rejected","committed":false,"warning":warning})));
                     }
@@ -1932,7 +1984,7 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
                 record_intent(&tx,&message.id,&fields)?;
                 let intent_revision:i64=tx.query_row("SELECT revision FROM group_clock WHERE id=1",[],|r|r.get(0))?;
                 tx.execute("INSERT INTO individual_mail_actions(id,mail,account,fields,physical,intent_revision,credential_slot,status,created) VALUES(?1,?2,?3,?4,?5,?6,?7,'queued',?8)",params![action_id,message.id,message.account_id,payload,physical,intent_revision,credential_slot,chrono::Utc::now().timestamp_millis()])?;
-                tx.execute("DELETE FROM individual_mail_actions WHERE status IN ('succeeded','cancelled') AND id NOT IN (SELECT id FROM individual_mail_actions WHERE status IN ('succeeded','cancelled') ORDER BY created DESC,id LIMIT 100)",[])?;
+                tx.execute("DELETE FROM individual_mail_actions WHERE group_job IS NULL AND status IN ('succeeded','cancelled') AND id NOT IN (SELECT id FROM individual_mail_actions WHERE group_job IS NULL AND status IN ('succeeded','cancelled') ORDER BY created DESC,id LIMIT 100)",[])?;
             }
         }
         let pending:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM pending_moves WHERE id=?1)",[&message.id],|r|r.get(0))?;
@@ -1954,6 +2006,12 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
         }
         mark_local_sent_edit(&tx,&message)?;
         acknowledged_mail_write(&tx,&message.id,|| Ok(tx.execute("UPDATE mail SET folder=COALESCE(?2,folder),unread=COALESCE(?3,unread),starred=COALESCE(?4,starred) WHERE id=?1",params![message.id,folder,unread,starred])?))?;
+        if intent {
+            let revision:i64=tx.query_row("SELECT intent_revision FROM individual_mail_actions WHERE id=?1",[&action_id],|row|row.get(0))?;
+            for field in [folder.as_ref().map(|_|"folder"),unread.map(|_|"unread"),starred.map(|_|"starred")].into_iter().flatten() {
+                record_applied(&tx,&message.id,field,revision)?;
+            }
+        }
         tx.execute("UPDATE individual_mail_actions SET status='succeeded',error=NULL WHERE id=?1",[&action_id])?;
         tx.commit()?;
         Ok(Some(if report {json!({"action_id":action_id,"status":"succeeded","committed":true})} else {json!({"committed":true})}))
@@ -2007,19 +2065,30 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
     if !mutation.intent {
         return result;
     }
+    finish_durable_mutation(profile, final_action, result, report).await
+}
+
+pub(super) async fn finish_durable_mutation(
+    profile: &MobileProfile,
+    final_action: String,
+    result: Result<Value>,
+    report: bool,
+) -> Result<Value> {
+    let db = &profile.database;
     if let Ok(value) = &result
         && value.get("status").is_some()
     {
         return result;
     }
-    let status_before_result = {
+    let (status_before_result, public) = {
         let saved = final_action.clone();
         db.read(move |db| {
-            Ok(db.query_row(
+            let status = db.query_row(
                 "SELECT status FROM individual_mail_actions WHERE id=?1",
-                [saved],
+                [&saved],
                 |row| row.get::<_, String>(0),
-            )?)
+            )?;
+            Ok((status, group::public_action(db, &saved)?))
         })
         .await?
     };
@@ -2044,6 +2113,17 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
         }
         Err(error) => ("uncertain", Some(format!("{error:#}"))),
     };
+    let error = if public {
+        error
+    } else {
+        error.map(|_| {
+            match status {
+        "repair" => "The provider acknowledgement is saved. Retry to finish saving it locally.",
+        "uncertain" => "The provider result is unknown. Check the folder before another action.",
+        _ => "The operation could not be completed. Review the saved connection and try again.",
+    }.to_owned()
+        })
+    };
     let saved_id = final_action.clone();
     let saved_error = error.clone();
     db.write(move |db| {
@@ -2052,7 +2132,7 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
             "UPDATE individual_mail_actions SET status=?2,error=?3 WHERE id=?1",
             params![&saved_id, status, saved_error],
         )?;
-        if status == "rejected" {
+        if status == "rejected" && group::public_action(&tx, &saved_id)? {
             release_action_intent(&tx, &saved_id)?;
         }
         tx.commit()?;
@@ -2299,7 +2379,14 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             {
                 return Ok(json!({"committed":true}));
             }
-            let fingerprint = if remote && folder.is_some() {
+            let group_owned = if let Some(action) = action_id.as_deref() {
+                let action = action.to_owned();
+                db.read(move |db| Ok(!group::public_action(db, &action)?))
+                    .await?
+            } else {
+                false
+            };
+            let fingerprint = if (remote || group_owned) && folder.is_some() {
                 let identity = id.clone();
                 Some(
                     db.read(move |db| {
@@ -2365,6 +2452,7 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                     let (status, physical, fields, revision):(String,String,String,i64)=tx.query_row(
                         "SELECT status,physical,fields,intent_revision FROM individual_mail_actions WHERE id=?1",
                         [&action_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)))?;
+                    group::check_connection(&tx,&action_id)?;
                     if !matches!(status.as_str(),"queued"|"waiting") {
                         let warning = matches!(status.as_str(),"running"|"repair"|"uncertain").then_some("This action already has an execution or recovery result.");
                         return Ok((Some(json!({"action_id":action_id,"status":status,"committed":matches!(status.as_str(),"running"|"succeeded"|"repair"|"uncertain"),"warning":warning})),None));
@@ -2375,14 +2463,16 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                     }
                     let fields:Value=serde_json::from_str(&fields)?;
                     let owned = |field: &str| -> Result<bool> {
-                        Ok(tx.query_row("SELECT revision=?3 FROM mail_intents WHERE mail=?1 AND field=?2",params![source.id,field,revision],|row|row.get::<_,bool>(0)).optional()?.unwrap_or(false))
+                        group::owns_field(&tx,&action_id,&source.id,field,revision)
                     };
                     let accepted_folder=if owned("folder")? {fields.get("folder").and_then(Value::as_str).map(str::to_owned)} else {None};
                     let accepted_unread=if owned("unread")? {fields.get("unread").and_then(Value::as_bool)} else {None};
                     let accepted_starred=if owned("starred")? {fields.get("starred").and_then(Value::as_bool)} else {None};
                     if accepted_folder.is_none() && accepted_unread.is_none() && accepted_starred.is_none() {
                         tx.execute("UPDATE individual_mail_actions SET status='cancelled',error=NULL WHERE id=?1",[&action_id])?;
-                        release_action_intent(&tx,&action_id)?;
+                        if group::public_action(&tx,&action_id)? {
+                            release_action_intent(&tx,&action_id)?;
+                        }
                         tx.commit()?;
                         return Ok((Some(json!({"action_id":action_id,"status":"cancelled","committed":false})),None));
                     }
@@ -2455,7 +2545,11 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                     &message,
                     &account.id,
                     folder.as_ref().unwrap(),
-                    remote_id.clone(),
+                    if remote {
+                        remote_id.clone()
+                    } else {
+                        Some(message.remote_id.clone())
+                    },
                     fingerprint,
                 )
             });
@@ -2501,6 +2595,11 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             }
             saved?;
             if unresolved {
+                if group_owned {
+                    return Ok(
+                        json!({"committed":true,"warning":"The group MOVE is acknowledged, but its exact destination UID still needs read-only recovery."}),
+                    );
+                }
                 let receipt = receipt.unwrap();
                 if let Ok(Ok(recovered)) = tokio::time::timeout(
                     Duration::from_secs(45),
