@@ -16,6 +16,12 @@ class MailGroups {
   final void Function() changed;
   final Future<void> Function() refreshMail;
   List<GroupJob> jobs = [];
+  List<GroupJob> activeJobs = [];
+  List<GroupJob> observedJobs = [];
+  int attentionCount = 0;
+  GroupJob? attentionTarget, updatedJob;
+  String? removedJob;
+  int updateRevision = 0;
   GroupJob? review;
   GroupJob? completed;
   bool preparing = false, running = false, historyLoading = false;
@@ -24,7 +30,7 @@ class MailGroups {
   String? error, historyError;
   Timer? _toast, _repaint;
 
-  GroupJob? get active => jobs
+  GroupJob? get active => activeJobs
       .where((j) => j.state == 'running' || j.state == 'undoing')
       .firstOrNull;
   Iterable<GroupJob> get needingReview => jobs.where((j) => j.attention > 0);
@@ -155,40 +161,84 @@ class MailGroups {
     });
   }
 
-  Future<void> refreshHistory() async {
-    if (_disposed) return;
-    if (historyLoading) {
-      // Coalesce with the read in flight and observe again after it.
-      _historyAgain = true;
-      await _historyIdle.future;
-      return;
-    }
-    _historyAgain = false;
-    final idle = _historyIdle = Completer<void>();
+  Future<void> refreshHistory() {
+    if (_disposed) return Future.value();
+    _historyAgain = true;
+    if (historyLoading) return _historyIdle.future;
+    _historyIdle = Completer<void>();
     historyLoading = true;
+    unawaited(_observeHistory());
+    return _historyIdle.future;
+  }
+
+  Future<void> _observeHistory() async {
+    final idle = _historyIdle;
     try {
-      final data = await repository.groups({'kind': 'history'});
-      if (_disposed) return;
-      final previous = {for (final j in jobs) j.id: j};
-      jobs = (data['jobs'] as List)
-          .map((j) => GroupJob(j as Map<String, dynamic>))
-          .toList();
-      for (final job in jobs) {
-        final before = previous[job.id];
-        if (before != null && before.active && job.finished) {
-          _announce(job);
+      while (_historyAgain && !_disposed) {
+        _historyAgain = false;
+        final revision = updateRevision;
+        try {
+          final data = await repository.groups({
+            'kind': 'history',
+            'tracked': activeJobs.map((j) => j.id).toList(),
+          });
+          if (_disposed) return;
+          if (revision != updateRevision) {
+            _historyAgain = true;
+            continue;
+          }
+          final previous = {
+            for (final j in [...jobs, ...activeJobs]) j.id: j,
+          };
+          jobs = (data['jobs'] as List)
+              .map((j) => GroupJob(j as Map<String, dynamic>))
+              .toList();
+          activeJobs =
+              (data['active'] as List? ?? jobs.where((j) => j.active).toList())
+                  .map(
+                    (j) =>
+                        j is GroupJob ? j : GroupJob(j as Map<String, dynamic>),
+                  )
+                  .toList();
+          attentionCount =
+              data['attention'] as int? ??
+              needingReview.fold(0, (n, j) => n + j.attention);
+          attentionTarget = data['attention_job'] is Map<String, dynamic>
+              ? GroupJob(data['attention_job'] as Map<String, dynamic>)
+              : null;
+          final tracked = (data['tracked'] as List? ?? [])
+              .map((j) => GroupJob(j as Map<String, dynamic>))
+              .toList();
+          observedJobs = [
+            ...tracked,
+            ...observedJobs.where((j) => !tracked.any((t) => t.id == j.id)),
+          ].take(20).toList();
+          for (final job in [
+            ...jobs,
+            ...(data['tracked'] as List? ?? []).map(
+              (j) => GroupJob(j as Map<String, dynamic>),
+            ),
+          ]) {
+            final before = previous[job.id];
+            if (before != null && before.active && job.finished) {
+              _announce(job);
+            }
+          }
+          historyError = null;
+          if (data['runnable'] == true && !running) unawaited(pump());
+        } catch (e) {
+          if (_disposed) return;
+          if (revision != updateRevision) {
+            _historyAgain = true;
+            continue;
+          }
+          historyError = 'Could not read group History. $e';
         }
+        if (!_disposed) changed();
       }
-      historyError = null;
-      if (data['runnable'] == true && !running) unawaited(pump());
-    } catch (e) {
-      historyError = 'Could not read group History. $e';
     } finally {
       historyLoading = false;
-      changed();
-      if (_historyAgain && !_disposed) {
-        await refreshHistory();
-      }
+      if (!_disposed) changed();
       idle.complete();
     }
   }
@@ -206,7 +256,23 @@ class MailGroups {
   }
 
   void _replace(GroupJob job) {
-    jobs = [job, ...jobs.where((j) => j.id != job.id)];
+    final known = [
+      ...jobs,
+      ...activeJobs,
+      ...observedJobs,
+      ?updatedJob,
+    ].where((j) => j.id == job.id);
+    if (known.any((j) => j.revision > job.revision)) return;
+    jobs = [job, ...jobs.where((j) => j.id != job.id)]
+      ..sort((a, b) => b.sequence.compareTo(a.sequence));
+    jobs = jobs.take(20).toList();
+    activeJobs = [
+      if (job.active) job,
+      ...activeJobs.where((j) => j.id != job.id),
+    ];
+    updatedJob = job;
+    removedJob = null;
+    updateRevision++;
   }
 
   Future<void> _command(Map<String, Object?> command) async {
@@ -218,9 +284,10 @@ class MailGroups {
       }
       error = null;
     } catch (e) {
+      if (_disposed) return;
       error = '$e';
     }
-    changed();
+    if (!_disposed) changed();
   }
 
   Future<void> undo(GroupJob job) async {
@@ -245,21 +312,35 @@ class MailGroups {
   Future<void> accept(GroupJob job, GroupItem item) =>
       _command({'kind': 'accept', 'id': job.id, 'position': item.position});
 
-  Future<void> remove(GroupJob job) async {
+  Future<bool> remove(GroupJob job) async {
     try {
       await repository.groups({'kind': 'remove', 'id': job.id});
+      if (_disposed) return false;
       jobs = jobs.where((j) => j.id != job.id).toList();
+      activeJobs = activeJobs.where((j) => j.id != job.id).toList();
+      removedJob = job.id;
+      updatedJob = null;
+      updateRevision++;
       error = null;
+      changed();
+      return true;
     } catch (e) {
+      if (_disposed) return false;
       error = '$e';
     }
-    changed();
+    if (!_disposed) changed();
+    return false;
   }
 
-  Future<({List<GroupItem> rows, int? nextAfter})> items(
-    GroupJob job, {
-    int? after,
-  }) async {
+  Future<
+    ({
+      List<GroupItem> rows,
+      int? nextAfter,
+      bool hasPrevious,
+      int? previousAfter,
+    })
+  >
+  items(GroupJob job, {int? after}) async {
     final data = await repository.groups({
       'kind': 'items',
       'id': job.id,
@@ -270,6 +351,8 @@ class MailGroups {
           .map((r) => GroupItem(r as Map<String, dynamic>))
           .toList(),
       nextAfter: data['next_after'] as int?,
+      hasPrevious: data['has_previous'] == true,
+      previousAfter: data['previous_after'] as int?,
     );
   }
 

@@ -540,23 +540,38 @@ async fn account_removal_takes_the_group_fence_and_discards_only_reviewed_work()
 }
 
 #[tokio::test]
-async fn history_keeps_twenty_groups_retires_declined_reviews_and_pages_fifty_items() {
+async fn history_pages_twenty_groups_retains_completed_receipts_and_bounds_active_reviews() {
     let (_dir, p) = profile().await;
     seed(&p, 1).await;
     for n in 0..20 {
         let id = format!("job-{n:02}");
-        review(&p, &id, json!({"kind":"flag"})).await;
+        review(&p, &id, json!({"kind":if n%2==0 {"unflag"} else {"flag"}})).await;
         approve(&p, &id).await;
         run_all(&p, None).await;
     }
     let history = groups(&p, json!({"kind":"history"})).await;
     assert_eq!(history["jobs"].as_array().unwrap().len(), 20);
     assert_eq!(history["jobs"][0]["id"], "job-19");
-    // The twenty-first review retires the oldest finished group.
+    // Admission never deletes an older completed receipt.
     review(&p, "job-20", json!({"kind":"unflag"})).await;
     let history = groups(&p, json!({"kind":"history"})).await;
     assert_eq!(history["jobs"].as_array().unwrap().len(), 20);
-    assert!(job(&p, "job-00").await.is_null());
+    let older = groups(
+        &p,
+        json!({"kind":"history","before":history["next_before"]}),
+    )
+    .await;
+    assert_eq!(older["jobs"][0]["id"], "job-00");
+    assert_eq!(older["jobs"][0]["counts"]["done"], 1);
+    assert!(older["next_before"].is_null());
+    assert_eq!(
+        groups(
+            &p,
+            json!({"kind":"history","before":older["previous_before"]})
+        )
+        .await["jobs"][0]["id"],
+        "job-20"
+    );
     assert_eq!(history["jobs"][0]["id"], "job-20");
     groups(&p, json!({"kind":"decline","id":"job-20"})).await;
     assert!(job(&p, "job-20").await.is_null());
@@ -572,7 +587,7 @@ async fn history_keeps_twenty_groups_retires_declined_reviews_and_pages_fifty_it
         .await
         .unwrap();
     assert_eq!(remaining, 0);
-    for n in 1..20 {
+    for n in 0..20 {
         groups(&p, json!({"kind":"remove","id":format!("job-{n:02}")})).await;
     }
     assert!(
@@ -587,11 +602,132 @@ async fn history_keeps_twenty_groups_retires_declined_reviews_and_pages_fifty_it
     }
     let captured = select_all(&p, "blocked-selection").await;
     let blocked = group_failure(&p,json!({"kind":"prepare","id":"blocked","selection":"blocked-selection","expected":captured["revision"],"action":{"kind":"flag"},"scope":{"folder":"Inbox"}})).await;
-    assert!(blocked.contains("History keeps 20"), "{blocked}");
+    assert!(blocked.contains("already 20 active"), "{blocked}");
     let running = failure(
         &p,
         json!({"op":"groups","command":{"kind":"remove","id":"open-00"}}),
     )
     .await;
     assert!(running.contains("finish or undo"), "{running}");
+}
+
+#[tokio::test]
+async fn history_upgrade_preserves_receipts_and_exact_item_cursor_boundaries() {
+    let (dir, p) = profile().await;
+    seed(&p, 100).await;
+    review(&p, "kept", json!({"kind":"archive"})).await;
+    approve(&p, "kept").await;
+    run_all(&p, None).await;
+    let first = items(&p, "kept", None).await;
+    assert_eq!(first["rows"].as_array().expect("page").len(), 50);
+    assert_eq!(first["has_previous"], false);
+    let second = items(&p, "kept", first["next_after"].as_i64()).await;
+    assert_eq!(second["rows"].as_array().expect("page").len(), 50);
+    assert!(second["next_after"].is_null());
+    assert_eq!(second["has_previous"], true);
+    assert_eq!(
+        items(&p, "kept", second["previous_after"].as_i64()).await,
+        first
+    );
+    p.database.write(|db| {
+        db.execute_batch("DROP INDEX group_history_cursor; DROP INDEX group_item_attention; PRAGMA user_version=24")?;
+        Ok(())
+    }).await.expect("legacy profile");
+    drop(p);
+    let path = dir.path().join("mail.sqlite3");
+    let reopened = crate::api::MobileProfile::open(path.to_string_lossy().to_string())
+        .await
+        .expect("upgrade");
+    let kept = items(&reopened, "kept", None).await;
+    assert_eq!(kept["rows"][0]["receipt"], first["rows"][0]["receipt"]);
+    let version = reopened
+        .database
+        .read(|db| Ok(db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?))
+        .await
+        .expect("version");
+    assert_eq!(version, 25);
+}
+
+#[tokio::test]
+async fn completed_history_does_not_delay_active_seeks_or_hide_older_attention() {
+    use rusqlite::StatementStatus;
+    let (_dir, p) = profile().await;
+    p.database.write(|db| {
+        db.execute_batch("BEGIN; WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<100000) INSERT INTO group_jobs(id,action,fields,state,scope,created,total) SELECT 'finished-'||v,'{\"kind\":\"flag\"}','{}','finished','{}',0,1 FROM n; INSERT INTO group_items(job,position,mail,account,folder,remote_id,unread,starred,state,receipt) SELECT id,0,'fixture','fixture','INBOX','1',0,0,'done','{\"proof\":true}' FROM group_jobs; UPDATE group_items SET state='uncertain' WHERE job='finished-1'; INSERT INTO group_jobs(id,action,fields,state,scope,created,total) VALUES('ready','{\"kind\":\"flag\"}','{}','running','{}',0,1); INSERT INTO group_items(job,position,mail,account,folder,remote_id,unread,starred,state) VALUES('ready',0,'fixture','fixture','INBOX','1',0,0,'pending'); COMMIT")?;
+        let mut next=db.prepare(crate::groups::NEXT_ITEM_QUERY)?;
+        assert_eq!(next.query_row([],|r|r.get::<_,String>(0))?,"ready");
+        assert!(next.get_status(StatementStatus::VmStep)<1000);
+        assert!(next.get_status(StatementStatus::FullscanStep)<30);
+        println!("next-item: VM={}, fullscan={}",next.get_status(StatementStatus::VmStep),next.get_status(StatementStatus::FullscanStep));
+        let plans=db.prepare(&format!("EXPLAIN QUERY PLAN {}",crate::groups::NEXT_ITEM_QUERY))?.query_map([],|r|r.get::<_,String>(3))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        println!("next-item plan: {plans:?}");
+        let queries=[
+            crate::groups::ACTIVE_CAPACITY_QUERY,
+            crate::groups::ATTENTION_COUNT_QUERY,
+        ];
+        for sql in queries {
+            let mut statement=db.prepare(sql)?;
+            assert_eq!(statement.query_row([],|r|r.get::<_,i64>(0))?,1);
+            assert!(statement.get_status(StatementStatus::VmStep)<1000);
+            assert!(statement.get_status(StatementStatus::FullscanStep)<30);
+            println!("{sql}: VM={}, fullscan={}",statement.get_status(StatementStatus::VmStep),statement.get_status(StatementStatus::FullscanStep));
+        }
+        let mut attention=db.prepare(crate::groups::ATTENTION_TARGET_QUERY)?;
+        assert_eq!(attention.query_row([],|r|r.get::<_,String>(0))?,"finished-1");
+        assert!(attention.get_status(StatementStatus::VmStep)<1000);
+        println!("attention-target: VM={}, fullscan={}",attention.get_status(StatementStatus::VmStep),attention.get_status(StatementStatus::FullscanStep));
+        Ok(())
+    }).await.expect("bounded seeks");
+    let observed = groups(&p, json!({"kind":"history"})).await;
+    assert_eq!(observed["jobs"].as_array().expect("page").len(), 20);
+    assert_eq!(observed["active"][0]["id"], "ready");
+    assert_eq!(observed["attention"], 1);
+    assert_eq!(observed["attention_job"]["id"], "finished-1");
+    let count = p
+        .database
+        .read(|db| {
+            Ok(db.query_row("SELECT COUNT(*) FROM group_jobs", [], |r| {
+                r.get::<_, i64>(0)
+            })?)
+        })
+        .await
+        .expect("retained history");
+    assert_eq!(count, 100001);
+}
+
+#[tokio::test]
+async fn an_empty_cursor_page_keeps_its_surviving_boundary_reachable() {
+    let (_dir, p) = profile().await;
+    seed(&p, 50).await;
+    review(&p, "boundary", json!({"kind":"archive"})).await;
+    approve(&p, "boundary").await;
+    run_all(&p, None).await;
+    let latest = groups(&p, json!({"kind":"history"})).await;
+    let empty = groups(
+        &p,
+        json!({"kind":"history","before":latest["jobs"][0]["seq"]}),
+    )
+    .await;
+    assert!(empty["jobs"].as_array().expect("empty page").is_empty());
+    assert_eq!(empty["has_previous"], true);
+    assert_eq!(
+        groups(
+            &p,
+            json!({"kind":"history","before":empty["previous_before"]})
+        )
+        .await["jobs"][0]["id"],
+        "boundary"
+    );
+    let empty_items = items(&p, "boundary", Some(49)).await;
+    assert!(
+        empty_items["rows"]
+            .as_array()
+            .expect("empty details")
+            .is_empty()
+    );
+    assert_eq!(empty_items["has_previous"], true);
+    assert_eq!(
+        items(&p, "boundary", empty_items["previous_after"].as_i64()).await["rows"][49]["position"],
+        49
+    );
 }

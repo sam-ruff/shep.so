@@ -1,5 +1,31 @@
 # Completion audit
 
+## Mobile bulk History checkpoint, 6 October 2026 (#50)
+
+The Flutter History control now keeps one 20-group page and one 50-item page,
+with visible cursor navigation and exact older recovery targets. Schema25
+separates a 20-active admission bound from retained completed history and fences
+older binaries that would delete those records. The existing owner reads active
+and attention state independently of the displayed page; next-step lookup seeks
+one indexed eligible item per active group. No provider dispatcher was added.
+
+Recovery callbacks keep their group/item/page generation through held Retry or
+Accept, another group, another page and same-group away-and-back. Page and owner
+observations fence local command revisions, including two removals during a held
+read. Iterative one-read/latest-replacement loops share idle futures, avoiding
+recursive refresh chains. Failed detail reads retain a scoped Retry above the
+scroller; group controls and closing remain independent of those reads.
+
+Before current-main integration, the full host gates pass 317 Flutter and 206
+native tests, with clean analysis/native Clippy and reviewed compact light/dark
+captures. Focused native evidence includes 100,000 completed groups: next-item
+92 VM steps, active admission 66, attention count 48 and target 34, all with zero
+full-scan steps. That query-plan regression is not latency/performance evidence.
+The actual FFI case covers final and empty-boundary cursors. Full merged checks,
+normal hooks and pinned strict documentation are still to follow; Android/Apple,
+live providers and large-active-group performance remain separate requirements.
+Pending-group Undo stays in #49.
+
 ## Mobile foreground sync notices, 6 October 2026 (#28)
 
 Automatic mail checks now publish an account-bound warning only after 30 seconds

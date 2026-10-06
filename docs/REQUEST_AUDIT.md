@@ -1,5 +1,15 @@
 # Conversation request audit
 
+**6 October mobile bulk History (#50):** Keep one 50-item detail page and one
+20-group History page, with visible navigation to older retained records.
+Recovery controls must keep their exact group/item identity through delayed
+Retry or Accept, group changes, page changes and leaving/reopening the same
+group. Loading and failed detail reads cannot block Pause, Resume, Undo or error
+recovery. Bound the control without deleting durable history or truncating the
+execution/attention owner. Native cursors, actual held-control/cardinality
+regressions and compact light/dark captures are required; #49 pending-group Undo
+remains separate. Root reviews and merges the resulting PR.
+
 **6 October mobile review and parallel delivery:** Review Android/iOS
 functionality against current desktop behaviour, excluding mobile usability
 adaptations; file GitHub issues and assign GPT-6.1 Sol agents at high reasoning.

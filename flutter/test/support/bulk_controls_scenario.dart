@@ -163,7 +163,6 @@ Future<void> bulkControlsScenario(
     await tap(find.text('History'));
     await wait(() => find.text('Group History').evaluate().isNotEmpty);
     expect(find.textContaining('Mark read 130 messages'), findsOneWidget);
-    await tap(find.textContaining('Mark read 130 messages'));
     await wait(() => find.text('Retry').evaluate().isNotEmpty, 'items');
     expect(find.textContaining('Failed · Fixture rejected'), findsOneWidget);
     expect(find.textContaining('Unconfirmed · '), findsOneWidget);

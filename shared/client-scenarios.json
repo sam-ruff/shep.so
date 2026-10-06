@@ -3,6 +3,13 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "mobile-bulk-history-pages",
+      "contract": "Retain one 20-group History page and one 50-item detail page with exact bidirectional cursors. Completed receipts remain durable until explicit removal. Delayed recovery, page reads and owner observations cannot replace newer groups/pages or resurrect removed records; native admission/execution/attention seeks stay independent of completed history.",
+      "desktop": "Existing paged group History and exact retained journal ownership remain the reference.",
+      "mobile": "Schema25 positive history/attention indexes and20-active admission preserve older receipts. groups_tests.rs covers migration, exact final/empty-boundary pages and100,000 completed-history seeks. group_history_test.dart and group_history_controls_test.dart cover bounded cardinality, held Retry/Accept across groups/pages/same-group re-entry, two removals during held page/owner reads, coalesced Refresh, failed-page Retry and independent Pause/Undo/Resume/close. native_repository_test.dart exercises actual FFI cursor boundaries. Compact light/dark failure captures are reviewed; execution counts and remaining platform/provider requirements are in COMPLETION.",
+      "browser": "Existing worker/journal History and recovery scenarios remain the reference; this increment changes Flutter only."
+    },
+    {
       "id": "first-download-composer-focus",
       "contract": "Publishing the first nonempty mail page while composing from an empty Inbox preserves the same active draft, editor, caret and typing focus. Further typing must edit that draft without triggering mail shortcuts. Save/reopen and graceful restart retain the complete input; explicit mail selection remains available.",
       "desktop": "Automatic first-row selection requires no current composer. App-level cases and first_download_preserves_active_composer_and_focus exercise empty/populated editors, real TLS IMAP arrival, continued Subject typing and draft restart.",
