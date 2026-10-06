@@ -34,6 +34,7 @@ if [[ ${SHEP_DESKTOP_CONTAINER:-0} != 1 ]]; then
     --security-opt "seccomp=$shep_root/.github/desktop-linux-seccomp.json" \
     --security-opt no-new-privileges \
     --mount "type=bind,source=$shep_root,target=/workspace" \
+    --mount "type=tmpfs,destination=/e2e,tmpfs-size=3221225472,tmpfs-mode=1777" \
     --env SHEP_DESKTOP_CONTAINER=1 \
     "${shep_environment[@]}" "$shep_image" \
     bash scripts/ci-desktop-linux.sh "$shep_version" "$shep_source"
@@ -66,7 +67,15 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 cargo build --locked --release --no-default-features -p shep --bin shep
 cargo build --locked --profile test-ui --features test-support
 cargo bench --locked --bench responsiveness
-python3 scripts/e2e.py
+# The functional flows keep their fixture data in memory: SQLite commits on the
+# runner's rotational pool stalled for tens of seconds under shared load. The
+# timing scripts below stay on disk. Evidence is copied back for upload whether
+# or not the suite passes.
+copy_e2e_evidence() { mkdir -p artifacts/e2e && cp -a /e2e/. artifacts/e2e/; }
+trap copy_e2e_evidence EXIT
+SHEP_E2E_ARTIFACTS=/e2e python3 scripts/e2e.py
+trap - EXIT
+copy_e2e_evidence
 python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
 python3 scripts/action_latency.py --samples 20 --output artifacts/performance/actions.json
 # The runner renders HTML 3-4x slower than a quiet workstation, so CI reports

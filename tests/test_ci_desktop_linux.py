@@ -60,8 +60,10 @@ if sys.argv[1] == 'build' and os.environ.get('CI_TEST_BUILD_FAIL'):
         self.assertIn("--shm-size=2g", args)
         self.assertIn("no-new-privileges", args)
         self.assertIn(f"seccomp={self.root}/.github/desktop-linux-seccomp.json", args)
+        # The only other mount is bounded tmpfs for the functional suite's fixture data.
         self.assertEqual([args[i + 1] for i, value in enumerate(args) if value == "--mount"],
-                         [f"type=bind,source={self.root},target=/workspace"])
+                         [f"type=bind,source={self.root},target=/workspace",
+                          "type=tmpfs,destination=/e2e,tmpfs-size=3221225472,tmpfs-mode=1777"])
         self.assertEqual([args[i + 1] for i, value in enumerate(args) if value == "--env"],
                          ["SHEP_DESKTOP_CONTAINER=1", "SHEP_GOOGLE_CLIENT_ID", "SHEP_GOOGLE_CLIENT_SECRET"])
         self.assertEqual(args[-4:], ["bash", "scripts/ci-desktop-linux.sh", "1.2.3", SHA])

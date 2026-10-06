@@ -23,7 +23,9 @@ import tempfile
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-ARTIFACTS = ROOT / "artifacts" / "e2e"
+# CI points this at tmpfs for the functional suite: fixture SQLite commits on the
+# runner's rotational pool can stall for tens of seconds under shared load.
+ARTIFACTS = Path(os.environ.get("SHEP_E2E_ARTIFACTS") or ROOT / "artifacts" / "e2e")
 _profile_spec = importlib.util.spec_from_file_location("profile_drive_fixture", ROOT / "scripts/profile_drive_fixture.py")
 _profile_fixture = importlib.util.module_from_spec(_profile_spec)
 _profile_spec.loader.exec_module(_profile_fixture)
@@ -278,6 +280,27 @@ class Desktop:
     def command(self, *args):
         return subprocess.run(args, env=self.env, capture_output=True, text=True,
                               check=True, timeout=10).stdout.strip()
+
+    def reclaim_app_focus(self, settle=.3, timeout=3.):
+        """Raises and focuses Shep until focus has stayed on it for `settle` seconds.
+
+        Xvfb has no window manager, so an owned browser that activates its own
+        window after a dialog closes takes keyboard input until Shep is refocused.
+        """
+        deadline = time.monotonic() + timeout
+        held_since = None
+        while True:
+            if self.command("xdotool", "getwindowfocus").strip() == self.window:
+                held_since = held_since or time.monotonic()
+                if time.monotonic() - held_since >= settle:
+                    return
+            else:
+                held_since = None
+                self.command("xdotool", "windowraise", self.window)
+                self.command("xdotool", "windowfocus", self.window)
+            if time.monotonic() >= deadline:
+                raise RuntimeError("The owned Shep window did not keep keyboard focus.")
+            time.sleep(.02)
 
     def paste_text(self, text):
         """Native clipboard paste on the owned display, including Unicode input."""
@@ -1092,8 +1115,9 @@ class Desktop:
                     windows = self.command("xdotool", "search", "--onlyvisible", "--class", "[Cc]hrom")
                     self.command("xdotool", "windowfocus", windows.splitlines()[-1])
                     self.command("xdotool", "key", "--clearmodifiers", "Escape")
-                    self.command("xdotool", "windowraise", self.window)
-                    self.command("xdotool", "windowfocus", self.window)
+                    # The browser can activate its own window after the dialog
+                    # closes, so one refocus can be undone before the next key.
+                    self.reclaim_app_focus()
                 elif kind == "browser_screenshot":
                     if not self.browser or self.browser.poll() is not None:
                         raise RuntimeError("No owned print browser is running.")

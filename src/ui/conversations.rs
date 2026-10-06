@@ -376,18 +376,16 @@ impl App {
     }
 
     pub(super) fn conversation_reader(&self) -> Element<'_, Message> {
-        let title = self
-            .page
-            .rows
-            .iter()
-            .find(|mail| Some(&mail.id) == self.selected.as_ref())
+        let selected = self.selected_row();
+        let title = selected
             .map(|mail| mail.subject.as_str())
             .unwrap_or("Conversation");
         let cards = self.conversation_cards();
         let controls = self.conversation_controls();
-        let toolbar: Element<'_, Message> = match &self.detail {
-            Some(detail) => self.reader_toolbar(detail),
-            None => container(muted("Opening message…")).height(36).into(),
+        let toolbar: Element<'_, Message> = match (&self.detail, selected) {
+            (Some(detail), _) => self.reader_toolbar(&detail.summary, true),
+            (None, Some(summary)) => self.reader_toolbar(summary, false),
+            (None, None) => container(muted("Opening message…")).height(36).into(),
         };
         let mut heading = column![self.selectable_conversation_title(title), controls].spacing(8);
         if self.conversation.error.is_some() {
