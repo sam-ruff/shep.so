@@ -1,5 +1,12 @@
 # Client parity
 
+The [6 October mobile functionality audit](agents/MOBILE_FUNCTIONAL_AUDIT.md)
+checks the current Flutter implementation against desktop `main` and links
+24 confirmed functional gaps plus a separate platform-verification ticket.
+Its source inventory corrects stale broad Open entries below: mobile folder
+mutations, CalDAV, durable bulk actions and ongoing preference reconciliation
+already have implemented paths. Mobile layout choices are outside this audit.
+
 First-download composer ownership: desktop preserves the current draft and
 typing target when the first mail page arrives, while explicit mail selection
 can still park it. Flutter's separate composer route and browser's retained

@@ -23,10 +23,30 @@ full Flutter suite passes 293 tests and the native Rust suite passes 203 tests;
 Flutter analysis is clean. Compact light/dark notice goldens were reviewed for
 readable account errors and reachable Retry/Dismiss controls. The actual Rust
 activation/restart regression checks legacy and newly activated snapshot slots.
+Implementation: [PR #53](https://github.com/sam-ruff/shep.so/pull/53),
+commit `2b1d7db`; the primary review checked the complete diff and both captures.
 
 Serial account scheduling and the fixed 15-second polling interval remain tracked
 separately in #35. OS-background scheduling, push/IDLE, live mail providers and
 actual Android/Apple lifecycle execution are unverified by these fixture tests.
+
+## Mobile source audit and issue inventory, 6 October 2026
+
+The [functional audit](agents/MOBILE_FUNCTIONAL_AUDIT.md) compares Flutter
+Android/iOS against desktop `main` `4dec758`, covering all application domains
+and excluding mobile layout adaptations and incomplete shared features.
+[GitHub #51](https://github.com/sam-ruff/shep.so/issues/51) links 24 confirmed
+functional gaps and a separate platform/provider verification issue. Each
+ticket includes baseline source evidence and acceptance criteria.
+
+Existing mobile folder mutations, CalDAV, durable bulk actions and preference
+reconciliation were checked in source, correcting stale broad missing-feature
+claims. The review also found lost selection after a declined bulk review,
+missing Undo before the first group acknowledgement, unbounded History item
+accumulation and the reader's account label being shown as recipient metadata.
+Implementation PRs and their executed checks are recorded separately. This
+inventory does not claim runtime or full-parity completion. The pinned strict
+Zensical documentation build passes.
 
 ## Real-server iced_test coverage, 5 October 2026 (desktop)
 
