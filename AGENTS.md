@@ -309,7 +309,9 @@ seccomp profile, namespace/browser preflight, four Cargo jobs and native timing
 budgets. The functional `scripts/e2e.py` run keeps its fixture data on a bounded
 tmpfs (`SHEP_E2E_ARTIFACTS=/e2e`) because SQLite commits on the runner's
 rotational pool stalled for tens of seconds under shared load; its evidence is
-copied back to `artifacts/e2e/` for upload. Timing scripts stay on disk. Never
+copied back to `artifacts/e2e/` for upload. Mount it with `exec`: Docker defaults
+tmpfs to noexec, and the print fixture runs its launcher from the run directory.
+Timing scripts stay on disk. Never
 lengthen a wait to absorb a slow disk instead. Windows uses the provisioned MSVC/Python toolchain. Documentation uses
 the installed Python in a private virtual environment because setup-python has
 no matching Debian 13 Python build. Keep the CI image free of profile data and
