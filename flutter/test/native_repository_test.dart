@@ -444,6 +444,16 @@ void main() {
         refreshMail: () async {},
       );
       addTearDown(groups.dispose);
+      final capture = model.snapshot!;
+      final cancelled = await groups.prepare(model, GroupAction.archive);
+      expect(cancelled, isNotNull, reason: groups.error);
+      expect(model.snapshot!.id, capture.id);
+      expect(await groups.decline(expected: cancelled!.id), true);
+      model.refresh();
+      await settled(() => model.ready || model.error != null);
+      expect(model.error, isNull);
+      expect(model.snapshot!.id, capture.id);
+      expect(model.count, 1);
       final review = await groups.prepare(model, GroupAction.archive);
       expect(review, isNotNull, reason: groups.error);
       expect(review!.total, 1);
@@ -452,6 +462,7 @@ void main() {
       expect(await total('Inbox'), 1, reason: 'a review does not paint');
       final approved = await groups.approve();
       expect(approved, true, reason: groups.error);
+      expect(model.mode, false);
       expect(await total('Inbox'), 0, reason: 'approved intent paints');
       await settled(() => !groups.running);
       final job = groups.jobs.single;

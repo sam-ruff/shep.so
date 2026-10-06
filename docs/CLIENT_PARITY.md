@@ -1,5 +1,15 @@
 # Client parity
 
+Mobile bulk reviews retain the exact live selection through Cancel, Back and
+barrier dismissal. Approval releases only its matching capture after durable
+confirmation; lost replies inspect the same saved review identity. Failed
+decisions stay reviewable, while newer selections and scope changes fence late
+preparation results. Native journal, Dart model and actual Flutter control
+regressions cover this lifecycle. Android integration controls and exact journal
+restart also pass; ordinary Appium pixels, Flutter-web, Apple, live-provider and
+performance verification remain separate. See issue #27 and the completion audit
+for executed evidence.
+
 First-download composer ownership: desktop preserves the current draft and
 typing target when the first mail page arrives, while explicit mail selection
 can still park it. Flutter's separate composer route and browser's retained

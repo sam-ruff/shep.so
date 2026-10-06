@@ -1,5 +1,35 @@
 # Completion audit
 
+## Mobile bulk review selection, 6 October 2026 (#27)
+
+Preparing, cancelling or dismissing a Flutter bulk review keeps the original
+native capture, including off-page membership. Preparation releases its frozen
+copy. Durable approval releases only the matching selection generation and scope.
+Lost preparation/approval replies inspect the reserved job without creating a
+second review or dispatching work. Failed decisions retain the exact review;
+Retry reopens it or retries failed cleanup, and obsolete preparations retire
+through the existing journal. Back and barrier dismissal share that cleanup.
+
+Host verification passes 289 Flutter tests, including the updated actual FFI
+group case and light/dark paged controls, plus four focused failure/held-decision
+controls. The standalone native suite passes 206 tests; its 11 group cases also
+cover read-only inspection of live/removed jobs, invalid identities and a
+transaction-aborted review page that retains the original capture and releases
+its frozen copy. Analysis and standalone Clippy are clean. Two compact captures
+with packaged fonts show failed approval and visible cleanup recovery; both were
+reviewed. Normal commit hooks gate the published checkpoint.
+
+Updated Flutter-web and Appium bulk flows reuse the retained selection after
+Cancel. Root Android verification passed the three named light/dark control and
+native-journal restart scenarios with the exact SQLite report. Ordinary Appium
+pixels remain pending: integration captures omit some filled-button labels, so
+those captures are not a visual pass. Flutter-web execution, Apple, live IMAP and
+large-group performance remain separate verification requirements. Pending-group
+Undo (#49), bounded History retention (#50) and common-domain Activity (#45)
+remain active gaps. The existing compose button also overlaps the centre of the
+compact list's paging control; the new paging regression uses its exposed left
+portion with a real pointer tap.
+
 ## Real-server iced_test coverage, 5 October 2026 (desktop)
 
 The opt-in desktop suite drives actual widgets through `iced_test` with the

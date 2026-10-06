@@ -14,16 +14,16 @@ Future<void> settled(bool Function() ready) async {
 }
 
 class Harness {
-  Harness({Duration stepDelay = Duration.zero})
-    : repository = bulkPreviewRepository(stepDelay: stepDelay) {
+  Harness({Duration stepDelay = Duration.zero, PreviewRepository? repository})
+    : repository = repository ?? bulkPreviewRepository(stepDelay: stepDelay) {
     selection = MailSelection(
-      repository: repository,
-      scope: () => {'folder': 'Inbox'},
+      repository: this.repository,
+      scope: () => {'folder': folder},
       currentCount: () => inbox.length,
       changed: () => changes++,
     );
     groups = MailGroups(
-      repository: repository,
+      repository: this.repository,
       changed: () => changes++,
       refreshMail: () async => repaints++,
     );
@@ -32,6 +32,7 @@ class Harness {
   late final MailSelection selection;
   late final MailGroups groups;
   int changes = 0, repaints = 0;
+  String folder = 'Inbox';
   List<String> get inbox => repository.cached
       .where((m) => m.folder == 'Inbox')
       .map((m) => m.id)
@@ -72,10 +73,12 @@ void main() {
         ),
         containsAll(['Personal:Inbox:86', 'Work:Inbox:44']),
       );
-      expect(h.selection.mode, false, reason: 'the review owns the membership');
+      expect(h.selection.mode, true);
+      expect(h.selection.count, 130);
       // Nothing paints or runs before approval.
       expect(h.inbox.length, 130);
       expect(await h.groups.approve(), true);
+      expect(h.selection.mode, false);
       expect(h.groups.review, isNull);
       expect(h.inbox, isEmpty, reason: 'approved intent paints immediately');
       await h.finished();
@@ -244,6 +247,8 @@ void main() {
       final review = await h.reviewAll(GroupAction.unflag);
       await h.groups.decline();
       expect(h.groups.review, isNull);
+      expect(h.selection.mode, true);
+      expect(h.selection.count, 130);
       await h.groups.refreshHistory();
       expect(h.groups.jobs.where((j) => j.id == review.id), isEmpty);
       expect(
@@ -252,6 +257,261 @@ void main() {
       );
     },
   );
+
+  test(
+    'cancel retains exact off-page membership for the next review',
+    () async {
+      final h = Harness();
+      addTearDown(h.dispose);
+      final review = await h.reviewAll(GroupAction.archive);
+      final capture = h.selection.snapshot!;
+      for (final id in h.inbox.take(50)) {
+        h.selection.unwatch(id);
+      }
+      for (final id in h.inbox.skip(100)) {
+        h.selection.watch(id);
+      }
+      await h.groups.decline(expected: review.id);
+      await settled(() => h.selection.error == null && !h.selection.pending);
+      h.selection.refresh();
+      await settled(() => h.selection.selected(h.inbox.last));
+      expect(h.selection.snapshot!.id, capture.id);
+      expect(h.selection.snapshot!.revision, capture.revision);
+      expect(h.selection.count, 130);
+      final next = await h.groups.prepare(h.selection, GroupAction.flag);
+      expect(next!.total, 130);
+      expect(next.id, isNot(review.id));
+    },
+  );
+
+  test('failed prepare and lost prepare replies keep the capture', () async {
+    final repository = _ReviewRepository();
+    final h = Harness(repository: repository);
+    addTearDown(h.dispose);
+    repository.failBefore = 'prepare';
+    h.selection.all();
+    await settled(() => h.selection.ready);
+    final capture = h.selection.snapshot!;
+    expect(await h.groups.prepare(h.selection, GroupAction.archive), isNull);
+    expect(h.selection.snapshot!.id, capture.id);
+    expect(repository.groupPreview.jobs, isEmpty);
+    repository.loseReply = 'prepare';
+    final review = await h.groups.prepare(h.selection, GroupAction.archive);
+    expect(review!.total, 130);
+    expect(h.selection.snapshot!.id, capture.id);
+    expect(
+      repository.groupPreview.calls.where((c) => c == 'prepare').length,
+      1,
+    );
+  });
+
+  test(
+    'obsolete prepare is retired without replacing a newer selection',
+    () async {
+      final repository = _ReviewRepository();
+      final h = Harness(repository: repository);
+      addTearDown(h.dispose);
+      h.selection.all();
+      await settled(() => h.selection.ready);
+      repository.holdKind = 'prepare';
+      repository.hold = Completer<void>();
+      final preparing = h.groups.prepare(h.selection, GroupAction.archive);
+      await repository.started.future;
+      h.selection.done();
+      h.folder = 'Archive';
+      h.selection.toggle('6');
+      await settled(() => h.selection.ready);
+      final newer = h.selection.snapshot!.id;
+      repository.hold!.complete();
+      expect(await preparing, isNull);
+      expect(h.groups.review, isNull);
+      expect(repository.groupPreview.jobs, isEmpty);
+      expect(h.selection.snapshot!.id, newer);
+      expect(h.selection.count, 1);
+    },
+  );
+
+  test('new gestures fence prepare before their native reply', () async {
+    final repository = _ReviewRepository();
+    final h = Harness(repository: repository);
+    addTearDown(h.dispose);
+    h.selection.all();
+    await settled(() => h.selection.ready);
+    repository.holdKind = 'prepare';
+    repository.hold = Completer<void>();
+    final preparing = h.groups.prepare(h.selection, GroupAction.archive);
+    await repository.started.future;
+    h.selection.clear();
+    repository.hold!.complete();
+    expect(await preparing, isNull);
+    await settled(() => !h.selection.pending);
+    expect(h.selection.count, 0);
+    expect(h.selection.mode, true);
+    expect(repository.groupPreview.jobs, isEmpty);
+  });
+
+  test('failed approval retains review and selection for retry', () async {
+    final repository = _ReviewRepository();
+    final h = Harness(repository: repository);
+    addTearDown(h.dispose);
+    final review = await h.reviewAll(GroupAction.archive);
+    repository.failBefore = 'approve';
+    expect(await h.groups.approve(expected: review.id), false);
+    expect(h.groups.review!.id, review.id);
+    expect(h.selection.count, 130);
+    expect(h.selection.mode, true);
+    expect(h.groups.error, contains('Could not confirm'));
+    expect(await h.groups.approve(expected: review.id), true);
+    expect(h.selection.mode, false);
+    await h.finished();
+  });
+
+  test('lost approval inspects saved status without approving twice', () async {
+    final repository = _ReviewRepository();
+    final h = Harness(repository: repository);
+    addTearDown(h.dispose);
+    final review = await h.reviewAll(GroupAction.archive);
+    repository.loseReply = 'approve';
+    repository.failBefore = 'inspect';
+    expect(await h.groups.approve(expected: review.id), false);
+    expect(h.groups.review!.id, review.id);
+    expect(h.selection.mode, true);
+    expect(await h.groups.approve(expected: review.id), true);
+    await h.finished();
+    expect(
+      repository.groupPreview.calls.where((c) => c == 'approve').length,
+      1,
+    );
+    expect(h.selection.mode, false);
+  });
+
+  test('delayed approval never releases a replacement selection', () async {
+    final repository = _ReviewRepository();
+    final h = Harness(repository: repository);
+    addTearDown(h.dispose);
+    final review = await h.reviewAll(GroupAction.flag);
+    repository.holdKind = 'approve';
+    repository.hold = Completer<void>();
+    final approving = h.groups.approve(expected: review.id);
+    await repository.started.future;
+    expect(await h.groups.decline(expected: review.id), false);
+    h.selection.done();
+    h.selection.toggle(h.inbox.last);
+    await settled(() => h.selection.ready);
+    final newer = h.selection.snapshot!.id;
+    repository.hold!.complete();
+    expect(await approving, true);
+    expect(h.selection.snapshot!.id, newer);
+    expect(h.selection.count, 1);
+    await h.finished();
+  });
+
+  test(
+    'failed decline stays reviewable and stale callbacks do not retarget',
+    () async {
+      final repository = _ReviewRepository();
+      final h = Harness(repository: repository);
+      addTearDown(h.dispose);
+      final old = await h.reviewAll(GroupAction.archive);
+      repository.failBefore = 'decline';
+      expect(await h.groups.decline(expected: old.id), false);
+      expect(h.groups.review!.id, old.id);
+      expect(h.selection.count, 130);
+      expect(await h.groups.prepare(h.selection, GroupAction.flag), isNull);
+      expect(await h.groups.decline(expected: old.id), true);
+      final newer = await h.groups.prepare(h.selection, GroupAction.flag);
+      expect(await h.groups.decline(expected: old.id), false);
+      expect(await h.groups.approve(expected: old.id), false);
+      expect(h.groups.review!.id, newer!.id);
+    },
+  );
+
+  test(
+    'failed obsolete-review cleanup is retried before another prepare',
+    () async {
+      final repository = _ReviewRepository();
+      final h = Harness(repository: repository);
+      addTearDown(h.dispose);
+      h.selection.all();
+      await settled(() => h.selection.ready);
+      repository.holdKind = 'prepare';
+      repository.hold = Completer<void>();
+      final preparing = h.groups.prepare(h.selection, GroupAction.archive);
+      await repository.started.future;
+      h.selection.clear();
+      await settled(() => !h.selection.pending);
+      repository.failBefore = 'decline';
+      repository.hold!.complete();
+      expect(await preparing, isNull);
+      expect(repository.groupPreview.jobs.length, 1);
+      expect(h.groups.error, contains('Could not close'));
+    await h.groups.retryPending();
+      expect(repository.groupPreview.jobs, isEmpty);
+      expect(h.groups.error, isNull);
+      expect(h.selection.mode, true);
+      expect(h.selection.count, 0);
+      h.selection.toggle(h.inbox.last);
+      await settled(() => h.selection.ready);
+      final next = await h.groups.prepare(h.selection, GroupAction.flag);
+      expect(next!.total, 1);
+      expect(repository.groupPreview.jobs.length, 1);
+      expect(repository.groupPreview.jobs.keys.single, next.id);
+    },
+  );
+
+  test('disposal retires the displayed unapproved review', () async {
+    final h = Harness();
+    await h.reviewAll(GroupAction.archive);
+    h.dispose();
+    await settled(() => h.repository.groupPreview.jobs.isEmpty);
+    expect(h.repository.groupPreview.calls, isNot(contains('approve')));
+  });
+
+  test(
+    'dispose retires a delayed prepare without notifying or approving',
+    () async {
+      final repository = _ReviewRepository();
+      final h = Harness(repository: repository);
+      h.selection.all();
+      await settled(() => h.selection.ready);
+      repository.holdKind = 'prepare';
+      repository.hold = Completer<void>();
+      final preparing = h.groups.prepare(h.selection, GroupAction.archive);
+      await repository.started.future;
+      h.dispose();
+      final changes = h.changes;
+      repository.hold!.complete();
+      expect(await preparing, isNull);
+      expect(h.changes, changes);
+      expect(repository.groupPreview.jobs, isEmpty);
+    },
+  );
+}
+
+class _ReviewRepository extends PreviewRepository {
+  _ReviewRepository() : super(delay: Duration.zero, extra: bulkFixtureMail());
+  String? failBefore, loseReply, holdKind;
+  Completer<void>? hold;
+  final started = Completer<void>();
+
+  @override
+  Future<dynamic> groups(Map<String, Object?> command) async {
+    final kind = command['kind'];
+    if (failBefore == kind) {
+      failBefore = null;
+      throw StateError('Saved review fixture failure');
+    }
+    final result = await super.groups(command);
+    if (holdKind == kind && hold != null) {
+      if (!started.isCompleted) started.complete();
+      await hold!.future;
+    }
+    if (loseReply == kind) {
+      loseReply = null;
+      throw StateError('Lost saved review reply');
+    }
+    return result;
+  }
 }
 
 class _Unavailable implements GroupRepository {

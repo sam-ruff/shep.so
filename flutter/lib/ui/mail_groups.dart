@@ -7,6 +7,22 @@ import 'controls.dart';
 import 'icons.dart';
 import 'theme.dart';
 
+Future<void> _showGroupReview(
+  BuildContext context,
+  Workspace workspace,
+  GroupJob review,
+) async {
+  final groups = workspace.groups!;
+  try {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => GroupReviewDialog(workspace: workspace, review: review),
+    );
+  } finally {
+    await groups.decline(expected: review.id);
+  }
+}
+
 /// Selection-mode toolbar: counts, Select all/Clear/Done and the group
 /// actions. Every gesture has a visible, labelled control here.
 class SelectionBar extends StatelessWidget {
@@ -17,6 +33,8 @@ class SelectionBar extends StatelessWidget {
     final selection = workspace.selection;
     final groups = workspace.groups;
     if (selection == null || groups == null) return;
+    final capture = selection.capture;
+    if (capture == null) return;
     String? folder;
     if (action == GroupAction.move) {
       folder = await showDialog<String>(
@@ -39,13 +57,14 @@ class SelectionBar extends StatelessWidget {
       );
       if (folder == null || !context.mounted) return;
     }
+    if (!selection.owns(capture)) return;
     final review = await groups.prepare(selection, action, folder: folder);
-    if (review == null || !context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => GroupReviewDialog(workspace: workspace),
-    );
+    if (review == null) return;
+    if (!context.mounted) {
+      await groups.decline(expected: review.id);
+      return;
+    }
+    await _showGroupReview(context, workspace, review);
   }
 
   @override
@@ -53,10 +72,15 @@ class SelectionBar extends StatelessWidget {
     final c = ShepColors.of(context);
     final selection = workspace.selection;
     final groups = workspace.groups;
-    if (selection == null || !selection.mode) return const SizedBox.shrink();
+    if (selection == null || (!selection.mode && groups?.review == null)) {
+      return const SizedBox.shrink();
+    }
     final count = selection.count;
     final busy = selection.pending || (groups?.preparing ?? false);
-    final actionable = selection.ready && !(groups?.preparing ?? false);
+    final actionable =
+        selection.ready &&
+        !(groups?.preparing ?? false) &&
+        groups?.review == null;
     final status = selection.error != null
         ? selection.error!
         : selection.warning != null
@@ -114,6 +138,15 @@ class SelectionBar extends StatelessWidget {
               ),
               Wrap(
                 children: [
+                  if (groups?.review case final review?)
+                    TextButton(
+                      onPressed: groups!.deciding
+                          ? null
+                          : () => unawaited(
+                              _showGroupReview(context, workspace, review),
+                            ),
+                      child: const Text('Review action'),
+                    ),
                   for (final action in GroupAction.values)
                     IconButton(
                       tooltip: '${action.label} selected',
@@ -138,8 +171,13 @@ class SelectionBar extends StatelessWidget {
 
 /// Frozen review: exact counts per account and folder before approval.
 class GroupReviewDialog extends StatelessWidget {
-  const GroupReviewDialog({super.key, required this.workspace});
+  const GroupReviewDialog({
+    super.key,
+    required this.workspace,
+    required this.review,
+  });
   final Workspace workspace;
+  final GroupJob review;
 
   @override
   Widget build(BuildContext context) {
@@ -148,8 +186,7 @@ class GroupReviewDialog extends StatelessWidget {
       listenable: workspace,
       builder: (context, _) {
         final groups = workspace.groups;
-        final review = groups?.review;
-        if (groups == null || review == null) {
+        if (groups == null || groups.review?.id != review.id) {
           return const SizedBox.shrink();
         }
         final skipped = review.count('skipped');
@@ -159,61 +196,83 @@ class GroupReviewDialog extends StatelessWidget {
                 .firstOrNull
                 ?.email ??
             id;
-        return AlertDialog(
-          title: Text(review.title),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'This applies to the frozen selection, including messages on other pages. Messages changed since the review are skipped.',
-                  style: TextStyle(
-                    fontSize: ShepText.secondary,
-                    color: c.muted,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                for (final group in review.groups)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 3),
-                    child: Text(
-                      '${accountLabel(group['account'] as String)} · ${group['folder'] == 'INBOX' ? 'Inbox' : group['folder']}: ${group['total']} (${group['unread']} unread, ${group['starred']} flagged)',
-                      style: TextStyle(fontSize: ShepText.body, color: c.text),
+        return PopScope(
+          canPop: !groups.deciding,
+          child: AlertDialog(
+            title: Text(review.title),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (groups.deciding)
+                    Semantics(
+                      liveRegion: true,
+                      child: const Text('Saving review decision…'),
+                    ),
+                  if (groups.error case final error?)
+                    Text(error, style: TextStyle(color: c.flag)),
+                  Text(
+                    'This applies to the frozen selection, including messages on other pages. Messages changed since the review are skipped.',
+                    style: TextStyle(
+                      fontSize: ShepText.secondary,
+                      color: c.muted,
                     ),
                   ),
-                if (skipped > 0)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      '$skipped no longer cached and will be skipped.',
-                      style: TextStyle(
-                        fontSize: ShepText.secondary,
-                        color: c.muted,
+                  const SizedBox(height: 12),
+                  for (final group in review.groups)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Text(
+                        '${accountLabel(group['account'] as String)} · ${group['folder'] == 'INBOX' ? 'Inbox' : group['folder']}: ${group['total']} (${group['unread']} unread, ${group['starred']} flagged)',
+                        style: TextStyle(
+                          fontSize: ShepText.body,
+                          color: c.text,
+                        ),
                       ),
                     ),
-                  ),
-              ],
+                  if (skipped > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        '$skipped no longer cached and will be skipped.',
+                        style: TextStyle(
+                          fontSize: ShepText.secondary,
+                          color: c.muted,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: groups.deciding
+                    ? null
+                    : () async {
+                        if (await groups.decline(expected: review.id) &&
+                            context.mounted) {
+                          Navigator.pop(context);
+                        }
+                      },
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: review.total == 0 || groups.deciding
+                    ? null
+                    : () async {
+                        final approved = await groups.approve(
+                          expected: review.id,
+                        );
+                        if ((approved || groups.review?.id != review.id) &&
+                            context.mounted) {
+                          Navigator.pop(context);
+                        }
+                      },
+                child: Text(review.verb),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                unawaited(groups.decline());
-                Navigator.pop(context);
-              },
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: review.total == 0
-                  ? null
-                  : () {
-                      unawaited(groups.approve());
-                      Navigator.pop(context);
-                    },
-              child: Text(review.verb),
-            ),
-          ],
         );
       },
     );
@@ -242,6 +301,7 @@ class GroupActionBanner extends StatelessWidget {
     final active = groups.active;
     final paused = groups.jobs.where((j) => j.paused).firstOrNull;
     final completed = groups.completed;
+    final review = groups.review;
     final attention = groups.needingReview.fold(0, (n, j) => n + j.attention);
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -253,7 +313,13 @@ class GroupActionBanner extends StatelessWidget {
               error: true,
               trailing: [
                 TextButton(
-                  onPressed: () => unawaited(groups.pump()),
+                  onPressed: groups.deciding
+                      ? null
+                      : () => unawaited(
+                          review == null
+                        ? groups.retryPending()
+                              : _showGroupReview(context, workspace, review),
+                        ),
                   child: const Text('Retry'),
                 ),
                 IconButton(
