@@ -179,9 +179,9 @@ try {
       timeout: 15000,
       timeoutMsg: "Declined review stayed open",
     });
+    await waitText("All 130 selected");
   });
   await step("native approve, pause, resume, completion and Undo", async () => {
-    await selectAll();
     await tap("Archive selected");
     await waitText("Archive 130 messages");
     await tap("Archive");

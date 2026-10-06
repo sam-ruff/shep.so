@@ -7,6 +7,16 @@ Its source inventory corrects stale broad Open entries below: mobile folder
 mutations, CalDAV, durable bulk actions and ongoing preference reconciliation
 already have implemented paths. Mobile layout choices are outside this audit.
 
+Mobile bulk reviews retain the exact live selection through Cancel, Back and
+barrier dismissal. Approval releases only its matching capture after durable
+confirmation; lost replies inspect the same saved review identity. Failed
+decisions stay reviewable, while newer selections and scope changes fence late
+preparation results. Native journal, Dart model and actual Flutter control
+regressions cover this lifecycle. Android integration controls and exact journal
+restart also pass, along with four Appium flows and reviewed light/dark captures.
+Flutter-web, Apple, live-provider and performance verification remain separate.
+See issue #27 and the completion audit for executed evidence.
+
 First-download composer ownership: desktop preserves the current draft and
 typing target when the first mail page arrives, while explicit mail selection
 can still park it. Flutter's separate composer route and browser's retained

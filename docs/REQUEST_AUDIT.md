@@ -8,6 +8,11 @@ handles merging. The [source audit](agents/MOBILE_FUNCTIONAL_AUDIT.md) links
 24 functional gaps and a separate platform-evidence issue. This session permits
 three concurrent child agents, so delivery uses waves within the requested
 maximum of five. Existing unrelated changes remain outside these PRs.
+Initial fixes are account-bound notices in
+[PR #53](https://github.com/sam-ruff/shep.so/pull/53) and retained bulk selection
+in [PR #54](https://github.com/sam-ruff/shep.so/pull/54). Preferences search,
+calendar scheduling and bounded History remain active implementation lanes;
+the tracker retains the remaining functional and platform gaps.
 
 **28 September sync notice, tray and reader report:** The user's screenshot
 shows an account sync no-progress timeout and a blank formatted reader. It does

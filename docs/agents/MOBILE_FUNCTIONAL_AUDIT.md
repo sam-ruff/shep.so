@@ -46,7 +46,7 @@ the corresponding request in the main TODO.
 | Reader metadata | To displays an account label; subject and sender name cannot be selected | [#47](https://github.com/sam-ruff/shep.so/issues/47) |
 | Logical mail folders | Archive/Trash/Spam use literal names without the desktop destination lifecycle | [#48](https://github.com/sam-ruff/shep.so/issues/48) |
 | Pending bulk Undo | Controls require an acknowledged item before offering Undo for unsent work | [#49](https://github.com/sam-ruff/shep.so/issues/49) |
-| History bounds | Loading item pages appends all rows to Dart state | [#50](https://github.com/sam-ruff/shep.so/issues/50) |
+| History bounds and identity | Item pages accumulate in Dart, older completed groups are deleted, and delayed recovery can load details for a previously selected group | [#50](https://github.com/sam-ruff/shep.so/issues/50) |
 
 ## Implemented foundations
 
@@ -105,3 +105,10 @@ primary thread reviews the complete diff and tests before merging each PR,
 then checks the combined revision. Each PR must update the shared scenario
 registry, parity status and completion evidence without claiming unexecuted
 device/provider checks.
+
+The table records the audit baseline. Account-bound delayed notices (#28) are
+implemented in [PR #53](https://github.com/sam-ruff/shep.so/pull/53), and retained
+bulk selection (#27) in [PR #54](https://github.com/sam-ruff/shep.so/pull/54).
+Follow-up inspection expanded #50 to retain older completed receipts and fence
+late recovery details to the exact selected group and page. The delivery tracker
+and completion log distinguish these changes from the remaining open findings.
