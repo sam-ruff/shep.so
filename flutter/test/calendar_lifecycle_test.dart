@@ -1085,8 +1085,8 @@ void main() {
     await tester.pump();
     final after = repository.saved.single.$2;
     expect(after.allDay, isTrue);
-    expect(after.start, date);
-    expect(after.end, date.add(const Duration(days: 1)));
+    expect(after.start, DateTime.utc(date.year, date.month, date.day));
+    expect(after.end, DateTime.utc(date.year, date.month, date.day + 1));
     expect(after.etag, isNull);
     expect(after.remoteUrl, isNull);
   });

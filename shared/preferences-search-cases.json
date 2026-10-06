@@ -1,0 +1,20 @@
+{
+  "entries": [
+    {"target":"theme","label":"Theme","section":"Appearance","description":"Light dark system","synonyms":"colour"},
+    {"target":"profiles","label":"Saved profiles","section":"Profiles and sync","description":"Shared settings","synonyms":"cloud"},
+    {"target":"numbers","label":"Office365","section":"Connections","description":"Account","synonyms":""},
+    {"target":"unicode","label":"ガ 한글 Café","section":"Reading","description":"","synonyms":""}
+  ],
+  "cases": [
+    {"query":"APPEARÁNCE","positions":[0]},
+    {"query":"prf","positions":[1]},
+    {"query":"office365","positions":[2]},
+    {"query":"office36","positions":[]},
+    {"query":"office365x","positions":[]},
+    {"query":"cafe","positions":[3]},
+    {"query":"theme office365","positions":[]},
+    {"query":"theem","positions":[0],"native_only":true},
+    {"query":"ガ","positions":[3],"native_only":true},
+    {"query":"한글","positions":[3],"native_only":true}
+  ]
+}

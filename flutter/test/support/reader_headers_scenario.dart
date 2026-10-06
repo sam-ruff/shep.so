@@ -15,6 +15,21 @@ Future<void> readerHeadersScenario(
 }) async {
   final repository = HeaderRepository();
   final workspace = Workspace(repository, MemorySettings());
+  Future<void> copy(String key, String label, String expected) async {
+    final control = find.byKey(ValueKey('reader-copy-$key'));
+    await tester.ensureVisible(control);
+    expect(find.text('$label copied.'), findsNothing);
+    await tester.tap(control);
+    final deadline = DateTime.now().add(const Duration(seconds: 20));
+    while (find.text('$label copied.').evaluate().isEmpty) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('Copy $label did not complete.');
+      }
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    if (clipboard != null) expect(await clipboard(), expected);
+  }
+
   await workspace.loadPage();
   try {
     await tester.pumpWidget(
@@ -33,19 +48,15 @@ Future<void> readerHeadersScenario(
     final footer = find.widgetWithText(OutlinedButton, 'Move');
     final footerElement = tester.element(footer);
     final footerBounds = tester.getRect(footer);
-    for (final (key, expected) in [
-      ('subject', headerSubject),
-      ('sender', headerSender),
-      ('address', 'sender@example.test'),
-      ('recipient', headerRecipient),
+    for (final (key, label, expected) in [
+      ('subject', 'subject', headerSubject),
+      ('sender', 'sender', headerSender),
+      ('address', 'sender address', 'sender@example.test'),
+      ('recipient', 'To', headerRecipient),
     ]) {
       final control = find.byKey(ValueKey('reader-$key'));
       expect(tester.widget<SelectableText>(control).data, expected);
-      final copy = find.byKey(ValueKey('reader-copy-$key'));
-      await tester.ensureVisible(copy);
-      await tester.tap(copy);
-      await tester.pump();
-      if (clipboard != null) expect(await clipboard(), expected);
+      await copy(key, label, expected);
     }
     expect(find.text('Account: Receiving account'), findsOneWidget);
     expect(workspace.loadingBody(repository.metadata.id), isTrue);
@@ -99,13 +110,7 @@ Future<void> readerHeadersScenario(
           .data,
       'Alias target <target@example.test>',
     );
-    final copy = find.byKey(const ValueKey('reader-copy-recipient'));
-    await tester.ensureVisible(copy);
-    await tester.tap(copy);
-    await tester.pump();
-    if (clipboard != null) {
-      expect(await clipboard(), 'Alias target <target@example.test>');
-    }
+    await copy('recipient', 'To', 'Alias target <target@example.test>');
     expect(tester.element(footer), same(footerElement));
     expect(tester.takeException(), isNull);
   } finally {

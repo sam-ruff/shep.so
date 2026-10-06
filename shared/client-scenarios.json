@@ -3,6 +3,13 @@
   "reference": "Rust iced desktop committed 10d8569; merged-worktree verification and gaps in docs/CLIENT_PARITY.md",
   "scenarios": [
     {
+      "id": "mobile-bulk-history-pages",
+      "contract": "Retain one 20-group History page and one 50-item detail page with exact bidirectional cursors. Completed receipts remain durable until explicit removal. Delayed recovery, page reads and owner observations cannot replace newer groups/pages or resurrect removed records; native admission/execution/attention seeks stay independent of completed history.",
+      "desktop": "Existing paged group History and exact retained journal ownership remain the reference.",
+      "mobile": "Schema25 positive history/attention indexes and20-active admission preserve older receipts. groups_tests.rs covers migration, exact final/empty-boundary pages and100,000 completed-history seeks. group_history_test.dart and group_history_controls_test.dart cover bounded cardinality, held Retry/Accept across groups/pages/same-group re-entry, two removals during held page/owner reads, stale read failures, coalesced Refresh and rapid group choices, failed-page Retry and independent Pause/Undo/Resume/close. native_repository_test.dart exercises actual FFI cursor boundaries. Compact light/dark failure captures are reviewed; execution counts and remaining platform/provider requirements are in COMPLETION.",
+      "browser": "Existing worker/journal History and recovery scenarios remain the reference; this increment changes Flutter only."
+    },
+    {
       "id": "first-download-composer-focus",
       "contract": "Publishing the first nonempty mail page while composing from an empty Inbox preserves the same active draft, editor, caret and typing focus. Further typing must edit that draft without triggering mail shortcuts. Save/reopen and graceful restart retain the complete input; explicit mail selection remains available.",
       "desktop": "Automatic first-row selection requires no current composer. App-level cases and first_download_preserves_active_composer_and_focus exercise empty/populated editors, real TLS IMAP arrival, continued Subject typing and draft restart.",
@@ -48,7 +55,7 @@
       "id": "reader-cached-header-metadata",
       "contract": "Subject, From and actual cached To metadata remain selectable/copyable before body completion and through failure, refresh and alias adoption. Preserve exact strings and Unicode; display receiving-account identity separately, without inferred recipients or Bcc. Header updates retain the message frame and footer ownership.",
       "desktop": "Selectable subjects/sender controls and cached detail.summary.recipient; sender address copy is available.",
-      "mobile": "Exact raw From and cached To flow through native page/alias/detail metadata and the preview adapter. Shared bounded address parsing refuses ambiguous/invalid From. Model, actual FFI and real compact reader controls cover Copy, empty/Unicode/multiple recipients, held body/error, refresh/alias and footer ownership. Saved browser and Android harnesses are separate execution gates.",
+      "mobile": "Exact raw From and cached To flow through native page/alias/detail metadata and the preview adapter. Shared bounded address parsing refuses ambiguous/invalid From. Model, actual FFI and real compact reader controls cover Copy, empty/Unicode/multiple recipients, held body/error, refresh/alias and footer ownership. Actual browser clipboard/frame checks and synthetic Android light/dark system-clipboard controls pass separately from host FFI; Apple/live-provider verification remains OPEN.",
       "browser": "Actual recipient and subject selection exist; exact header clipboard and refresh ownership verification remains OPEN."
     },
     {
@@ -76,7 +83,7 @@
       "id": "preferences-search-catalogue",
       "contract": "Search visible control captions, section/tab names, descriptions and common synonyms across Preferences. Rank exact titles and captions above supporting text, tolerate spelling mistakes, require every distinct query word, preserve exact numeric tokens and expose clear no-results feedback. Selecting a result navigates without changing the setting; newly persisted fields require a coverage or explicit internal-state review.",
       "desktop": "settings_search::tests covers labels, ranking, Unicode/numbers, exhaustive Preferences fields and nested network/account/calendar/profile schemas; test_preferences_catalogue_ranking_and_cross_tab_navigation covers real light/dark/compact controls. Deep controls in long or state-dependent cards still require scrolling or existing Edit/destination controls. The ignored complete-catalogue timing test is separate from native latency.",
-      "mobile": "OPEN: expanded Preferences catalogue, ranked typo matching, coverage guard and exact-control reveal.",
+      "mobile": "Available-control catalogue uses shared native WordMatcher off-thread for caption/section/description/synonym matching, Latin accents, native Unicode recomposition, abbreviations/OSA typos and exact mixed-numeric tokens. One running query plus latest replacement fences late replies; failures expose Retry independently of provider slots. Result selection reveals actual controls/destinations, focuses CalDAV fields and retains open credentials and local preference/save Retry ownership. Rust capacity/word contracts, actual FFI/native-matcher widgets and conditional/compact/held-consent controls are separate from Flutter preview Playwright input evidence. Native Android FFI/search/reveal/Theme and reviewed captures pass. Preview-only Dart matching supports accents/prefixes/subsequences but not OSA or native recomposition/ranking. OPEN: wider Android/iOS search execution and unimplemented desktop controls tracked in #41.",
       "browser": "OPEN: expanded Preferences catalogue, ranked typo matching, coverage guard and exact-control reveal."
     },
     {
@@ -183,9 +190,9 @@
     },
     {
       "id": "calendar-identity",
-      "contract": "edit selected calendar event; preserve source/end; read-only cannot save",
-      "mobile": "ui_test.dart",
-      "browser": "workspace.spec.ts"
+      "contract": "Create or edit timed/all-day schedules with valid end-after-start and inclusive Last date/exclusive all-day end. Preserve source, ETag, resource URL, description and untouched times. Canonical all-day dates are nominal; non-midnight legacy pairs retain exact timestamps until the schedule is explicitly edited. Read-only and expanded recurring events cannot save. Freeze exact admissions, retain newer form input and never bypass an unknown CREATE by switching its calendar.",
+      "mobile": "event_schedule_test.dart, event_editor_test.dart and calendar_native_repository_test.dart cover native picker controls, multi-day projection, London/Los Angeles spring gaps, nominal DST arithmetic, exact legacy/timed round trips, source pinning, held/lost admission and actual native profile close/reopen. The saved calendar_android_test.dart scenario passes light/dark timed and all-day saves plus native journal close/reopen, with reviewed captures. Live providers, full recurrence, Calendar Undo and Apple execution remain separate.",
+      "browser": "workspace.spec.ts covers identity; timed creation/scheduling controls remain open."
     },
     {
       "id": "production-isolation",

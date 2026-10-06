@@ -12,10 +12,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shep_mail_core::model::Protocol;
 
-/// History keeps this many groups; older finished groups retire first.
+/// History page size and independently bounded active admission.
 pub const HISTORY_JOBS: i64 = 20;
 /// Items are staged, listed and retired in pages of this size.
 pub const PAGE: usize = 50;
+pub(crate) const ACTIVE_CAPACITY_QUERY: &str = "SELECT COUNT(*) FROM (SELECT 1 FROM group_jobs INDEXED BY group_job_state WHERE state IN ('staging','review','running','undoing','paused') LIMIT 21)";
+pub(crate) const ATTENTION_COUNT_QUERY: &str = "SELECT COUNT(*) FROM group_items INDEXED BY group_item_attention WHERE state IN ('failed','uncertain','undo_failed','undo_uncertain')";
+pub(crate) const ATTENTION_TARGET_QUERY: &str = "SELECT job FROM group_items INDEXED BY group_item_attention WHERE state IN ('failed','uncertain','undo_failed','undo_uncertain') LIMIT 1";
+pub(crate) const NEXT_ITEM_QUERY: &str = "SELECT j.id,j.state,COALESCE(CASE WHEN j.state='undoing' THEN j.undone ELSE j.approved END,0),j.fields,i.position,i.mail,i.account,i.folder,i.remote_id,i.unread,i.starred,i.receipt FROM group_jobs j INDEXED BY group_job_state CROSS JOIN group_items i ON i.job=j.id AND i.position=(SELECT position FROM group_items INDEXED BY group_item_state WHERE job=j.id AND state=CASE j.state WHEN 'running' THEN 'pending' ELSE 'undoing' END ORDER BY position LIMIT 1) WHERE j.state IN ('running','undoing') ORDER BY j.seq LIMIT 1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -129,7 +133,12 @@ pub enum Command {
         id: String,
         position: i64,
     },
-    History,
+    History {
+        #[serde(default)]
+        before: Option<i64>,
+        #[serde(default)]
+        tracked: Vec<String>,
+    },
     Items {
         id: String,
         #[serde(default)]
@@ -168,6 +177,15 @@ fn touch(db: &Connection, id: &str) -> Result<()> {
         "UPDATE group_jobs SET revision=revision+1 WHERE id=?1",
         [id],
     )?;
+    Ok(())
+}
+
+fn admit_active(db: &Connection) -> Result<()> {
+    let count: i64 = db.query_row(ACTIVE_CAPACITY_QUERY, [], |r| r.get(0))?;
+    ensure!(
+        count < HISTORY_JOBS,
+        "There are already {HISTORY_JOBS} active group actions. Finish or remove an open review first."
+    );
     Ok(())
 }
 fn runnable_items(db: &Connection, id: &str) -> Result<i64> {
@@ -367,6 +385,9 @@ pub(crate) async fn run(profile: &MobileProfile, command: Command) -> Result<Val
                     matches!(state.as_str(), "running" | "paused" | "finished"),
                     "This group action cannot be undone from its current state."
                 );
+                if state == "finished" {
+                    admit_active(&tx)?;
+                }
                 // Unsent forward steps are cancelled before any provider call;
                 // acknowledged steps queue their inverse. Failed, skipped and
                 // uncertain items keep their state and are never repeated.
@@ -400,6 +421,9 @@ pub(crate) async fn run(profile: &MobileProfile, command: Command) -> Result<Val
                     ),
                     _ => anyhow::bail!("Only a failed step can be retried."),
                 };
+                if state == "finished" {
+                    admit_active(&tx)?;
+                }
                 tx.execute(
                     "UPDATE group_items SET state=?3,reason=NULL,attempt=NULL WHERE job=?1 AND position=?2",
                     params![id, position, next],
@@ -446,8 +470,20 @@ pub(crate) async fn run(profile: &MobileProfile, command: Command) -> Result<Val
             })
             .await
         }
-        Command::History => db.read(history).await,
-        Command::Items { id, after } => db.read(move |db| items(db, &id, after)).await,
+        Command::History { before, tracked } => db.read(move |db| {
+            ensure!(tracked.len() <= 20, "Observe at most 20 active groups.");
+            for id in &tracked { token(id)?; }
+            let tx = db.unchecked_transaction()?;
+            let value = history(&tx, before, &tracked)?;
+            tx.commit()?;
+            Ok(value)
+        }).await,
+        Command::Items { id, after } => db.read(move |db| {
+            let tx=db.unchecked_transaction()?;
+            let value=items(&tx,&id,after)?;
+            tx.commit()?;
+            Ok(value)
+        }).await,
         Command::Remove { id } => {
             token(&id)?;
             loop {
@@ -500,15 +536,7 @@ async fn prepare(
                 break;
             }
         }
-        let jobs: i64 = tx.query_row("SELECT COUNT(*) FROM group_jobs", [], |r| r.get(0))?;
-        if jobs >= HISTORY_JOBS {
-            let oldest: Option<String> = tx.query_row("SELECT id FROM group_jobs WHERE state='finished' ORDER BY seq LIMIT 1",[],|r|r.get(0)).optional()?;
-            if let Some(oldest) = oldest {
-                while !retire_page(&tx, &oldest)? {}
-            }
-        }
-        let jobs: i64 = tx.query_row("SELECT COUNT(*) FROM group_jobs", [], |r| r.get(0))?;
-        ensure!(jobs < HISTORY_JOBS, "History keeps {HISTORY_JOBS} group actions. Finish or remove older ones first.");
+        admit_active(&tx)?;
         tx.execute("INSERT INTO group_jobs(id,action,fields,state,scope,created) VALUES(?1,?2,?3,'staging',?4,?5)",params![job,action_json,fields_json,scope_json,now()])?;
         tx.commit()?;
         Ok(())
@@ -675,21 +703,49 @@ fn summary(db: &Connection, id: &str) -> Result<Value> {
         "revision":revision,"error":error,"undo":undo,"counts":counts(db,id)?,"groups":groups
     }))
 }
-fn history(db: &Connection) -> Result<Value> {
-    let ids = db
-        .prepare("SELECT id FROM group_jobs WHERE state NOT IN ('cancelled','interrupted') ORDER BY seq DESC LIMIT ?1")?
-        .query_map([HISTORY_JOBS], |r| r.get::<_, String>(0))?
+fn history(db: &Connection, before: Option<i64>, tracked: &[String]) -> Result<Value> {
+    let mut ids = db
+        .prepare("SELECT id,seq FROM group_jobs INDEXED BY group_history_cursor WHERE state IN ('staging','review','running','undoing','paused','finished') AND seq<?1 ORDER BY seq DESC LIMIT 21")?
+        .query_map([before.unwrap_or(i64::MAX)], |r| Ok((r.get::<_, String>(0)?,r.get::<_, i64>(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let more = ids.len() > HISTORY_JOBS as usize;
+    ids.truncate(HISTORY_JOBS as usize);
+    let newer = db.prepare("SELECT seq FROM group_jobs INDEXED BY group_history_cursor WHERE state IN ('staging','review','running','undoing','paused','finished') AND seq>?1 ORDER BY seq ASC LIMIT 21")?
+        .query_map([ids.first().map_or(before.map_or(i64::MAX,|cursor|cursor.saturating_sub(1)), |(_,seq)|*seq)], |r| r.get::<_,i64>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let jobs = ids
         .iter()
-        .map(|id| summary(db, id))
+        .map(|(id, _)| summary(db, id))
         .collect::<Result<Vec<_>>>()?;
+    let active = db.prepare("SELECT id FROM group_jobs INDEXED BY group_job_state WHERE state IN ('running','undoing','paused') ORDER BY seq LIMIT 20")?
+        .query_map([], |r| r.get::<_,String>(0))?
+        .map(|r| summary(db, &r?)).collect::<Result<Vec<_>>>()?;
+    let attention: i64 = db.query_row(ATTENTION_COUNT_QUERY, [], |r| r.get(0))?;
+    let target: Option<String> = db
+        .query_row(ATTENTION_TARGET_QUERY, [], |r| r.get(0))
+        .optional()?;
+    let attention_job = target.map(|id| summary(db, &id)).transpose()?;
+    let mut observed = Vec::with_capacity(tracked.len());
+    for id in tracked {
+        let exists: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM group_jobs WHERE id=?1)",
+            [id],
+            |r| r.get(0),
+        )?;
+        if exists {
+            observed.push(summary(db, id)?);
+        }
+    }
     let runnable: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM group_jobs j WHERE (j.state='running' AND EXISTS(SELECT 1 FROM group_items WHERE job=j.id AND state='pending')) OR (j.state='undoing' AND EXISTS(SELECT 1 FROM group_items WHERE job=j.id AND state='undoing')))",
+        "SELECT EXISTS(SELECT 1 FROM group_jobs j INDEXED BY group_job_state WHERE j.state IN ('running','undoing') AND EXISTS(SELECT 1 FROM group_items WHERE job=j.id AND state=CASE j.state WHEN 'running' THEN 'pending' ELSE 'undoing' END))",
         [],
         |r| r.get(0),
     )?;
-    Ok(json!({"jobs":jobs,"runnable":runnable}))
+    Ok(
+        json!({"jobs":jobs,"runnable":runnable,"active":active,"attention":attention,"attention_job":attention_job,"tracked":observed,
+        "next_before":if more {ids.last().map(|(_,seq)|*seq)} else {None},
+        "has_previous":!newer.is_empty(),"previous_before":if newer.len()>20 {newer.last().copied()} else {None}}),
+    )
 }
 fn items(db: &Connection, id: &str, after: Option<i64>) -> Result<Value> {
     job_state(db, id)?;
@@ -703,12 +759,28 @@ fn items(db: &Connection, id: &str, after: Option<i64>) -> Result<Value> {
             "subject":r.get::<_,Option<String>>(10)?,"sender":r.get::<_,Option<String>>(11)?
         })))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let next_after = (rows.len() == PAGE).then(|| {
+    let next_after = (rows.len() == PAGE
+        && db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM group_items WHERE job=?1 AND position>?2)",
+            params![
+                id,
+                rows.last()
+                    .and_then(|r| r["position"].as_i64())
+                    .unwrap_or(-1)
+            ],
+            |r| r.get::<_, bool>(0),
+        )?)
+    .then(|| {
         rows.last()
             .map(|r| r["position"].clone())
             .unwrap_or(Value::Null)
     });
-    Ok(json!({"rows":rows,"next_after":next_after}))
+    let newer = db.prepare("SELECT position FROM group_items WHERE job=?1 AND position<?2 ORDER BY position DESC LIMIT 51")?
+        .query_map(params![id, rows.first().and_then(|r|r["position"].as_i64()).unwrap_or(after.unwrap_or(-1).saturating_add(1))],|r|r.get::<_,i64>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(
+        json!({"id":id,"rows":rows,"next_after":next_after,"has_previous":!newer.is_empty(),"previous_after":newer.get(50).copied()}),
+    )
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -775,21 +847,26 @@ struct Queued {
     receipt: Option<String>,
 }
 fn next(db: &Connection) -> Result<Next> {
-    let row = db.query_row(
-        "SELECT j.id,j.state,COALESCE(CASE WHEN j.state='undoing' THEN j.undone ELSE j.approved END,0),j.fields,i.position,i.mail,i.account,i.folder,i.remote_id,i.unread,i.starred,i.receipt FROM group_jobs j JOIN group_items i ON i.job=j.id WHERE (j.state='running' AND i.state='pending') OR (j.state='undoing' AND i.state='undoing') ORDER BY j.seq,i.position LIMIT 1",
-        [],
-        |r| Ok(Queued {
-            job: r.get(0)?,
-            job_state: r.get(1)?,
-            approved: r.get(2)?,
-            job_fields: r.get(3)?,
-            position: r.get(4)?,
-            mail: r.get(5)?,
-            account: r.get(6)?,
-            frozen: Identity { folder: r.get(7)?, remote_id: r.get(8)?, unread: r.get(9)?, starred: r.get(10)? },
-            receipt: r.get(11)?,
-        }),
-    ).optional()?;
+    let row = db
+        .query_row(NEXT_ITEM_QUERY, [], |r| {
+            Ok(Queued {
+                job: r.get(0)?,
+                job_state: r.get(1)?,
+                approved: r.get(2)?,
+                job_fields: r.get(3)?,
+                position: r.get(4)?,
+                mail: r.get(5)?,
+                account: r.get(6)?,
+                frozen: Identity {
+                    folder: r.get(7)?,
+                    remote_id: r.get(8)?,
+                    unread: r.get(9)?,
+                    starred: r.get(10)?,
+                },
+                receipt: r.get(11)?,
+            })
+        })
+        .optional()?;
     let Some(Queued {
         job,
         job_state,

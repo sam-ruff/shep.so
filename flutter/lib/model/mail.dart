@@ -175,20 +175,32 @@ class CalendarEntry {
     'etag': etag,
     'remote_url': remoteUrl,
   };
-  factory CalendarEntry.fromCalendarJson(Map<String, dynamic> json) =>
-      CalendarEntry(
-        json['id'] as String,
-        json['title'] as String,
-        DateTime.parse(json['start'] as String).toLocal(),
-        DateTime.parse(json['end'] as String).toLocal(),
-        calendar: json['source_id'] as String,
-        sourceId: json['source_id'] as String,
-        location: json['location'] as String? ?? '',
-        description: json['description'] as String? ?? '',
-        allDay: json['all_day'] as bool? ?? false,
-        etag: json['etag'] as String?,
-        remoteUrl: json['remote_url'] as String?,
-      );
+  factory CalendarEntry.fromCalendarJson(Map<String, dynamic> json) {
+    final start = DateTime.parse(json['start'] as String);
+    final end = DateTime.parse(json['end'] as String);
+    bool nominal(DateTime value) =>
+        value.isUtc &&
+        value.hour == 0 &&
+        value.minute == 0 &&
+        value.second == 0 &&
+        value.millisecond == 0 &&
+        value.microsecond == 0;
+    // Non-midnight pairs retain their existing instant interpretation.
+    final dates = json['all_day'] == true && nominal(start) && nominal(end);
+    return CalendarEntry(
+      json['id'] as String,
+      json['title'] as String,
+      dates ? start : start.toLocal(),
+      dates ? end : end.toLocal(),
+      calendar: json['source_id'] as String,
+      sourceId: json['source_id'] as String,
+      location: json['location'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      allDay: json['all_day'] as bool? ?? false,
+      etag: json['etag'] as String?,
+      remoteUrl: json['remote_url'] as String?,
+    );
+  }
   CalendarEntry withSource(CalendarSourceView source) => CalendarEntry(
     id,
     title,
