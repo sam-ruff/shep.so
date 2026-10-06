@@ -1,5 +1,32 @@
 # Completion audit
 
+## Mobile Preferences search, 6 October 2026 (review branch)
+
+Implementation `24ca8a8055dbb10d52dc27d15e5aab21aebeaab1` on
+`fix/mobile-preferences-search` implements issue #26. Its available-control
+catalogue reveals actual local, mail, Google, profile and CalDAV settings while
+retaining save/Retry ownership and open form input. Installed native builds use
+the shared WordMatcher off-thread through the existing request boundary; bounded
+coalescing rejects older input and replaced catalogue identities. The preview
+matcher has explicitly narrower typo/recomposition/ranking support.
+
+Validation passes 296 Flutter tests with serial workers, 207 Flutter Rust tests,
+four shared-matching/bounds/capacity checks, native all-target Clippy with warnings
+denied, Flutter analysis, strict Zensical and eight real-input preview flows.
+Normal commit hooks pass. Root also executed the saved Android native FFI/control
+scenario and reviewed its accent-result and revealed-dark captures; the report
+contains exactly `native-preferences-shared-search-controls` and both images.
+Evidence is in `artifacts/logs/preferences-android-captures-root.log`,
+`artifacts/flutter/native/` and `artifacts/flutter/web/`.
+
+Earlier normal-hook compilation was interrupted with exit 143; the unchanged
+rerun passes. Existing native selection/group settle checks intermittently failed
+in parallel host suites; isolated and complete unchanged reruns pass, and the
+final serial suite passes without changing deadlines. Failed logs are retained.
+These checks use temporary profiles and fixtures, not personal provider access.
+Browser search, absent desktop controls (#41), wider Android/iOS scenarios, live
+Google/provider parity and final latency measurements remain separate work.
+
 ## Real-server iced_test coverage, 5 October 2026 (desktop)
 
 The opt-in desktop suite drives actual widgets through `iced_test` with the

@@ -9,8 +9,9 @@ the current capabilities and state. Search keeps the existing settings form
 mounted, reveals controls inside its scroll view and opens the existing CalDAV
 form for a field result without clearing entered credentials. Local saves and
 Retry still belong to Workspace. The Flutter catalogue does not expose absent
-desktop controls; those remain tracked in issue #41. Android/iOS execution and
-the separate browser client search remain open.
+desktop controls; those remain tracked in issue #41. Native Android search/reveal
+and Theme controls have actual FFI/capture evidence; wider Android scenarios,
+iOS execution and the separate browser client search remain open.
 
 Native Flutter runs the shared `mail-content::fuzzy::WordMatcher` through the
 existing native request boundary. Catalogue encoding, decoding and ranking run

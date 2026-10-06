@@ -65,7 +65,7 @@ The standard `flutter_web_e2e.py` preview flow also drives the search field,
 no-results/clear, a synonym result and the revealed checkbox using real input.
 The preview matcher supports common accents/abbreviations/numeric contracts but
 omits OSA and native Unicode recomposition/ranking. These host/preview checks do
-not establish Android/iOS execution.
+not replace the native Android scenario below or establish iOS execution.
 
 The saved native Android search scenario builds the shared fuzzy feature and
 checks its actual FFI accent/abbreviation/typo/mixed-numeric matches before driving
@@ -77,8 +77,9 @@ SHEP_NATIVE_REPORT=integration-preferences-search-result CARGO_BUILD_JOBS=4 flut
 ```
 
 Require `native-preferences-shared-search-controls` in the saved report and review
-the `native-preferences-search-*` captures. This scenario is saved for review;
-Android execution remains open until that run succeeds.
+the `native-preferences-search-*` captures. Root executed this scenario successfully
+on the owned Android emulator and reviewed both captures on 6 October 2026.
+Wider Android scenarios and Apple/live-provider execution remain separate work.
 
 Google calendar HTTP contracts run explicitly with
 `cargo test -p shep-calendar-core --features http,test-support -- --include-ignored`.
