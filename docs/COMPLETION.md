@@ -23,8 +23,8 @@ unknown replies without replay and preserves newer read/star fields. Five real
 control scenarios cover queued light/dark, paused History/held receipt, partial
 completion and lost status after close. Both compact queued captures are reviewed.
 Full checkpoint host gates pass 376 Flutter and 217 native tests, with clean
-analysis/native Clippy and pinned strict documentation. Main integration and
-normal checkpoint hooks are still pending. Android,
+analysis/native Clippy and pinned strict documentation. Normal checkpoint hooks
+pass. Main integration and final hooks remain pending. Android,
 Apple and live-provider evidence remain separate; no performance-under-load
 claim follows from controlled held-provider tests.
 

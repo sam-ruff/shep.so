@@ -115,6 +115,8 @@ void main() {
         repository.inspectHold = Completer<void>();
         final inspecting = groups.undo(removed);
         await repository.inspected.future;
+        expect(groups.failedUndo!.id, removed.id);
+        expect(groups.undoDeciding(removed), true);
         expect(
           await groups.remove(GroupJob(repository.summary(removed.id))),
           true,

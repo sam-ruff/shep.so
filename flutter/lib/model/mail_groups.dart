@@ -461,7 +461,6 @@ class MailGroups {
     bool owns() => !_disposed && identical(_undos[job.id], request);
     if (request.busy) return;
     request.busy = true;
-    request.error = null;
     if (completed?.id == job.id) dismiss();
     changed();
     try {
