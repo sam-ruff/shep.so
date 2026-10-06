@@ -478,6 +478,8 @@ Client request numbers R67 to R80 in this section are the client session's own n
 
 ## Mail reading, search and bulk actions (client parity)
 
+- [x] **Mobile reader headers (#47):** cached exact From/To metadata and selectable subject/sender/recipient Copy controls are implemented separately from receiving-account identity. Empty/Unicode/multiple recipients, metadata refresh, aliases, body error/loading, actual FFI and compact reader/footer controls pass; real browser clipboard checks retain the same formatted frame. Android's saved clipboard harness, Apple and live-provider verification remain separate gates; see [completion](docs/COMPLETION.md).
+
 - [ ] **20 September desktop bulk delete responsiveness:** **Owner clarification:** fast review and immediate list feedback are required; actual server deletion may continue in the background. Provider batching is not a completion prerequisite. `a1049ab` freezes and summarises review in one database-worker transaction without waiting for earlier provider writes. Ten-message native review/confirmation, pre-admission Undo and rejection recovery pass with reviewed images; 38 native regressions pass. The 100,000-membership regression guards selected-row query plans; it is not a latency measurement. Remaining: measure the native 100 ms target at mailbox scale, implement Flutter/browser equivalents and verify the released/installed build.
 
 Desktop delivery of these requests is recorded in the completion log; the entries track the remaining mobile/browser work and any desktop gaps named explicitly.

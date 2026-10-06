@@ -1,5 +1,36 @@
 # Completion audit
 
+## Mobile cached reader headers, 6 October 2026 (#47)
+
+Flutter carries cached To and exact From through metadata pages, confirmed alias
+rows and detail reads. Receiving-account identity has its own line. Subject,
+From, single parsed sender address and To use selectable controls with visible
+Copy actions before body completion and through failure. Empty fields have
+noncopyable placeholders; no recipient or Bcc is inferred. The separate address
+uses the existing bounded shared mailbox parser and stays empty for invalid or
+ambiguous From values, preserving the exact original header independently.
+
+Focused model, actual FFI and reader/footer checks pass all 13 cases, including
+quoted angle brackets, surrounding whitespace, Unicode, multiple recipients,
+body failure/Retry, metadata refresh, alias adoption and late clipboard replies.
+Both native parser regressions pass and Flutter analysis is clean. The saved
+Flutter-web harness passes `header-copy-before-body` and
+`metadata-refresh-retains-frame`, checking actual clipboard values and the same
+formatted frame through two metadata refreshes. Three compact light/loading/dark
+captures were visually reviewed under `artifacts/flutter/reader-headers/`.
+
+The first native FFI failure exposed whitespace handling in parsed addresses;
+the unchanged exact From assertion already passed. That failure is retained in
+`reader-headers-parser-ffi.log`, with the passing corrected run in
+`reader-headers-ffi-fixed.log`. Browser observation/navigation failures are also
+preserved; the final real clipboard-based flow passes without relaxed deadlines.
+Full baseline verification passes 318 Flutter tests and all 208 native tests;
+native Clippy denies warnings and pinned strict documentation builds cleanly.
+The saved Android harness checks the platform clipboard with a synthetic
+repository separately from host FFI. Android execution, Apple and live provider
+verification remain separate gates until their results are recorded. Normal
+hooks and main integration gate publication of this checkpoint.
+
 ## Mobile bulk review selection, 6 October 2026 (#27)
 
 Preparing, cancelling or dismissing a Flutter bulk review keeps the original

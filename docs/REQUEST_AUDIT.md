@@ -1,5 +1,13 @@
 # Conversation request audit
 
+**6 October reader metadata continuation (#47):** Flutter now displays exact
+cached From/To independently of receiving-account identity and exposes selectable
+headers with visible Copy controls before body completion. Host native FFI,
+actual reader controls and the saved compact browser clipboard/frame scenario
+pass. Android's synthetic clipboard harness is saved separately; Apple and live
+provider execution remain open in the platform audit. See
+[completion](COMPLETION.md) for exact verification and preserved failures.
+
 **6 October mobile review and parallel delivery:** Review Android/iOS
 functionality against current desktop behaviour, excluding mobile usability
 adaptations; file GitHub issues and assign GPT-6.1 Sol agents at high reasoning.

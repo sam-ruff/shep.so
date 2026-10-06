@@ -54,6 +54,8 @@ class Mail {
     this.accountId = '',
     this.bodyLoaded = true,
     this.lineage,
+    this.recipient = '',
+    this.senderHeader,
   });
   final String id, sender, address, subject, preview, body, account, folder;
   final DateTime date;
@@ -64,10 +66,14 @@ class Mail {
   final String accountId;
   final bool bodyLoaded;
   final String? lineage;
+  final String recipient;
+  final String? senderHeader;
 
   Mail patch(Map<String, Object> fields) => Mail(
     id: fields['id'] as String? ?? id,
     sender: sender,
+    senderHeader: senderHeader,
+    recipient: recipient,
     address: address,
     subject: subject,
     preview: preview,
@@ -88,6 +94,8 @@ class Mail {
   Mail withoutBody() => Mail(
     id: id,
     sender: sender,
+    senderHeader: senderHeader,
+    recipient: recipient,
     address: address,
     subject: subject,
     preview: preview,
@@ -108,6 +116,8 @@ class Mail {
   Mail withDetail(Mail detail) => Mail(
     id: id,
     sender: sender,
+    senderHeader: senderHeader,
+    recipient: recipient,
     address: address,
     subject: subject,
     preview: preview,

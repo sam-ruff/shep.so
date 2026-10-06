@@ -41,8 +41,15 @@
       "id": "reader-selection-and-recovered-mail-actions",
       "contract": "Double-click selects a word, triple-click selects a line and drag selects across HTML markup using established text-selection semantics. Subjects are selectable and copyable. A rediscovered provider original can receive a fresh Move/Delete after a retained local recovery copy, without removing the local copy or replaying uncertain work.",
       "desktop": "cosmic-text word/line selection and iced selectable subjects; transactional fresh recovery reservations preserve original/local copies. Rust regressions and real native selection, copy, Move/Delete and recovery controls pass; exact evidence belongs in COMPLETION.",
-      "mobile": "OPEN: verify native subject selection and recovered-original actions alongside platform HTML selection.",
+      "mobile": "Selectable cached subjects/From/To and exact-value Copy controls are covered before body completion, through failure, metadata refresh and aliases; native FFI preserves recipient metadata independently of the receiving account. Recovered-original actions and broader platform HTML selection remain OPEN.",
       "browser": "OPEN: verify subject selection and recovered-original actions alongside browser HTML selection."
+    },
+    {
+      "id": "reader-cached-header-metadata",
+      "contract": "Subject, From and actual cached To metadata remain selectable/copyable before body completion and through failure, refresh and alias adoption. Preserve exact strings and Unicode; display receiving-account identity separately, without inferred recipients or Bcc. Header updates retain the message frame and footer ownership.",
+      "desktop": "Selectable subjects/sender controls and cached detail.summary.recipient; sender address copy is available.",
+      "mobile": "Exact raw From and cached To flow through native page/alias/detail metadata and the preview adapter. Shared bounded address parsing refuses ambiguous/invalid From. Model, actual FFI and real compact reader controls cover Copy, empty/Unicode/multiple recipients, held body/error, refresh/alias and footer ownership. Saved browser and Android harnesses are separate execution gates.",
+      "browser": "Actual recipient and subject selection exist; exact header clipboard and refresh ownership verification remains OPEN."
     },
     {
       "id": "standard-spam-folder",

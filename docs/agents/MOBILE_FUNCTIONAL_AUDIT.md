@@ -43,7 +43,7 @@ the corresponding request in the main TODO.
 | Large mail | No equivalent staged incoming path or completed bounded body-cache audit | [#43](https://github.com/sam-ruff/shep.so/issues/43) |
 | External entry/export | No Shep mailto activation or Save original message control | [#44](https://github.com/sam-ruff/shep.so/issues/44) |
 | Activity | Recovery remains separated by domain without the bounded combined summary | [#45](https://github.com/sam-ruff/shep.so/issues/45) |
-| Reader metadata | To displays an account label; subject and sender name cannot be selected | [#47](https://github.com/sam-ruff/shep.so/issues/47) |
+| Reader metadata | Cached exact From/To and selectable Copy controls implemented; host FFI/control and compact browser-frame evidence recorded, Android/Apple execution tracked separately | [#47](https://github.com/sam-ruff/shep.so/issues/47), [completion](../COMPLETION.md) |
 | Logical mail folders | Archive/Trash/Spam use literal names without the desktop destination lifecycle | [#48](https://github.com/sam-ruff/shep.so/issues/48) |
 | Pending bulk Undo | Controls require an acknowledged item before offering Undo for unsent work | [#49](https://github.com/sam-ruff/shep.so/issues/49) |
 | History bounds and identity | Item pages accumulate in Dart, older completed groups are deleted, and delayed recovery can load details for a previously selected group | [#50](https://github.com/sam-ruff/shep.so/issues/50) |
