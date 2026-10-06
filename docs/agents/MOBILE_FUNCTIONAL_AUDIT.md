@@ -26,7 +26,7 @@ the corresponding request in the main TODO.
 | Preferences search | No mobile catalogue or result-to-control navigation | [#26](https://github.com/sam-ruff/shep.so/issues/26) |
 | Bulk review | Preparing a review releases the original selection, including when declined | [#27](https://github.com/sam-ruff/shep.so/issues/27) |
 | Background error notices | Automatic checks use the immediate explicit-refresh error path | [#28](https://github.com/sam-ruff/shep.so/issues/28) |
-| Calendar editor | New events are all-day; dates, start/end times and all-day status cannot be changed | [#29](https://github.com/sam-ruff/shep.so/issues/29) |
+| Calendar editor | Date/time/All day controls, range validation, nominal all-day projection and exact admission/source fences are implemented; see the completion record. Live providers and Apple execution remain separate. | [#29](https://github.com/sam-ruff/shep.so/issues/29) |
 | Reply composition | No separate original-message toggle or configurable starting choice | [#30](https://github.com/sam-ruff/shep.so/issues/30) |
 | Move destinations | No ranked chooser or safe account-qualified transfer | [#31](https://github.com/sam-ruff/shep.so/issues/31) |
 | Mail search | Current-folder prefix matching/date order instead of cross-folder ranked search | [#32](https://github.com/sam-ruff/shep.so/issues/32) |

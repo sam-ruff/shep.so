@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
+import '../model/event_schedule.dart';
 import 'icons.dart';
 
 class CalendarView extends StatefulWidget {
@@ -67,8 +68,12 @@ class _CalendarViewState extends State<CalendarView> {
         widget.workspace.events
             .where(
               (e) => selected == null
-                  ? e.start.year == month.year && e.start.month == month.month
-                  : DateUtils.isSameDay(e.start, selected),
+                  ? eventOverlapsDates(
+                      e,
+                      start,
+                      DateTime(month.year, month.month + 1),
+                    )
+                  : eventOccursOnDate(e, selected!),
             )
             .toList()
           ..sort((a, b) => a.start.compareTo(b.start));
@@ -185,7 +190,7 @@ class _CalendarViewState extends State<CalendarView> {
             if (day < 1 || day > days) return const SizedBox();
             final date = DateTime(month.year, month.month, day);
             final has = widget.workspace.events.any(
-              (e) => DateUtils.isSameDay(e.start, date),
+              (e) => eventOccursOnDate(e, date),
             );
             return TextButton(
               style: TextButton.styleFrom(
@@ -250,7 +255,7 @@ class _CalendarViewState extends State<CalendarView> {
               ),
               title: Text(e.title),
               subtitle: Text(
-                '${e.calendar} · ${e.start.hour.toString().padLeft(2, '0')}:${e.start.minute.toString().padLeft(2, '0')}${e.location.isEmpty ? '' : ' · ${e.location}'}',
+                '${e.calendar} · ${e.allDay ? 'All day' : '${e.start.hour.toString().padLeft(2, '0')}:${e.start.minute.toString().padLeft(2, '0')}'}${e.location.isEmpty ? '' : ' · ${e.location}'}',
               ),
               trailing: e.readOnly || e.providerViewOnly
                   ? const ShepIcon('lock', size: 18)
@@ -284,6 +289,14 @@ class _EventEditorState extends State<EventEditor> {
   late final location = TextEditingController(text: widget.entry?.location);
   String? error;
   bool saving = false;
+  int _formRevision = 0, _scheduleRevision = 0;
+  late (String, String) _observedText;
+  final Set<String> _submittedSources = {};
+  bool _observedSources = false;
+  late EventSchedule schedule = EventSchedule(
+    date: widget.date,
+    entry: widget.entry,
+  );
   late String sourceId =
       widget.entry?.sourceId ??
       widget.workspace.calendarSources
@@ -291,9 +304,168 @@ class _EventEditorState extends State<EventEditor> {
           .firstOrNull
           ?.id ??
       'primary';
+  bool get viewOnly {
+    final current = widget.workspace.calendarSources
+        .where((source) => source.id == sourceId)
+        .firstOrNull;
+    return widget.entry?.readOnly == true ||
+        widget.entry?.providerViewOnly == true ||
+        current?.readOnly == true ||
+        (_observedSources && current == null);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _observedSources = widget.workspace.calendarSources.isNotEmpty;
+    _observedText = (title.text, location.text);
+    title.addListener(_textChanged);
+    location.addListener(_textChanged);
+    widget.workspace.addListener(_workspaceChanged);
+  }
+
+  void _workspaceChanged() {
+    if (!mounted) return;
+    _observedSources |= widget.workspace.calendarSources.isNotEmpty;
+    setState(() {});
+  }
+
+  void _inputChanged() {
+    _formRevision++;
+    if (mounted) setState(() {});
+  }
+
+  void _textChanged() {
+    final current = (title.text, location.text);
+    if (current == _observedText) return;
+    _observedText = current;
+    _inputChanged();
+  }
+
+  void _changeSchedule(EventSchedule value) {
+    if (viewOnly) return;
+    _scheduleRevision++;
+    schedule = value;
+    _inputChanged();
+  }
+
+  Future<void> _pickDate({required bool first}) async {
+    final chosen = await showDatePicker(
+      context: context,
+      initialDate: first ? schedule.firstDate : schedule.lastDate,
+      firstDate: DateTime(1),
+      lastDate: DateTime(9999, 12, 31),
+    );
+    if (!mounted || chosen == null || viewOnly) return;
+    _changeSchedule(
+      first
+          ? schedule.copy(firstDate: chosen)
+          : schedule.copy(lastDate: chosen),
+    );
+  }
+
+  Future<void> _pickTime({required bool first}) async {
+    final time = first ? schedule.from : schedule.to;
+    final chosen = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay(hour: time.hour, minute: time.minute),
+    );
+    if (!mounted || chosen == null || viewOnly) return;
+    _changeSchedule(
+      first
+          ? schedule.copy(fromHour: chosen.hour, fromMinute: chosen.minute)
+          : schedule.copy(toHour: chosen.hour, toMinute: chosen.minute),
+    );
+  }
+
+  Future<void> _save() async {
+    if (saving || viewOnly) return;
+    final failure = title.text.trim().isEmpty
+        ? 'Enter an event title.'
+        : widget.entry != null && _scheduleRevision == 0
+        ? null
+        : schedule.error;
+    if (failure != null) {
+      setState(() => error = failure);
+      return;
+    }
+    final revision = _formRevision, entry = widget.entry;
+    final retained = entry != null && _scheduleRevision == 0;
+    final requested = CalendarEntry(
+      eventId,
+      title.text.trim(),
+      retained ? entry.start : schedule.start,
+      retained ? entry.end : schedule.end,
+      calendar: entry?.calendar ?? 'Personal',
+      sourceId: sourceId,
+      location: location.text,
+      description: entry?.description ?? '',
+      allDay: retained ? entry.allDay : schedule.allDay,
+      etag: entry?.etag,
+      remoteUrl: entry?.remoteUrl,
+    );
+    setState(() {
+      saving = true;
+      error = null;
+    });
+    _submittedSources.add(sourceId);
+    bool ok;
+    try {
+      ok = await widget.workspace.saveEvent(requested);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        saving = false;
+        error =
+            'Could not confirm whether the event was queued. Keep this form open and retry.';
+      });
+      return;
+    }
+    if (!mounted) return;
+    if (ok && revision == _formRevision) {
+      Navigator.pop(context);
+      return;
+    }
+    setState(() {
+      saving = false;
+      error = ok
+          ? 'The earlier version was queued. Your newer edits are still open.'
+          : widget.workspace.error ??
+                'The event could not be queued. Keep this form open and retry.';
+    });
+  }
+
+  Widget _scheduleButton(String label, String value, VoidCallback? choose) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: OutlinedButton(
+          onPressed: choose,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [Text(label), const SizedBox(height: 4), Text(value)],
+              ),
+            ),
+          ),
+        ),
+      );
+  Widget _schedulePair(Widget first, Widget last) => Row(
+    children: [
+      Expanded(child: first),
+      const SizedBox(width: 8),
+      Expanded(child: last),
+    ],
+  );
   @override
   void dispose() {
-    widget.workspace.releaseCalendarEditor(sourceId, eventId);
+    widget.workspace.removeListener(_workspaceChanged);
+    for (final source in {..._submittedSources, sourceId}) {
+      widget.workspace.releaseCalendarEditor(source, eventId);
+    }
     title.dispose();
     location.dispose();
     super.dispose();
@@ -302,8 +474,7 @@ class _EventEditorState extends State<EventEditor> {
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
-    final viewOnly = entry?.readOnly == true || entry?.providerViewOnly == true;
-    final day = entry?.start ?? widget.date;
+    final viewOnly = this.viewOnly;
     return AlertDialog(
       title: Text(
         viewOnly
@@ -312,63 +483,133 @@ class _EventEditorState extends State<EventEditor> {
             ? 'New event'
             : 'Edit event',
       ),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              entry == null || entry.allDay
-                  ? '${day.day}/${day.month}/${day.year} · All day'
-                  : '${day.day}/${day.month}/${day.year} · ${day.hour.toString().padLeft(2, '0')}:${day.minute.toString().padLeft(2, '0')}',
-            ),
-            if (entry == null &&
-                widget.workspace.calendarSources.any(
-                  (source) => !source.readOnly,
-                )) ...[
+      content: SizedBox(
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${schedule.firstDate.day}/${schedule.firstDate.month}/${schedule.firstDate.year} · ${schedule.allDay ? 'All day' : '${schedule.from.hour.toString().padLeft(2, '0')}:${schedule.from.minute.toString().padLeft(2, '0')}'}',
+              ),
+              if (entry?.providerViewOnly == true) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Recurring CalDAV events are view-only because this device cannot safely change a single occurrence.',
+                ),
+              ],
+              if (viewOnly && entry?.providerViewOnly != true)
+                const Text(
+                  'This calendar is read-only or no longer available.',
+                ),
+              if (entry == null &&
+                  widget.workspace.calendarSources.any(
+                    (source) => !source.readOnly,
+                  )) ...[
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  icon: const ShepIcon('chevron-down', size: 18),
+                  initialValue:
+                      widget.workspace.calendarSources.any(
+                        (source) => source.id == sourceId,
+                      )
+                      ? sourceId
+                      : null,
+                  decoration: InputDecoration(
+                    labelText: 'Calendar',
+                    helperText: _submittedSources.isEmpty
+                        ? null
+                        : 'This save stays with this calendar.',
+                  ),
+                  items: widget.workspace.calendarSources
+                      .map(
+                        (source) => DropdownMenuItem(
+                          value: source.id,
+                          enabled: !source.readOnly,
+                          child: Text(source.name),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: saving || _submittedSources.isNotEmpty
+                      ? null
+                      : (value) {
+                          if (_submittedSources.isNotEmpty) return;
+                          sourceId = value ?? sourceId;
+                          _inputChanged();
+                        },
+                ),
+              ],
               const SizedBox(height: 16),
-              DropdownButtonFormField<String>(
-                initialValue: sourceId,
-                decoration: const InputDecoration(labelText: 'Calendar'),
-                items: widget.workspace.calendarSources
-                    .where((source) => !source.readOnly)
-                    .map(
-                      (source) => DropdownMenuItem(
-                        value: source.id,
-                        child: Text(source.name),
-                      ),
-                    )
-                    .toList(),
-                onChanged: saving
+              TextField(
+                controller: title,
+                readOnly: viewOnly,
+                decoration: const InputDecoration(labelText: 'Event title'),
+              ),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('All day'),
+                value: schedule.allDay,
+                onChanged: viewOnly
                     ? null
-                    : (value) => setState(() => sourceId = value ?? sourceId),
+                    : (value) => _changeSchedule(schedule.copy(allDay: value)),
               ),
-            ],
-            const SizedBox(height: 16),
-            TextField(
-              controller: title,
-              readOnly: viewOnly,
-              decoration: const InputDecoration(labelText: 'Event title'),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: location,
-              readOnly: viewOnly,
-              decoration: const InputDecoration(labelText: 'Location'),
-            ),
-            if (entry?.providerViewOnly == true) ...[
+              _schedulePair(
+                _scheduleButton(
+                  'Start date',
+                  '${schedule.firstDate.day}/${schedule.firstDate.month}/${schedule.firstDate.year}',
+                  viewOnly ? null : () => _pickDate(first: true),
+                ),
+                _scheduleButton(
+                  'Last date',
+                  '${schedule.lastDate.day}/${schedule.lastDate.month}/${schedule.lastDate.year}',
+                  viewOnly ? null : () => _pickDate(first: false),
+                ),
+              ),
+              if (!schedule.allDay) ...[
+                _schedulePair(
+                  _scheduleButton(
+                    'From',
+                    '${schedule.from.hour.toString().padLeft(2, '0')}:${schedule.from.minute.toString().padLeft(2, '0')}',
+                    viewOnly ? null : () => _pickTime(first: true),
+                  ),
+                  _scheduleButton(
+                    'To',
+                    '${schedule.to.hour.toString().padLeft(2, '0')}:${schedule.to.minute.toString().padLeft(2, '0')}',
+                    viewOnly ? null : () => _pickTime(first: false),
+                  ),
+                ),
+                const Text('Times use this device’s local time zone.'),
+              ],
               const SizedBox(height: 16),
-              const Text(
-                'Recurring CalDAV events are view-only because this device cannot safely change a single occurrence.',
+              TextField(
+                controller: location,
+                readOnly: viewOnly,
+                decoration: const InputDecoration(labelText: 'Location'),
               ),
+              if (error != null)
+                Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              if (_submittedSources.isNotEmpty)
+                const Text(
+                  'Queued events remain in Calendar when this form closes.',
+                ),
             ],
-            if (error != null) Text(error!),
-          ],
+          ),
         ),
       ),
       actions: [
         TextButton(
-          onPressed: saving ? null : () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          onPressed: () => Navigator.pop(context),
+          child: Text(
+            _submittedSources.isEmpty && !saving ? 'Cancel' : 'Close',
+          ),
         ),
         if (entry != null && !viewOnly)
           TextButton(
@@ -393,39 +634,7 @@ class _EventEditorState extends State<EventEditor> {
           ),
         if (!viewOnly)
           FilledButton(
-            onPressed: saving
-                ? null
-                : () async {
-                    if (title.text.trim().isEmpty) {
-                      setState(() => error = 'Enter an event title.');
-                      return;
-                    }
-                    setState(() => saving = true);
-                    final ok = await widget.workspace.saveEvent(
-                      CalendarEntry(
-                        eventId,
-                        title.text.trim(),
-                        day,
-                        entry?.end ?? day.add(const Duration(days: 1)),
-                        calendar: entry?.calendar ?? 'Personal',
-                        sourceId: entry?.sourceId ?? sourceId,
-                        location: location.text,
-                        description: entry?.description ?? '',
-                        allDay: entry?.allDay ?? true,
-                        etag: entry?.etag,
-                        remoteUrl: entry?.remoteUrl,
-                      ),
-                    );
-                    if (!context.mounted) return;
-                    if (ok) {
-                      Navigator.pop(context);
-                    } else {
-                      setState(() {
-                        error = widget.workspace.error;
-                        saving = false;
-                      });
-                    }
-                  },
+            onPressed: saving ? null : _save,
             child: const Text('Save event'),
           ),
       ],
