@@ -18,8 +18,8 @@ if [[ "$shep_phase" == backend ]]; then
   else
     shep_required_status=$?
   fi
-  mkdir -p artifacts/diagnostics/backend
-  if SHEP_PERFORMANCE_MODE=diagnostic SHEP_BENCH_REPORT_DIR=artifacts/diagnostics/backend \
+  if mkdir -p artifacts/diagnostics/backend && \
+    SHEP_PERFORMANCE_MODE=diagnostic SHEP_BENCH_REPORT_DIR=artifacts/diagnostics/backend \
     RUST_LOG=shep::query_timing=debug cargo bench --locked --features test-support --bench responsiveness \
     > artifacts/diagnostics/backend/run.log 2>&1; then
     shep_diagnostic_status=0
@@ -32,8 +32,8 @@ else
   else
     shep_required_status=$?
   fi
-  mkdir -p artifacts/diagnostics/action
-  if SHEP_PERFORMANCE_MODE=diagnostic SHEP_E2E_ARTIFACTS="$shep_root/artifacts/diagnostics/action/e2e" \
+  if mkdir -p artifacts/diagnostics/action && \
+    SHEP_PERFORMANCE_MODE=diagnostic SHEP_E2E_ARTIFACTS="$shep_root/artifacts/diagnostics/action/e2e" \
     RUST_LOG=shep::review_timing=debug,iced_tiny_skia::timing=debug \
     python3 scripts/action_latency.py --samples 20 --output artifacts/diagnostics/action/actions.json \
     > artifacts/diagnostics/action/run.log 2>&1; then

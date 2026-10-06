@@ -109,3 +109,18 @@ sys.exit(int(os.environ['TIMING_REQUIRED_EXIT' if mode == 'required' else 'TIMIN
         for phase, source in (("backend", "main"), ("unknown", SHA)):
             self.assertEqual(self.run_script(phase, source).returncode, 2)
             self.assertFalse(self.calls.exists())
+
+    def test_failed_diagnostic_directory_keeps_required_failure_and_evidence(self):
+        (self.root / "artifacts").mkdir()
+        (self.root / "artifacts/diagnostics").write_text("obstructed diagnostic directory")
+        for phase, status in (("backend", 101), ("action", 3)):
+            with self.subTest(phase=phase):
+                self.calls.unlink(missing_ok=True)
+                self.env["TIMING_REQUIRED_EXIT"] = str(status)
+                result = self.run_script(phase)
+                self.assertEqual(result.returncode, status, result.stderr)
+                calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+                self.assertEqual(len(calls), 1)
+                required = calls[0]
+                self.assertEqual(json.loads((self.root / required["report"]).read_text()), required)
+                self.assertIn("diagnostic replay exited 1", result.stderr)
