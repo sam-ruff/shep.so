@@ -165,6 +165,15 @@ retries its cleanup. Retire obsolete preparations through the existing journal,
 retain failed cleanup and fence newer selections through disposal and late replies.
 Preserve native page-copy rollback, FFI and actual failure/dismissal controls.
 
+Flutter approved bulk Undo includes pending and sending work before the first
+receipt. Cancel only pending membership and retain actual in-flight receipts for
+the inverse. Same-group Undo retries preserve the original decision revision;
+unknown replies inspect that exact journal identity before retrying. Keep bounded
+pending decisions with visible capacity recovery, and retire only the matching
+request after explicit removal. Late replies cannot resurrect removed feedback.
+Preserve explicit Undo/Resume/Retry pump wakes through the final History read,
+without automatically repeating unknown provider writes or failed steps.
+
 Flutter Preferences search uses the available-control catalogue and shared native
 WordMatcher on independent background capacity. Keep one query and its latest
 replacement, fence changed input/catalogue identities, and retain real controls

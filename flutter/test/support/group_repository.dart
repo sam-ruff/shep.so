@@ -69,7 +69,9 @@ class PreviewGroupRepository implements GroupRepository {
     for (final job in active.toList()..sort((a, b) => a.seq.compareTo(b.seq))) {
       for (final item in job.items) {
         Map<String, Object>? fields;
-        if (item.state == 'pending' || item.state == 'sending') {
+        if ((item.state == 'pending' || item.state == 'sending') &&
+            (job.state == 'running' || job.state == 'paused') &&
+            !job.undo) {
           fields = Map<String, Object>.from(
             job.fields.map((k, v) => MapEntry(k, v as Object)),
           );
@@ -269,7 +271,7 @@ class PreviewGroupRepository implements GroupRepository {
       case 'undo':
         final job = _job(command['id'] as String);
         if (job.undo) {
-          throw StateError('This group action is already being undone.');
+          return _summary(job);
         }
         if (!{'running', 'paused', 'finished'}.contains(job.state)) {
           throw StateError(

@@ -380,7 +380,9 @@ pub(crate) async fn run(profile: &MobileProfile, command: Command) -> Result<Val
             db.write(move |db| {
                 let tx = db.transaction()?;
                 let (state, undo) = job_state(&tx, &id)?;
-                ensure!(!undo, "This group action is already being undone.");
+                if undo {
+                    return summary(&tx, &id);
+                }
                 ensure!(
                     matches!(state.as_str(), "running" | "paused" | "finished"),
                     "This group action cannot be undone from its current state."

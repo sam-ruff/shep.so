@@ -1,5 +1,13 @@
 # Client parity
 
+Mobile queued bulk Undo (#49) is implemented on its lane for pending, paused and
+held-first-step work. The checked local decision removes forward projection and
+cancels only unsent items; actual late receipts retain their same-group inverse.
+Unknown replies keep exact status inspection/Retry, including visible capacity
+feedback and removal fences. The same owner preserves explicit Undo/Resume/Retry
+wakes through final History observation (#58). Native/mock, FFI, real compact
+controls and remaining integration/platform evidence are recorded in Completion.
+
 Mobile bulk History schema25 separates retained durable history from its
 20-active admission bound. The control keeps one 20-group page and one 50-item
 page, with indexed cursors and exact older recovery targets. Page generations
