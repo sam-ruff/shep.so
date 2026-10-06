@@ -43,9 +43,10 @@ the corresponding request in the main TODO.
 | Large mail | No equivalent staged incoming path or completed bounded body-cache audit | [#43](https://github.com/sam-ruff/shep.so/issues/43) |
 | External entry/export | No Shep mailto activation or Save original message control | [#44](https://github.com/sam-ruff/shep.so/issues/44) |
 | Activity | Recovery remains separated by domain without the bounded combined summary | [#45](https://github.com/sam-ruff/shep.so/issues/45) |
-| Reader metadata | Cached exact From/To and selectable Copy controls implemented; host FFI/control and compact browser-frame evidence recorded, Android/Apple execution tracked separately | [#47](https://github.com/sam-ruff/shep.so/issues/47), [completion](../COMPLETION.md) |
+| Reader metadata | Cached To is omitted and exact sender/subject/recipient Copy controls are unavailable | [#47](https://github.com/sam-ruff/shep.so/issues/47) |
 | Logical mail folders | Archive/Trash/Spam use literal names without the desktop destination lifecycle | [#48](https://github.com/sam-ruff/shep.so/issues/48) |
-| Pending bulk Undo | Controls require an acknowledged item before offering Undo for unsent work | [#49](https://github.com/sam-ruff/shep.so/issues/49) |
+| Pending bulk Undo | Undo is unavailable before the first acknowledgement, including queued and held-first-step work | [#49](https://github.com/sam-ruff/shep.so/issues/49) |
+| Bulk owner wake | Undo/Resume/Retry can lose their wake during final History observation, identified by the later independent review | [#58](https://github.com/sam-ruff/shep.so/issues/58) |
 | History bounds and identity | Item pages accumulate in Dart, older completed groups are deleted, and delayed recovery can load details for a previously selected group | [#50](https://github.com/sam-ruff/shep.so/issues/50) |
 
 ## Implemented foundations
@@ -113,6 +114,11 @@ Preferences search (#26) in [PR #55](https://github.com/sam-ruff/shep.so/pull/55
 calendar scheduling (#29) in [PR #56](https://github.com/sam-ruff/shep.so/pull/56),
 and bounded History (#50) in [PR #57](https://github.com/sam-ruff/shep.so/pull/57).
 The independent History review also identified a pre-existing executor wake
-race, now reproduced and tracked in [#58](https://github.com/sam-ruff/shep.so/issues/58)
-alongside queued Undo (#49). The delivery tracker and completion log distinguish
-these changes from the remaining open findings.
+race, reproduced in [#58](https://github.com/sam-ruff/shep.so/issues/58) and fixed
+alongside queued Undo (#49) in merged
+[PR #60](https://github.com/sam-ruff/shep.so/pull/60). Accurate cached headers
+and Copy controls (#47) are implemented in
+[PR #59](https://github.com/sam-ruff/shep.so/pull/59), with host FFI, compact
+browser and Android clipboard evidence. The delivery tracker and completion log
+distinguish these changes from the remaining open findings and Apple/provider
+verification.

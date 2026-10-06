@@ -9,6 +9,18 @@ in light and dark separately from host FFI; Apple and live provider execution
 remain open in the platform audit. See
 [completion](COMPLETION.md) for exact verification and preserved failures.
 
+**6 October mobile queued bulk Undo (#49):** Continue parity delivery with Undo
+for approved groups before any acknowledged item, including pending, paused and
+held-first-step work. Keep the immutable saved group and decision revisions;
+inspect/retry the same Undo after lost replies. Clear its forward projection from
+the checked decision while preserving newer fields and actual in-flight receipts.
+Real notice/History controls, occupied provider capacity, partial completion,
+restart and native/model regressions are required. Root owns integration and
+Android execution; selection retention and bounded History remain intact.
+Independent review additionally reproduced #58: Undo, Resume or Retry requested
+during the pump's final held History observation loses its wake. Preserve that
+checked request after observation completes, using the same existing owner.
+
 **6 October mobile bulk History (#50):** Keep one 50-item detail page and one
 20-group History page, with visible navigation to older retained records.
 Recovery controls must keep their exact group/item identity through delayed
@@ -34,9 +46,12 @@ Initial fixes are account-bound notices in
 in [PR #54](https://github.com/sam-ruff/shep.so/pull/54) and Preferences search
 in [PR #55](https://github.com/sam-ruff/shep.so/pull/55) and calendar scheduling
 in [PR #56](https://github.com/sam-ruff/shep.so/pull/56), with bounded History
-in [PR #57](https://github.com/sam-ruff/shep.so/pull/57). Reader headers,
-reply quote controls and queued Undo remain active implementation lanes;
-the tracker retains the remaining functional and platform gaps.
+in [PR #57](https://github.com/sam-ruff/shep.so/pull/57) and queued Undo in
+[PR #60](https://github.com/sam-ruff/shep.so/pull/60). Reader headers are in
+[PR #59](https://github.com/sam-ruff/shep.so/pull/59); reply quote controls and
+provider folder destinations remain active implementation lanes. The user also
+requested a separate agent investigate and fix failing CI. The tracker retains
+the remaining functional and platform gaps.
 
 **6 October mobile calendar scheduling (#29):** Native Start date, Last date,
 From, To and All day controls now support timed and multi-day events. Validation,

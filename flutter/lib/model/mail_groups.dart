@@ -10,6 +10,13 @@ class _Review {
   final SelectionCapture capture;
 }
 
+class _Undo {
+  _Undo(this.job);
+  final GroupJob job;
+  bool unknown = false, busy = false;
+  String? error;
+}
+
 /// Drives the durable group journal: one frozen review at a time, one owned
 /// step at a time, bounded History pages and explicit failure decisions.
 /// Membership stays in the repository; this controller holds counts only.
@@ -29,6 +36,20 @@ class MailGroups {
   GroupJob? attentionTarget, updatedJob;
   String? removedJob;
   int updateRevision = 0;
+  final _undos = <String, _Undo>{};
+  GroupJob? _blockedUndo;
+  bool undoPending(GroupJob job) =>
+      _undos.containsKey(job.id) || _blockedUndo?.id == job.id;
+  bool undoDeciding(GroupJob job) => _undos[job.id]?.busy == true;
+  GroupJob? get failedUndo =>
+      _blockedUndo ??
+      _undos.values.where((request) => request.error != null).firstOrNull?.job;
+  String? get undoError => _blockedUndo != null
+      ? 'Undo is catching up. Retry Undo for ${_blockedUndo!.title} after a saved decision finishes.'
+      : _undos.values
+            .where((request) => request.error != null)
+            .firstOrNull
+            ?.error;
   _Review? _review;
   GroupJob? get review => _review?.job;
   bool deciding = false;
@@ -280,6 +301,7 @@ class MailGroups {
       if (!_disposed) {
         unawaited(refreshMail());
         changed();
+        if (_pumpAgain) unawaited(pump());
       }
     }
   }
@@ -429,11 +451,60 @@ class MailGroups {
   }
 
   Future<void> undo(GroupJob job) async {
+    if (_disposed || (!job.canUndo && !_undos.containsKey(job.id))) return;
+    if (!_undos.containsKey(job.id) && _undos.length >= 32) {
+      _blockedUndo = job;
+      changed();
+      return;
+    }
+    final request = _undos.putIfAbsent(job.id, () => _Undo(job));
+    bool owns() => !_disposed && identical(_undos[job.id], request);
+    if (request.busy) return;
+    request.busy = true;
     if (completed?.id == job.id) dismiss();
-    await _command({'kind': 'undo', 'id': job.id});
-    // The decision paints the restored rows before its inverse steps run.
-    unawaited(refreshMail());
-    unawaited(pump());
+    changed();
+    try {
+      GroupJob saved;
+      final inspected = request.unknown ? await _inspect(request.job.id) : null;
+      if (!owns()) return;
+      if (inspected?.undo == true) {
+        saved = inspected!;
+      } else {
+        request.unknown = true;
+        try {
+          saved = GroupJob(
+            await repository.groups({'kind': 'undo', 'id': request.job.id})
+                as Map<String, dynamic>,
+          );
+        } catch (_) {
+          if (!owns()) return;
+          saved = await _inspect(request.job.id);
+          if (!owns()) return;
+          if (!saved.undo) {
+            request.unknown = false;
+            rethrow;
+          }
+        }
+      }
+      if (saved.id != request.job.id || !saved.undo) {
+        throw StateError('The saved group has not confirmed this Undo.');
+      }
+      if (!owns()) return;
+      _replace(saved);
+      _undos.remove(request.job.id);
+      if (_blockedUndo?.id == request.job.id) _blockedUndo = null;
+      unawaited(refreshMail());
+      unawaited(refreshHistory());
+      unawaited(pump());
+    } catch (e) {
+      if (owns()) {
+        request.error =
+            'Could not confirm Undo for ${request.job.title}. Retry checks this saved group. $e';
+      }
+    } finally {
+      request.busy = false;
+      if (!_disposed) changed();
+    }
   }
 
   Future<void> pause(GroupJob job) => _command({'kind': 'pause', 'id': job.id});
@@ -456,6 +527,8 @@ class MailGroups {
       if (_disposed) return false;
       jobs = jobs.where((j) => j.id != job.id).toList();
       activeJobs = activeJobs.where((j) => j.id != job.id).toList();
+      _undos.remove(job.id);
+      if (_blockedUndo?.id == job.id) _blockedUndo = null;
       removedJob = job.id;
       updatedJob = null;
       updateRevision++;

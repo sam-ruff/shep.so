@@ -2,6 +2,8 @@
 
 ## Mobile cached reader headers, 6 October 2026 (#47)
 
+Implementation: [PR #59](https://github.com/sam-ruff/shep.so/pull/59).
+
 Flutter carries cached To and exact From through metadata pages, confirmed alias
 rows and detail reads. Receiving-account identity has its own line. Subject,
 From, single parsed sender address and To use selectable controls with visible
@@ -41,6 +43,49 @@ capacity test without changing its data or assertions. Final analysis, native
 Clippy, formatting, strict documentation and the current-main browser rerun pass.
 Normal merge hooks gate publication. Apple and live-provider verification remain
 open.
+
+Root integration with `main` at `9939956` retains queued Undo and the History
+wake fix, passing 405 Flutter tests and all 219 native tests. The two existing
+Calendar timezone skips remain covered by the unchanged London/Los Angeles
+cases from the preceding integration. Native Clippy and Flutter analysis pass.
+Root also reviewed the three saved browser and two Android captures and the
+exact system-clipboard assertions, with the synthetic Android repository kept
+separate from host FFI evidence.
+
+## Mobile queued bulk Undo checkpoint, 6 October 2026 (#49/#58)
+
+Implementation: [PR #60](https://github.com/sam-ruff/shep.so/pull/60).
+
+Approved queued/paused/held-first-step groups now expose Undo in the notice and
+History. The checked existing local decision cancels unsent membership and clears
+forward projection while preserving sending items and their later actual receipt.
+Native same-group retries keep the original Undo revision; unknown Dart replies
+inspect that exact saved group before another request. Dedicated Retry Undo
+feedback survives close and other owner errors, with bounded pending decisions,
+visible capacity recovery and exact removal fences.
+
+Independent review also reproduced a lost owner wake (#58): Undo, Resume and
+Retry during the final held History read each left one step call instead of the
+expected second call. The failed-before log is retained. Explicit wakes now
+restart the existing pump after its final observation, without authorising an
+automatic retry of failed or uncertain provider work.
+
+Focused model/actual controls, native provider fixtures and actual Dart FFI pass.
+The native fixture holds all admission/provider slots for local queued Undo and
+holds a real first MOVE reply through Undo, receipt and restart. It also retains
+unknown replies without replay and preserves newer read/star fields. Five real
+control scenarios cover queued light/dark, paused History/held receipt, partial
+completion and lost status after close. Both compact queued captures are reviewed.
+Full checkpoint host gates pass 376 Flutter and 217 native tests, with clean
+analysis/native Clippy and pinned strict documentation. Normal checkpoint hooks
+pass. Merging main `0858706` leaves native/shared source unchanged and the final
+Flutter suite passes 395 tests, with two zone-conditional Calendar skips covered
+separately in London/Los Angeles. The first combined run hit the previously
+reported existing group FFI settle timeout; its unchanged isolated and full
+reruns pass, with the failed log retained and no timeout changes. Final merged
+analysis/documentation and merge hooks are recorded with the PR. Android,
+Apple and live-provider evidence remain separate; no performance-under-load
+claim follows from controlled held-provider tests.
 
 ## Mobile bulk History checkpoint, 6 October 2026 (#50)
 

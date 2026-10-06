@@ -31,6 +31,18 @@ Account removal takes `Operations.groups` before the account lock so no owned st
 
 ## Flutter controller and controls
 
+Approved groups offer Undo for pending or sending work before any acknowledgement,
+including the paused notice and History. The local transaction cancels pending
+items, removes forward projection and keeps sending items until their actual
+receipt can join the inverse queue. Newer individual fields remain authoritative.
+Same-group native Undo retries return its current status without advancing the
+original Undo revision. Dart retains at most 32 exact decision requests plus one
+latest capacity rejection, and inspects unknown outcomes before any retry. A
+dedicated Retry Undo notice survives History close and unrelated pump errors.
+Explicit removal clears only that group's retained request; held replies cannot
+recreate its state or feedback. Explicit Undo/Resume/Retry wakes received during
+the pump's final History read start the same owner again after it becomes idle.
+
 `model/group_history.dart` owns one 20-group page and one 50-item page, with
 visible Newer/Older groups and Previous/Next messages controls. Indexed native
 cursors report exact last pages and retain surviving boundary rows after

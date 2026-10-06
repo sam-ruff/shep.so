@@ -79,7 +79,10 @@ class GroupJob {
   bool get finished => state == 'finished';
   bool get paused => state == 'paused';
   bool get inReview => state == 'review' || state == 'staging';
-  bool get canUndo => !undo && (active || finished) && count('done') > 0;
+  bool get canUndo =>
+      !undo &&
+      (active || finished) &&
+      count('done') + count('pending') + count('sending') > 0;
   bool get canPause => state == 'running' || state == 'undoing';
   bool get canRemove =>
       state == 'finished' || state == 'cancelled' || state == 'interrupted';

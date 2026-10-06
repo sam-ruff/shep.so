@@ -367,6 +367,189 @@ async fn newer_individual_intent_and_applied_values_become_distinct_skips() {
 }
 
 #[tokio::test]
+async fn queued_undo_is_local_with_all_provider_capacity_held_and_retries_keep_its_revision() {
+    let (_dir, p) = profile().await;
+    seed(&p, 125).await;
+    make_imap(&p).await;
+    let provider = Scripted::new(vec![]);
+    *p.operations.provider.lock().expect("provider fixture") = Some(provider.clone());
+    let _capacity = p.operations.hold_network_capacity().await;
+    review(&p, "queued", json!({"kind":"archive"})).await;
+    approve(&p, "queued").await;
+    assert_eq!(page(&p, "Inbox").await["total"], 0);
+    groups(&p, json!({"kind":"pause","id":"queued"})).await;
+    let undone = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        groups(&p, json!({"kind":"undo","id":"queued"})),
+    )
+    .await
+    .expect("local Undo cannot wait for providers");
+    assert_eq!(undone["counts"]["cancelled"], 125);
+    assert_eq!(undone["state"], "finished");
+    assert_eq!(page(&p, "Inbox").await["total"], 125);
+    let repeated = groups(&p, json!({"kind":"undo","id":"queued"})).await;
+    assert_eq!(repeated["revision"], undone["revision"]);
+    assert_eq!(provider.moves.load(Ordering::SeqCst), 0);
+    assert_eq!(step(&p, None).await["idle"], true);
+}
+
+#[tokio::test]
+async fn held_first_acknowledgement_joins_the_same_inverse_after_undo_and_restart() {
+    let (dir, p) = profile().await;
+    seed(&p, 4).await;
+    make_imap(&p).await;
+    let provider = Scripted::new(vec![]);
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *provider.gate.lock().expect("gate fixture") = Some(gate.clone());
+    *p.operations.provider.lock().expect("provider fixture") = Some(provider.clone());
+    review(&p, "held", json!({"kind":"archive"})).await;
+    approve(&p, "held").await;
+    let held = {
+        let profile = crate::api::MobileProfile {
+            database: p.database.clone(),
+            operations: p.operations.clone(),
+        };
+        tokio::spawn(async move { step(&profile, Some("secret")).await })
+    };
+    provider.started.notified().await;
+    let before = groups(&p, json!({"kind":"inspect","id":"held"})).await;
+    assert_eq!(before["counts"]["sending"], 1);
+    assert!(before["counts"]["done"].is_null());
+    let undone = groups(&p, json!({"kind":"undo","id":"held"})).await;
+    assert_eq!(undone["counts"]["cancelled"], 3);
+    assert_eq!(undone["counts"]["sending"], 1);
+    assert_eq!(page(&p, "Inbox").await["total"], 4);
+    assert_eq!(provider.moves.load(Ordering::SeqCst), 1);
+    let sending = items(&p, "held", None).await["rows"]
+        .as_array()
+        .expect("frozen rows")
+        .iter()
+        .find(|row| row["state"] == "sending")
+        .expect("in-flight item")["mail"]
+        .clone();
+    request(
+        &p,
+        json!({"op":"mutate","id":sending,"starred":true,"unread":false}),
+    )
+    .await;
+    *provider.gate.lock().expect("release fixture") = None;
+    gate.notify_one();
+    assert_eq!(held.await.expect("provider task")["outcome"], "done");
+    let acknowledged = groups(&p, json!({"kind":"inspect","id":"held"})).await;
+    assert_eq!(acknowledged["counts"]["undoing"], 1);
+    assert_eq!(page(&p, "Inbox").await["total"], 4);
+    drop(p);
+    let reopened = crate::api::MobileProfile::open(
+        dir.path()
+            .join("mail.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .await
+    .expect("reopen cache");
+    *reopened
+        .operations
+        .provider
+        .lock()
+        .expect("reopened provider") = Some(provider.clone());
+    let inspected = groups(&reopened, json!({"kind":"inspect","id":"held"})).await;
+    let repeated = groups(&reopened, json!({"kind":"undo","id":"held"})).await;
+    assert_eq!(repeated["revision"], inspected["revision"]);
+    let inverse = run_all(&reopened, Some("secret")).await;
+    assert_eq!(outcomes(&inverse, "undone"), 1);
+    assert_eq!(provider.moves.load(Ordering::SeqCst), 2);
+    assert_eq!(page(&reopened, "Inbox").await["total"], 4);
+    let rows = page(&reopened, "Inbox").await;
+    let newer = rows["mail"]
+        .as_array()
+        .expect("metadata rows")
+        .iter()
+        .find(|row| row["id"] == sending)
+        .expect("newer mail");
+    assert_eq!(newer["starred"], true);
+    assert_eq!(newer["unread"], false);
+    assert_eq!(provider.flags.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn undo_during_an_unknown_first_reply_retains_attention_without_replaying_after_restart() {
+    let (dir, p) = profile().await;
+    seed(&p, 3).await;
+    make_imap(&p).await;
+    let provider = Scripted::new(vec![Err("lost provider reply".into())]);
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *provider.gate.lock().expect("gate fixture") = Some(gate.clone());
+    *p.operations.provider.lock().expect("provider fixture") = Some(provider.clone());
+    review(&p, "unknown", json!({"kind":"archive"})).await;
+    approve(&p, "unknown").await;
+    let held = {
+        let profile = crate::api::MobileProfile {
+            database: p.database.clone(),
+            operations: p.operations.clone(),
+        };
+        tokio::spawn(async move { step(&profile, Some("secret")).await })
+    };
+    provider.started.notified().await;
+    groups(&p, json!({"kind":"undo","id":"unknown"})).await;
+    gate.notify_one();
+    assert_eq!(held.await.expect("provider task")["outcome"], "uncertain");
+    let saved = groups(&p, json!({"kind":"inspect","id":"unknown"})).await;
+    assert_eq!(saved["undo"], true);
+    assert_eq!(saved["counts"]["uncertain"], 1);
+    assert_eq!(saved["counts"]["cancelled"], 2);
+    assert!(run_all(&p, Some("secret")).await.is_empty());
+    drop(p);
+    let reopened = crate::api::MobileProfile::open(
+        dir.path()
+            .join("mail.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .await
+    .expect("reopen cache");
+    *reopened
+        .operations
+        .provider
+        .lock()
+        .expect("reopened provider") = Some(provider.clone());
+    let before = groups(&reopened, json!({"kind":"inspect","id":"unknown"})).await;
+    let repeated = groups(&reopened, json!({"kind":"undo","id":"unknown"})).await;
+    assert_eq!(repeated["revision"], before["revision"]);
+    assert_eq!(repeated["counts"]["uncertain"], 1);
+    assert!(run_all(&reopened, Some("secret")).await.is_empty());
+    assert_eq!(provider.moves.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn queued_undo_preserves_newer_local_fields_without_dispatch() {
+    let (_dir, p) = profile().await;
+    seed(&p, 4).await;
+    let id = page(&p, "Inbox").await["mail"][0]["id"].clone();
+    review(&p, "flag", json!({"kind":"flag"})).await;
+    approve(&p, "flag").await;
+    request(
+        &p,
+        json!({"op":"mutate","id":id,"starred":true,"unread":false}),
+    )
+    .await;
+    groups(&p, json!({"kind":"undo","id":"flag"})).await;
+    let rows = page(&p, "Inbox").await;
+    let newer = rows["mail"]
+        .as_array()
+        .expect("metadata rows")
+        .iter()
+        .find(|row| row["id"] == id)
+        .expect("newer mail");
+    assert_eq!(newer["starred"], true);
+    assert_eq!(newer["unread"], false);
+    assert_eq!(
+        groups(&p, json!({"kind":"inspect","id":"flag"})).await["counts"]["cancelled"],
+        4
+    );
+    assert!(run_all(&p, None).await.is_empty());
+}
+
+#[tokio::test]
 async fn undo_cancels_unsent_steps_and_reverses_receipts_to_their_baseline() {
     let (_dir, p) = profile().await;
     seed(&p, 6).await;
@@ -408,11 +591,9 @@ async fn undo_cancels_unsent_steps_and_reverses_receipts_to_their_baseline() {
         .find(|r| r["state"] == "cancelled")
         .unwrap();
     assert_eq!(cancelled["reason"], "Cancelled before sending");
-    assert!(
-        group_failure(&p, json!({"kind":"undo","id":"delete"}))
-            .await
-            .contains("already")
-    );
+    let repeated = groups(&p, json!({"kind":"undo","id":"delete"})).await;
+    assert_eq!(repeated["revision"], finished["revision"]);
+    assert_eq!(repeated["counts"], finished["counts"]);
 }
 
 #[tokio::test]
