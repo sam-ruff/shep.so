@@ -94,6 +94,18 @@ CREATE INDEX IF NOT EXISTS group_item_mail ON group_items(mail,state);
 CREATE INDEX IF NOT EXISTS group_item_account ON group_items(account,state);
 CREATE INDEX IF NOT EXISTS group_item_active ON group_items(state,job) WHERE state IN ('pending','sending','undoing','reversing');
 CREATE INDEX IF NOT EXISTS group_item_attention ON group_items(state,job) WHERE state IN ('failed','uncertain','undo_failed','undo_uncertain');
+CREATE TABLE IF NOT EXISTS logical_mail_destinations(
+ owner_kind TEXT NOT NULL CHECK(owner_kind IN ('individual','group')),owner TEXT NOT NULL,
+ account TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,role TEXT NOT NULL,
+ connection TEXT NOT NULL,creation_id TEXT NOT NULL UNIQUE,
+ phase TEXT NOT NULL DEFAULT 'queued',target TEXT,candidate TEXT,error TEXT,
+ revision INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(owner_kind,owner,account)
+);
+CREATE INDEX IF NOT EXISTS logical_destination_account ON logical_mail_destinations(account,owner_kind,owner);
+CREATE TRIGGER IF NOT EXISTS logical_destination_action_delete AFTER DELETE ON individual_mail_actions BEGIN
+ DELETE FROM logical_mail_destinations WHERE owner_kind='individual' AND owner=old.id AND NOT EXISTS(SELECT 1 FROM folder_creations f WHERE f.id=creation_id AND f.status IN ('queued','waiting','planning'));
+ UPDATE logical_mail_destinations SET phase='cancelled',error=NULL,revision=revision+1 WHERE owner_kind='individual' AND owner=old.id;
+END;
 CREATE TABLE IF NOT EXISTS calendar_events(source_id TEXT NOT NULL,id TEXT NOT NULL,event TEXT NOT NULL,PRIMARY KEY(source_id,id));
 CREATE TABLE IF NOT EXISTS calendar_connections(id TEXT PRIMARY KEY,config TEXT NOT NULL,credential_slot TEXT NOT NULL UNIQUE,revision INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS calendar_connection_attempts(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL,request TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('prepared','probing','waiting','active','cancelled')),error TEXT,created INTEGER NOT NULL);
@@ -111,5 +123,5 @@ CREATE TABLE IF NOT EXISTS calendar_intents(source_id TEXT NOT NULL,event_id TEX
 CREATE INDEX IF NOT EXISTS calendar_action_status ON calendar_actions(status,created,id);
 CREATE INDEX IF NOT EXISTS calendar_action_history ON calendar_actions(created DESC,id);
 CREATE INDEX IF NOT EXISTS calendar_action_attention ON calendar_actions(created DESC,id) WHERE status NOT IN ('succeeded','cancelled');
-PRAGMA user_version=26;
+PRAGMA user_version=28;
 COMMIT;

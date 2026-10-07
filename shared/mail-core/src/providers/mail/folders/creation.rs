@@ -307,19 +307,35 @@ impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + std::fmt::
         self.ensure_folder_exact(&target.name).await
     }
 
+    /// Creates an ordinary folder; any role on the saved target is ignored.
     pub async fn create_planned_folder(&mut self, target: &Mailbox) -> CreateOutcome {
+        self.create_planned(target, None).await
+    }
+
+    /// Creates a logical destination with its special use when the server
+    /// advertises CREATE-SPECIAL-USE.
+    pub async fn create_planned_role_folder(&mut self, target: &Mailbox) -> CreateOutcome {
+        self.create_planned(target, target.role).await
+    }
+
+    async fn create_planned(
+        &mut self,
+        target: &Mailbox,
+        role: Option<FolderRole>,
+    ) -> CreateOutcome {
         if self.encoding != target.encoding {
             return CreateOutcome::Rejected(
                 "The server's folder encoding changed. Refresh the saved request.".into(),
             );
         }
-        connection(
-            &mut self.session,
-            self.encoding,
-            self.extensions.without_special_use(),
-        )
-        .create(target.name.clone(), None)
-        .await
+        let extensions = if role.is_some() {
+            self.extensions
+        } else {
+            self.extensions.without_special_use()
+        };
+        connection(&mut self.session, self.encoding, extensions)
+            .create(target.name.clone(), role)
+            .await
     }
 
     pub async fn find_planned_folder(
@@ -635,6 +651,69 @@ mod tests {
             },
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn planned_logical_roles_need_advertised_special_use_and_generic_creation_stays_plain() {
+        for (capabilities, role, logical, command) in [
+            (
+                "* CAPABILITY IMAP4rev1 CREATE-SPECIAL-USE\r\n$TAG OK done\r\n",
+                None,
+                true,
+                "CREATE \"INBOX.Archive\"",
+            ),
+            (
+                "* CAPABILITY IMAP4rev1\r\n$TAG OK done\r\n",
+                Some(FolderRole::Archive),
+                true,
+                "CREATE \"INBOX.Archive\"",
+            ),
+            (
+                "* CAPABILITY IMAP4rev1 CREATE-SPECIAL-USE\r\n$TAG OK done\r\n",
+                Some(FolderRole::Archive),
+                true,
+                "CREATE \"INBOX.Archive\" (USE (\\Archive))",
+            ),
+            // Desktop and gateway callers keep plain CREATE even when a
+            // client-supplied target carries a role.
+            (
+                "* CAPABILITY IMAP4rev1 CREATE-SPECIAL-USE\r\n$TAG OK done\r\n",
+                Some(FolderRole::Archive),
+                false,
+                "CREATE \"INBOX.Archive\"",
+            ),
+        ] {
+            script(
+                vec![
+                    ("CAPABILITY", capabilities),
+                    (command, "$TAG OK created\r\n"),
+                ],
+                async move |folders| {
+                    let capabilities = folders
+                        .session
+                        .capabilities()
+                        .await
+                        .expect("advertised capabilities");
+                    folders.extensions = Extensions::from(&capabilities);
+                    let target = Mailbox {
+                        name: "INBOX.Archive".into(),
+                        delimiter: Some('.'),
+                        selectable: true,
+                        encoding: NameEncoding::ImapUtf7,
+                        no_inferiors: false,
+                        non_existent: false,
+                        role,
+                    };
+                    let outcome = if logical {
+                        folders.create_planned_role_folder(&target).await
+                    } else {
+                        folders.create_planned_folder(&target).await
+                    };
+                    assert!(matches!(outcome, CreateOutcome::Acknowledged));
+                },
+            )
+            .await;
+        }
     }
 
     #[tokio::test]

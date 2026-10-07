@@ -25,8 +25,34 @@ class MailActivity {
   Map<String, Object> get fields {
     final fields = Map<String, dynamic>.from(data['fields'] as Map)
       ..removeWhere((_, value) => value == null);
+    fields.remove('logical_role');
     if (fields['folder'] == 'INBOX') fields['folder'] = 'Inbox';
     return Map<String, Object>.from(fields);
+  }
+
+  String? get logicalRole =>
+      (data['logical_role'] ?? (data['fields'] as Map?)?['logical_role'])
+          as String?;
+
+  /// The folder request a waiting logical action depends on.
+  String? get folderCreation => data['folder_creation'] as String?;
+
+  String get pendingLabel => status != 'waiting'
+      ? 'Mail change waiting to sync'
+      : folderCreation != null
+      ? 'Mail change waiting for its destination folder'
+      : 'Mail change waiting for connection';
+
+  Map<String, Object> get requestedFields {
+    final requested = fields;
+    final folder = switch (logicalRole) {
+      'archive' => 'Archive',
+      'trash' => 'Trash',
+      'spam' => 'Spam',
+      _ => null,
+    };
+    if (folder != null) requested['folder'] = folder;
+    return requested;
   }
 
   bool get needsReview =>
@@ -63,6 +89,23 @@ abstract interface class DurableMutationRepository {
     String actionId,
   );
   Future<void> cancelAdmittedMutation(String actionId);
+}
+
+abstract interface class LogicalMutationRepository
+    implements DurableMutationRepository {
+  Future<void> admitLogicalMutation(
+    String id,
+    Map<String, Object> fields,
+    String actionId,
+    String observedLineage,
+    String role,
+  );
+  Future<Map<String, Object>> executeLogicalMutation(
+    String id,
+    Map<String, Object> fields,
+    String actionId,
+    String role,
+  );
 }
 
 class CalendarActivity {

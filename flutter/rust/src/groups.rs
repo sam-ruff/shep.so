@@ -1168,6 +1168,7 @@ async fn step(
             folder: fields.folder.clone(),
             unread: fields.unread,
             starred: fields.starred,
+            logical_role: None,
             intent: false,
             report: false,
         },

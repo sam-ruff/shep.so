@@ -584,7 +584,7 @@ async fn schema_twenty_three_creation_rows_upgrade_without_new_dispatch_authorit
             assert!(saved.mutation.is_none());
             assert_eq!(
                 db.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?,
-                26
+                28
             );
             Ok(())
         })

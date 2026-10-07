@@ -318,6 +318,7 @@ pub fn recover(db: &Connection) -> Result<()> {
 pub fn apply_receipt(db: &mut Connection, job: &Creation) -> Result<Creation> {
     let tx = db.transaction()?;
     checked_account(&tx, job)?;
+    crate::destinations::allow_cache(&tx, &job.id)?;
     let mailbox = job
         .receipt
         .as_ref()
@@ -348,6 +349,7 @@ pub fn apply_receipt(db: &mut Connection, job: &Creation) -> Result<Creation> {
         .unwrap_or_default();
     catalogue.retain(|value| value.name != mailbox.name);
     catalogue.push(mailbox.clone());
+    refresh_role_names(&tx, &job.account, &catalogue)?;
     tx.execute("INSERT INTO folder_catalogues(account_id,mailboxes) VALUES(?1,?2) ON CONFLICT(account_id) DO UPDATE SET mailboxes=excluded.mailboxes", params![job.account,serde_json::to_string(&catalogue)?])?;
     let mut after = job.clone();
     after.status = "succeeded".into();
@@ -355,6 +357,44 @@ pub fn apply_receipt(db: &mut Connection, job: &Creation) -> Result<Creation> {
     let saved = save(&tx, job, &after)?;
     tx.commit()?;
     Ok(saved)
+}
+
+pub(crate) fn admit_destination(
+    db: &Connection,
+    destination: &crate::destinations::Destination,
+    target: &Mailbox,
+) -> Result<Creation> {
+    uuid::Uuid::parse_str(&destination.creation)
+        .context("The destination request identity is invalid.")?;
+    shep_mail_core::folder_actions::creation::valid_path(&target.name)?;
+    anyhow::ensure!(
+        crate::destinations::owns(db, destination)?,
+        "This mail destination no longer owns its action."
+    );
+    changes::available(db, &destination.account)?;
+    if let Some(saved) = get(db, &destination.creation)? {
+        anyhow::ensure!(
+            saved.account == destination.account
+                && saved.connection == destination.connection
+                && saved.target.as_ref() == Some(target),
+            "The saved destination prerequisite changed."
+        );
+        return Ok(saved);
+    }
+    let active: i64 = db.query_row("SELECT COUNT(*) FROM (SELECT 1 FROM folder_creations INDEXED BY folder_creation_active WHERE status IN ('queued','waiting','planning','running','checking','repair','rejected','uncertain') LIMIT 32)", [], |row|row.get(0))?;
+    anyhow::ensure!(
+        active < 32,
+        "Folder requests are catching up. Review Folder activity before continuing this action."
+    );
+    // A refused CREATE made no folder, so a reviewed retry may plan again.
+    let duplicate: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM folder_creations INDEXED BY folder_creation_active WHERE account_id=?1 AND connection=?2 AND status IN ('queued','waiting','planning','running','checking','repair','rejected','uncertain') AND NOT (status='rejected' AND acknowledged=0) AND (json_extract(target,'$.name')=?3 OR (target IS NULL AND parent IS NULL AND name=?4)))", params![destination.account,destination.connection,target.name,destination.role.requested()], |row|row.get(0))?;
+    anyhow::ensure!(
+        !duplicate,
+        "This destination has another saved folder request. Review Folder activity before continuing."
+    );
+    db.execute("INSERT INTO folder_creations(id,account_id,connection,parent,name,status,target,created) VALUES(?1,?2,?3,NULL,?4,'queued',?5,?6)",
+        params![destination.creation,destination.account,destination.connection,destination.role.requested(),serde_json::to_string(target)?,chrono::Utc::now().timestamp_millis()])?;
+    get(db, &destination.creation)?.context("The destination folder request was not saved.")
 }
 
 pub fn save_catalogue(db: &Connection, account: &str, folders: &[Mailbox]) -> Result<()> {
@@ -366,5 +406,13 @@ pub fn save_catalogue(db: &Connection, account: &str, folders: &[Mailbox]) -> Re
         .collect();
     db.execute("INSERT INTO folders VALUES(?1,?2) ON CONFLICT(account_id) DO UPDATE SET names=excluded.names",params![account,serde_json::to_string(&names)?])?;
     db.execute("INSERT INTO folder_catalogues VALUES(?1,?2) ON CONFLICT(account_id) DO UPDATE SET mailboxes=excluded.mailboxes",params![account,serde_json::to_string(folders)?])?;
+    refresh_role_names(db, account, folders)?;
+    Ok(())
+}
+
+fn refresh_role_names(db: &Connection, account: &str, catalogue: &[Mailbox]) -> Result<()> {
+    let encoded = serde_json::to_string(catalogue)?;
+    db.execute("DELETE FROM folder_role_names WHERE account_id=?1 AND (observed=0 OR NOT EXISTS(SELECT 1 FROM json_each(?2) m WHERE json_extract(m.value,'$.name')=folder_role_names.name AND COALESCE(json_extract(m.value,'$.encoding'),'Utf8')=folder_role_names.encoding AND json_extract(m.value,'$.selectable')=1 AND COALESCE(json_extract(m.value,'$.non_existent'),0)=0) OR EXISTS(SELECT 1 FROM json_each(?2) m WHERE json_extract(m.value,'$.role')=folder_role_names.role AND json_extract(m.value,'$.selectable')=1 AND COALESCE(json_extract(m.value,'$.non_existent'),0)=0))",params![account,encoded])?;
+    db.execute("INSERT OR REPLACE INTO folder_role_names(account_id,role,name,encoding,observed) SELECT ?1,json_extract(m.value,'$.role'),json_extract(m.value,'$.name'),COALESCE(json_extract(m.value,'$.encoding'),'Utf8'),0 FROM json_each(?2) m WHERE json_extract(m.value,'$.role') IN ('Archive','Trash','Junk') AND json_extract(m.value,'$.selectable')=1 AND COALESCE(json_extract(m.value,'$.non_existent'),0)=0",params![account,encoded])?;
     Ok(())
 }

@@ -44,7 +44,7 @@ the corresponding request in the main TODO.
 | External entry/export | No Shep mailto activation or Save original message control | [#44](https://github.com/sam-ruff/shep.so/issues/44) |
 | Activity | Recovery remains separated by domain without the bounded combined summary | [#45](https://github.com/sam-ruff/shep.so/issues/45) |
 | Reader metadata | Cached To is omitted and exact sender/subject/recipient Copy controls are unavailable | [#47](https://github.com/sam-ruff/shep.so/issues/47) |
-| Logical mail folders | Archive/Trash/Spam use literal names without the desktop destination lifecycle | [#48](https://github.com/sam-ruff/shep.so/issues/48) |
+| Logical mail folders | Individual Archive/Trash/Spam resolve provider folders on the #48 lane; group Archive/Delete still use literal names until #64 merges | [#48](https://github.com/sam-ruff/shep.so/issues/48) |
 | Pending bulk Undo | Undo is unavailable before the first acknowledgement, including queued and held-first-step work | [#49](https://github.com/sam-ruff/shep.so/issues/49) |
 | Bulk owner wake | Undo/Resume/Retry can lose their wake during final History observation, identified by the later independent review | [#58](https://github.com/sam-ruff/shep.so/issues/58) |
 | History bounds and identity | Item pages accumulate in Dart, older completed groups are deleted, and delayed recovery can load details for a previously selected group | [#50](https://github.com/sam-ruff/shep.so/issues/50) |

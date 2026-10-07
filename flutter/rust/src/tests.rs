@@ -71,7 +71,7 @@ async fn schema25_upgrade_preserves_exact_reply_payloads_and_current_legacy_auto
             ))
         })
         .await?;
-    assert_eq!(version, 26);
+    assert_eq!(version, 28);
     assert_eq!(preserved, exact);
     assert_eq!(flat, legacy);
     assert_eq!(bytes, [0, 255, 13, 10]);

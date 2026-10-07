@@ -1,5 +1,25 @@
 # Conversation request audit
 
+**6 October mobile provider destinations (#48):** Continue parity delivery for
+individual and bulk Archive, Trash and Spam. Preserve Sam's cached catalogue first,
+LIST before first sync and uncached literal candidate on failed LIST policy.
+Validate selectable special-use and namespaced destinations before dispatch,
+freezing exact physical/encoded targets without adding new account settings.
+Missing CREATE must use an admitted durable plan and receipt before MOVE; unknown
+replies cannot infer success from LIST or authorise automatic repeats. Preserve
+local admission before credentials/capacity, POP3 local semantics, newer fields,
+receipt/cache recovery and removed/reconnected/source-replacement fences. Native
+mock, actual FFI and mobile controls must cover rejection, lost acknowledgement,
+restart and held races. Cross-account/ranked chooser work remains #31; CI belongs
+to another lane and the root coordinates Android ownership and final integration.
+Immediate account removal while provider owners are held is tracked separately
+in #62; provider-folder work retains existing removal guards and stale-dispatch
+fences. Schema26 belongs to reply writer protection; destination/lineage work
+uses schema28 after group receipt/source-ownership prerequisite #64 (schema27),
+and must integrate both earlier migrations before publication. The individual
+action lane is ready for review; group destinations wait for #64 to merge and
+stay open in TODO.
+
 **6 October reply-original delivery (#30):** Mobile Reply and Reply all gain a
 per-draft Include original message control and searchable new-reply default.
 Typed text remains independent of the saved original through files, autosave,

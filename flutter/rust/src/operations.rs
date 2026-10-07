@@ -541,6 +541,8 @@ pub enum Request {
         folder: Option<String>,
         unread: Option<bool>,
         starred: Option<bool>,
+        #[serde(default)]
+        logical_role: Option<crate::destinations::Role>,
     },
     Drafts,
     DraftFiles {
@@ -1086,7 +1088,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let (summary,text,raw)=db.read(move |db| {
                 let mut summary=stored_mail(db,&id)?;
                 let desired:Option<(Option<String>,Option<bool>,Option<bool>)>=db.query_row(
-                    "SELECT MAX(CASE WHEN mi.field='folder' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.folder') END),MAX(CASE WHEN mi.field='unread' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.unread') END),MAX(CASE WHEN mi.field='starred' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.starred') END) FROM individual_mail_actions a JOIN mail_intents mi ON mi.mail=a.mail WHERE a.mail=?1 AND a.status IN ('queued','waiting','running','uncertain','repair') GROUP BY a.mail",
+                    "SELECT MAX(CASE WHEN mi.field='folder' AND mi.revision=a.intent_revision THEN json_extract(COALESCE(a.accepted_fields,a.fields),'$.folder') END),MAX(CASE WHEN mi.field='unread' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.unread') END),MAX(CASE WHEN mi.field='starred' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.starred') END) FROM individual_mail_actions a JOIN mail_intents mi ON mi.mail=a.mail WHERE a.mail=?1 AND a.status IN ('queued','waiting','running','uncertain','repair') GROUP BY a.mail",
                     [&summary.id],
                     |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
                 ).optional()?;
@@ -1197,9 +1199,9 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::Delivery{id} => crate::outgoing::delivery(profile, id).await,
         Request::Outbox{offset} => crate::outgoing::page(profile, offset).await,
         Request::RecoverOutgoing{id,action,confirmed} => crate::outgoing::recover(profile,id,action,confirmed).await,
-        Request::Mutate{action_id,observed_lineage,require_observation,credential_slot,id,password,folder,unread,starred} => {
+        Request::Mutate{action_id,observed_lineage,require_observation,credential_slot,id,password,folder,unread,starred,logical_role} => {
             let report=action_id.is_some();
-            mutate(profile,Mutation{action_id:action_id.unwrap_or_else(||uuid::Uuid::new_v4().to_string()),parent_action:None,observed_lineage,require_observation,credential_slot,id,password,folder,unread,starred,intent:true,report}).await
+            mutate(profile,Mutation{action_id:action_id.unwrap_or_else(||uuid::Uuid::new_v4().to_string()),parent_action:None,observed_lineage,require_observation,credential_slot,id,password,folder,unread,starred,logical_role,intent:true,report}).await
         }
         Request::Groups{command} => crate::groups::run(profile,command).await,
         Request::AdmitCalendarAction{id,mutation,subject} => db.write(move|db| {
@@ -1337,7 +1339,10 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             };
             let rows=saved.into_iter().map(|(id,mail,account,fields,status,error,created)|{
                 anyhow::ensure!(Status::parse(&status).is_some(),"This action status requires a newer Shep version.");
-                Ok(json!({"id":id,"mail":mail,"account":account,"fields":serde_json::from_str::<Value>(&fields)?,"status":status,"error":error,"created":created}))
+                let destination:Option<(String,Option<String>)>=db.query_row("SELECT role,CASE WHEN phase IN ('creating','blocked') THEN creation_id END FROM logical_mail_destinations WHERE owner_kind='individual' AND owner=?1",[&id],|row|Ok((row.get(0)?,row.get(1)?))).optional()?;
+                let (role,creation)=destination.map_or((None,None),|(role,creation)|(Some(role),creation));
+                let creation=creation.filter(|_|status=="waiting");
+                Ok(json!({"id":id,"mail":mail,"account":account,"fields":serde_json::from_str::<Value>(&fields)?,"logical_role":role.map(|role|serde_json::from_str::<Value>(&role)).transpose()?,"folder_creation":creation,"status":status,"error":error,"created":created}))
             }).collect::<Result<Vec<_>>>()?;
             Ok(json!({"actions":rows}))
         }).await,
@@ -1361,7 +1366,7 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             let folder=fields.get("folder").filter(|v|!v.is_null()).map(|_|physical.get("folder").and_then(Value::as_str).map(str::to_owned).context("This older move has no saved Undo folder.")).transpose()?;
             let unread=fields.get("unread").filter(|v|!v.is_null()).map(|_|physical.get("unread").and_then(Value::as_bool).context("This older flag change has no saved Undo value.")).transpose()?;
             let starred=fields.get("starred").filter(|v|!v.is_null()).map(|_|physical.get("starred").and_then(Value::as_bool).context("This older flag change has no saved Undo value.")).transpose()?;
-            mutate(profile,Mutation{action_id:undo_id,parent_action:Some(id),observed_lineage:None,require_observation:false,credential_slot,id:mail,password,folder,unread,starred,intent:true,report:true}).await
+            mutate(profile,Mutation{action_id:undo_id,parent_action:Some(id),observed_lineage:None,require_observation:false,credential_slot,id:mail,password,folder,unread,starred,logical_role:None,intent:true,report:true}).await
         }
         Request::InspectMailAction{id,credential_slot,password} => inspect_mail_action(profile,id,credential_slot,password).await,
         request => network(profile,request).await,
@@ -1547,6 +1552,7 @@ pub(crate) struct Mutation {
     pub folder: Option<String>,
     pub unread: Option<bool>,
     pub starred: Option<bool>,
+    pub logical_role: Option<crate::destinations::Role>,
     pub intent: bool,
     pub report: bool,
 }
@@ -1691,7 +1697,14 @@ pub(crate) fn record_intent(db: &Connection, id: &str, fields: &[&str]) -> Resul
     }
     Ok(())
 }
-fn release_action_intent(db: &Connection, action: &str) -> Result<()> {
+pub(crate) const CHANGED_SOURCE: &str = "This message changed identity while the action was waiting. Refresh and review it before retrying.";
+/// The reply for an action whose saved status is already past queued/waiting.
+pub(crate) fn saved_reply(action: &str, status: &str) -> Value {
+    let warning = matches!(status, "running" | "repair" | "uncertain")
+        .then_some("This action already has an execution or recovery result.");
+    json!({"action_id":action,"status":status,"committed":matches!(status,"running"|"succeeded"|"repair"|"uncertain"),"warning":warning})
+}
+pub(crate) fn release_action_intent(db: &Connection, action: &str) -> Result<()> {
     let saved: Option<(String, String, i64)> = db
         .query_row(
             "SELECT mail,fields,intent_revision FROM individual_mail_actions WHERE id=?1",
@@ -1809,7 +1822,11 @@ pub(crate) fn observed_lineage_matches(db: &Connection, id: &str, observed: &str
         |row| row.get(0),
     )?)
 }
-fn action_source_matches(db: &Connection, message: &Mail, physical: &Value) -> Result<bool> {
+pub(crate) fn action_source_matches(
+    db: &Connection,
+    message: &Mail,
+    physical: &Value,
+) -> Result<bool> {
     if physical["account"].as_str() != Some(message.account_id.as_str()) {
         return Ok(false);
     }
@@ -1821,9 +1838,10 @@ fn action_source_matches(db: &Connection, message: &Mail, physical: &Value) -> R
 }
 fn provider_definitely_refused(error: &anyhow::Error) -> bool {
     classify_move_failure(error) == MoveFailure::Refused
-        || error
-            .chain()
-            .any(|cause| cause.is::<shep_mail_core::mail_actions::FlagsRejected>())
+        || error.chain().any(|cause| {
+            cause.is::<shep_mail_core::mail_actions::FlagsRejected>()
+                || cause.is::<shep_mail_core::mail_actions::DestinationChanged>()
+        })
 }
 #[derive(Debug)]
 struct ClaimRejected;
@@ -1834,6 +1852,29 @@ impl std::fmt::Display for ClaimRejected {
 }
 impl std::error::Error for ClaimRejected {}
 pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Result<Value> {
+    let id = mutation.action_id.clone();
+    let logical = mutation.logical_role.is_some();
+    let mut result = mutate_impl(profile, mutation).await?;
+    if logical {
+        if matches!(result["status"].as_str(), Some("queued" | "waiting")) {
+            result["committed"] = json!(false);
+        }
+        let (fields,unchanged) = profile.database.read(move |db| {
+            let saved: Option<String> = db.query_row("SELECT accepted_fields FROM individual_mail_actions WHERE id=?1 AND status IN ('running','succeeded','repair','uncertain','cancelled')", [&id], |row|row.get(0)).optional()?.flatten();
+            let unchanged:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM logical_mail_destinations d JOIN individual_mail_actions a ON a.id=d.owner WHERE d.owner_kind='individual' AND d.owner=?1 AND d.phase='unchanged' AND a.status='cancelled')",[&id],|row|row.get(0))?;
+            Ok((saved.map(|fields|serde_json::from_str::<Value>(&fields).map_err(anyhow::Error::from)).transpose()?,unchanged))
+        }).await?;
+        if let Some(fields) = fields {
+            result["applied_fields"] = fields;
+        }
+        if unchanged {
+            result["unchanged"] = json!(true);
+        }
+    }
+    Ok(result)
+}
+#[rustfmt::skip]
+async fn mutate_impl(profile: &MobileProfile, mutation: Mutation) -> Result<Value> {
     let db = &profile.database;
     let action_id = mutation.action_id.clone();
     let parent_action = mutation.parent_action.clone();
@@ -1841,7 +1882,8 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
     let require_observation = mutation.require_observation;
     let credential_slot = mutation.credential_slot.clone();
     let report = mutation.report;
-    let (id, folder, unread, starred, has_password, intent) = (
+    let logical_role = mutation.logical_role;
+    let (id, mut folder, unread, starred, has_password, intent) = (
         mutation.id.clone(),
         mutation.folder.clone(),
         mutation.unread,
@@ -1853,7 +1895,9 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
         // A local edit and the handover eligibility marker commit
         // together, before any account lock or provider admission.
         let tx=db.transaction()?;
-        let payload=serde_json::to_string(&json!({"folder":folder,"unread":unread,"starred":starred}))?;
+        let mut requested=json!({"folder":folder,"unread":unread,"starred":starred});
+        if let Some(role)=logical_role { requested["logical_role"]=serde_json::to_value(role)?; }
+        let payload=serde_json::to_string(&requested)?;
         let saved:Option<(String,String,String,i64,String,Option<String>)>=if intent {
             tx.query_row("SELECT mail,fields,physical,intent_revision,status,error FROM individual_mail_actions WHERE id=?1",[&action_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?
         } else { None };
@@ -1887,7 +1931,7 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
                 if matches!(status.as_str(),"queued"|"waiting"|"running") {
                     let frozen:Value=serde_json::from_str(&saved_physical)?;
                     if !action_source_matches(&tx,&message,&frozen)? {
-                        let warning="This message changed identity while the action was waiting. Refresh and review it before retrying.";
+                        let warning=CHANGED_SOURCE;
                         tx.execute("UPDATE individual_mail_actions SET status='rejected',error=?2 WHERE id=?1",params![&action_id,warning])?;
                         release_action_intent(&tx,&action_id)?;
                         tx.commit()?;
@@ -1934,6 +1978,10 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
                 tx.execute("INSERT INTO individual_mail_actions(id,mail,account,fields,physical,intent_revision,credential_slot,status,created) VALUES(?1,?2,?3,?4,?5,?6,?7,'queued',?8)",params![action_id,message.id,message.account_id,payload,physical,intent_revision,credential_slot,chrono::Utc::now().timestamp_millis()])?;
                 tx.execute("DELETE FROM individual_mail_actions WHERE status IN ('succeeded','cancelled') AND id NOT IN (SELECT id FROM individual_mail_actions WHERE status IN ('succeeded','cancelled') ORDER BY created DESC,id LIMIT 100)",[])?;
             }
+            if let Some(role)=logical_role {
+                anyhow::ensure!(folder.as_deref()==Some(role.local()) && unread.is_none() && starred.is_none(),"A logical destination must be its own folder action.");
+                crate::destinations::admit(&tx,"individual",&action_id,&message.account_id,role)?;
+            }
         }
         let pending:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM pending_moves WHERE id=?1)",[&message.id],|r|r.get(0))?;
         if pending && intent {
@@ -1951,6 +1999,12 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
             }
             tx.commit()?;
             return Ok(if has_password {None} else {Some(if report {json!({"action_id":action_id,"status":"waiting","requires_credentials":account.id})} else {json!({"requires_credentials":account.id})})});
+        }
+        if logical_role.is_some() {
+            let destination=crate::destinations::get(&tx,"individual",&action_id,&message.account_id)?.context("The local destination was not admitted.")?;
+            let target=crate::destinations::local(&tx,&destination)?;
+            folder=Some(target.name);
+            tx.execute("UPDATE individual_mail_actions SET accepted_fields=?2 WHERE id=?1",params![action_id,serde_json::to_string(&json!({"folder":folder,"unread":unread,"starred":starred}))?])?;
         }
         mark_local_sent_edit(&tx,&message)?;
         acknowledged_mail_write(&tx,&message.id,|| Ok(tx.execute("UPDATE mail SET folder=COALESCE(?2,folder),unread=COALESCE(?3,unread),starred=COALESCE(?4,starred) WHERE id=?1",params![message.id,folder,unread,starred])?))?;
@@ -2001,6 +2055,7 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
             folder: mutation.folder,
             unread: mutation.unread,
             starred: mutation.starred,
+            logical_role: mutation.logical_role,
         },
     )
     .await;
@@ -2208,7 +2263,9 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             mut folder,
             mut unread,
             mut starred,
+            logical_role,
         } => {
+            let mut prepared_destination = None;
             let identity = id.clone();
             let account = db
                 .read(move |db| {
@@ -2266,6 +2323,81 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                 let binding = credential_slot.clone();
                 db.read(move |db| crate::connections::check_binding(db, &id, binding.as_deref()))
                     .await?;
+            }
+            if let Some(role) = logical_role {
+                let action = action_id
+                    .clone()
+                    .context("A logical move needs its saved action identity.")?;
+                let saved = action.clone();
+                let finished = db
+                    .read(move |db| {
+                        let status: String = db.query_row(
+                            "SELECT status FROM individual_mail_actions WHERE id=?1",
+                            [&saved],
+                            |row| row.get(0),
+                        )?;
+                        Ok((!matches!(status.as_str(), "queued" | "waiting"))
+                            .then(|| saved_reply(&saved, &status)))
+                    })
+                    .await?;
+                // A duplicate request that waited for the account lock reports
+                // the saved result instead of resolving again.
+                if let Some(reply) = finished {
+                    return Ok(reply);
+                }
+                let account_id = account.id.clone();
+                let lookup = action.clone();
+                let destination = db
+                    .read(move |db| {
+                        crate::destinations::get(db, "individual", &lookup, &account_id)?
+                            .context("The logical destination was not admitted.")
+                    })
+                    .await?;
+                anyhow::ensure!(
+                    destination.role == role,
+                    "This action belongs to another logical destination."
+                );
+                let resolution = crate::destinations::provider(
+                    profile,
+                    destination,
+                    account.clone(),
+                    password
+                        .clone()
+                        .context("Reconnect this account before resolving its destination.")?,
+                )
+                .await?;
+                match resolution {
+                    crate::destinations::Resolution::Ready(target) => {
+                        if target.name == message.folder {
+                            let saved_action =
+                                action_id.clone().context("The saved action is missing.")?;
+                            let saved_account = account.id.clone();
+                            let physical = target.name.clone();
+                            let unchanged=db.write(move |db| {
+                                let tx=db.transaction()?;
+                                let destination=crate::destinations::get(&tx,"individual",&saved_action,&saved_account)?.context("The logical destination was removed.")?;
+                                if !crate::destinations::owns(&tx,&destination)? {return Ok(false);}
+                                let mail:String=tx.query_row("SELECT mail FROM individual_mail_actions WHERE id=?1",[&saved_action],|row|row.get(0))?;
+                                if stored_mail(&tx,&mail)?.folder!=physical {return Ok(false);}
+                                tx.execute("UPDATE individual_mail_actions SET status='cancelled',accepted_fields=?2,error=NULL WHERE id=?1",params![saved_action,serde_json::to_string(&json!({"folder":physical}))?])?;
+                                tx.execute("UPDATE logical_mail_destinations SET phase='unchanged',error=NULL,revision=revision+1 WHERE owner_kind='individual' AND owner=?1 AND account=?2",params![saved_action,saved_account])?;
+                                tx.commit()?;Ok(true)
+                            }).await?;
+                            if unchanged {
+                                return Ok(
+                                    json!({"action_id":action_id,"status":"cancelled","committed":false,"unchanged":true}),
+                                );
+                            }
+                        }
+                        folder = Some(target.name.clone());
+                        prepared_destination = Some(target);
+                    }
+                    outcome => {
+                        return db
+                            .write(move |db| crate::destinations::settle(db, &action, outcome))
+                            .await;
+                    }
+                }
             }
             if remote
                 && let Some(receipt) = previous
@@ -2366,8 +2498,7 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                         "SELECT status,physical,fields,intent_revision FROM individual_mail_actions WHERE id=?1",
                         [&action_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)))?;
                     if !matches!(status.as_str(),"queued"|"waiting") {
-                        let warning = matches!(status.as_str(),"running"|"repair"|"uncertain").then_some("This action already has an execution or recovery result.");
-                        return Ok((Some(json!({"action_id":action_id,"status":status,"committed":matches!(status.as_str(),"running"|"succeeded"|"repair"|"uncertain"),"warning":warning})),None));
+                        return Ok((Some(saved_reply(&action_id,&status)),None));
                     }
                     let frozen:Value=serde_json::from_str(&physical)?;
                     if !action_source_matches(&tx,&source,&frozen)? {
@@ -2377,7 +2508,7 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                     let owned = |field: &str| -> Result<bool> {
                         Ok(tx.query_row("SELECT revision=?3 FROM mail_intents WHERE mail=?1 AND field=?2",params![source.id,field,revision],|row|row.get::<_,bool>(0)).optional()?.unwrap_or(false))
                     };
-                    let accepted_folder=if owned("folder")? {fields.get("folder").and_then(Value::as_str).map(str::to_owned)} else {None};
+                    let accepted_folder=if owned("folder")? { if logical_role.is_some() {folder.clone()} else {fields.get("folder").and_then(Value::as_str).map(str::to_owned)} } else {None};
                     let accepted_unread=if owned("unread")? {fields.get("unread").and_then(Value::as_bool)} else {None};
                     let accepted_starred=if owned("starred")? {fields.get("starred").and_then(Value::as_bool)} else {None};
                     if accepted_folder.is_none() && accepted_unread.is_none() && accepted_starred.is_none() {
@@ -2420,9 +2551,18 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                 let provider = operations.mail_provider(account.protocol);
                 let operation = async {
                     if let Some(folder) = &folder {
-                        provider
-                            .move_mail(&account, password, &message, folder)
-                            .await
+                        match prepared_destination.clone() {
+                            Some(target) => {
+                                provider
+                                    .move_planned_mail(&account, password, &message, target)
+                                    .await
+                            }
+                            None => {
+                                provider
+                                    .move_mail(&account, password, &message, folder)
+                                    .await
+                            }
+                        }
                     } else {
                         provider
                             .set_flags(&account, password, &message, Flags { unread, starred })

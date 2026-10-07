@@ -49,6 +49,17 @@ impl std::fmt::Display for MoveRefused {
 }
 impl std::error::Error for MoveRefused {}
 
+/// A saved destination no longer matches the server, found before SELECT or
+/// MOVE. This is a local check, not a server refusal of the move.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DestinationChanged(pub String);
+impl std::fmt::Display for DestinationChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for DestinationChanged {}
+
 /// How a failed server move may be handled locally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MoveFailure {

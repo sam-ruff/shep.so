@@ -81,6 +81,8 @@ class Workspace extends ChangeNotifier {
   final Set<String> _resumingMailAccounts = {};
   final Set<String> _seenMailResumeAccounts = {};
   final Set<String> _blockedMailResumeAccounts = {};
+  // Actions waiting on their own folder request; skipped for the sweep only.
+  final Set<String> _heldMailResumeActions = {};
   bool _mailResumeSweep = false, _mailResumePump = false;
   bool _mailResumeProgressed = false;
   int? _mailResumeAfterCreated;
@@ -464,7 +466,12 @@ class Workspace extends ChangeNotifier {
           .where(
             (m) =>
                 (m.folder == folder ||
-                    (folder == 'Sent' &&
+                    (const {
+                          'Sent',
+                          'Archive',
+                          'Trash',
+                          'Spam',
+                        }.contains(folder) &&
                         _pageFolderScope == folder &&
                         (_pageFolders[m.accountId]?.contains(m.folder) ??
                             false))) &&
@@ -694,6 +701,7 @@ class Workspace extends ChangeNotifier {
       _mailResumeAfterCreated = null;
       _mailResumeAfterId = null;
       _blockedMailResumeAccounts.clear();
+      _heldMailResumeActions.clear();
       _seenMailResumeAccounts.clear();
     }
     if (_mailResumePump) return;
@@ -745,6 +753,7 @@ class Workspace extends ChangeNotifier {
           _mailResumeAfterCreated = action.created;
           _mailResumeAfterId = action.id;
           if (_resumingMailActivity.contains(action.id) ||
+              _heldMailResumeActions.contains(action.id) ||
               _resumingMailAccounts.contains(action.account) ||
               _seenMailResumeAccounts.contains(action.account) ||
               _blockedMailResumeAccounts.contains(action.account)) {
@@ -792,8 +801,14 @@ class Workspace extends ChangeNotifier {
       await source.resumeMailAction(action);
       _mailResumeProgressed = true;
     } catch (e) {
-      error = '$e';
-      _blockedMailResumeAccounts.add(action.account);
+      if (e is MailOperationFailure && e.held) {
+        // Only this action waits on its folder request; later work proceeds.
+        _heldMailResumeActions.add(action.id);
+        _mailResumeProgressed = true;
+      } else {
+        error = '$e';
+        _blockedMailResumeAccounts.add(action.account);
+      }
     } finally {
       _resumingMailActivity.remove(action.id);
       _resumingMailAccounts.remove(action.account);
@@ -806,7 +821,12 @@ class Workspace extends ChangeNotifier {
 
   Future<void> retryMailActivity(MailActivity action) async {
     if (action.status == 'rejected') {
-      await change(action.mail, action.fields, force: true);
+      await change(
+        action.mail,
+        action.requestedFields,
+        force: true,
+        logicalRole: action.logicalRole,
+      );
     } else {
       final source = switch (repository) {
         MailActivityRepository value => value,
@@ -1291,7 +1311,13 @@ class Workspace extends ChangeNotifier {
       _ => <String, Object>{},
     };
     if (fields.isEmpty) return;
-    await change(id, fields);
+    final logicalRole = switch (action) {
+      MailAction.archive => 'archive',
+      MailAction.trash => 'trash',
+      MailAction.spam => 'spam',
+      _ => null,
+    };
+    await change(id, fields, logicalRole: logicalRole);
   }
 
   Future<void> change(
@@ -1301,6 +1327,7 @@ class Workspace extends ChangeNotifier {
     bool quiet = false,
     MoveRecord? restoring,
     bool force = false,
+    String? logicalRole,
   }) async {
     id = _canonical(id);
     if (fields.containsKey('folder') &&
@@ -1320,6 +1347,7 @@ class Workspace extends ChangeNotifier {
     if (current == null || fields.isEmpty) return;
     final observedLineage = current.lineage;
     if (!force &&
+        restoring == null &&
         fields.entries.every((e) => current.field(e.key) == e.value)) {
       return;
     }
@@ -1389,6 +1417,14 @@ class Workspace extends ChangeNotifier {
                         'This message changed since it was shown. Refresh the folder and retry.',
                       ),
                     )
+                  : logicalRole != null && durable is LogicalMutationRepository
+                  ? durable.admitLogicalMutation(
+                      id,
+                      fields,
+                      actionId!,
+                      observedLineage,
+                      logicalRole,
+                    )
                   : durable.admitMutation(
                       id,
                       fields,
@@ -1444,13 +1480,24 @@ class Workspace extends ChangeNotifier {
         return;
       }
       if (move != null) move.started = true;
+      var confirmedFields = fields;
       try {
-        if (durable != null) {
+        if (logicalRole != null && durable is LogicalMutationRepository) {
+          confirmedFields = await durable.executeLogicalMutation(
+            target,
+            fields,
+            actionId!,
+            logicalRole,
+          );
+        } else if (durable != null) {
           await durable.executeMutation(target, fields, actionId!);
         } else {
           await repository.mutate(target, fields);
         }
-        if (move != null) move.committed = true;
+        if (move != null) {
+          move.committed = true;
+          move.pending = false;
+        }
         if (restoring != null) {
           undoFailures.remove(restoring);
           if (identical(_undoErrorOwner, restoring)) {
@@ -1460,10 +1507,44 @@ class Workspace extends ChangeNotifier {
         }
         target = _canonical(id);
         if (!_confirmed.containsKey(target)) return;
-        _confirmed[target] = _confirmed[target]!.patch(fields);
+        _confirmed[target] = _confirmed[target]!.patch(confirmedFields);
+        _patchMail(target, {
+          for (final field in confirmedFields.entries)
+            if (_versions['$target:${field.key}'] == revision)
+              field.key: field.value,
+        });
       } catch (e) {
         target = _canonical(id);
         if (!_confirmed.containsKey(target)) return;
+        if (e is MailOperationFailure && e.unchanged) {
+          final actual = e.appliedFields ?? fields;
+          _confirmed[target] = _confirmed[target]!.patch(actual);
+          _patchMail(target, {
+            for (final field in actual.entries)
+              if (_versions['$target:${field.key}'] == revision)
+                field.key: field.value,
+          });
+          if (move != null) moves.failed(move);
+          return;
+        }
+        if (e is MailOperationFailure &&
+            e.superseded &&
+            (move?.undoRequested == true ||
+                fields.keys.every(
+                  (field) => _versions['$target:$field'] != revision,
+                ))) {
+          if (move != null && !move.undoRequested) moves.failed(move);
+          return;
+        }
+        if (e is MailOperationFailure && e.pending) {
+          if (move != null) {
+            move.pending = true;
+            move.started = false;
+          }
+          error = e.message;
+          retry = () => unawaited(refreshMailActivity());
+          return;
+        }
         if (move != null && !move.undoRequested) moves.failed(move);
         if (restoring != null) {
           moves.failed(restoring);
@@ -1471,7 +1552,9 @@ class Workspace extends ChangeNotifier {
         }
         if (e is MailOperationFailure && e.committed) {
           if (restoring != null) restoring.restoreCommitted = true;
-          _confirmed[target] = _confirmed[target]!.patch(fields);
+          _confirmed[target] = _confirmed[target]!.patch(
+            e.appliedFields ?? fields,
+          );
           if (move != null) {
             move.committed = true;
             move.blocked = true;
@@ -1513,6 +1596,7 @@ class Workspace extends ChangeNotifier {
                       quiet: quiet,
                       restoring: restoring,
                       force: restoring != null,
+                      logicalRole: logicalRole,
                     ),
             );
           };

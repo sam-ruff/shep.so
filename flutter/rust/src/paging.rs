@@ -58,7 +58,7 @@ const GROUP_INTENT: &str = "group_active AS (
 
 const INDIVIDUAL_INTENT: &str = "individual_intent AS (
           SELECT a.mail AS id,
-          MAX(CASE WHEN mi.field='folder' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.folder') END) AS folder,
+          MAX(CASE WHEN mi.field='folder' AND mi.revision=a.intent_revision THEN json_extract(COALESCE(a.accepted_fields,a.fields),'$.folder') END) AS folder,
           MAX(CASE WHEN mi.field='unread' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.unread') END) AS unread,
           MAX(CASE WHEN mi.field='starred' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.starred') END) AS starred
           FROM individual_mail_actions a JOIN mail_intents mi ON mi.mail=a.mail
@@ -178,6 +178,8 @@ impl Plan {
             .join(" AND ");
         let folder_condition = if folder == "Sent" {
             "(folder=?1 OR (account_id,folder) IN (SELECT account_id,folder FROM sent_folder_names))"
+        } else if matches!(folder.as_str(), "Archive" | "Trash" | "Spam") {
+            "(folder=?1 OR (?1='Spam' AND folder='Junk') OR (account_id,folder) IN (SELECT account_id,name FROM folder_role_names INDEXED BY folder_role_lookup WHERE role=CASE ?1 WHEN 'Spam' THEN 'Junk' ELSE ?1 END))"
         } else {
             "folder=?1"
         };
@@ -273,7 +275,7 @@ pub(crate) fn page(
         }
     }
     let mut folder_membership: BTreeMap<String, HashSet<String>> = BTreeMap::new();
-    if folder == "Sent" {
+    if matches!(folder.as_str(), "Sent" | "Archive" | "Trash" | "Spam") {
         for message in &mail {
             folder_membership
                 .entry(message.account_id.clone())
