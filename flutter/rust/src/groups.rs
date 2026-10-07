@@ -409,6 +409,9 @@ pub(crate) async fn run(profile: &MobileProfile, command: Command) -> Result<Val
                 tx.execute("UPDATE group_items SET state='cancelled',attempt=NULL,reason='Cancelled before sending' WHERE job=?1 AND state='sending' AND EXISTS(SELECT 1 FROM individual_mail_actions a WHERE a.id=group_items.attempt AND a.status='cancelled')",[&id])?;
                 tx.execute("UPDATE group_items SET state='cancelled',reason='Cancelled before sending' WHERE job=?1 AND state='pending'",[&id])?;
                 tx.execute("UPDATE group_items SET state='undoing',reason=NULL WHERE job=?1 AND state='done'",[&id])?;
+                // An accepted unsaved acknowledgement is applied through the
+                // checked repair first, then reversed with its proven identity.
+                tx.execute("UPDATE group_items SET state='repair',reason='Undo saves this acknowledged change locally before reversing it.' WHERE job=?1 AND state='accepted' AND EXISTS(SELECT 1 FROM individual_mail_actions a WHERE a.id=group_items.attempt AND a.group_job=?1 AND a.group_inverse=0 AND a.status='repair')",[&id])?;
                 tx.execute("UPDATE group_jobs SET state='undoing',undone=(SELECT revision FROM group_clock WHERE id=1),revision=revision+1 WHERE id=?1",[&id])?;
                 settle(&tx, &id)?;
                 let value = summary(&tx, &id)?;
@@ -465,7 +468,7 @@ pub(crate) async fn run(profile: &MobileProfile, command: Command) -> Result<Val
         Command::Accept { id, position } => {
             db.write(move |db| {
                 let tx = db.transaction()?;
-                job_state(&tx, &id)?;
+                let (_, undo) = job_state(&tx, &id)?;
                 let item: String = tx
                     .query_row(
                         "SELECT state FROM group_items WHERE job=?1 AND position=?2",
@@ -478,6 +481,7 @@ pub(crate) async fn run(profile: &MobileProfile, command: Command) -> Result<Val
                 // later refresh shows. Saved acknowledgements stay recorded.
                 let reason = match item.as_str() {
                     "uncertain" | "undo_uncertain" => "Current state accepted without a server confirmation",
+                    "repair" if undo => "Accepted without Undo. This message stays where the server put it; refresh the folder to see it.",
                     "repair" | "undo_repair" => "Current state accepted. The server acknowledgement is kept, but this device did not save it; refresh the folder to see the result.",
                     _ => anyhow::bail!("Only an unconfirmed or unsaved step can be accepted."),
                 };
@@ -854,16 +858,24 @@ enum Next {
     Claim(Box<Claim>),
 }
 
+/// A started, acknowledged-but-unsaved or unknown change to this field.
+fn unsettled(db: &Connection, mail: &str, field: &str) -> Result<bool> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM individual_mail_actions INDEXED BY individual_mail_action_unsettled WHERE mail=?1 AND status IN ('running','repair','uncertain') AND json_extract(COALESCE(accepted_fields,fields),?2) IS NOT NULL)",
+        params![mail, format!("$.{field}")],
+        |row| row.get(0),
+    )?)
+}
+
 /// A cached flag proves the server value only when its last cache completion
-/// is known and no started, acknowledged or unknown change to it is unapplied.
+/// is known and no change to it is unsettled.
 fn cache_proves(db: &Connection, mail: &str, field: &str) -> Result<bool> {
-    let path = format!("$.{field}");
-    let doubtful: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND legacy_revision>applied_revision) OR EXISTS(SELECT 1 FROM individual_mail_actions INDEXED BY individual_mail_action_unsettled WHERE mail=?1 AND status IN ('running','repair','uncertain') AND json_extract(COALESCE(accepted_fields,fields),?3) IS NOT NULL)",
-        params![mail, field, path],
+    let legacy: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND legacy_revision>applied_revision)",
+        params![mail, field],
         |row| row.get(0),
     )?;
-    Ok(!doubtful)
+    Ok(!legacy && !unsettled(db, mail, field)?)
 }
 
 fn same_folder(a: &str, b: &str) -> bool {
@@ -1077,17 +1089,18 @@ fn next(db: &Connection) -> Result<Next> {
     if had_fields && fields.is_empty() {
         return skip("A newer change owns this message; skipped");
     }
+    // A started or unsaved move leaves the cached folder and UID unproven.
     let moving: bool = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM pending_moves WHERE id=?1)",
         [&current.id],
         |row| row.get(0),
     )?;
-    if moving {
+    if moving || unsettled(db, &current.id, "folder")? {
         return Ok(Next::Defer {
             job,
             position,
             inverse,
-            reason: "An earlier move of this message is not saved locally yet. Refresh its folders, then retry.".into(),
+            reason: "An earlier move of this message is not confirmed or saved locally yet. Check Activity or refresh its folders, then retry.".into(),
         });
     }
     if fields
@@ -1186,7 +1199,11 @@ fn reserve_applied_choice(db: &Connection, job: &str, position: i64) -> Result<(
         ("unread", fields.unread == Some(current.unread)),
         ("starred", fields.starred == Some(current.starred)),
     ] {
-        let proven = field == "folder" || cache_proves(db, &current.id, field)?;
+        let proven = if field == "folder" {
+            !unsettled(db, &current.id, field)?
+        } else {
+            cache_proves(db, &current.id, field)?
+        };
         if applied && proven && field_owned(db, job, &current.id, field, approved)? {
             db.execute("INSERT INTO mail_intents(mail,field,revision) VALUES(?1,?2,?3) ON CONFLICT(mail,field) DO UPDATE SET revision=excluded.revision WHERE mail_intents.revision<=excluded.revision",params![current.id,field,approved])?;
             crate::operations::record_applied(db, &current.id, field, approved)?;

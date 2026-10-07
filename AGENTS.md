@@ -148,7 +148,10 @@ projecting it. Accept retires an unrepairable gap with its receipt and no
 provider work; it must never block other groups. A child succeeds only with a
 saved receipt. Skip a flag as already applied only when no unknown legacy,
 running, unsaved or unconfirmed change makes the cache unproven, and defer steps
-behind an unsaved earlier move. Unknown replies never authorise replay. Captured
+while any earlier move of the message is unproven, including a claimed MOVE whose
+pending-move row is not written yet. Undo saves accepted repairs through the
+checked repair before reversing them; a receipt alone is not a cached identity.
+Unknown replies never authorise replay. Captured
 selection lineage cannot acquire proof from a later replacement. Preserve the
 original approval through inverse admission and newer field choices, including
 same-value decisions. `mail_intents.applied_revision` records actual cache

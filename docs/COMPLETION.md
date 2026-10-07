@@ -78,6 +78,18 @@ native suite passes 254 tests and Flutter 418 host cases, including real Accept
 controls and inspected repair goldens. Android device, Apple and live-provider
 runs remain outstanding; a real schema26 DDL upgrade fixture is not committed.
 
+The approving re-review of `d8ee23b` found two follow-ups, both with
+failing-before regressions. A group "Move to Inbox" decided between an
+individual MOVE claim and its pending-move row was skipped as already applied;
+any started, unsaved or unconfirmed move now defers the step without recording
+folder completion. Undo left an accepted unsaved acknowledgement unreversed.
+Reversing straight from the receipt would act on an identity the cache never
+held, so Undo now returns it to the checked repair and reverses only after the
+save succeeds; if saving still fails, accepting again says the message stays
+where the server put it. Opening also drops the obsolete repair index from
+development caches. The native suite passes 256 tests. One run had an unrelated
+Sent-folder ordering failure that passed six times alone and in two full reruns.
+
 ## Mobile reply original and portable default, 6 October 2026 (#30)
 
 Reply and Reply all now retain an immutable original separately from typed text,
