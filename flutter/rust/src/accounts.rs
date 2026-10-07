@@ -26,7 +26,7 @@ pub struct Removal {
 
 /// Group work that removal must discard explicitly: queued, in-flight,
 /// failed, uncertain and inverse steps, never completed receipts.
-pub(crate) const ACTIVE_GROUP_ITEMS: &str = "('pending','sending','undoing','reversing','failed','uncertain','undo_failed','undo_uncertain')";
+pub(crate) const ACTIVE_GROUP_ITEMS: &str = "('pending','sending','undoing','reversing','failed','uncertain','undo_failed','undo_uncertain','repair','undo_repair')";
 
 pub fn available(db: &Connection, id: &str) -> Result<()> {
     let removed: bool = db.query_row(
@@ -89,7 +89,7 @@ pub fn preview(db: &Connection, id: &str) -> Result<Removal> {
             "SELECT COUNT(*) FROM group_items WHERE account=?1 AND state IN {ACTIVE_GROUP_ITEMS}"
         ))?,
         actions: count(
-            "SELECT COUNT(*) FROM individual_mail_actions WHERE account=?1 AND status NOT IN ('succeeded','rejected','cancelled')",
+            "SELECT COUNT(*) FROM individual_mail_actions WHERE account=?1 AND group_job IS NULL AND status NOT IN ('succeeded','rejected','cancelled')",
         )?,
         folder_requests: count(
             "SELECT count(*) FROM folder_creations WHERE account_id=?1 AND status IN ('queued','waiting','planning','running','checking','repair','rejected','uncertain')",

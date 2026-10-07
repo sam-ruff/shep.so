@@ -1,5 +1,104 @@
 # Completion audit
 
+## Mobile bulk receipt and ownership checkpoint, 6 October 2026 (#64)
+
+Schema27 admits exact group attempts into explicitly owned existing mail action
+rows. Provider acknowledgements remain durable before cache repair; successful
+cache completion and original approval stay distinct from newer input. Unknown
+MOVE and flag results cannot replay. Restart repairs acknowledged forward/inverse
+work instead of inventing uncertainty, and persistent cache failures stop the
+owner with visible Retry. Source lineage is captured with membership, preserved
+through verified aliases and never backfilled into older unproven reviews.
+Private child rows stay outside public individual routes, projection, History
+and its collection. Explicit retirement drains at most 50 actual child rows.
+
+The initial regressions failed on the original inverse clock and acknowledged
+MOVE/cache rollback. Independent review reproduced the opposite-value flag case:
+old Read ACK left stale Unread in cache and a newer Unread group skipped its
+provider call. `mail_intents.applied_revision` now records actual cache completion
+independently of reserved input; it protects newer completed choices while a
+pending opposite group dispatches against the acknowledged baseline. Legacy
+zero never infers completion. Failed-before logs remain in ignored artifacts.
+
+The current full native suite passes 248 tests, including quote/schema migration,
+selection/History/queued Undo and new mocked-provider ownership cases. The
+previous five failures were only current schema-marker expectations, corrected
+without weakening payload assertions. The mixed individual/group failed-before
+case also reproduces a stale cache skip after cancelling a newer Waiting action.
+The correction uses the same applied-version fence for every ACK repair; actual
+Waiting requests retain newer Page/Detail values over the physical baseline.
+Full Flutter passes 417 cases, with the existing two zone-conditional Calendar
+cases and schema25 probe skipped. The new optional schema26 probe runs separately:
+the real PR63 host library opens26 and refuses27 without changing exact draft,
+file, group, owned child or receipt rows. Its SHA-256 is
+`20925d70a1a78bb8f8317a964b41e0787f31e4cef413c4e33ec23c925bfad378`.
+
+Native Clippy, clean Flutter analysis and strict pinned documentation pass.
+The targeted 22-case bridge/control chain includes persistent cache fault,
+History idle, actual Undo/Retry and exact inverse completion with zero credential
+reads. Compact light/dark repair goldens have been inspected. The first host
+fixture run needed real asynchronous Process I/O; the next needed completion
+timer cleanup. Those logs and the older-probe CLI fixture failure remain in
+ignored artifacts; production did not change for those harness corrections.
+The frozen checkpoint `7fb92fa` passes normal hooks, including 1,203 desktop
+library tests with 26 intentional ignored tests, plus the remaining shared and
+profile checks. Main `8a91144` is integrated by merge `71ca852`, whose normal
+hooks pass again. Subsequent regressions reproduce completed destination flags
+lost by alias folding and newer legacy choices overwritten after
+upgrade/cancellation. Cache values now move atomically with newer ownership;
+`legacy_revision` preserves observed old decisions through cancellation and
+alias folding without claiming completion. A fresh explicit flag write
+establishes a known baseline. On the integrated tree, native Clippy, Flutter
+analysis and strict documentation pass; Flutter passes 417 host cases with the
+two older-library probes and two zone-conditional Calendar cases skipped. The
+real-library receipt controls pass in light and dark against unchanged goldens,
+and the schema26 probe passes again with the same library hash. Known
+same-account successor adoption remains explicit #66. Android device, Apple,
+live-provider and timing evidence is not claimed.
+
+Independent review of PR #67 at `fd4133e` reproduced four further defects, now
+committed as failing-before regressions in `groups_tests/repair.rs`. One
+unrepairable receipt blocked every later group in the profile; an acknowledged
+cache gap stops only its own group now, other groups continue, and Accept
+retires it with its receipt and no provider work. A matching cached flag behind
+an unsaved individual acknowledgement was skipped as already applied, losing a
+newer choice; such values now need an explicit write, and steps behind an
+unsaved earlier move defer as retryable failures. Repair items fell out of page
+projection, so archived messages reappeared; they now project their claimed
+fields. A credential request was recorded as a successful step with no receipt;
+group children now succeed only with a saved receipt. Restart also requeues
+never-sent attempts, and account removal no longer double counts group children.
+The extra page-projection subqueries had made the 130-message Inbox page about
+four times slower than base during a group; one window pass restores parity.
+A diagnostic debug-build harness on the shared host (not a timing gate) gave
+base `8a91144` and the fix about 30 to 37 ms per forward Inbox page p50 each at
+load 50 to 70. A local step p50 stayed slower, about 13 to 15 versus 18 to 22 ms,
+from the added ownership and lineage checks. The
+native suite passes 254 tests and Flutter 418 host cases, including real Accept
+controls and inspected repair goldens. Android device, Apple and live-provider
+runs remain outstanding; a real schema26 DDL upgrade fixture is not committed.
+
+The approving re-review of `d8ee23b` found two follow-ups, both with
+failing-before regressions. A group "Move to Inbox" decided between an
+individual MOVE claim and its pending-move row was skipped as already applied;
+any started, unsaved or unconfirmed move now defers the step without recording
+folder completion. Undo left an accepted unsaved acknowledgement unreversed.
+Reversing straight from the receipt would act on an identity the cache never
+held, so Undo now returns it to the checked repair and reverses only after the
+save succeeds; if saving still fails, accepting again says the message stays
+where the server put it. Opening also drops the obsolete repair index from
+development caches. The native suite passes 256 tests. One run had an unrelated
+Sent-folder ordering failure that passed six times alone and in two full reruns.
+
+Root review of `8cbb5a2` found that deferring on every unsettled folder action
+blocked later group steps forever after an accepted or unresolved unconfirmed
+move, because those action rows never settle and refreshes do not change them.
+Steps now defer only while a MOVE is running or its pending-move row is unsaved;
+a listing that still shows the source clears that row. Group-step blockers point
+to History and individual ones to Activity. The new regression failed on
+`8cbb5a2` and passes for both group and individual moves; an Activity Inspect
+always leaves a terminal status. The native suite passes 257 tests.
+
 ## Mobile reply original and portable default, 6 October 2026 (#30)
 
 Reply and Reply all now retain an immutable original separately from typed text,
@@ -43,9 +142,12 @@ emulator is rebooted without a wipe before another unchanged attempt. Normal
 checkpoint hooks pass, including 1,203 desktop library tests. The saved Android
 scenario passes with exactly `native-reply-original-default-files-reopen` in
 `artifacts/flutter/native/integration-compose-result.json`. Its reply and Waiting
-Outbox PNGs are retained there; a final spacing recapture is pending on the larger
-dedicated emulator under the primary thread; the final 16-pixel separation is
-covered by passing compact host goldens. Earlier normal-hook failures and the
+Outbox PNGs are retained there. The primary thread's final spacing Android
+recapture passes on the dedicated emulator at reviewed `77281b6`, equivalent to
+merged `b239da4`, with the exact native reply/default/files/reopen report. The
+updated reply and Outbox PNGs were inspected; the 16-pixel quote/From separation
+is legible. Its log is `artifacts/logs/root-reply-spacing-android.log` in the
+reply worktree. Earlier normal-hook failures and the
 first Android control failure are retained under ignored artifacts. The third
 run completed quote/default, picker/removal and three owned close/reopen checks,
 then exposed the fixture's obsolete immediate Send-error assumption. It now

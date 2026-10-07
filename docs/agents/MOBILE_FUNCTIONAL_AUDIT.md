@@ -119,6 +119,13 @@ alongside queued Undo (#49) in merged
 [PR #60](https://github.com/sam-ruff/shep.so/pull/60). Accurate cached headers
 and Copy controls (#47) are implemented in
 [PR #59](https://github.com/sam-ruff/shep.so/pull/59), with host FFI, compact
-browser and Android clipboard evidence. The delivery tracker and completion log
+browser and Android clipboard evidence. Reply original/default (#30) is delivered
+in [PR #63](https://github.com/sam-ruff/shep.so/pull/63), including the saved
+Android quote/file/Outbox flow and final spacing recapture. Destination review
+identified the receipt/cache and inverse ownership prerequisite
+[#64](https://github.com/sam-ruff/shep.so/issues/64); it has its own implementation
+before destination planning #48. Same-account acknowledged successor adoption is
+an explicit follow-up [#66](https://github.com/sam-ruff/shep.so/issues/66), separate
+from cross-account moves #31. The delivery tracker and completion log
 distinguish these changes from the remaining open findings and Apple/provider
 verification.

@@ -42,19 +42,21 @@ pub struct Scope {
 /// Approved group intent that the cache has not confirmed yet, newest job
 /// first per field. Forward items project their job's fields; items awaiting
 /// an inverse step project the frozen baseline of the fields they applied.
+/// Acknowledged steps awaiting cache repair project the fields they claimed.
 const GROUP_INTENT: &str = "group_active AS (
-          SELECT i.mail AS id,j.seq AS seq,
-          CASE WHEN i.state IN ('pending','sending') THEN json_extract(j.fields,'$.folder') WHEN json_extract(i.receipt,'$.applied.folder') IS NOT NULL THEN i.folder END AS folder,
-          CASE WHEN i.state IN ('pending','sending') THEN json_extract(j.fields,'$.unread') WHEN json_extract(i.receipt,'$.applied.unread') IS NOT NULL THEN i.unread END AS unread,
-          CASE WHEN i.state IN ('pending','sending') THEN json_extract(j.fields,'$.starred') WHEN json_extract(i.receipt,'$.applied.starred') IS NOT NULL THEN i.starred END AS starred
-          FROM group_items i JOIN group_jobs j ON j.id=i.job
-          WHERE (i.state IN ('pending','sending') AND j.state IN ('running','paused')) OR (i.state IN ('undoing','reversing') AND j.state IN ('undoing','paused'))),
+          SELECT COALESCE(alias.id,i.mail) AS id,j.seq AS seq,
+          CASE WHEN EXISTS(SELECT 1 FROM mail_intents mi WHERE mi.mail=COALESCE(alias.id,i.mail) AND mi.field='folder' AND MAX(mi.revision,mi.applied_revision,mi.legacy_revision)>j.approved AND (j.undone IS NULL OR mi.revision!=j.undone)) THEN NULL WHEN i.state IN ('pending','sending') THEN json_extract(j.fields,'$.folder') WHEN i.state IN ('repair','undo_repair') THEN json_extract(i.fields,'$.folder') WHEN json_extract(i.receipt,'$.applied.folder') IS NOT NULL THEN i.folder END AS folder,
+          CASE WHEN EXISTS(SELECT 1 FROM mail_intents mi WHERE mi.mail=COALESCE(alias.id,i.mail) AND mi.field='unread' AND MAX(mi.revision,mi.applied_revision,mi.legacy_revision)>j.approved AND (j.undone IS NULL OR mi.revision!=j.undone)) THEN NULL WHEN i.state IN ('pending','sending') THEN json_extract(j.fields,'$.unread') WHEN i.state IN ('repair','undo_repair') THEN json_extract(i.fields,'$.unread') WHEN json_extract(i.receipt,'$.applied.unread') IS NOT NULL THEN i.unread END AS unread,
+          CASE WHEN EXISTS(SELECT 1 FROM mail_intents mi WHERE mi.mail=COALESCE(alias.id,i.mail) AND mi.field='starred' AND MAX(mi.revision,mi.applied_revision,mi.legacy_revision)>j.approved AND (j.undone IS NULL OR mi.revision!=j.undone)) THEN NULL WHEN i.state IN ('pending','sending') THEN json_extract(j.fields,'$.starred') WHEN i.state IN ('repair','undo_repair') THEN json_extract(i.fields,'$.starred') WHEN json_extract(i.receipt,'$.applied.starred') IS NOT NULL THEN i.starred END AS starred
+          FROM group_items i JOIN group_jobs j ON j.id=i.job LEFT JOIN mail_aliases alias ON alias.alias=i.mail
+          JOIN mail_lineage l ON l.id=COALESCE(alias.id,i.mail) AND (l.token=i.lineage OR l.token=(SELECT target FROM mail_lineage_aliases WHERE source=i.lineage))
+          WHERE (i.state IN ('pending','sending') AND j.state IN ('running','paused')) OR (i.state IN ('undoing','reversing') AND j.state IN ('undoing','paused')) OR (i.state IN ('repair','undo_repair') AND j.state IN ('running','undoing','paused'))),
         group_intent AS (
-          SELECT g.id,
-          (SELECT folder FROM group_active a WHERE a.id=g.id AND a.folder IS NOT NULL ORDER BY a.seq DESC LIMIT 1) AS folder,
-          (SELECT unread FROM group_active a WHERE a.id=g.id AND a.unread IS NOT NULL ORDER BY a.seq DESC LIMIT 1) AS unread,
-          (SELECT starred FROM group_active a WHERE a.id=g.id AND a.starred IS NOT NULL ORDER BY a.seq DESC LIMIT 1) AS starred
-          FROM (SELECT DISTINCT id FROM group_active) g)";
+          SELECT DISTINCT id,
+          FIRST_VALUE(folder) OVER (PARTITION BY id ORDER BY folder IS NULL,seq DESC) AS folder,
+          FIRST_VALUE(unread) OVER (PARTITION BY id ORDER BY unread IS NULL,seq DESC) AS unread,
+          FIRST_VALUE(starred) OVER (PARTITION BY id ORDER BY starred IS NULL,seq DESC) AS starred
+          FROM group_active)";
 
 const INDIVIDUAL_INTENT: &str = "individual_intent AS (
           SELECT a.mail AS id,
@@ -62,12 +64,12 @@ const INDIVIDUAL_INTENT: &str = "individual_intent AS (
           MAX(CASE WHEN mi.field='unread' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.unread') END) AS unread,
           MAX(CASE WHEN mi.field='starred' AND mi.revision=a.intent_revision THEN json_extract(a.fields,'$.starred') END) AS starred
           FROM individual_mail_actions a JOIN mail_intents mi ON mi.mail=a.mail
-          WHERE a.status IN ('queued','waiting','running','uncertain','repair')
+          WHERE a.group_job IS NULL AND a.status IN ('queued','waiting','running','uncertain','repair')
           GROUP BY a.mail)";
 
 pub(crate) fn group_intent_active(db: &Connection) -> Result<bool> {
     Ok(db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM group_items WHERE state IN ('pending','sending','undoing','reversing'))",
+        "SELECT EXISTS(SELECT 1 FROM group_items INDEXED BY group_item_active WHERE state IN ('pending','sending','undoing','reversing')) OR EXISTS(SELECT 1 FROM group_items INDEXED BY group_item_attention WHERE state IN ('failed','uncertain','undo_failed','undo_uncertain','repair','undo_repair') AND state IN ('repair','undo_repair'))",
         [],
         |r| r.get(0),
     )?)
@@ -75,7 +77,7 @@ pub(crate) fn group_intent_active(db: &Connection) -> Result<bool> {
 
 fn individual_intent_active(db: &Connection) -> Result<bool> {
     Ok(db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM individual_mail_actions WHERE status IN ('queued','waiting','running','uncertain','repair'))",
+        "SELECT EXISTS(SELECT 1 FROM individual_mail_actions WHERE group_job IS NULL AND status IN ('queued','waiting','running','uncertain','repair'))",
         [],
         |r| r.get(0),
     )?)

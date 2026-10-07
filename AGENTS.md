@@ -139,6 +139,31 @@ and remain distinct from success.
 
 ## Monorepo and feature parity
 
+Flutter schema27 binds subordinate mail action rows to exact group attempts.
+Only the existing group owner can dispatch, inspect, repair or retire them;
+public individual controls, projections and history collection exclude them.
+Persist provider receipts before cache writes; an acknowledged gap pauses only its
+group, which repairs it before that group's next provider claim, and pages keep
+projecting it. Accept retires an unrepairable gap with its receipt and no
+provider work; it must never block other groups. A child succeeds only with a
+saved receipt. Skip a flag as already applied only when no unknown legacy,
+running, unsaved or unconfirmed change makes the cache unproven, and defer steps
+while a MOVE of the message is running or its pending-move row is unsaved. A
+listing that still shows the source clears that row, so accepted or unconfirmed
+moves must never defer later steps forever. Undo saves accepted repairs through the
+checked repair before reversing them; a receipt alone is not a cached identity.
+Unknown replies never authorise replay. Captured
+selection lineage cannot acquire proof from a later replacement. Preserve the
+original approval through inverse admission and newer field choices, including
+same-value decisions. `mail_intents.applied_revision` records actual cache
+completion independently of reserved input; legacy zero is unknown. Keep the
+pre-upgrade `legacy_revision` ownership fence through cancellation and aliases;
+it cannot establish completion or an already-applied no-op. A fresh confirmed
+field write establishes that baseline. Alias adoption transfers cache values
+with their newer completed or conservatively retained legacy ownership. Keep the
+held opposite-value flag ACK, queued Pause, alias, legacy upgrade, restart,
+`groups_tests/repair.rs` and bounded child-row cleanup regressions.
+
 Flutter schema26 fences older writers that discard hidden reply originals.
 Retain the immutable quote/account/message identity through text and file saves;
 an omitted reply context cannot erase the saved context. The Include original

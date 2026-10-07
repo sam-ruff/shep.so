@@ -5,6 +5,9 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+mod receipts;
+mod repair;
+
 async fn groups(p: &crate::api::MobileProfile, command: Value) -> Value {
     request(p, json!({"op":"groups","command":command})).await
 }
@@ -85,6 +88,7 @@ async fn make_imap(p: &crate::api::MobileProfile) {
 struct Scripted {
     moves: AtomicUsize,
     flags: AtomicUsize,
+    flag_values: Mutex<Vec<shep_mail_core::mail_actions::Flags>>,
     replies: Mutex<Vec<Result<Option<String>, String>>>,
     started: tokio::sync::Notify,
     gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
@@ -94,6 +98,7 @@ impl Scripted {
         Arc::new(Self {
             moves: AtomicUsize::new(0),
             flags: AtomicUsize::new(0),
+            flag_values: Mutex::new(Vec::new()),
             replies: Mutex::new(replies),
             started: tokio::sync::Notify::new(),
             gate: Mutex::new(None),
@@ -143,9 +148,10 @@ impl shep_mail_core::providers::MailProvider for Scripted {
         _a: &shep_mail_core::model::Account,
         _p: &secrecy::SecretString,
         _m: &shep_mail_core::model::Mail,
-        _changes: shep_mail_core::mail_actions::Flags,
+        changes: shep_mail_core::mail_actions::Flags,
     ) -> anyhow::Result<()> {
         self.flags.fetch_add(1, Ordering::SeqCst);
+        self.flag_values.lock().expect("flag values").push(changes);
         match self.reply().await {
             Err(error) if error.to_string() == "NO STORE failed" => {
                 Err(shep_mail_core::mail_actions::FlagsRejected(error.to_string()).into())
@@ -211,6 +217,66 @@ async fn frozen_review_stages_exact_membership_and_executes_every_step_locally()
     )
     .await;
     assert!(released.contains("no longer available"), "{released}");
+}
+
+#[tokio::test]
+async fn original_group_undo_cannot_replace_newer_individual_read_reversion() {
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    review(&p, "original-read", json!({"kind":"read"})).await;
+    approve(&p, "original-read").await;
+    assert_eq!(step(&p, None).await["outcome"], "done");
+    let id = page(&p, "Inbox").await["mail"][0]["id"]
+        .as_str()
+        .expect("mail identity")
+        .to_owned();
+    for unread in [true, false] {
+        request(&p, json!({"op":"mutate", "action_id":uuid::Uuid::new_v4().to_string(), "id":id, "unread":unread})).await;
+    }
+    groups(&p, json!({"kind":"undo", "id":"original-read"})).await;
+    run_all(&p, None).await;
+    assert_eq!(page(&p, "Inbox").await["mail"][0]["unread"], false);
+    assert_eq!(job(&p, "original-read").await["counts"]["undo_skipped"], 1);
+}
+
+#[tokio::test]
+async fn group_move_acknowledgement_survives_cache_rollback_before_completion() -> anyhow::Result<()>
+{
+    let (_dir, p) = profile().await;
+    seed(&p, 1).await;
+    make_imap(&p).await;
+    let provider = Scripted::new(vec![Ok(Some("acknowledged-destination".into()))]);
+    *p.operations.provider.lock().expect("provider fixture") = Some(provider.clone());
+    review(&p, "cache-failure", json!({"kind":"archive"})).await;
+    approve(&p, "cache-failure").await;
+    p.database.write(|db| {
+        db.execute_batch("CREATE TRIGGER fail_group_cache BEFORE UPDATE OF folder ON mail BEGIN SELECT RAISE(FAIL,'Synthetic cache failure'); END;")?;
+        Ok(())
+    }).await?;
+    let result = step(&p, Some("fixture-only-not-a-real-password")).await;
+    assert_eq!(provider.moves.load(Ordering::SeqCst), 1);
+    let saved: i64 = p
+        .database
+        .read(|db| {
+            Ok(db.query_row(
+                "SELECT COUNT(*) FROM individual_mail_action_receipts",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .await?;
+    assert_eq!(
+        saved, 1,
+        "The acknowledged group attempt must be durable before cache work: {result}"
+    );
+    assert_eq!(
+        job(&p, "cache-failure").await["counts"]
+            .get("done")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        0
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -961,7 +1027,7 @@ async fn history_upgrade_preserves_receipts_and_exact_item_cursor_boundaries() {
         .read(|db| Ok(db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?))
         .await
         .expect("version");
-    assert_eq!(version, 26);
+    assert_eq!(version, 27);
 }
 
 #[tokio::test]

@@ -71,7 +71,7 @@ async fn schema25_upgrade_preserves_exact_reply_payloads_and_current_legacy_auto
             ))
         })
         .await?;
-    assert_eq!(version, 26);
+    assert_eq!(version, 27);
     assert_eq!(preserved, exact);
     assert_eq!(flat, legacy);
     assert_eq!(bytes, [0, 255, 13, 10]);
@@ -1383,10 +1383,11 @@ async fn acknowledged_flag_repairs_cache_after_restart_without_provider_replay()
     )
     .await;
     assert_eq!(second["status"], "repair");
+    let pending = request(&reopened,json!({"op":"mutate","action_id":"newer-visible-star","id":"fixture:INBOX:0","starred":true})).await;
+    assert_eq!(pending["status"], "waiting");
     reopened
         .database
         .write(|db| {
-            operations::record_intent(db, "fixture:INBOX:0", &["starred"])?;
             db.execute_batch("DROP TRIGGER fail_second_flag_cache;")?;
             Ok(())
         })
@@ -1399,11 +1400,19 @@ async fn acknowledged_flag_repairs_cache_after_restart_without_provider_replay()
     .await;
     assert_eq!(repaired["status"], "succeeded");
     assert!(
-        reopened
+        !reopened
             .database
             .read(|db| Ok(operations::stored_mail(db, "fixture:INBOX:0")?.starred))
             .await
             .unwrap()
+    );
+    assert_eq!(
+        request(&reopened, json!({"op":"page","folder":"Inbox"})).await["mail"][0]["starred"],
+        true
+    );
+    assert_eq!(
+        request(&reopened, json!({"op":"detail","id":"fixture:INBOX:0"})).await["summary"]["starred"],
+        true
     );
     assert_eq!(provider.writes.load(Ordering::SeqCst), 2);
 }

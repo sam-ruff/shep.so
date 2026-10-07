@@ -317,11 +317,18 @@ class PreviewGroupRepository implements GroupRepository {
         final item = job.items.firstWhere(
           (i) => i.position == command['position'],
         );
-        if (item.state != 'uncertain' && item.state != 'undo_uncertain') {
-          throw StateError('Only an unconfirmed step can be accepted.');
+        final unsaved = item.state == 'repair' || item.state == 'undo_repair';
+        if (!unsaved &&
+            item.state != 'uncertain' &&
+            item.state != 'undo_uncertain') {
+          throw StateError(
+            'Only an unconfirmed or unsaved step can be accepted.',
+          );
         }
         item.state = 'accepted';
-        item.reason = 'Current state accepted without a server confirmation';
+        item.reason = unsaved
+            ? 'Current state accepted. The server acknowledgement is kept, but this device did not save it; refresh the folder to see the result.'
+            : 'Current state accepted without a server confirmation';
         job.revision++;
         return _summary(job);
       case 'history':
