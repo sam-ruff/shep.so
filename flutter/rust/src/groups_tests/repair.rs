@@ -428,3 +428,85 @@ async fn undo_saves_an_accepted_acknowledgement_before_reversing_it() -> Result<
     }
     Ok(())
 }
+
+/// Prepares and approves a review of every message shown in `folder`.
+async fn approve_in(p: &crate::api::MobileProfile, job: &str, kind: &str, folder: &str) {
+    let selection = format!("{job}-selection");
+    let captured = request(
+        p,
+        json!({"op":"selection","command":{"kind":"capture","id":selection,"revision":0,"all":true,"scope":{"folder":folder}}}),
+    )
+    .await;
+    groups(
+        p,
+        json!({"kind":"prepare","id":job,"selection":selection,"expected":captured["revision"],"action":{"kind":kind},"scope":{"folder":folder}}),
+    )
+    .await;
+    request(
+        p,
+        json!({"op":"selection","command":{"kind":"release","id":captured["id"]}}),
+    )
+    .await;
+    approve(p, job).await;
+}
+
+#[tokio::test]
+async fn unconfirmed_moves_stop_blocking_once_a_refresh_lists_the_source() -> Result<()> {
+    for group_owned in [true, false] {
+        let (_dir, p) = profile().await;
+        seed(&p, 1).await;
+        make_imap(&p).await;
+        let provider = Scripted::new(vec![Err("connection lost".into())]);
+        *p.operations.provider.lock().expect("provider") = Some(provider.clone());
+        // The server never applies this MOVE, but its reply is lost.
+        let shown = if group_owned {
+            approve_in(&p, "lost-move", "archive", "Inbox").await;
+            assert_eq!(step(&p, Some("fixture-only")).await["outcome"], "uncertain");
+            groups(&p, json!({"kind":"accept","id":"lost-move","position":0})).await;
+            "Inbox"
+        } else {
+            let moved = request(
+                &p,
+                json!({"op":"mutate","action_id":"lost-individual","id":"fixture:INBOX:0","folder":"Archive","password":"fixture-only"}),
+            )
+            .await;
+            assert_eq!(moved["status"], "uncertain");
+            "Archive"
+        };
+        approve_in(&p, "before-refresh", "read", shown).await;
+        let deferred = step(&p, Some("fixture-only")).await;
+        assert_eq!(deferred["outcome"], "failed");
+        let expected = if group_owned {
+            "Check History"
+        } else {
+            "Check Activity"
+        };
+        assert!(
+            deferred["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains(expected)),
+            "{deferred}"
+        );
+        p.database
+            .write(|db| {
+                let tx = db.transaction()?;
+                crate::operations::reconcile_folder(
+                    &tx,
+                    "fixture",
+                    "INBOX",
+                    &HashSet::from(["fixture:INBOX:0".to_owned()]),
+                )?;
+                tx.commit()?;
+                Ok(())
+            })
+            .await?;
+        approve_in(&p, "later-read", "read", shown).await;
+        assert_eq!(step(&p, Some("fixture-only")).await["outcome"], "done");
+        approve_in(&p, "later-archive", "archive", shown).await;
+        let archived = step(&p, Some("fixture-only")).await;
+        assert_eq!(archived["outcome"], "done", "{archived}");
+        assert_eq!(provider.flags.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.moves.load(Ordering::SeqCst), 2);
+    }
+    Ok(())
+}

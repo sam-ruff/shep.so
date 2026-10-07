@@ -90,6 +90,15 @@ where the server put it. Opening also drops the obsolete repair index from
 development caches. The native suite passes 256 tests. One run had an unrelated
 Sent-folder ordering failure that passed six times alone and in two full reruns.
 
+Root review of `8cbb5a2` found that deferring on every unsettled folder action
+blocked later group steps forever after an accepted or unresolved unconfirmed
+move, because those action rows never settle and refreshes do not change them.
+Steps now defer only while a MOVE is running or its pending-move row is unsaved;
+a listing that still shows the source clears that row. Group-step blockers point
+to History and individual ones to Activity. The new regression failed on
+`8cbb5a2` and passes for both group and individual moves; an Activity Inspect
+always leaves a terminal status. The native suite passes 257 tests.
+
 ## Mobile reply original and portable default, 6 October 2026 (#30)
 
 Reply and Reply all now retain an immutable original separately from typed text,

@@ -878,6 +878,38 @@ fn cache_proves(db: &Connection, mail: &str, field: &str) -> Result<bool> {
     Ok(!legacy && !unsettled(db, mail, field)?)
 }
 
+/// Why the cached folder and UID cannot be trusted yet: a move is in flight
+/// or its pending-move row is unsaved. A complete listing that still shows the
+/// source clears that row, so an unconfirmed move never blocks indefinitely.
+fn move_blocker(db: &Connection, mail: &str) -> Result<Option<&'static str>> {
+    let (pending, running): (bool, bool) = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pending_moves WHERE id=?1),EXISTS(SELECT 1 FROM individual_mail_actions INDEXED BY individual_mail_action_unsettled WHERE mail=?1 AND status IN ('running','repair','uncertain') AND status='running' AND json_extract(COALESCE(accepted_fields,fields),'$.folder') IS NOT NULL)",
+        [mail],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    if !pending && !running {
+        return Ok(None);
+    }
+    let group: Option<bool> = db
+        .query_row(
+            "SELECT group_job IS NOT NULL FROM individual_mail_actions INDEXED BY individual_mail_action_unsettled WHERE mail=?1 AND status IN ('running','repair','uncertain') AND json_extract(COALESCE(accepted_fields,fields),'$.folder') IS NOT NULL ORDER BY status='running' DESC,created DESC LIMIT 1",
+            [mail],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(Some(match group {
+        Some(true) => {
+            "An earlier group step that moves this message is not saved locally yet. Check History or refresh its folders, then retry."
+        }
+        Some(false) => {
+            "An earlier move of this message is not confirmed or saved locally yet. Check Activity or refresh its folders, then retry."
+        }
+        None => {
+            "An earlier move of this message is not saved locally yet. Refresh its folders, then retry."
+        }
+    }))
+}
+
 fn same_folder(a: &str, b: &str) -> bool {
     let normalise = |f: &str| {
         if f.eq_ignore_ascii_case("Inbox") {
@@ -1089,18 +1121,12 @@ fn next(db: &Connection) -> Result<Next> {
     if had_fields && fields.is_empty() {
         return skip("A newer change owns this message; skipped");
     }
-    // A started or unsaved move leaves the cached folder and UID unproven.
-    let moving: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pending_moves WHERE id=?1)",
-        [&current.id],
-        |row| row.get(0),
-    )?;
-    if moving || unsettled(db, &current.id, "folder")? {
+    if let Some(reason) = move_blocker(db, &current.id)? {
         return Ok(Next::Defer {
             job,
             position,
             inverse,
-            reason: "An earlier move of this message is not confirmed or saved locally yet. Check Activity or refresh its folders, then retry.".into(),
+            reason: reason.into(),
         });
     }
     if fields
@@ -1200,7 +1226,7 @@ fn reserve_applied_choice(db: &Connection, job: &str, position: i64) -> Result<(
         ("starred", fields.starred == Some(current.starred)),
     ] {
         let proven = if field == "folder" {
-            !unsettled(db, &current.id, field)?
+            move_blocker(db, &current.id)?.is_none()
         } else {
             cache_proves(db, &current.id, field)?
         };
