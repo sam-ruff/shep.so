@@ -2177,7 +2177,8 @@ class NativeFlows(unittest.TestCase):
         for dark in (False, True):
             result = self.mcp.call("desktop.start", html_mail=True)
             if dark:
-                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),key("ctrl+1"))
+                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),
+                               key("ctrl+1"),check("tab","Mail"))
             self.mcp.batch(click(85,355),check("selected","Dispatch update"),check("html_view_current",True),
                            check("html_background",[255,255,255,255]),wait(100),shot(f"html-white-surround-{dark}"))
             state = self.mcp.call("desktop.state")
@@ -2194,7 +2195,8 @@ class NativeFlows(unittest.TestCase):
             result = self.mcp.call("desktop.start", html_mail=True)
             print(f"Transparent newsletter evidence ({'dark' if dark else 'light'}): {result['artifacts']}", flush=True)
             if dark:
-                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),key("ctrl+1"))
+                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),
+                               key("ctrl+1"),check("tab","Mail"))
             self.mcp.batch(click(85,477),check("selected","Confirm your fictional lesson"),check("html_view_current",True),
                            check("html_background",[255,255,255,255]),wait(100),shot(f"html-transparent-paper-{dark}"))
             state = self.mcp.call("desktop.state")
@@ -6209,8 +6211,10 @@ class NativeFlows(unittest.TestCase):
         for dark in (False, True):
             self.mcp.call("desktop.start", reading_mail=True)
             if dark:
+                # iced dispatches a click queued with Ctrl+1 to the old Preferences tree, where
+                # this row's position is the Light card, so wait for Mail before clicking.
                 self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(100),
-                               click(690,366), check("dark",True), key("ctrl+1"))
+                               click(690,366), check("dark",True), key("ctrl+1"), check("tab","Mail"))
             self.mcp.batch(click(400,mail_row_y(2)), check("conversation_total",2),
                            check("html_view_current",True), wait(100),
                            click(1322,258), check("conversation_collapsed",True),
