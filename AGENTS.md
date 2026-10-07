@@ -333,7 +333,9 @@ seccomp profile, namespace/browser preflight, four Cargo jobs and native timing
 budgets. The functional `scripts/e2e.py` run keeps its fixture data on a bounded
 tmpfs (`SHEP_E2E_ARTIFACTS=/e2e`) because SQLite commits on the runner's
 rotational pool stalled for tens of seconds under shared load; its evidence is
-copied back to `artifacts/e2e/` for upload. Timing scripts stay on disk. Never
+copied back to `artifacts/e2e/` for upload. Mount it with `exec`: Docker defaults
+tmpfs to noexec, and the print fixture runs its launcher from the run directory.
+Timing scripts stay on disk. Never
 lengthen a wait to absorb a slow disk instead. Windows uses the provisioned MSVC/Python toolchain. Documentation uses
 the installed Python in a private virtual environment because setup-python has
 no matching Debian 13 Python build. Keep the CI image free of profile data and
@@ -380,6 +382,9 @@ with the original failure status. Diagnostic reports never validate required
 gates. Query tracing includes extra read-only COUNT comparisons, so its timings
 are deliberately ineligible; phase sums also exclude worker scheduling and
 ordinary read-transaction drop. Keep original reports and screenshots separate.
+The wrapper also saves `/proc/stat` and load at the start, every two seconds and
+at exit in `artifacts/logs/runner-cpu-<phase>.log`, so hypervisor steal can be
+compared with a slow run. Those samples never decide a gate.
 
 `scripts/action_latency.py` measures real ten-of-100,000 review and confirmation
 pixels separately, with held provider capacity and unchanged 100 ms p95 budgets.
@@ -640,7 +645,7 @@ Read-on-leave and action feedback requirements: selecting an inbox message and t
 - Prefer 40–44 px click targets; visible focus, descriptive labels/tooltips, persistent errors with a clear recovery, no text clipping at 900×640 and 1440×920. Mouse and keyboard should reach the same core actions.
 - User-visible messages should explain the problem and next action. Do not present sample data as live accounts, pretend a sync succeeded after errors, or silently lose unsent drafts.
 
-Run `python3 scripts/performance_gate.py` after backend, native navigation and HTML pixel timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence. Sam decided on 25 September that CI passes `--html-report-only`: the sophie runner renders HTML 3-4x slower than a quiet workstation, so CI still validates and uploads the HTML pixel evidence but reports its budgets; local `scripts/check.sh` keeps them strict.
+Run `python3 scripts/performance_gate.py` after backend, native navigation and HTML pixel timing reports have been generated. It fails on missing, invalid, undersampled or over-budget evidence. Sam decided on 25 September that CI passes `--html-report-only`: the sophie runner renders HTML 3-4x slower than a quiet workstation, so CI still validates and uploads the HTML pixel evidence but reports its budgets; local `scripts/check.sh` keeps them strict. Sam decided on 7 October that CI treats the bulk review and confirmation pixel gate the same way: `scripts/ci-performance.sh` runs `action_latency.py --report-only` and the final gate adds `--actions-report-only`, because the sophie runner measured review pixels at 131-149 ms (p95 149 ms) against about 34 ms locally. CI still runs, validates and uploads the action evidence, an invalid report still fails, and a diagnostic replay now follows only such a failure. Backend budgets stay strict in CI, and `scripts/check.sh` keeps the unchanged 100 ms action budgets strict.
 
 The inbox/reader divider must remain mouse-draggable with saved preferences and minimum widths. Filtering and sorting must invalidate stale page prefetches; flags map to IMAP `\Flagged` and remain local for POP3. Cover drag persistence, mouse flagging/filtering/sorting and page navigation in the MCP suite.
 

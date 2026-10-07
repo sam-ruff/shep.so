@@ -62,7 +62,7 @@ def evaluate_html(budgets, report, enforce=True):
     return errors
 
 
-def evaluate_actions(budgets, report):
+def evaluate_actions(budgets, report, enforce=True):
     if not isinstance(report, dict) or type(report.get("schema")) is not int or report["schema"] != 1:
         return ["Action report has no supported schema"]
     errors = []
@@ -110,8 +110,10 @@ def evaluate_actions(budgets, report):
             errors.append(f"Action {case}: too few valid pixel observations")
             continue
         p95 = sorted(values)[math.ceil(len(values) * .95) - 1]
-        if p95 > limit:
+        if p95 > limit and enforce:
             errors.append(f"Action {case}: {p95:.3f} ms exceeds {limit:.3f} ms")
+        elif p95 > limit:
+            print(f"OVER Action {case}: {p95:.3f} / {limit:.3f} ms ({len(values)} samples, report only)")
         else:
             print(f"PASS Action {case}: {p95:.3f} / {limit:.3f} ms ({len(values)} samples)")
     if any(cycles != observed_cycles[0] for cycles in observed_cycles[1:]):
@@ -126,6 +128,8 @@ def main():
     only.add_argument("--actions-only", action="store_true", help="Check the immediate-action pixel measurements only")
     parser.add_argument("--html-report-only", action="store_true",
                         help="Validate the HTML evidence but report over-budget timings without failing")
+    parser.add_argument("--actions-report-only", action="store_true",
+                        help="Validate the action evidence but report over-budget timings without failing")
     parser.add_argument("--html-report", type=Path, default=ROOT / "artifacts/performance/html.json")
     parser.add_argument("--actions-report", type=Path, default=ROOT / "artifacts/performance/actions.json")
     args = parser.parse_args()
@@ -138,7 +142,7 @@ def main():
             errors.extend(evaluate_html(budgets, html, enforce=not args.html_report_only))
         if not args.html_only:
             actions = json.loads(args.actions_report.read_text())
-            errors.extend(evaluate_actions(budgets, actions))
+            errors.extend(evaluate_actions(budgets, actions, enforce=not args.actions_report_only))
         if not args.html_only and not args.actions_only:
             backend = json.loads((directory / "backend.json").read_text())
             ui = json.loads((directory / "ui.json").read_text())

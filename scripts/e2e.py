@@ -190,7 +190,7 @@ class NativeFlows(unittest.TestCase):
                        check("settings_tab", "Backups"), click(1080, 334),
                        check("backup_run.0.status", "Saved"),
                        check("backup_run.1.status.Failed", "acknowledgment was lost", "contains"),
-                       key("ctrl+1"), check("activity.label", "Activity · attention"),
+                       key("ctrl+1"), check("tab", "Mail"), check("activity.label", "Activity · attention"),
                        click(85, 830), check("dialog", "Activity"),
                        shot("activity-backup-other-destination"), click(530, 454), wait(100),
                        check("activity.refreshing", False), check("activity.review_error", None),
@@ -315,8 +315,8 @@ class NativeFlows(unittest.TestCase):
 
     def test_spam_shortcut_compact_dark_context_menu(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
-                       click(690, 366), check("dark", True), key("ctrl+1"),
-                       {"type": "resize", "width": 900, "height": 640}, wait(180),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900, 640]), wait(180),
                        click(85, 482), check("folder", "Junk"), check("total", 0),
                        shot("spam-empty-compact-dark"), key("shift+F10"),
                        check("folder_changes.menu.source", "Junk"),
@@ -415,7 +415,7 @@ class NativeFlows(unittest.TestCase):
                 {"type": "scroll", "amount": 30}, wait(120), click(85, 752))
 
     def open_saved_folder_with_keyboard(self, label):
-        self.mcp.batch(key("ctrl+1"), {"type": "hover", "x": 100, "y": 400},
+        self.mcp.batch(key("ctrl+1"), check("tab", "Mail"), {"type": "hover", "x": 100, "y": 400},
                        {"type": "scroll", "amount": -30}, wait(120), click(85, 278),
                        check("sidebar_focus", True))
         state = self.mcp.call("desktop.state")
@@ -2177,7 +2177,8 @@ class NativeFlows(unittest.TestCase):
         for dark in (False, True):
             result = self.mcp.call("desktop.start", html_mail=True)
             if dark:
-                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),key("ctrl+1"))
+                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),
+                               key("ctrl+1"),check("tab","Mail"))
             self.mcp.batch(click(85,355),check("selected","Dispatch update"),check("html_view_current",True),
                            check("html_background",[255,255,255,255]),wait(100),shot(f"html-white-surround-{dark}"))
             state = self.mcp.call("desktop.state")
@@ -2194,7 +2195,8 @@ class NativeFlows(unittest.TestCase):
             result = self.mcp.call("desktop.start", html_mail=True)
             print(f"Transparent newsletter evidence ({'dark' if dark else 'light'}): {result['artifacts']}", flush=True)
             if dark:
-                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),key("ctrl+1"))
+                self.mcp.batch(key("ctrl+comma"),check("tab","Preferences"),wait(100),click(690,366),check("dark",True),
+                               key("ctrl+1"),check("tab","Mail"))
             self.mcp.batch(click(85,477),check("selected","Confirm your fictional lesson"),check("html_view_current",True),
                            check("html_background",[255,255,255,255]),wait(100),shot(f"html-transparent-paper-{dark}"))
             state = self.mcp.call("desktop.state")
@@ -4336,7 +4338,11 @@ class NativeFlows(unittest.TestCase):
         checkpoint=self.profile_checkpoint(started)
         self.assertEqual(len(checkpoint["accounts"]),2)
         self.assertEqual(checkpoint["local_only"],[])
-        self.assertEqual(sum(t.startswith("setting:") for t in checkpoint["fields"]),10)
+        # Every key in profile_sync::metadata::SETTINGS.
+        self.assertEqual(sorted(t for t in checkpoint["fields"] if t.startswith("setting:")),
+                         [f"setting:{key}" for key in ("appearance","cross_account_moves","desktop_badges",
+                          "foreign_move_folders","group_conversations","help_icons","image_policy",
+                          "reply_display","reply_include_original","tooltips","unified_inbox")])
         self.assertIsNone(checkpoint["pending"])
 
     def test_profile_sync_native_failure_retry_and_opt_out(self):
@@ -6205,8 +6211,10 @@ class NativeFlows(unittest.TestCase):
         for dark in (False, True):
             self.mcp.call("desktop.start", reading_mail=True)
             if dark:
+                # iced dispatches a click queued with Ctrl+1 to the old Preferences tree, where
+                # this row's position is the Light card, so wait for Mail before clicking.
                 self.mcp.batch(key("ctrl+comma"), check("tab","Preferences"), wait(100),
-                               click(690,366), check("dark",True), key("ctrl+1"))
+                               click(690,366), check("dark",True), key("ctrl+1"), check("tab","Mail"))
             self.mcp.batch(click(400,mail_row_y(2)), check("conversation_total",2),
                            check("html_view_current",True), wait(100),
                            click(1322,258), check("conversation_collapsed",True),
