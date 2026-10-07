@@ -5,6 +5,7 @@ import 'mail_error.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../model/mail.dart';
+import '../data/mailto_links.dart';
 import '../data/outgoing.dart';
 import '../data/repository.dart';
 import 'outbox.dart';
@@ -20,8 +21,9 @@ import 'reader.dart';
 import 'theme.dart';
 
 class ShepApp extends StatelessWidget {
-  const ShepApp({super.key, required this.workspace});
+  const ShepApp({super.key, required this.workspace, this.links});
   final Workspace workspace;
+  final MailtoLinks? links;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: workspace,
@@ -31,24 +33,73 @@ class ShepApp extends StatelessWidget {
       theme: shepTheme(Brightness.light),
       darkTheme: shepTheme(Brightness.dark),
       themeMode: workspace.preferences.appearance,
-      home: Home(workspace: workspace),
+      home: Home(workspace: workspace, links: links),
     ),
   );
 }
 
 class Home extends StatefulWidget {
-  const Home({super.key, required this.workspace});
+  const Home({super.key, required this.workspace, this.links});
   final Workspace workspace;
+  final MailtoLinks? links;
   @override
   State<Home> createState() => _HomeState();
 }
 
 class _HomeState extends State<Home> with WidgetsBindingObserver {
+  StreamSubscription<void>? linkArrivals;
+  bool openingLinks = false, moreLinks = false;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (widget.links case final MailtoLinks links) {
+      linkArrivals = links.arrivals.listen((_) => unawaited(openLinks()));
+      unawaited(openLinks());
+    }
   }
+
+  /// Opens each operating-system link as a new draft above the current screen
+  /// once saved accounts and drafts have loaded. Nothing is sent automatically.
+  Future<void> openLinks() async {
+    final links = widget.links;
+    if (links == null) return;
+    if (openingLinks) {
+      moreLinks = true;
+      return;
+    }
+    openingLinks = true;
+    try {
+      await w.ready;
+      do {
+        moreLinks = false;
+        for (final link in await links.take()) {
+          if (!mounted) return;
+          try {
+            compose(await w.openMailto(link));
+          } catch (e) {
+            if (mounted) await linkFailed('$e');
+          }
+        }
+      } while (moreLinks && mounted);
+    } finally {
+      openingLinks = false;
+    }
+  }
+
+  Future<void> linkFailed(String reason) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Email link not opened'),
+      content: Text(reason),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) =>
@@ -59,6 +110,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   Workspace get w => widget.workspace;
   @override
   void dispose() {
+    unawaited(linkArrivals?.cancel());
     WidgetsBinding.instance.removeObserver(this);
     search.dispose();
     super.dispose();
@@ -92,15 +144,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
 
   void compose([Draft? draft]) {
     unawaited(w.finishReading());
+    // The route builder runs again when the keyboard or theme changes, so the
+    // new draft's identity is chosen once here.
+    final opened =
+        draft ?? Draft(id: DateTime.now().microsecondsSinceEpoch.toString());
     Navigator.push(
       context,
       MaterialPageRoute<void>(
-        builder: (_) => Composer(
-          workspace: w,
-          draft:
-              draft ??
-              Draft(id: DateTime.now().microsecondsSinceEpoch.toString()),
-        ),
+        builder: (_) => Composer(workspace: w, draft: opened),
       ),
     );
   }

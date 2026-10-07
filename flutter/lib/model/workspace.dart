@@ -621,7 +621,21 @@ class Workspace extends ChangeNotifier {
     _changed();
   }
 
+  final _ready = Completer<void>();
+
+  /// Completes after the first [initialize] has loaded saved preferences,
+  /// accounts and drafts, including when part of it failed.
+  Future<void> get ready => _ready.future;
+
   Future<void> initialize() async {
+    try {
+      await _initialize();
+    } finally {
+      if (!_ready.isCompleted) _ready.complete();
+    }
+  }
+
+  Future<void> _initialize() async {
     if (google case final GoogleConnection connection) {
       unawaited(connection.load());
     }
@@ -1633,6 +1647,39 @@ class Workspace extends ChangeNotifier {
       _forwarding.remove(id);
       _changed();
     }
+  }
+
+  /// Saves an unsent draft from a `mailto:` link and returns it for editing.
+  /// Launcher links prefill every field; [message] links from received mail
+  /// keep only their address. Existing drafts are never replaced.
+  Future<Draft> openMailto(String link, {bool message = false}) async {
+    if (repository case final MailtoRepository source) {
+      final draft = await source.mailtoDraft(
+        newDraftIdentity(),
+        link,
+        accountId: _mailtoAccount(),
+        message: message,
+      );
+      if (!_disposed) {
+        drafts[draft.id] = draft;
+        _changed();
+      }
+      return draft;
+    }
+    throw const MailOperationFailure(
+      'Email links need the installed Shep app. Copy the address instead.',
+    );
+  }
+
+  /// The account shown in the mail list, otherwise the first connected one.
+  /// Without an account the draft is kept and sending asks for one.
+  String _mailtoAccount() {
+    final connected = [
+      for (final candidate in accountRepository?.mailAccounts ?? const [])
+        if (!_removedAccounts.contains(candidate.id)) candidate,
+    ];
+    final shown = connected.where((candidate) => candidate.email == account);
+    return (shown.firstOrNull ?? connected.firstOrNull)?.id ?? '';
   }
 
   Future<Draft?> reply(String id, bool all) async {

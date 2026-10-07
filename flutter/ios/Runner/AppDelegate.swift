@@ -19,6 +19,50 @@ import WebKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ShepAttachmentSave") {
       AttachmentSavePlugin.register(with: registrar)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ShepMailto") {
+      MailtoPlugin.register(with: registrar)
+    }
+  }
+}
+
+/// Holds mailto links from the scene until Dart takes them, so a link that
+/// launches Shep waits for the device cache. Other URLs, including the Google
+/// sign-in callback, are left for their own handlers.
+private final class MailtoPlugin: NSObject, FlutterPlugin, FlutterSceneLifeCycleDelegate {
+  private static let maxPending = 16
+  private static let maxLength = 8 * 1024
+  private let channel: FlutterMethodChannel
+  private var pending: [String] = []
+  init(channel: FlutterMethodChannel) { self.channel = channel }
+  static func register(with registrar: FlutterPluginRegistrar) {
+    let channel = FlutterMethodChannel(name: "so.shep/mailto", binaryMessenger: registrar.messenger())
+    let plugin = MailtoPlugin(channel: channel)
+    registrar.addMethodCallDelegate(plugin, channel: channel)
+    registrar.addSceneDelegate(plugin)
+  }
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard call.method == "take" else { result(FlutterMethodNotImplemented); return }
+    let links = pending
+    pending = []
+    result(links)
+  }
+  @objc(scene:willConnectToSession:options:)
+  func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions?) -> Bool {
+    accept(connectionOptions?.urlContexts.map(\.url) ?? [])
+  }
+  @objc(scene:openURLContexts:)
+  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) -> Bool {
+    accept(URLContexts.map(\.url))
+  }
+  /// Claims the event only when every URL is a mailto link.
+  private func accept(_ urls: [URL]) -> Bool {
+    let links = urls.filter { $0.scheme?.lowercased() == "mailto" }
+    guard !links.isEmpty else { return false }
+    for link in links where link.absoluteString.utf8.count <= Self.maxLength && pending.count < Self.maxPending {
+      pending.append(link.absoluteString)
+    }
+    channel.invokeMethod("available", arguments: nil)
+    return links.count == urls.count
   }
 }
 

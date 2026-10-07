@@ -3,6 +3,7 @@ import 'data/bootstrap_stub.dart'
     if (dart.library.io) 'data/bootstrap_native.dart';
 import 'data/settings_store.dart';
 import 'data/google_native.dart';
+import 'data/mailto_links.dart';
 import 'model/google_connection.dart';
 import 'model/profile_discovery.dart';
 import 'data/profile_discovery_native.dart';
@@ -25,6 +26,7 @@ class Startup extends StatefulWidget {
 class _StartupState extends State<Startup> {
   Workspace? workspace;
   bool failed = false;
+  final links = PlatformMailtoLinks();
   @override
   void initState() {
     super.initState();
@@ -72,7 +74,9 @@ class _StartupState extends State<Startup> {
 
   @override
   Widget build(BuildContext context) {
-    if (workspace case final Workspace ready) return ShepApp(workspace: ready);
+    if (workspace case final Workspace ready) {
+      return ShepApp(workspace: ready, links: links);
+    }
     return MaterialApp(
       title: 'Shep',
       debugShowCheckedModeBanner: false,

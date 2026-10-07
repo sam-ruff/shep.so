@@ -28,3 +28,14 @@ abstract interface class DraftRepository {
 abstract interface class ForwardRepository {
   Future<Draft> forward(String id, String draftId);
 }
+
+/// Saves an unsent draft from a `mailto:` link through the shared parser.
+/// [message] links come from received mail and keep only their address.
+abstract interface class MailtoRepository {
+  Future<Draft> mailtoDraft(
+    String draftId,
+    String link, {
+    required String accountId,
+    required bool message,
+  });
+}

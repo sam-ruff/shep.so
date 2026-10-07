@@ -2,6 +2,7 @@ package so.shep.shep_mobile
 
 import android.app.Activity
 import android.content.Intent
+import android.os.Bundle
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -12,11 +13,22 @@ class MainActivity : FlutterActivity() {
     private var pending: MethodChannel.Result? = null
     private var content: ByteArray? = null
     private val writer = Executors.newSingleThreadExecutor()
+    private val mailtoLinks = ArrayDeque<String>()
+    private var mailtoChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         messagePrinter = MessagePrint(this).also { printer ->
             MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "so.shep/message-print").setMethodCallHandler(printer::handle)
+        }
+        // Links wait here until Dart has opened the device cache and takes them.
+        mailtoChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "so.shep/mailto").also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                if (call.method != "take") { result.notImplemented(); return@setMethodCallHandler }
+                val links = mailtoLinks.toList()
+                mailtoLinks.clear()
+                result.success(links)
+            }
         }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "so.shep/attachment-save")
             .setMethodCallHandler { call, result ->
@@ -70,12 +82,47 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // A restored activity or a launch from Recents repeats an intent that
+        // was already opened as a draft.
+        if (savedInstanceState == null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == 0) {
+            acceptMailto(intent)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        acceptMailto(intent)
+    }
+
+    private fun acceptMailto(intent: Intent?) {
+        val link = mailtoLink(intent) ?: return
+        if (mailtoLinks.size >= MAX_PENDING_MAILTO) return
+        mailtoLinks.addLast(link)
+        mailtoChannel?.invokeMethod("available", null)
+    }
+
     override fun onDestroy() {
         messagePrinter?.dispose(); messagePrinter = null
+        mailtoChannel?.setMethodCallHandler(null); mailtoChannel = null
         pending?.error("closed", "The save was interrupted. Reopen Shep and retry.", null)
         pending = null; content = null
         writer.shutdown()
         super.onDestroy()
     }
-    companion object { private const val SAVE_ATTACHMENT = 4107 }
+    companion object {
+        private const val SAVE_ATTACHMENT = 4107
+        private const val MAX_PENDING_MAILTO = 16
+        private const val MAX_MAILTO_LENGTH = 8 * 1024
+
+        // Only a mailto VIEW/SENDTO link is accepted; the shared Rust parser
+        // checks everything else before any draft exists.
+        fun mailtoLink(intent: Intent?): String? {
+            if (intent?.action != Intent.ACTION_VIEW && intent?.action != Intent.ACTION_SENDTO) return null
+            val link = intent?.dataString ?: return null
+            if (!link.startsWith("mailto:", ignoreCase = true) || link.length > MAX_MAILTO_LENGTH) return null
+            return link
+        }
+    }
 }

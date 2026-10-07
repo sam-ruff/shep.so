@@ -1,5 +1,98 @@
 # Completion audit
 
+## Mobile Save original message, 7 October 2026 (#44, part two)
+
+The reader has a Save original message control below the attachments, separate
+from Print and attachment saves. It reads the exact cached raw MIME through the
+native `original_message` operation, which resolves message aliases and refuses
+missing or empty originals, and checks the decoded length. The bytes go through
+the existing platform save picker as `message.eml` (`message/rfc822`), matching
+the desktop's default export name. Saved, cancelled and failed results have
+their own status line; cancelling is not an error, read and picker failures can
+be retried, and attachment saves wait while an original save holds the shared
+picker.
+
+Verification: 2 native tests cover CRLF, bare LF, 8-bit bytes, trailing
+spaces, aliases, an unchanged cache row and missing or empty originals. An
+actual FFI test compares the bytes with the fixture's SQLite row, including
+through an alias. 7 real-control Flutter tests cover the exact picker arguments
+and bytes, cancellation, retried read and picker failures, the shared picker,
+a client without the native cache and compact light/dark goldens, which were
+reviewed. The full Flutter suite passes 438 tests (3 existing skips) and all 231
+mobile native tests pass with Clippy denying warnings.
+
+On the isolated read-only `shep-e2e` Android 16 emulator, the production entry
+opened the incoming fixture profile handed over before launch. DocumentsUI
+offered `message.eml`; Back reported Save cancelled, and Save wrote a 4,448-byte
+file with 128 CRLF line ends whose SHA-256 matched the fixture's SQLite row
+(`30db4b61...68d02`). Captures, the expected and saved files are in
+`artifacts/android-mailto/export/` in the lane worktree. This was driven with
+adb, not a saved automated scenario.
+
+Remaining: a saved Android scenario, iOS execution and the browser equivalent.
+
+## Mobile mailto drafts, 6 October 2026 (#44, part one)
+
+Implementation: [PR #70](https://github.com/sam-ruff/shep.so/pull/70).
+
+The desktop `mailto:` parser now lives in `shared/mail-content/src/mailto.rs`
+with shared cases in `shared/mailto-cases.json`. Launcher links prefill
+To/Cc/Bcc/subject/body; links inside received mail keep only their address.
+Repeated recipients combine, the first subject and body win, encoded line breaks
+become spaces outside the body, and attachments and other headers are ignored.
+Invalid percent escapes, non-UTF-8 bytes, other schemes and links over 8 KiB
+create nothing. Desktop uses the same parser for launch arguments, the running
+owner and reader links, so malformed links that previously opened drafts with
+replacement characters now open nothing; valid links behave as before.
+
+Mobile saves a new unsent draft through the native `mailto_draft` operation
+before the composer opens. An exact retry returns the same draft; any other
+reuse, a discarded identity and unknown or removed accounts are refused, and an
+existing draft is never replaced. Android's MainActivity is now singleTask with
+a VIEW/SENDTO mailto filter, so another app's link reaches the one running
+window; it holds at most 16 links until Dart takes them after the saved
+workspace loads, and ignores restored or Recents launches of an already opened
+link. iOS registers the mailto scheme beside the Google callback and a scene
+plugin claims only events whose URLs are all mailto. Flutter deep linking is
+disabled on both so a link is never treated as a route. A link arriving while
+Shep runs opens above the current screen, including an open composer, whose
+text stays unchanged. Without an account the draft keeps an empty sender and the
+composer explains how to add one. Reader links open the existing link review
+with Write message in place of Open link.
+
+Device checks exposed two existing composer faults, both fixed with host
+regressions that failed before the change. A New message route chose its draft
+identity inside the route builder, so keyboard and theme rebuilds saved one
+typed message as several drafts. The first keystroke also inserted a save-status
+row above unkeyed fields, so the list rebuilt the focused field and the keyboard
+lost every later character. The identity is now chosen once and the fields are
+keyed. The existing `composer_save_failure_light` golden had captured that lost
+focus; its update shows Subject still focused after the failed save, and was
+reviewed.
+
+Verification: 4 shared parser tests (22 shared cases), 9 desktop mailto tests
+including the new invalid-encoding regression, 6 new native operation tests
+within all 229 mobile native tests, 2 actual FFI tests that run every shared
+case and reopen the profile, and 13 real-control Flutter tests within the full
+suite of 430 passing tests (3 existing skips). The compact
+light/dark no-account goldens were reviewed. Native Clippy denies warnings and
+Flutter analysis is clean. Logs are under `artifacts/logs/` in the lane worktree.
+
+On an isolated read-only `shep-e2e` Android 16 emulator, the production entry in
+the preview package opened a cold-start VIEW link with every field and the
+no-account instruction, while the attachment parameter was ignored. A running
+SENDTO link opened above a composer holding typed text, and that text was intact
+after the link draft closed. An invalid-encoding link showed Email link not
+opened. After the process was killed, relaunching from Recents restored the
+Inbox without repeating the launch link. The final profile held exactly the
+typed draft and the link draft, with no Outbox rows. Captures and database
+copies are in `artifacts/android-mailto/` in the lane worktree. This was driven
+with adb, not a saved automated scenario.
+
+Remaining under #44: Save original message, a saved Android activation
+scenario, iOS execution and system routing (Apple's default mail app
+entitlement), Android SENDTO subject/body extras and browser mailto drafts.
+
 ## Mobile reply original and portable default, 6 October 2026 (#30)
 
 Reply and Reply all now retain an immutable original separately from typed text,

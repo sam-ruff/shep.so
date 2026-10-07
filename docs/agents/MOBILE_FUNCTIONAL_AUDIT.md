@@ -119,6 +119,10 @@ alongside queued Undo (#49) in merged
 [PR #60](https://github.com/sam-ruff/shep.so/pull/60). Accurate cached headers
 and Copy controls (#47) are implemented in
 [PR #59](https://github.com/sam-ruff/shep.so/pull/59), with host FFI, compact
-browser and Android clipboard evidence. The delivery tracker and completion log
-distinguish these changes from the remaining open findings and Apple/provider
-verification.
+browser and Android clipboard evidence. Mailto drafts (#44) now share the
+desktop's bounded parser and open as unsent mobile drafts, with manual Android
+emulator routing checks, in [PR #70](https://github.com/sam-ruff/shep.so/pull/70).
+Save original message exports the exact cached MIME in a follow-up PR; a saved
+Android scenario and device/Apple execution remain open under the same ticket. The delivery tracker and
+completion log distinguish these changes from the remaining open findings and
+Apple/provider verification.

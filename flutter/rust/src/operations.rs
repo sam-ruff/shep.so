@@ -520,6 +520,9 @@ pub enum Request {
         id: String,
         file: String,
     },
+    OriginalMessage {
+        id: String,
+    },
     Sync {
         #[serde(default)]
         credential_slot: Option<String>,
@@ -565,6 +568,12 @@ pub enum Request {
     },
     SaveDraft {
         draft: Draft,
+    },
+    MailtoDraft {
+        id: String,
+        account: String,
+        link: String,
+        message: bool,
     },
     DiscardDraft {
         id: String,
@@ -1119,6 +1128,18 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
                 Ok(json!({"info":info,"bytes":base64::engine::general_purpose::STANDARD.encode(bytes)}))
             }).await?
         }
+        // The exact cached MIME, unparsed, for Save original message.
+        Request::OriginalMessage{id} => {
+            let raw:Vec<u8>=db.read(move |db| {
+                let summary=stored_mail(db,&id)?;
+                Ok(db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?)
+            }).await?;
+            anyhow::ensure!(!raw.is_empty(),"This message has no cached original yet. Refresh its folder and retry.");
+            tokio::task::spawn_blocking(move || {
+                use base64::Engine;
+                Ok(json!({"size":raw.len(),"bytes":base64::engine::general_purpose::STANDARD.encode(&raw)}))
+            }).await?
+        }
         Request::Drafts => db.read(crate::drafts::list).await,
         Request::DraftFiles{id} => db.read(move|db|crate::drafts::snapshot(db,&id)).await,
         Request::AddDraftFiles{id,paths} => {
@@ -1157,6 +1178,9 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::SaveDraft{draft} => {
             db.write(move|db|crate::drafts::save_text(db,draft)).await?;
             Ok(json!({"saved":true}))
+        }
+        Request::MailtoDraft{id,account,link,message} => {
+            db.write(move|db|crate::drafts::create_mailto(db,&id,&account,&link,message)).await
         }
         Request::DiscardDraft{id,revision} => {
             db.write(move|db|{

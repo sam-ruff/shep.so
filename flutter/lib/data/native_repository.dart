@@ -33,9 +33,11 @@ class NativeRepository
         ProfileAccountRepository,
         DraftRepository,
         ForwardRepository,
+        MailtoRepository,
         OutgoingRepository,
         SentPreferencesRepository,
         AttachmentRepository,
+        OriginalMessageRepository,
         AccountRemovalRepository,
         TextSearchRepository,
         FormattedMessageRepository,
@@ -705,6 +707,18 @@ class NativeRepository
   }
 
   @override
+  Future<Uint8List> originalMessage(String id) async {
+    final result = await call({'op': 'original_message', 'id': id});
+    final bytes = await compute(base64Decode, result['bytes'] as String);
+    if (bytes.length != result['size']) {
+      throw const MailOperationFailure(
+        'The original message could not be read completely. Retry.',
+      );
+    }
+    return bytes;
+  }
+
+  @override
   Future<List<Mail>> refresh() async {
     warning = null;
     final results = await refreshIncoming();
@@ -1098,6 +1112,27 @@ class NativeRepository
   Future<Draft> forward(String id, String draftId) async {
     final draft = Draft.fromJson(
       await call({'op': 'forward', 'id': id, 'draft_id': draftId}),
+    );
+    savedDrafts.removeWhere((d) => d.id == draft.id);
+    savedDrafts.add(draft);
+    return draft;
+  }
+
+  @override
+  Future<Draft> mailtoDraft(
+    String draftId,
+    String link, {
+    required String accountId,
+    required bool message,
+  }) async {
+    final draft = Draft.fromJson(
+      await call({
+        'op': 'mailto_draft',
+        'id': draftId,
+        'account': accountId,
+        'link': link,
+        'message': message,
+      }),
     );
     savedDrafts.removeWhere((d) => d.id == draft.id);
     savedDrafts.add(draft);

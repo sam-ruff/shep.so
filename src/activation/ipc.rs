@@ -203,5 +203,5 @@ async fn read_link(mut connection: &Stream) -> Option<String> {
     let mut link = vec![0_u8; length];
     connection.read_exact(&mut link).await.ok()?;
     let link = String::from_utf8(link).ok()?;
-    crate::mailto::Mailto::parse(&link).map(|_| link)
+    crate::mailto::Mailto::parse(&link).ok().map(|_| link)
 }

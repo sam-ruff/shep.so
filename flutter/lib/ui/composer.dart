@@ -347,6 +347,8 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
     String label, {
     bool multiline = false,
   }) => TextField(
+    // Keys let the list keep each field's focus when status rows appear above.
+    key: ValueKey('composer-field-$label'),
     controller: controller,
     onChanged: (_) => edited(),
     readOnly: locked,
@@ -498,7 +500,19 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
               ),
             ),
           if (widget.workspace.accountRepository case final native?) ...[
+            if (!widget.workspace.repository.preview &&
+                accountId.isEmpty &&
+                native.mailAccounts.isEmpty)
+              Padding(
+                key: const ValueKey('composer-no-account'),
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'No email account is connected. Add an account in Preferences, then choose it here before sending. Drafts stay on this device.',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
             DropdownButtonFormField<String>(
+              key: const ValueKey('composer-from'),
               initialValue: native.mailAccounts.any((a) => a.id == accountId)
                   ? accountId
                   : null,

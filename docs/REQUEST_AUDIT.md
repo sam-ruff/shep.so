@@ -1,5 +1,18 @@
 # Conversation request audit
 
+**6 October mailto drafts (#44):** Mobile opens operating-system mailto links
+and links inside received mail as new unsent drafts. The desktop parser moved to
+`shared/mail-content` so both clients share one bounded contract and fixture
+set; desktop now also refuses malformed encodings instead of opening drafts with
+replacement characters. Existing drafts and open editors are never replaced and
+nothing is sent automatically. Android routing was checked manually on an
+emulator. Save original message then exports the exact cached MIME through the
+native picker as `message.eml`, separately from Print and attachment saves, and
+a manual Android save matched the cached bytes. Saved Android scenarios, Apple
+execution, Android SENDTO extras and the browser equivalents remain tracked in
+[TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); evidence is in
+[Completion](COMPLETION.md).
+
 **6 October reply-original delivery (#30):** Mobile Reply and Reply all gain a
 per-draft Include original message control and searchable new-reply default.
 Typed text remains independent of the saved original through files, autosave,

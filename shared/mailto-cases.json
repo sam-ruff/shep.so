@@ -1,0 +1,149 @@
+{
+  "schema": 1,
+  "reference": "shared/mail-content/src/mailto.rs. Activation links come from the operating system or a launcher and may prefill every draft field; message links come from received mail and prefill only their own address. Rejected links never create a draft.",
+  "cases": [
+    {
+      "name": "prefills draft fields but not other headers",
+      "mode": "activation",
+      "link": "MAILTO:a%40example.test?to=b@example.test&cc=c@example.test&subject=Hello%20there+friend&bcc=hidden@example.test&body=This%20is%20the%20body.&attachment=/etc/passwd&from=x@example.test",
+      "expected": {
+        "to": "a@example.test, b@example.test",
+        "cc": "c@example.test",
+        "bcc": "hidden@example.test",
+        "subject": "Hello there+friend",
+        "body": "This is the body."
+      }
+    },
+    {
+      "name": "repeated recipients combine and the first subject and body win",
+      "mode": "activation",
+      "link": "mailto:a@example.test?to=a@example.test&cc=c1@example.test&CC=c2@example.test&subject=First&Subject=Second&body=One&BODY=Two",
+      "expected": {
+        "to": "a@example.test, a@example.test",
+        "cc": "c1@example.test, c2@example.test",
+        "subject": "First",
+        "body": "One"
+      }
+    },
+    {
+      "name": "encoded line breaks cannot add a header through the subject",
+      "mode": "activation",
+      "link": "mailto:a@example.test?subject=Hi%0D%0ABcc:%20x@example.test",
+      "expected": { "to": "a@example.test", "subject": "Hi  Bcc: x@example.test" }
+    },
+    {
+      "name": "encoded line breaks cannot add a header through the address",
+      "mode": "activation",
+      "link": "mailto:a@example.test%0D%0ABcc:%20evil@example.test",
+      "expected": { "to": "a@example.test  Bcc: evil@example.test" }
+    },
+    {
+      "name": "literal line breaks are removed before decoding",
+      "mode": "activation",
+      "link": "mailto:a@example.test?subject=Hi\r\nBcc: x",
+      "expected": { "to": "a@example.test", "subject": "HiBcc: x" }
+    },
+    {
+      "name": "body keeps line breaks and tabs and drops other control characters",
+      "mode": "activation",
+      "link": "mailto:a@example.test?body=First%0D%0ASecond%0A%09Third%00%1B",
+      "expected": { "to": "a@example.test", "body": "First\nSecond\n\tThird" }
+    },
+    {
+      "name": "attachments and other headers are ignored",
+      "mode": "activation",
+      "link": "mailto:a@example.test?attachment=%2Fetc%2Fpasswd&attach=file:///private/file&X-Header=y&in-reply-to=%3Cid%40example.test%3E&from=x@example.test",
+      "expected": { "to": "a@example.test" }
+    },
+    {
+      "name": "links without an address are accepted",
+      "mode": "activation",
+      "link": "mailto:?subject=Report",
+      "expected": { "subject": "Report" }
+    },
+    {
+      "name": "pairs without a value and fragments are ignored",
+      "mode": "activation",
+      "link": "mailto:a@example.test?subject&body=Hi#subject=Later",
+      "expected": { "to": "a@example.test", "body": "Hi" }
+    },
+    {
+      "name": "encoded and literal Unicode text is kept",
+      "mode": "activation",
+      "link": "mailto:caf%C3%A9@example.test?subject=Caf%C3%A9%20%E3%82%AC&body=Café 한글",
+      "expected": { "to": "café@example.test", "subject": "Café ガ", "body": "Café 한글" }
+    },
+    {
+      "name": "percent-encoded bytes that are not UTF-8 are rejected",
+      "mode": "activation",
+      "link": "mailto:a@example.test?subject=caf%E9",
+      "rejected": "invalid-encoding"
+    },
+    {
+      "name": "overlong encodings of a line break are rejected",
+      "mode": "activation",
+      "link": "mailto:a@example.test?body=Hi%C0%8ABcc:%20x",
+      "rejected": "invalid-encoding"
+    },
+    {
+      "name": "an incomplete escape is rejected",
+      "mode": "activation",
+      "link": "mailto:a@example.test?subject=50%",
+      "rejected": "invalid-encoding"
+    },
+    {
+      "name": "an escape with non-hex digits is rejected",
+      "mode": "activation",
+      "link": "mailto:a%zz@example.test",
+      "rejected": "invalid-encoding"
+    },
+    {
+      "name": "an escape with a sign is rejected",
+      "mode": "activation",
+      "link": "mailto:a@example.test?cc=%+1",
+      "rejected": "invalid-encoding"
+    },
+    {
+      "name": "other schemes are rejected",
+      "mode": "activation",
+      "link": "https://example.test/?to=a@example.test",
+      "rejected": "not-mailto"
+    },
+    {
+      "name": "text that is not a link is rejected",
+      "mode": "activation",
+      "link": "not a link",
+      "rejected": "not-mailto"
+    },
+    {
+      "name": "message links keep only their own address",
+      "mode": "message",
+      "link": "mailto:friend%40example.test?subject=untrusted&cc=copy@example.test&bcc=hidden@example.test&body=Hello&attachment=/private/file",
+      "expected": { "to": "friend@example.test" }
+    },
+    {
+      "name": "message links ignore recipients named only in the query",
+      "mode": "message",
+      "link": "mailto:?to=someone@example.test&bcc=hidden@example.test",
+      "expected": {}
+    },
+    {
+      "name": "message links cannot smuggle a header through the address",
+      "mode": "message",
+      "link": "mailto:a@example.test%0ABcc:%20evil@example.test",
+      "expected": { "to": "a@example.test Bcc: evil@example.test" }
+    },
+    {
+      "name": "message links reject invalid address encoding",
+      "mode": "message",
+      "link": "mailto:%FF@example.test",
+      "rejected": "invalid-encoding"
+    },
+    {
+      "name": "message links reject other schemes",
+      "mode": "message",
+      "link": "javascript:alert(1)",
+      "rejected": "not-mailto"
+    }
+  ]
+}
