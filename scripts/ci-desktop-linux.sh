@@ -85,9 +85,10 @@ trap - EXIT
 copy_e2e_evidence
 python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
 bash scripts/ci-performance.sh action "$shep_source"
-# The runner renders HTML 3-4x slower than a quiet workstation, so CI reports
-# those pixel timings; scripts/check.sh keeps the strict budgets.
-python3 scripts/performance_gate.py --html-report-only
+# The runner renders HTML and bulk review pixels 3-4x slower than a quiet
+# workstation, so CI reports those pixel timings; backend budgets stay strict
+# here and scripts/check.sh keeps every budget strict.
+python3 scripts/performance_gate.py --html-report-only --actions-report-only
 if [[ -n "$shep_version" ]]; then
   python3 scripts/release.py "$shep_version" --no-stamp \
     --target x86_64-unknown-linux-gnu --source "$shep_source"
