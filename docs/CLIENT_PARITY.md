@@ -1,14 +1,24 @@
 # Client parity
 
-Mobile individual Archive, Trash and Spam (#48) follow desktop's provider folder
-policy: cached catalogue first, LIST before the first sync and an uncached
-literal candidate when LIST fails. The exact physical target is frozen before
-MOVE, a missing folder is created only through the existing folder journal with
-its acknowledgement saved first, and receipts and Undo use the physical folder.
+Mobile individual Archive, Trash and Spam (#48) share desktop's choice order:
+cached catalogue first, LIST before the first sync and, when LIST fails, the
+literal name without caching the failed listing. They differ in three ways.
+Mobile plans a missing folder inside the server's namespace (for example
+`INBOX.Archive`), where desktop's `ensure_exact("Archive")` fails on servers with
+a prefixed personal namespace; that is a desktop gap. A definite CREATE refusal
+becomes a reviewable rejection of that mail action, releasing only its intent,
+while desktop completes a refused move on the device only; that local
+completion is the tracked Flutter/browser gap in TODO's 14 September local
+fallback entry. An unknown CREATE stays held for Folder activity on both and is
+never replayed. The exact physical target is frozen before MOVE, a missing folder
+is created only through the existing folder journal with its acknowledgement
+saved first, and receipts and Undo use the physical folder. The Spam view, like
+desktop's, shows a literal `Junk` folder as well as the account's role folders.
 Mobile group Archive/Delete still use literal names until the group receipt work
-in [#64](https://github.com/sam-ruff/shep.so/issues/64) lands. The existing
-refusal of account removal while provider owners are held remains an active
-desktop/mobile gap in [#62](https://github.com/sam-ruff/shep.so/issues/62).
+in [#64](https://github.com/sam-ruff/shep.so/issues/64) lands; until then a group
+Delete from a role-aware view moves to a literal `Trash`. The existing refusal of
+account removal while provider owners are held remains an active desktop/mobile
+gap in [#62](https://github.com/sam-ruff/shep.so/issues/62).
 
 Mobile queued bulk Undo (#49) is merged for pending, paused and
 held-first-step work. The checked local decision removes forward projection and

@@ -105,16 +105,21 @@ Android, Apple and live-provider verification.
 
 `logical_mail_controls_test.dart` retains compact light/dark Waiting notices and
 visible Undo, without completed MOVE wording. `logical_mail_actions_test.dart`
-also keeps an older superseded action or Undo restore quiet under newer input.
+also keeps an older superseded action or Undo restore quiet under newer input
+and lets later actions resume past one held for its folder request.
 Native destination tests (`cargo test destinations` in `flutter/rust`) cover
 special-use/encoded physical receipts and exact Undo, local POP3 roles, failed
-LIST without caching, typed plan rejection, unknown CREATE inspection,
-acknowledged cache-only repair, held catalogue/plan/inspect/CREATE cancellation,
-credential reconnect for the same mailbox and destination rows bounded by the
-action history. Shared protocol checks retain ordinary CREATE for generic folders
-and require advertised CREATE-SPECIAL-USE for logical roles; changed dispatch
-encoding refuses before SELECT/MOVE. Group Archive/Delete destinations are not
-part of this path yet, and these checks do not establish platform parity.
+LIST with and without a plannable literal name, typed plan rejection, a renamed
+cached folder, unknown CREATE inspection, definite CREATE refusal and reviewed
+retry, a folder found before CREATE, acknowledged cache-only repair, held
+catalogue/plan/inspect/CREATE cancellation, a duplicate request after success, a
+replaced source, uncertain physical projection, a plain `Junk` folder in the Spam
+view, credential reconnect for the same mailbox and destination rows bounded by
+the action history. Shared protocol checks keep plain CREATE for ordinary planned
+folders, even with a role on the target, and require advertised
+CREATE-SPECIAL-USE for logical roles; a changed dispatch encoding is a distinct
+local error before SELECT/MOVE. Group Archive/Delete destinations are not part of
+this path yet, and these checks do not establish platform parity.
 
 Preferences search is covered by `preferences_search_test.dart`,
 `preferences_search_controls_test.dart` and `preferences_search_native_test.dart`:

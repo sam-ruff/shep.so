@@ -3,15 +3,18 @@
 ## Mobile individual provider destinations, 6 October 2026 (#48, partial)
 
 Individual Archive, Trash and Spam keep desktop's cached-catalogue-first
-resolution, LIST before the first sync and the deliberate uncached literal
-candidate after a failed LIST. The exact physical target is frozen before MOVE.
-A missing folder is admitted through the existing folder journal and its CREATE
-acknowledgement is saved before MOVE; an unknown CREATE stays unconfirmed even
-after a successful existence check, and acknowledged folder receipts repair the
-cache without another CREATE or credentials. Receipts and Undo use the physical
-folder, so a Trash resolved to "Corbeille" is undone from "Corbeille". POP3 and
-local copies file locally. Pending logical actions show a clock and progressive
-wording while keeping the existing Archive/Delete completion wording.
+resolution, LIST before the first sync and the deliberate uncached literal name
+after a failed LIST; a missing folder is then planned inside the server's
+namespace rather than at desktop's literal root path. The exact physical target
+is frozen before MOVE. A missing folder is admitted through the existing folder
+journal and its CREATE acknowledgement is saved before MOVE; an unknown CREATE
+stays unconfirmed even after a successful existence check, and acknowledged
+folder receipts repair the cache without another CREATE or credentials. A
+definite CREATE refusal rejects only that mail action for review. Receipts and
+Undo use the physical folder, so a Trash resolved to "Corbeille" is undone from
+"Corbeille". POP3 and local copies file locally. Archive/Delete keep their usual
+wording; an action waiting on its folder request shows a clock and progressive
+wording.
 
 The review continuation fixed four defects, each with a regression that failed
 first. A credential reconnect for the same mailbox stranded an admitted logical
@@ -37,6 +40,31 @@ cancels both admissions, keeps the acknowledged `INBOX.Archive` receipt and send
 no SELECT or MOVE. The compact light/dark Waiting captures were reviewed. Logs are
 under ignored `artifacts/logs/provider-folders-*`, including the failing-first
 runs.
+
+The independent review of PR #69 found further defects, each fixed with a
+regression that failed first (`provider-folders-review-before.txt`,
+`-encoding-before.txt`, `-held-resume-before.txt`). A duplicate request that
+waited for the account lock after the first had succeeded released the
+succeeded intent and reported "cancelled"; it now returns the saved result, and
+destination outcomes change an action only while it is still queued or waiting.
+A source replaced during resolution is rejected with the existing changed-identity
+message instead of reported as superseded. A definite CREATE refusal is now a
+reviewable rejection that releases only that action's intent, and a reviewed
+retry can plan a new request; an unknown CREATE stays held. A Spam action that
+resolved to a plain `Junk` folder vanished from the Spam view after the next
+catalogue save; the view now includes `Junk` as desktop's does. An uncertain move
+projected and reported the logical name instead of the attempted folder. A cached
+role folder renamed on the server was rejected; it now lists again. A folder that
+appeared before any CREATE was sent was held as an unknown CREATE; it is now used
+as checked state without inventing an acknowledgement. A cancelled and pruned
+action left its destination row behind after the folder request ended. A held
+action blocked every later resumed action on its account, under a "waiting for
+connection" label; it is now skipped alone and labelled as waiting for its
+destination folder. A changed folder encoding is a distinct local error rather
+than a server refusal, and the shared planned CREATE keeps plain CREATE for
+desktop and gateway callers. All 250 native tests, Clippy and formatting pass;
+426 Flutter host tests pass with the same five skips; analysis is clean and the
+TLS FFI runner passes both cases.
 
 This is not a completed parity claim. Remaining: group Archive/Delete/Spam
 destinations on top of #64 (schema27 before destination schema28) with combined
