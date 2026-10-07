@@ -190,7 +190,7 @@ class NativeFlows(unittest.TestCase):
                        check("settings_tab", "Backups"), click(1080, 334),
                        check("backup_run.0.status", "Saved"),
                        check("backup_run.1.status.Failed", "acknowledgment was lost", "contains"),
-                       key("ctrl+1"), check("activity.label", "Activity · attention"),
+                       key("ctrl+1"), check("tab", "Mail"), check("activity.label", "Activity · attention"),
                        click(85, 830), check("dialog", "Activity"),
                        shot("activity-backup-other-destination"), click(530, 454), wait(100),
                        check("activity.refreshing", False), check("activity.review_error", None),
@@ -315,8 +315,8 @@ class NativeFlows(unittest.TestCase):
 
     def test_spam_shortcut_compact_dark_context_menu(self):
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80),
-                       click(690, 366), check("dark", True), key("ctrl+1"),
-                       {"type": "resize", "width": 900, "height": 640}, wait(180),
+                       click(690, 366), check("dark", True), key("ctrl+1"), check("tab", "Mail"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900, 640]), wait(180),
                        click(85, 482), check("folder", "Junk"), check("total", 0),
                        shot("spam-empty-compact-dark"), key("shift+F10"),
                        check("folder_changes.menu.source", "Junk"),
@@ -415,7 +415,7 @@ class NativeFlows(unittest.TestCase):
                 {"type": "scroll", "amount": 30}, wait(120), click(85, 752))
 
     def open_saved_folder_with_keyboard(self, label):
-        self.mcp.batch(key("ctrl+1"), {"type": "hover", "x": 100, "y": 400},
+        self.mcp.batch(key("ctrl+1"), check("tab", "Mail"), {"type": "hover", "x": 100, "y": 400},
                        {"type": "scroll", "amount": -30}, wait(120), click(85, 278),
                        check("sidebar_focus", True))
         state = self.mcp.call("desktop.state")
