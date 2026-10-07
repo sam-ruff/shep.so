@@ -209,6 +209,9 @@ fn settle(db: &Connection, id: &str) -> Result<()> {
 pub(crate) fn restart(db: &Connection) -> Result<()> {
     db.execute("UPDATE group_items SET state='repair',reason='A saved acknowledgement needs local repair before another group step.' WHERE state='sending' AND EXISTS(SELECT 1 FROM individual_mail_action_receipts r WHERE r.action=group_items.attempt)",[])?;
     db.execute("UPDATE group_items SET state='undo_repair',reason='A saved Undo acknowledgement needs local repair before another group step.' WHERE state='reversing' AND EXISTS(SELECT 1 FROM individual_mail_action_receipts r WHERE r.action=group_items.attempt)",[])?;
+    // A child that never left queued or waiting was not sent; requeue its item.
+    db.execute("UPDATE individual_mail_actions SET status='cancelled',error=NULL WHERE group_job IS NOT NULL AND status IN ('queued','waiting') AND id IN (SELECT attempt FROM group_items WHERE state IN ('sending','reversing'))",[])?;
+    db.execute("UPDATE group_items SET state=CASE state WHEN 'sending' THEN 'pending' ELSE 'undoing' END,attempt=NULL WHERE state IN ('sending','reversing') AND EXISTS(SELECT 1 FROM individual_mail_actions a WHERE a.id=group_items.attempt AND a.status='cancelled' AND NOT EXISTS(SELECT 1 FROM individual_mail_action_receipts r WHERE r.action=a.id))",[])?;
     db.execute("UPDATE group_items SET state='uncertain',reason='Shep stopped before the server confirmed this step. Check the folder, then accept the current state or refresh.' WHERE state='sending'",[])?;
     db.execute("UPDATE group_items SET state='undo_uncertain',reason='Shep stopped before the server confirmed this Undo step. Check the folder, then accept the current state or refresh.' WHERE state='reversing'",[])?;
     db.execute("UPDATE group_jobs SET state='paused' WHERE state IN ('running','undoing') AND EXISTS(SELECT 1 FROM group_items WHERE job=group_jobs.id AND state IN ('uncertain','undo_uncertain') AND attempt IS NOT NULL)",[])?;
@@ -470,16 +473,17 @@ pub(crate) async fn run(profile: &MobileProfile, command: Command) -> Result<Val
                         |r| r.get(0),
                     )
                     .context("This message is no longer part of the group action.")?;
-                ensure!(
-                    matches!(item.as_str(), "uncertain" | "undo_uncertain"),
-                    "Only an unconfirmed step can be accepted."
-                );
                 // Retires the local intent only. The cache and the provider
                 // outcome are not classified; the message keeps whatever a
-                // later refresh shows.
+                // later refresh shows. Saved acknowledgements stay recorded.
+                let reason = match item.as_str() {
+                    "uncertain" | "undo_uncertain" => "Current state accepted without a server confirmation",
+                    "repair" | "undo_repair" => "Current state accepted. The server acknowledgement is kept, but this device did not save it; refresh the folder to see the result.",
+                    _ => anyhow::bail!("Only an unconfirmed or unsaved step can be accepted."),
+                };
                 tx.execute(
-                    "UPDATE group_items SET state='accepted',reason='Current state accepted without a server confirmation' WHERE job=?1 AND position=?2",
-                    params![id, position],
+                    "UPDATE group_items SET state='accepted',reason=?3 WHERE job=?1 AND position=?2",
+                    params![id, position, reason],
                 )?;
                 touch(&tx, &id)?;
                 let value = summary(&tx, &id)?;
@@ -755,11 +759,12 @@ fn history(db: &Connection, before: Option<i64>, tracked: &[String]) -> Result<V
             observed.push(summary(db, id)?);
         }
     }
-    let runnable: bool = db.query_row(
-        "SELECT NOT EXISTS(SELECT 1 FROM individual_mail_actions INDEXED BY individual_mail_action_group_repair WHERE group_job IS NOT NULL AND status='repair') AND EXISTS(SELECT 1 FROM group_jobs j INDEXED BY group_job_state WHERE j.state IN ('running','undoing') AND EXISTS(SELECT 1 FROM group_items WHERE job=j.id AND state=CASE j.state WHEN 'running' THEN 'pending' ELSE 'undoing' END))",
-        [],
-        |r| r.get(0),
-    )?;
+    let runnable: bool = crate::operations::group::pending(db)?.is_some()
+        || db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM group_jobs j INDEXED BY group_job_state WHERE j.state IN ('running','undoing') AND EXISTS(SELECT 1 FROM group_items WHERE job=j.id AND state=CASE j.state WHEN 'running' THEN 'pending' ELSE 'undoing' END))",
+            [],
+            |r| r.get(0),
+        )?;
     Ok(
         json!({"jobs":jobs,"runnable":runnable,"active":active,"attention":attention,"attention_job":attention_job,"tracked":observed,
         "next_before":if more {ids.last().map(|(_,seq)|*seq)} else {None},
@@ -839,7 +844,26 @@ enum Next {
         inverse: bool,
         reason: String,
     },
+    /// No provider work was started; the step stays retryable.
+    Defer {
+        job: String,
+        position: i64,
+        inverse: bool,
+        reason: String,
+    },
     Claim(Box<Claim>),
+}
+
+/// A cached flag proves the server value only when its last cache completion
+/// is known and no started, acknowledged or unknown change to it is unapplied.
+fn cache_proves(db: &Connection, mail: &str, field: &str) -> Result<bool> {
+    let path = format!("$.{field}");
+    let doubtful: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND legacy_revision>applied_revision) OR EXISTS(SELECT 1 FROM individual_mail_actions INDEXED BY individual_mail_action_unsettled WHERE mail=?1 AND status IN ('running','repair','uncertain') AND json_extract(COALESCE(accepted_fields,fields),?3) IS NOT NULL)",
+        params![mail, field, path],
+        |row| row.get(0),
+    )?;
+    Ok(!doubtful)
 }
 
 fn same_folder(a: &str, b: &str) -> bool {
@@ -965,6 +989,9 @@ fn next(db: &Connection) -> Result<Next> {
     if stored_account(db, &account).is_err() {
         return skip("Account removed from this device");
     }
+    let Some(origin) = lineage.as_deref() else {
+        return skip("This older review has no captured source proof. Select the messages again");
+    };
     let connection: Option<String> = db.query_row(
         "SELECT connection FROM group_items WHERE job=?1 AND position=?2",
         params![job, position],
@@ -975,9 +1002,6 @@ fn next(db: &Connection) -> Result<Next> {
     }
     let Ok(current) = stored_mail(db, &mail) else {
         return skip("Message is no longer cached");
-    };
-    let Some(origin) = lineage.as_deref() else {
-        return skip("This older review has no captured source proof. Select the messages again");
     };
     if !crate::operations::observed_lineage_matches(db, &current.id, origin)? {
         return skip("Message changed since the selection was captured");
@@ -1035,8 +1059,12 @@ fn next(db: &Connection) -> Result<Next> {
         serde_json::from_str(&job_fields)?
     };
     let had_fields = !fields.is_empty();
-    for field in ["folder", "unread", "starred"] {
-        if field_owned(db, &job, &current.id, field, approved)? {
+    for (field, requested) in [
+        ("folder", fields.folder.is_some()),
+        ("unread", fields.unread.is_some()),
+        ("starred", fields.starred.is_some()),
+    ] {
+        if !requested || field_owned(db, &job, &current.id, field, approved)? {
             continue;
         }
         match field {
@@ -1049,6 +1077,19 @@ fn next(db: &Connection) -> Result<Next> {
     if had_fields && fields.is_empty() {
         return skip("A newer change owns this message; skipped");
     }
+    let moving: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pending_moves WHERE id=?1)",
+        [&current.id],
+        |row| row.get(0),
+    )?;
+    if moving {
+        return Ok(Next::Defer {
+            job,
+            position,
+            inverse,
+            reason: "An earlier move of this message is not saved locally yet. Refresh its folders, then retry.".into(),
+        });
+    }
     if fields
         .folder
         .as_deref()
@@ -1056,13 +1097,14 @@ fn next(db: &Connection) -> Result<Next> {
     {
         fields.folder = None;
     }
-    let known_field = |field: &str| -> Result<bool> {
-        Ok(!db.query_row("SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field=?2 AND legacy_revision>applied_revision)",params![current.id,field],|row|row.get::<_,bool>(0))?)
-    };
-    if fields.unread.is_some_and(|u| u == current.unread) && known_field("unread")? {
+    if fields.unread.is_some_and(|u| u == current.unread)
+        && cache_proves(db, &current.id, "unread")?
+    {
         fields.unread = None;
     }
-    if fields.starred.is_some_and(|s| s == current.starred) && known_field("starred")? {
+    if fields.starred.is_some_and(|s| s == current.starred)
+        && cache_proves(db, &current.id, "starred")?
+    {
         fields.starred = None;
     }
     if fields.is_empty() {
@@ -1144,7 +1186,8 @@ fn reserve_applied_choice(db: &Connection, job: &str, position: i64) -> Result<(
         ("unread", fields.unread == Some(current.unread)),
         ("starred", fields.starred == Some(current.starred)),
     ] {
-        if applied && field_owned(db, job, &current.id, field, approved)? {
+        let proven = field == "folder" || cache_proves(db, &current.id, field)?;
+        if applied && proven && field_owned(db, job, &current.id, field, approved)? {
             db.execute("INSERT INTO mail_intents(mail,field,revision) VALUES(?1,?2,?3) ON CONFLICT(mail,field) DO UPDATE SET revision=excluded.revision WHERE mail_intents.revision<=excluded.revision",params![current.id,field,approved])?;
             crate::operations::record_applied(db, &current.id, field, approved)?;
         }
@@ -1194,29 +1237,16 @@ async fn step(
             reason,
         } => {
             let state = if inverse { "undo_skipped" } else { "skipped" };
-            let (id, text) = (job.clone(), reason.clone());
-            db.write(move |db| {
-                let tx = db.transaction()?;
-                let current: String = tx.query_row(
-                    "SELECT state FROM group_items WHERE job=?1 AND position=?2",
-                    params![id, position],
-                    |r| r.get(0),
-                )?;
-                ensure!(
-                    matches!(current.as_str(), "pending" | "undoing"),
-                    "This step changed while it was being decided."
-                );
-                if !inverse && text == "Already up to date" {
-                    reserve_applied_choice(&tx, &id, position)?;
-                }
-                finish_item(&tx, &id, position, state, Some(&text), None)?;
-                tx.commit()?;
-                Ok(())
-            })
-            .await?;
-            return Ok(
-                json!({"stepped":true,"job":job,"position":position,"outcome":state,"reason":reason}),
-            );
+            return close_unclaimed(db, job, position, inverse, reason, state).await;
+        }
+        Next::Defer {
+            job,
+            position,
+            inverse,
+            reason,
+        } => {
+            let state = if inverse { "undo_failed" } else { "failed" };
+            return close_unclaimed(db, job, position, inverse, reason, state).await;
         }
         Next::Claim(claim) => claim,
     };
@@ -1319,6 +1349,39 @@ async fn step(
     )
 }
 
+/// Close a step that needs no provider call: a skip, or a retryable failure
+/// whose reason says what to do first.
+async fn close_unclaimed(
+    db: &crate::database::Database,
+    job: String,
+    position: i64,
+    inverse: bool,
+    reason: String,
+    state: &'static str,
+) -> Result<Value> {
+    let (id, text) = (job.clone(), reason.clone());
+    db.write(move |db| {
+        let tx = db.transaction()?;
+        let current: String = tx.query_row(
+            "SELECT state FROM group_items WHERE job=?1 AND position=?2",
+            params![id, position],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            matches!(current.as_str(), "pending" | "undoing"),
+            "This step changed while it was being decided."
+        );
+        if !inverse && text == "Already up to date" {
+            reserve_applied_choice(&tx, &id, position)?;
+        }
+        finish_item(&tx, &id, position, state, Some(&text), None)?;
+        tx.commit()?;
+        Ok(())
+    })
+    .await?;
+    Ok(json!({"stepped":true,"job":job,"position":position,"outcome":state,"reason":reason}))
+}
+
 async fn repair_attempt(
     profile: &MobileProfile,
     attempt: String,
@@ -1331,7 +1394,9 @@ async fn repair_attempt(
         .read(move |db| crate::operations::group::snapshot(db, &lookup))
         .await?;
     let lookup = attempt.clone();
-    let repaired = if saved.status == "succeeded" {
+    let repaired = if saved.status != "repair" {
+        // Only a saved acknowledgement needs local work; other results are
+        // recorded on the item as they stand.
         Ok(crate::operations::ReceiptApplication::Complete)
     } else {
         profile
@@ -1450,10 +1515,25 @@ fn finish_attempt(db: &mut Connection, attempt: &str, failure: Option<&str>) -> 
             }
         }
     };
+    // Child errors are fixed public text; provider replies never reach here.
+    let child_error: Option<String> = tx.query_row(
+        "SELECT error FROM individual_mail_actions WHERE id=?1",
+        [attempt],
+        |row| row.get(0),
+    )?;
+    if saved.status == "waiting" {
+        // Nothing was sent; a later Retry admits a fresh attempt.
+        tx.execute(
+            "UPDATE individual_mail_actions SET status='cancelled' WHERE id=?1 AND status='waiting'",
+            [attempt],
+        )?;
+    }
     let reason = match state {
+        "repair" | "undo_repair" if failure.is_some() => Some("The server acknowledgement is saved, but this device could not save it. Refresh the folder and retry, or accept the current state.".into()),
         "repair" | "undo_repair" => Some("The provider acknowledgement is saved. Retry to finish saving it locally before another group step.".into()),
         "uncertain" | "undo_uncertain" => Some("The provider result is unknown. Check the folder; Shep will not repeat this attempt.".into()),
-        "skipped" | "undo_skipped" => Some("A newer choice owns this message".into()),
+        "skipped" | "undo_skipped" => Some(child_error.unwrap_or_else(|| "A newer choice owns this message".into())),
+        "failed" | "undo_failed" if saved.status == "waiting" => child_error,
         "failed" | "undo_failed" if failure.is_some() => Some("The operation could not be completed. Review the saved connection and try again.".into()),
         _ => None,
     };

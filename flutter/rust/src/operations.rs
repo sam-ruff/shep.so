@@ -2079,6 +2079,11 @@ pub(crate) async fn mutate(profile: &MobileProfile, mutation: Mutation) -> Resul
     finish_durable_mutation(profile, final_action, result, report).await
 }
 
+const GROUP_CREDENTIALS: &str =
+    "This step was not sent because the account needs its password. Reconnect it, then retry.";
+const GROUP_UNCHANGED: &str =
+    "The message was already in the requested place, so no server change was sent.";
+
 pub(super) async fn finish_durable_mutation(
     profile: &MobileProfile,
     final_action: String,
@@ -2091,7 +2096,7 @@ pub(super) async fn finish_durable_mutation(
     {
         return result;
     }
-    let (status_before_result, public) = {
+    let (status_before_result, public, receipted) = {
         let saved = final_action.clone();
         db.read(move |db| {
             let status = db.query_row(
@@ -2099,10 +2104,18 @@ pub(super) async fn finish_durable_mutation(
                 [&saved],
                 |row| row.get::<_, String>(0),
             )?;
-            Ok((status, group::public_action(db, &saved)?))
+            let receipted: bool = db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM individual_mail_action_receipts WHERE action=?1)",
+                [&saved],
+                |row| row.get(0),
+            )?;
+            Ok((status, group::public_action(db, &saved)?, receipted))
         })
         .await?
     };
+    // A group attempt succeeds only with a saved receipt; any other reply
+    // means no provider change was made for it.
+    let unreceipted = !public && !receipted;
     let (status, error) = match &result {
         Ok(value) if value.get("warning").is_some() => (
             "repair",
@@ -2111,6 +2124,10 @@ pub(super) async fn finish_durable_mutation(
                 .and_then(Value::as_str)
                 .map(str::to_owned),
         ),
+        Ok(value) if unreceipted && value.get("requires_credentials").is_some() => {
+            ("waiting", Some(GROUP_CREDENTIALS.to_owned()))
+        }
+        Ok(_) if unreceipted => ("cancelled", Some(GROUP_UNCHANGED.to_owned())),
         Ok(_) => ("succeeded", None),
         Err(error) if status_before_result == "repair" => ("repair", Some(format!("{error:#}"))),
         Err(error)
@@ -2124,16 +2141,18 @@ pub(super) async fn finish_durable_mutation(
         }
         Err(error) => ("uncertain", Some(format!("{error:#}"))),
     };
-    let error = if public {
-        error
-    } else {
-        error.map(|_| {
+    let error = match &result {
+        _ if public => error,
+        Ok(value) if unreceipted && value.get("warning").is_none() => error,
+        _ => error.map(|_| {
             match status {
-        "repair" => "The provider acknowledgement is saved. Retry to finish saving it locally.",
-        "uncertain" => "The provider result is unknown. Check the folder before another action.",
-        _ => "The operation could not be completed. Review the saved connection and try again.",
-    }.to_owned()
-        })
+                "repair" => "The provider acknowledgement is saved. Retry to finish saving it locally.",
+                "uncertain" => "The provider result is unknown. Check the folder before another action.",
+                "waiting" => "This step was not sent. Check the account connection, then retry.",
+                _ => "The operation could not be completed. Review the saved connection and try again.",
+            }
+            .to_owned()
+        }),
     };
     let saved_id = final_action.clone();
     let saved_error = error.clone();
@@ -2476,9 +2495,10 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                     let owned = |field: &str| -> Result<bool> {
                         group::owns_field(&tx,&action_id,&source.id,field,revision)
                     };
-                    let accepted_folder=if owned("folder")? {fields.get("folder").and_then(Value::as_str).map(str::to_owned)} else {None};
-                    let accepted_unread=if owned("unread")? {fields.get("unread").and_then(Value::as_bool)} else {None};
-                    let accepted_starred=if owned("starred")? {fields.get("starred").and_then(Value::as_bool)} else {None};
+                    let requested = |field: &str| fields.get(field).is_some_and(|value| !value.is_null());
+                    let accepted_folder=if requested("folder") && owned("folder")? {fields.get("folder").and_then(Value::as_str).map(str::to_owned)} else {None};
+                    let accepted_unread=if requested("unread") && owned("unread")? {fields.get("unread").and_then(Value::as_bool)} else {None};
+                    let accepted_starred=if requested("starred") && owned("starred")? {fields.get("starred").and_then(Value::as_bool)} else {None};
                     if accepted_folder.is_none() && accepted_unread.is_none() && accepted_starred.is_none() {
                         tx.execute("UPDATE individual_mail_actions SET status='cancelled',error=NULL WHERE id=?1",[&action_id])?;
                         if group::public_action(&tx,&action_id)? {

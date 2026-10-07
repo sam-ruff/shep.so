@@ -8,7 +8,10 @@ ACKs. Subordinate rows belong exclusively to the group owner. This correction
 precedes destination planning #48; verification and remaining platform limits
 are recorded in [Completion](COMPLETION.md). Review of this lane opened #66:
 a queued same-account successor should follow an exactly proven acknowledged
-MOVE identity instead of skipping, without replaying unknown results.
+MOVE identity instead of skipping, without replaying unknown results. The 7
+October review of PR #67 corrected the scope of the repair gate: an unsaved
+acknowledgement may stop only its own group, must stay projected and must be
+acceptable without provider work; unproven cached flags cannot justify a skip.
 
 **6 October reply-original delivery (#30):** Mobile Reply and Reply all gain a
 per-draft Include original message control and searchable new-reply default.

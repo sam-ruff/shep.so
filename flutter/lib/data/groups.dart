@@ -167,7 +167,11 @@ class GroupItem {
       state == 'undo_failed' ||
       state == 'repair' ||
       state == 'undo_repair';
-  bool get canAccept => state == 'uncertain' || state == 'undo_uncertain';
+  bool get canAccept =>
+      state == 'uncertain' ||
+      state == 'undo_uncertain' ||
+      state == 'repair' ||
+      state == 'undo_repair';
   String get label => switch (state) {
     'pending' => 'Waiting',
     'sending' => 'Sending',

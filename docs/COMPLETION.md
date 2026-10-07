@@ -56,6 +56,28 @@ and the schema26 probe passes again with the same library hash. Known
 same-account successor adoption remains explicit #66. Android device, Apple,
 live-provider and timing evidence is not claimed.
 
+Independent review of PR #67 at `fd4133e` reproduced four further defects, now
+committed as failing-before regressions in `groups_tests/repair.rs`. One
+unrepairable receipt blocked every later group in the profile; an acknowledged
+cache gap stops only its own group now, other groups continue, and Accept
+retires it with its receipt and no provider work. A matching cached flag behind
+an unsaved individual acknowledgement was skipped as already applied, losing a
+newer choice; such values now need an explicit write, and steps behind an
+unsaved earlier move defer as retryable failures. Repair items fell out of page
+projection, so archived messages reappeared; they now project their claimed
+fields. A credential request was recorded as a successful step with no receipt;
+group children now succeed only with a saved receipt. Restart also requeues
+never-sent attempts, and account removal no longer double counts group children.
+The extra page-projection subqueries had made the 130-message Inbox page about
+four times slower than base during a group; one window pass restores parity.
+A diagnostic debug-build harness on the shared host (not a timing gate) gave
+base `8a91144` and the fix about 30 to 37 ms per forward Inbox page p50 each at
+load 50 to 70. A local step p50 stayed slower, about 13 to 15 versus 18 to 22 ms,
+from the added ownership and lineage checks. The
+native suite passes 254 tests and Flutter 418 host cases, including real Accept
+controls and inspected repair goldens. Android device, Apple and live-provider
+runs remain outstanding; a real schema26 DDL upgrade fixture is not committed.
+
 ## Mobile reply original and portable default, 6 October 2026 (#30)
 
 Reply and Reply all now retain an immutable original separately from typed text,

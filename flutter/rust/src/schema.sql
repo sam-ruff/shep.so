@@ -88,7 +88,7 @@ CREATE INDEX IF NOT EXISTS individual_mail_action_history ON individual_mail_act
 CREATE INDEX IF NOT EXISTS individual_mail_action_public_runnable ON individual_mail_actions(created,id) WHERE group_job IS NULL AND status IN ('queued','waiting');
 CREATE INDEX IF NOT EXISTS individual_mail_action_public_history ON individual_mail_actions(created DESC,id) WHERE group_job IS NULL;
 CREATE INDEX IF NOT EXISTS individual_mail_action_group ON individual_mail_actions(group_job,group_position,group_inverse,created,id) WHERE group_job IS NOT NULL;
-CREATE INDEX IF NOT EXISTS individual_mail_action_group_repair ON individual_mail_actions(status,created,id) WHERE group_job IS NOT NULL AND status='repair';
+CREATE INDEX IF NOT EXISTS individual_mail_action_unsettled ON individual_mail_actions(mail) WHERE status IN ('running','repair','uncertain');
 CREATE TABLE IF NOT EXISTS group_jobs(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,action TEXT NOT NULL,fields TEXT NOT NULL,state TEXT NOT NULL,scope TEXT NOT NULL,created INTEGER NOT NULL,approved INTEGER,undone INTEGER,total INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 0,error TEXT);
 CREATE INDEX IF NOT EXISTS group_job_state ON group_jobs(state,seq);
 CREATE INDEX IF NOT EXISTS group_history_cursor ON group_jobs(seq DESC) WHERE state IN ('staging','review','running','undoing','paused','finished');

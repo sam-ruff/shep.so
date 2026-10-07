@@ -390,6 +390,8 @@ async fn unknown_move_uid_retains_ack_and_uses_read_only_inspection_not_move_rep
         items(&p, "unknown-uid", None).await["rows"][0]["receipt"]["after"],
         Value::Null
     );
+    assert_eq!(job(&p, "unknown-uid").await["state"], "paused");
+    groups(&p, json!({"kind":"retry","id":"unknown-uid","position":0})).await;
     assert_eq!(step(&p, None).await["requires_credentials"], "fixture");
     assert_eq!(step(&p, Some("fixture-only")).await["outcome"], "done");
     assert_eq!(
@@ -428,7 +430,10 @@ async fn held_flag_ack_after_undo_preserves_newer_approval_and_cache_repair() ->
     let row = items(&p, "old-flags", None).await["rows"][0].clone();
     assert_eq!(row["receipt"]["after"]["unread"], false);
     assert_eq!(row["state"], "repair");
-    assert_eq!(step(&p, Some("fixture-only")).await["idle"], true);
+    // The newer group does not wait for the older unsaved receipt. The cached
+    // value is unproven, so it sends its own write instead of skipping.
+    assert_eq!(step(&p, Some("fixture-only")).await["outcome"], "repair");
+    assert_eq!(provider.flags.load(Ordering::SeqCst), 2);
     p.database
         .write(|db| {
             db.execute_batch("DROP TRIGGER fail_flags")?;
@@ -438,8 +443,10 @@ async fn held_flag_ack_after_undo_preserves_newer_approval_and_cache_repair() ->
     groups(&p, json!({"kind":"retry","id":"old-flags","position":0})).await;
     assert_eq!(step(&p, None).await["outcome"], "done");
     assert_eq!(step(&p, None).await["outcome"], "undo_skipped");
+    groups(&p, json!({"kind":"retry","id":"new-flags","position":0})).await;
+    assert_eq!(step(&p, None).await["outcome"], "done");
     run_all(&p, Some("fixture-only")).await;
-    assert_eq!(provider.flags.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.flags.load(Ordering::SeqCst), 2);
     assert_eq!(page(&p, "Inbox").await["mail"][0]["unread"], false);
     Ok(())
 }
@@ -495,6 +502,7 @@ async fn flag_cache_rollback_keeps_exact_ack_and_newer_individual_choice() -> Re
         json!({"op":"cancel_mail_action","id":"new-cancelled-read"}),
     )
     .await;
+    groups(&p, json!({"kind":"retry","id":"flag-cache","position":0})).await;
     assert_eq!(step(&p, None).await["outcome"], "done");
     assert_eq!(page(&p, "Inbox").await["mail"][0]["unread"], true);
     assert_eq!(p.database.read(|db|Ok(db.query_row("SELECT r.result FROM individual_mail_action_receipts r JOIN individual_mail_actions a ON a.id=r.action WHERE a.group_job='flag-cache'",[],|row|row.get::<_,String>(0))?)).await?,acknowledgement);
@@ -774,6 +782,11 @@ async fn unresolved_ack_repair_rejects_replaced_cache_and_modified_fingerprint()
             }
             Ok(())
         }).await?;
+        groups(
+            &p,
+            json!({"kind":"retry","id":"replaced-unknown","position":0}),
+        )
+        .await;
         assert_eq!(step(&p, Some("fixture-only")).await["outcome"], "repair");
         assert_eq!(
             p.database
@@ -1132,6 +1145,7 @@ async fn move_cache_repair_alias_keeps_completed_destination_flags_and_rejects_r
                 Ok(())
             })
             .await?;
+        groups(&p, json!({"kind":"retry","id":"alias-cache","position":0})).await;
         assert_eq!(
             step(&p, None).await["outcome"],
             if replaced { "repair" } else { "done" }

@@ -1,8 +1,11 @@
 # Client parity
 
 Mobile bulk schema27 retains exact provider acknowledgements in group-owned
-existing action rows before cache repair. An acknowledged cache gap stops further
-provider steps; Retry repairs local state and unknown replies remain unconfirmed.
+existing action rows before cache repair. An acknowledged cache gap pauses its
+own group and keeps projecting the acknowledged change; Retry repairs local
+state, Accept retires an unrepairable gap without provider work, other groups
+continue and unknown replies remain unconfirmed. A group never skips a flag on
+an unproven cached value, and defers steps behind an unsaved earlier move.
 Original approval and captured source lineage fence inverse work, replacements
 and newer same-value choices. Completed field revisions preserve newer cache
 ownership while an older flag ACK repairs the baseline for a newer pending

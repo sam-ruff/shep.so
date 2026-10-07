@@ -21,6 +21,14 @@ class _ObservedRepository extends NativeRepository {
   }
 }
 
+typedef _Prepared = (
+  Directory,
+  String,
+  _ObservedRepository,
+  Workspace,
+  FixtureCredentials,
+);
+
 void main() {
   setUpAll(() async {
     final name = Platform.isWindows
@@ -53,94 +61,101 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Opens History for an isolated profile whose one-message group holds a
+  /// saved acknowledgement that the cache refuses to apply.
+  Future<_Prepared> prepare(WidgetTester tester, {required bool dark}) async {
+    tester.view.physicalSize = const Size(1080, 2280);
+    tester.view.devicePixelRatio = 2.625;
+    addTearDown(tester.view.reset);
+    await loadPreviewFonts();
+    final prepared = await tester.runAsync(() async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-bulk-receipt-',
+      );
+      final path = '${directory.path}/mail.sqlite';
+      await script([
+        '../scripts/clients/android_incoming_fixture.py',
+        '--prepare',
+        path,
+      ]);
+      final credentials = FixtureCredentials()..unavailable = true;
+      final native = await NativeRepository.open(
+        path,
+        credentials: credentials,
+      );
+      final repository = _ObservedRepository(native.profile, credentials);
+      await repository.initialize();
+      final capture = await repository.selection({
+        'kind': 'capture',
+        'id': 'ffi-repair-selection',
+        'revision': 0,
+        'all': true,
+        'scope': {'folder': 'Inbox'},
+      });
+      await repository.groups({
+        'kind': 'prepare',
+        'id': 'ffi-repair',
+        'selection': capture['id'],
+        'expected': capture['revision'],
+        'action': {'kind': 'read'},
+        'scope': {'folder': 'Inbox'},
+      });
+      await repository.groups({'kind': 'approve', 'id': 'ffi-repair'});
+      await script(['../scripts/clients/mobile_bulk_receipt_fixture.py', path]);
+      final workspace = Workspace(repository, MemorySettings());
+      workspace.setForeground(false);
+      await workspace.initialize();
+      final groups = workspace.groups!;
+      await groups.pump();
+      expect(repository.steps, 1);
+      await groups.refreshHistory();
+      await groups.refreshHistory();
+      expect(
+        repository.steps,
+        1,
+        reason: 'History must not re-wake a persistently blocked repair',
+      );
+      expect(groups.jobs.single.count('repair'), 1);
+      expect(groups.jobs.single.canUndo, true);
+      return (directory, path, repository, workspace, credentials);
+    });
+    if (prepared == null) fail('Native receipt fixture did not open');
+    final (directory, _, repository, workspace, _) = prepared;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(() async {
+        workspace.dispose();
+        repository.profile.dispose();
+        await directory.delete(recursive: true);
+      });
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: shepTheme(dark ? Brightness.dark : Brightness.light),
+        home: GroupHistoryScreen(
+          workspace: workspace,
+          initialJob: workspace.groups!.jobs.single,
+        ),
+      ),
+    );
+    await wait(
+      tester,
+      () => find.widgetWithText(TextButton, 'Retry').evaluate().isNotEmpty,
+    );
+    return prepared;
+  }
+
   for (final dark in [false, true]) {
     final scheme = dark ? 'dark' : 'light';
     testWidgets(
       'persistent native cache fault stops owner and exposes Undo/Retry ($scheme)',
       (tester) async {
-        tester.view.physicalSize = const Size(1080, 2280);
-        tester.view.devicePixelRatio = 2.625;
-        addTearDown(tester.view.reset);
-        await loadPreviewFonts();
-        final prepared = await tester.runAsync(() async {
-          final directory = await Directory.systemTemp.createTemp(
-            'shep-bulk-receipt-',
-          );
-          final path = '${directory.path}/mail.sqlite';
-          await script([
-            '../scripts/clients/android_incoming_fixture.py',
-            '--prepare',
-            path,
-          ]);
-          final credentials = FixtureCredentials()..unavailable = true;
-          final native = await NativeRepository.open(
-            path,
-            credentials: credentials,
-          );
-          final repository = _ObservedRepository(native.profile, credentials);
-          await repository.initialize();
-          final capture = await repository.selection({
-            'kind': 'capture',
-            'id': 'ffi-repair-selection',
-            'revision': 0,
-            'all': true,
-            'scope': {'folder': 'Inbox'},
-          });
-          await repository.groups({
-            'kind': 'prepare',
-            'id': 'ffi-repair',
-            'selection': capture['id'],
-            'expected': capture['revision'],
-            'action': {'kind': 'read'},
-            'scope': {'folder': 'Inbox'},
-          });
-          await repository.groups({'kind': 'approve', 'id': 'ffi-repair'});
-          await script([
-            '../scripts/clients/mobile_bulk_receipt_fixture.py',
-            path,
-          ]);
-          final workspace = Workspace(repository, MemorySettings());
-          workspace.setForeground(false);
-          await workspace.initialize();
-          final groups = workspace.groups!;
-          await groups.pump();
-          expect(repository.steps, 1);
-          await groups.refreshHistory();
-          await groups.refreshHistory();
-          expect(
-            repository.steps,
-            1,
-            reason: 'History must not re-wake a persistently blocked repair',
-          );
-          expect(groups.jobs.single.count('repair'), 1);
-          expect(groups.jobs.single.canUndo, true);
-          return (directory, path, repository, workspace, credentials);
-        });
-        if (prepared == null) fail('Native receipt fixture did not open');
-        final (directory, path, repository, workspace, credentials) = prepared;
-        final groups = workspace.groups!;
-        addTearDown(() async {
-          await tester.pumpWidget(const SizedBox());
-          await tester.runAsync(() async {
-            workspace.dispose();
-            repository.profile.dispose();
-            await directory.delete(recursive: true);
-          });
-        });
-        await tester.pumpWidget(
-          MaterialApp(
-            debugShowCheckedModeBanner: false,
-            theme: shepTheme(dark ? Brightness.dark : Brightness.light),
-            home: GroupHistoryScreen(
-              workspace: workspace,
-              initialJob: groups.jobs.single,
-            ),
-          ),
-        );
-        await wait(
+        final (_, path, repository, workspace, credentials) = await prepare(
           tester,
-          () => find.widgetWithText(TextButton, 'Retry').evaluate().isNotEmpty,
+          dark: dark,
         );
+        final groups = workspace.groups!;
         expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
         await expectLater(
           find.byType(GroupHistoryScreen),
@@ -191,4 +206,39 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'Accept current state retires an unsaved acknowledgement without provider work',
+    (tester) async {
+      final (_, _, repository, workspace, credentials) = await prepare(
+        tester,
+        dark: false,
+      );
+      final groups = workspace.groups!;
+      final accept = find.widgetWithText(TextButton, 'Accept current state');
+      await tester.ensureVisible(accept);
+      await tester.tap(accept);
+      await wait(
+        tester,
+        () =>
+            groups.jobs.single.count('accepted') == 1 &&
+            find.textContaining('Accepted').evaluate().isNotEmpty,
+      );
+      expect(groups.jobs.single.count('repair'), 0);
+      expect(find.widgetWithText(TextButton, 'Retry'), findsNothing);
+      expect(repository.steps, 1, reason: 'Accept never starts a step');
+      expect(credentials.reads, 0);
+      await tester.tap(find.widgetWithText(TextButton, 'Resume'));
+      await wait(tester, () => !groups.running && groups.jobs.single.finished);
+      final detail = await tester.runAsync(
+        () => repository.groups({'kind': 'items', 'id': 'ffi-repair'}),
+      );
+      final row = (detail['rows'] as List).single as Map;
+      expect(row['state'], 'accepted');
+      expect(row['reason'], contains('acknowledgement is kept'));
+      expect(credentials.reads, 0);
+      groups.dismiss();
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 }

@@ -137,8 +137,11 @@ pub(crate) fn repair(db: &Connection, id: &str) -> Result<ReceiptApplication> {
     apply_individual_receipt(db, id)
 }
 
+/// The next attempt of an active group whose saved result still has to be
+/// recorded on its item. A paused group's repair waits for its own Retry or
+/// Resume, so one unrepairable receipt never holds back other groups.
 pub(crate) fn pending(db: &Connection) -> Result<Option<String>> {
-    Ok(db.query_row("SELECT i.attempt FROM group_jobs j INDEXED BY group_job_state CROSS JOIN group_items i INDEXED BY group_item_state WHERE j.state IN ('running','undoing','paused') AND i.job=j.id AND i.state IN ('sending','reversing','repair','undo_repair') AND EXISTS(SELECT 1 FROM individual_mail_actions a WHERE a.id=i.attempt AND a.group_job=j.id AND a.status IN ('repair','succeeded')) ORDER BY j.seq,i.position LIMIT 1",[],|row|row.get(0)).optional()?)
+    Ok(db.query_row("SELECT i.attempt FROM group_jobs j INDEXED BY group_job_state CROSS JOIN group_items i INDEXED BY group_item_state WHERE j.state IN ('running','undoing') AND i.job=j.id AND i.state IN ('sending','reversing','repair','undo_repair') AND EXISTS(SELECT 1 FROM individual_mail_actions a WHERE a.id=i.attempt AND a.group_job=j.id AND a.status NOT IN ('queued','running')) ORDER BY j.seq,i.position LIMIT 1",[],|row|row.get(0)).optional()?)
 }
 
 pub(crate) async fn inspect(
@@ -299,9 +302,9 @@ pub(crate) async fn dispatch(
         let lineage=saved.dispatch.lineage.as_deref().context("This group has no captured source proof.")?;
         anyhow::ensure!(observed_lineage_matches(&tx,&message.id,lineage)?, "This group source changed before its local action.");
         let revision: i64 = tx.query_row("SELECT intent_revision FROM individual_mail_actions WHERE id=?1",[&local_id],|row|row.get(0))?;
-        let folder = if owns_field(&tx,&local_id,&message.id,"folder",revision)? { saved.fields.folder.clone() } else { None };
-        let unread = if owns_field(&tx,&local_id,&message.id,"unread",revision)? { saved.fields.unread } else { None };
-        let starred = if owns_field(&tx,&local_id,&message.id,"starred",revision)? { saved.fields.starred } else { None };
+        let folder = if saved.fields.folder.is_some() && owns_field(&tx,&local_id,&message.id,"folder",revision)? { saved.fields.folder.clone() } else { None };
+        let unread = if saved.fields.unread.is_some() && owns_field(&tx,&local_id,&message.id,"unread",revision)? { saved.fields.unread } else { None };
+        let starred = if saved.fields.starred.is_some() && owns_field(&tx,&local_id,&message.id,"starred",revision)? { saved.fields.starred } else { None };
         if folder.is_none() && unread.is_none() && starred.is_none() {
             tx.execute("UPDATE individual_mail_actions SET status='cancelled',error=NULL WHERE id=?1",[&local_id])?;
             tx.commit()?;

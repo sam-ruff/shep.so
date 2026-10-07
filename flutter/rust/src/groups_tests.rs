@@ -6,6 +6,7 @@ use std::sync::{
 };
 
 mod receipts;
+mod repair;
 
 async fn groups(p: &crate::api::MobileProfile, command: Value) -> Value {
     request(p, json!({"op":"groups","command":command})).await
