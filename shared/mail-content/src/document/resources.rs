@@ -7,15 +7,43 @@ use std::{
 };
 use url::Url;
 
-#[derive(Default)]
-pub(crate) struct Resources {
+/// How discovered remote images appear in prepared output. Preparation never
+/// fetches anything itself.
+#[derive(Clone, Copy, Default)]
+pub(crate) enum Remote<'a> {
+    /// Discovered only; the element keeps no remote source.
+    #[default]
+    Omit,
+    /// A stable slot the display runtime fills once permitted bytes arrive.
+    Placeholder,
+    /// Embed bytes the caller already holds for permitted images.
+    Cached(&'a dyn Fn(&str) -> Option<Vec<u8>>),
+}
+
+pub(crate) struct Resources<'a> {
     pub images: BTreeMap<String, Image>,
     converted: BTreeMap<String, Option<String>>,
     pub remote: BTreeMap<String, RemoteImage>,
     pub issues: BTreeSet<String>,
     decoded_bytes: usize,
+    mode: Remote<'a>,
+    inline: bool,
 }
-impl Resources {
+impl<'a> Resources<'a> {
+    /// `inline` converts CID/data images; discovery alone skips that work.
+    pub fn new(mode: Remote<'a>, inline: bool) -> Self {
+        Self {
+            images: BTreeMap::new(),
+            converted: BTreeMap::new(),
+            remote: BTreeMap::new(),
+            issues: BTreeSet::new(),
+            decoded_bytes: 0,
+            mode,
+            inline,
+        }
+    }
+
+    /// The resource URN that replaces `source`, if any.
     pub fn image(
         &mut self,
         source: &str,
@@ -26,13 +54,17 @@ impl Resources {
     ) -> Option<String> {
         let source = source.trim();
         let (scheme, payload) = source.split_once(':').unwrap_or(("", ""));
+        let embedded = scheme.eq_ignore_ascii_case("cid") || scheme.eq_ignore_ascii_case("data");
+        if embedded && !self.inline {
+            return None;
+        }
         if scheme.eq_ignore_ascii_case("cid") {
             let cid = payload;
             let cid = percent_encoding::percent_decode_str(cid)
                 .decode_utf8()
                 .ok()?;
             let key = part.inline.get(cid.trim_matches(['<', '>']))?.as_ref()?;
-            return self.convert(key, body.resources.get(key)?);
+            return self.inline_urn(key, body.resources.get(key)?);
         }
         if scheme.eq_ignore_ascii_case("data") {
             let data = payload;
@@ -56,17 +88,29 @@ impl Resources {
             if bytes.len() > crate::MAX_MESSAGE_BYTES {
                 return None;
             }
-            return self.convert(&format!("{:x}", Sha256::digest(&bytes)), &bytes);
+            return self.inline_urn(&format!("{:x}", Sha256::digest(&bytes)), &bytes);
         }
-        if let Some(url) = web_url(source, base) {
-            self.remote
-                .entry(url.clone())
-                .or_insert_with(|| RemoteImage {
-                    url,
-                    alt: alt.chars().take(160).collect(),
-                });
+        let url = web_url(source, base)?;
+        let key = remote_key(&url);
+        self.remote
+            .entry(url.clone())
+            .or_insert_with(|| RemoteImage {
+                url: url.clone(),
+                alt: alt.chars().take(160).collect(),
+                key: key.clone(),
+            });
+        match self.mode {
+            Remote::Omit => None,
+            Remote::Placeholder => Some(format!("urn:shep-remote:{key}")),
+            Remote::Cached(cached) => {
+                let bytes = cached(&url)?;
+                self.inline_urn(&format!("remote:{key}"), &bytes)
+            }
         }
-        None
+    }
+    fn inline_urn(&mut self, key: &str, bytes: &[u8]) -> Option<String> {
+        self.convert(key, bytes)
+            .map(|key| format!("urn:shep-image:{key}"))
     }
     fn convert(&mut self, key: &str, bytes: &[u8]) -> Option<String> {
         if let Some(value) = self.converted.get(key) {
@@ -112,6 +156,10 @@ impl Resources {
         }
         Some(key)
     }
+}
+/// Identifies a remote image in prepared documents without exposing its URL.
+pub(crate) fn remote_key(url: &str) -> String {
+    format!("{:x}", Sha256::digest(url.as_bytes()))
 }
 pub(super) fn web_url(source: &str, base: Option<&Url>) -> Option<String> {
     let url = Url::parse(source)

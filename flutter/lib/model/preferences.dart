@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'mail.dart';
+import 'remote_images.dart';
 
 class Preferences {
   const Preferences({
@@ -13,12 +14,22 @@ class Preferences {
     this.quoteMode = 'Collapsed',
     this.tooltips = true,
     this.replyIncludeOriginal = true,
+    this.imagePolicy = ImagePolicy.blockAll,
+    this.imageTrust = const ImageTrust(),
   });
   final ThemeMode appearance;
   final MailAction leftSwipe, rightSwipe;
   final int previewLines;
   final bool avatars, unified, tooltips, replyIncludeOriginal;
   final String quoteMode;
+
+  /// Synced through the shared profile, like desktop.
+  final ImagePolicy imagePolicy;
+
+  /// Device-local exceptions and contacts; never a profile setting.
+  final ImageTrust imageTrust;
+
+  ImageRules get imageRules => ImageRules(imagePolicy, imageTrust);
 
   Preferences copy({
     ThemeMode? appearance,
@@ -30,6 +41,8 @@ class Preferences {
     String? quoteMode,
     bool? tooltips,
     bool? replyIncludeOriginal,
+    ImagePolicy? imagePolicy,
+    ImageTrust? imageTrust,
   }) => Preferences(
     appearance: appearance ?? this.appearance,
     leftSwipe: leftSwipe ?? this.leftSwipe,
@@ -40,6 +53,8 @@ class Preferences {
     quoteMode: quoteMode ?? this.quoteMode,
     tooltips: tooltips ?? this.tooltips,
     replyIncludeOriginal: replyIncludeOriginal ?? this.replyIncludeOriginal,
+    imagePolicy: imagePolicy ?? this.imagePolicy,
+    imageTrust: imageTrust ?? this.imageTrust,
   );
 
   Map<String, Object?> profileSettings() => {
@@ -53,6 +68,7 @@ class Preferences {
     'reply_display': quoteMode == 'Latest only' ? 'LatestOnly' : quoteMode,
     'tooltips': tooltips,
     'reply_include_original': replyIncludeOriginal,
+    'image_policy': imagePolicy.wire,
   };
 
   /// Apply only explicitly reviewed portable fields. Null is an explicit reset.
@@ -107,6 +123,10 @@ class Preferences {
       }, 'reply_display'),
       tooltips: flag('tooltips'),
       replyIncludeOriginal: flag('reply_include_original'),
+      imagePolicy: pick({
+        for (final policy in ImagePolicy.values) policy.wire: policy,
+      }, 'image_policy'),
+      imageTrust: imageTrust,
     );
   }
 
@@ -121,6 +141,8 @@ class Preferences {
     'quoteMode': quoteMode,
     'tooltips': tooltips,
     'replyIncludeOriginal': replyIncludeOriginal,
+    'imagePolicy': imagePolicy.wire,
+    'imageTrust': imageTrust.toJson(),
   });
 
   static Preferences decode(String? raw) {
@@ -144,6 +166,9 @@ class Preferences {
           : 'Collapsed',
       tooltips: data['tooltips'] as bool? ?? true,
       replyIncludeOriginal: data['replyIncludeOriginal'] as bool? ?? true,
+      imagePolicy:
+          ImagePolicy.parse(data['imagePolicy']) ?? ImagePolicy.blockAll,
+      imageTrust: ImageTrust.fromJson(data['imageTrust']),
     );
   }
 }

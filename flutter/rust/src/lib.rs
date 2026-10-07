@@ -4,6 +4,9 @@ mod frb_generated; /* AUTO INJECTED BY flutter_rust_bridge. This line may not be
 mod headers;
 mod operations;
 mod preferences_search;
+mod remote_images;
+#[cfg(test)]
+mod remote_images_tests;
 
 #[cfg(test)]
 mod tests;

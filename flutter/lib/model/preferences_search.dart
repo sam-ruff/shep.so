@@ -113,10 +113,24 @@ const mobilePreferenceEntries = [
   ),
   PreferenceSearchEntry(
     target: 'preference-images',
-    label: 'External images blocked',
+    label: 'External images',
     section: 'Reading',
-    description: 'Remote images stay blocked; inline images can still appear.',
-    synonyms: 'privacy remote pictures tracking security',
+    description: 'Block all, contacts only or allow all remote images',
+    synonyms: 'privacy remote pictures tracking security load show policy',
+  ),
+  PreferenceSearchEntry(
+    target: 'preference-image-exceptions',
+    label: 'Image exceptions on this device',
+    section: 'Reading',
+    description: 'Messages, senders and domains allowed to load images',
+    synonyms: 'clear remove trusted sender domain pictures remote',
+  ),
+  PreferenceSearchEntry(
+    target: 'preference-contacts',
+    label: 'Add contacts',
+    section: 'Reading',
+    description: 'Addresses whose images the Contacts only policy loads',
+    synonyms: 'contact address book email people images',
   ),
 ];
 

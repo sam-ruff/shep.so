@@ -1,12 +1,7 @@
 //! Parse escaped URLs as CSS tokens; never look for network resources by regex.
 use cssparser::{Parser, ParserInput, ToCss, Token};
 
-pub(super) fn rewrite(source: &str, mut image: impl FnMut(&str) -> Option<String>) -> String {
-    rewrite_urls(source, |url| {
-        image(url).map(|key| format!("urn:shep-image:{key}"))
-    })
-}
-
+/// `image` returns the replacement URL for each resource, or `None` to drop it.
 pub(crate) fn rewrite_urls(source: &str, mut image: impl FnMut(&str) -> Option<String>) -> String {
     fn scan<'i>(
         parser: &mut Parser<'i, '_>,

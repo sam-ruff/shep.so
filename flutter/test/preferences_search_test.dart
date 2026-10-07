@@ -40,7 +40,7 @@ void main() {
       expect(const Preferences().profileSettings().keys.toSet(), {
         'appearance', 'left_swipe', 'right_swipe', 'preview_lines',
         'sender_pictures', 'unified_inbox', 'reply_display',
-        'reply_include_original',
+        'reply_include_original', 'image_policy',
         // The local Tooltips control remains a parity gap tracked in #41.
         'tooltips',
       });

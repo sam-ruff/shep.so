@@ -223,6 +223,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Passwords required to continue'), findsOneWidget);
+      await tester.ensureVisible(find.text('Re-enter'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Re-enter'));
       await tester.pumpAndSettle();
       expect(find.text('Reconnect account'), findsOneWidget);

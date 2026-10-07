@@ -34,6 +34,55 @@ fn complete_formatted_print_uses_selected_mime_resources_and_independent_headers
 }
 
 #[test]
+fn print_embeds_only_remote_images_the_client_already_holds() {
+    let raw = include_bytes!("../../html-reader-fixture.eml");
+    let banner = "https://images.example.test/news/banner.webp";
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgba8(6, 3)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let png = png.into_inner();
+    let asked = std::sync::Mutex::new(Vec::new());
+    let cached = |url: &str| {
+        asked.lock().unwrap().push(url.to_owned());
+        (url == banner).then(|| png.clone())
+    };
+    let prepared = printing::prepare_with_cached(raw, &options(false), &cached).unwrap();
+    assert_eq!(*asked.lock().unwrap(), vec![banner.to_owned()]);
+    assert_eq!(
+        data(&prepared.document)["images"]
+            .as_object()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(!prepared.document.contains("images.example.test"));
+    assert!(!prepared.document.contains("shep-remote"));
+    assert!(prepared.issues.is_empty());
+
+    let missing = printing::prepare_with_cached(raw, &options(false), &|_| None).unwrap();
+    assert_eq!(
+        data(&missing.document)["images"].as_object().unwrap().len(),
+        1
+    );
+    let damaged =
+        printing::prepare_with_cached(raw, &options(false), &|_| Some(b"not an image".to_vec()))
+            .unwrap();
+    assert_eq!(
+        data(&damaged.document)["images"].as_object().unwrap().len(),
+        1
+    );
+    assert_eq!(damaged.issues.len(), 1);
+    let plain = printing::prepare_with_cached(raw, &options(true), &cached).unwrap();
+    assert!(
+        data(&plain.document)["images"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn print_headers_and_filenames_are_data_not_markup_or_private_thread_headers() {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("../../forward-fixtures.json")).unwrap();

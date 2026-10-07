@@ -24,7 +24,10 @@ import 'profile_discovery.dart';
 import '../data/profile_settings.dart';
 import '../data/profile_enrollment.dart';
 import '../data/profile_discovery.dart';
+import '../data/formatted_message.dart';
+import 'remote_images.dart';
 part 'profile_application.dart';
+part 'image_preferences.dart';
 
 class _CalendarAdmissionAttempt {
   _CalendarAdmissionAttempt({
@@ -1096,7 +1099,10 @@ class Workspace extends ChangeNotifier {
     _settingsQueue = _settingsQueue.then((_) async {
       try {
         if (settings case final ProfileSettingsStore profileStore) {
-          final saved = await profileStore.saveLocal(changes);
+          final saved = await profileStore.saveLocal(
+            changes,
+            imageTrust: value.imageTrust,
+          );
           _mergeProfilePreferences(saved, generations);
         } else {
           await settings.write(value);
@@ -1569,6 +1575,7 @@ class Workspace extends ChangeNotifier {
         id,
         generation: generation,
         plain: plain,
+        images: preferences.imageRules,
       );
       if (_disposed) return;
       if (_removedAccounts.contains(prepared.accountId)) {

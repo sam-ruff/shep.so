@@ -1,4 +1,5 @@
 import 'package:flutter/services.dart';
+import '../model/remote_images.dart';
 import 'accounts.dart';
 
 class PreparedPrint {
@@ -21,10 +22,13 @@ class PreparedPrint {
 }
 
 abstract interface class PrintRepository {
+  /// `images` lets the print include remote images already cached for a
+  /// permitted message; printing never fetches one.
   Future<PreparedPrint> preparePrint(
     String id, {
     required String generation,
     required bool plain,
+    ImageRules? images,
   });
 }
 

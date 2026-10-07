@@ -2391,9 +2391,12 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures",
+ "image",
  "lettre",
  "mailparse",
+ "mockall",
  "native-tls",
+ "reqwest",
  "secrecy",
  "serde",
  "serde_json",
@@ -2403,6 +2406,7 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "tracing",
+ "url",
  "uuid",
 ]
 

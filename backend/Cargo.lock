@@ -2565,6 +2565,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures",
+ "image",
  "lettre",
  "mailparse",
  "native-tls",

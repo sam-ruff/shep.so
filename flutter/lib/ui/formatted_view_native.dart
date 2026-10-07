@@ -44,7 +44,9 @@ class _FormattedViewState extends State<FormattedView> {
       onPermissionRequest: (request) => request.deny(),
     );
     subscription = widget.commands.listen((command) {
-      pending[command['type'] as String] = command;
+      // Image batches each carry different bytes; other kinds coalesce.
+      final type = command['type'] as String;
+      pending[type == 'images' ? '$type:${command['batch']}' : type] = command;
       unawaited(send());
     });
     unawaited(initialize());

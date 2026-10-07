@@ -1,6 +1,6 @@
 use super::{
     super::enrollment::{
-        tests::{enrolled, preferences, prepare_only, scope},
+        tests::{enrolled, generation, preferences, prepare_only, scope},
         transfer::Records,
     },
     *,
@@ -290,14 +290,11 @@ async fn seeding_uses_original_revisions_and_leaves_kept_and_legacy_fields_pendi
     // A legacy receipt proves nothing for any field.
     let (_dir, profile) = crate::tests::profile().await;
     let legacy = Device::new();
-    let mut original = preferences();
-    original.values.remove("reply_include_original");
-    original.revisions.remove("reply_include_original");
     let review = enrolled(
         &profile,
         legacy.snapshot_now(),
         &legacy,
-        original,
+        generation(8),
         vec!["appearance".into()],
         None,
     )
@@ -314,15 +311,13 @@ async fn seeding_uses_original_revisions_and_leaves_kept_and_legacy_fields_pendi
     .unwrap();
     assert_eq!(status["unproven"], 8);
     let key = scope().storage_key().expect("Scope");
-    assert!(
-        !profile
-            .database
-            .read(move |db| Ok(require(db, &key)?
-                .bases
-                .contains_key("reply_include_original")))
-            .await
-            .expect("Read subscription")
-    );
+    let bases = profile
+        .database
+        .read(move |db| Ok(require(db, &key)?.bases))
+        .await
+        .expect("Read subscription");
+    assert!(!bases.contains_key("reply_include_original"));
+    assert!(!bases.contains_key("image_policy"));
     let appearance = basis(&status, "appearance");
     assert_eq!(appearance.native_revision, None);
     assert_eq!(appearance.observed, 3);
@@ -399,6 +394,71 @@ async fn reply_default_false_and_reverted_intent_publish_once_through_restart() 
         vec![Value::Bool(false)]
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn external_image_policy_syncs_and_an_older_subscription_gains_its_basis() {
+    let (_dir, profile) = profile().await;
+    let device = Device::new();
+    // The previous release saved nine fields with its enrollment receipt.
+    let mut receipt = generation(9);
+    receipt.values.insert("appearance".into(), "Dark".into());
+    receipt.revisions.insert("appearance".into(), 1);
+    let review = enrolled(
+        &profile,
+        device.snapshot_now(),
+        &device,
+        generation(9),
+        vec!["appearance".into(), "preview_lines".into()],
+        Some(receipt.revisions.clone()),
+    )
+    .await;
+    let status = command(
+        &profile,
+        &device,
+        Command::Subscribe {
+            enrollment: review.id,
+            snapshot: receipt,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(status["bases"].get("image_policy").is_none());
+    command(
+        &profile,
+        &device,
+        Command::Configure {
+            expected_revision: status["revision"].as_u64().unwrap(),
+            enabled: Some(true),
+            field: None,
+            selected: None,
+        },
+    )
+    .await
+    .unwrap();
+    let local = snapshot(
+        serde_json::json!({"appearance":"Dark","image_policy":"Contacts"}),
+        &[("appearance", 1), ("image_policy", 2)],
+    );
+    let status = cycle(&profile, &device, &local).await;
+    assert_eq!(status["last"]["admitted"], 1);
+    assert_eq!(
+        device.current("image_policy"),
+        vec![Value::from("Contacts")]
+    );
+    assert_eq!(basis(&status, "image_policy").native_revision, Some(2));
+
+    // A desktop choice reaches this device through the ordinary receipt.
+    device.set(SettingKey::ImagePolicy, "AllowAll".into());
+    let status = cycle(&profile, &device, &local).await;
+    assert_eq!(status["applications"], 1);
+    let request = command(&profile, &device, Command::Application)
+        .await
+        .unwrap();
+    assert_eq!(
+        request["changes"],
+        serde_json::json!({"image_policy":"AllowAll"})
+    );
 }
 
 #[tokio::test]

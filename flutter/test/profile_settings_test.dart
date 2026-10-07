@@ -35,7 +35,8 @@ void main() {
     () async {
       final store = DeviceSettings(storage: Bytes());
       final values = const Preferences().profileSettings()
-        ..remove('reply_include_original');
+        ..remove('reply_include_original')
+        ..remove('image_policy');
       final baseline = ProfileSettingsSnapshot.fromJson({
         'values': values,
         'revisions': {for (final key in values.keys) key: 0},
@@ -59,7 +60,8 @@ void main() {
     () async {
       final bytes = Bytes();
       final values = const Preferences().profileSettings()
-        ..remove('reply_include_original');
+        ..remove('reply_include_original')
+        ..remove('image_policy');
       final baseline = ProfileSettingsSnapshot.fromJson({
         'values': values,
         'revisions': {for (final key in values.keys) key: 0},
@@ -75,7 +77,9 @@ void main() {
       final old =
           jsonDecode(const Preferences(appearance: ThemeMode.light).encode())
                 as Map<String, dynamic>
-            ..remove('replyIncludeOriginal');
+            ..remove('replyIncludeOriginal')
+            ..remove('imagePolicy')
+            ..remove('imageTrust');
       final originalRevisions = {
         for (final key in values.keys) key: key == 'appearance' ? 1 : 0,
       };

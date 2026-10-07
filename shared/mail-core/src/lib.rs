@@ -9,6 +9,7 @@ pub mod model;
 pub mod outgoing;
 pub mod profiles;
 pub mod providers;
+pub mod remote_images;
 pub mod replies;
 #[cfg(test)]
 pub(crate) mod test_wait;

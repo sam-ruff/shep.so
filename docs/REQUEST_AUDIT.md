@@ -1,5 +1,15 @@
 # Conversation request audit
 
+**7 October mobile remote images (#36, first part):** External images stay
+blocked by default. Flutter now syncs the existing `image_policy` profile key
+and keeps message, sender and domain exceptions plus a Contacts list on the
+device, as desktop does. A shared, mockable native fetch service (also used by
+desktop) loads only images discovered in a permitted cached message into the
+confined reader without reloading it; revocation clears cached pixels and
+replaces the document, and Print uses only cached permitted images. Android,
+Apple and live-network execution, exception-list sync and the browser equivalent
+remain open in TODO. See [Completion](COMPLETION.md).
+
 **6 October reply-original delivery (#30):** Mobile Reply and Reply all gain a
 per-draft Include original message control and searchable new-reply default.
 Typed text remains independent of the saved original through files, autosave,

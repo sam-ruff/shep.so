@@ -13,6 +13,7 @@ import '../data/accounts.dart';
 import 'google_connection.dart';
 import 'profile_discovery.dart';
 import 'profile_sync.dart';
+import 'remote_images.dart';
 import '../model/preferences_search.dart';
 import 'preferences_catalogue.dart';
 import 'dart:async';
@@ -444,14 +445,7 @@ class _PreferencesViewState extends State<PreferencesView> {
                     .toList(),
               ),
             ),
-            const ListTile(
-              key: ValueKey('preference-images'),
-              leading: ShepIcon('shield'),
-              title: Text('External images blocked'),
-              subtitle: Text(
-                'Remote images stay blocked; inline images can still appear.',
-              ),
-            ),
+            ImagePreferences(workspace: workspace),
           ]),
           section('Connections', [
             if (workspace.accountRepository != null) ...[

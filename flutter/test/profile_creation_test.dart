@@ -41,7 +41,7 @@ void main() {
       final settings = const Preferences().profileSettings();
       await d.prepareCreation('Work', accounts: true, settings: settings);
       final id = d.creation!.id;
-      expect(d.creation!.settings, 9);
+      expect(d.creation!.settings, 10);
       expect(d.creationAccounts.length, 50);
       await d.reviewCreationAccounts(first: false);
       expect(d.creationAccounts.length, 2);

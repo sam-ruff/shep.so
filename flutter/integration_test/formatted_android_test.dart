@@ -152,6 +152,39 @@ void main() {
         0,
       );
       expect(credentials.reads, 0);
+      // The remote banner stays blocked: the document holds no remote address
+      // and only the native service may try it after an explicit choice.
+      expect(find.text('1 remote image blocked.'), findsOneWidget);
+      expect(
+        await observe(
+          'document.documentElement.outerHTML.includes("images.example.test")',
+        ),
+        isFalse,
+      );
+      await tester.ensureVisible(find.text('Load images'));
+      await tester.tap(find.text('Load images'));
+      // The fixture host is reserved and cannot resolve, so the native fetch
+      // reports a fixed per-image failure without any credential access.
+      await wait(
+        () => find
+            .text('1 of 1 remote image could not load.')
+            .evaluate()
+            .isNotEmpty,
+        'The native image request did not report its outcome',
+      );
+      expect(
+        await observe(
+          'document.documentElement.outerHTML.includes("images.example.test")',
+        ),
+        isFalse,
+      );
+      expect(credentials.reads, 0);
+      await snapshot('native-formatted-images');
+      await tester.tap(find.text('Block images'));
+      await wait(
+        () => find.text('1 remote image blocked.').evaluate().isNotEmpty,
+        'Blocking images again did not restore the blocked state',
+      );
       await tester.pumpAndSettle();
       await snapshot('native-formatted-light');
       await tester.tap(find.byTooltip('Find in message'));

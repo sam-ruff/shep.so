@@ -5,6 +5,14 @@
   const bridge = window.ShepReader;
   const generation = data.generation;
   const blobs = new Map();
+  // Remote image slots: only the trusted host can fill them, with permitted,
+  // already converted bytes. The document itself never fetches anything.
+  const remoteBlobs = new Map(),
+    slots = [],
+    wanted = new Set();
+  const REMOTE = /urn:shep-remote:([0-9a-f]{64})/g;
+  const MAX_REMOTE_BYTES = 8 * 1024 * 1024;
+  let delivery = Promise.resolve();
   let disposed = false;
   let booted = false,
     layout = 0,
@@ -322,6 +330,126 @@
     }
     highlighting = false;
   }
+  function track(node, attr, value) {
+    const keys = [...value.matchAll(REMOTE)].map((match) => match[1]);
+    if (!keys.length) return;
+    const slot = { node, attr, value, keys };
+    slots.push(slot);
+    for (const key of keys) wanted.add(key);
+    fill(slot);
+  }
+  // An unfilled slot keeps no source, exactly like a blocked remote image.
+  function resolved({ attr, value }) {
+    if (attr === "srcset")
+      return value
+        .split(",")
+        .map((candidate) => candidate.trim())
+        .filter(Boolean)
+        .flatMap((candidate) => {
+          const match = /^urn:shep-remote:([0-9a-f]{64})(\s.*)?$/.exec(
+            candidate,
+          );
+          if (!match) return [candidate];
+          const url = remoteBlobs.get(match[1]);
+          return url ? [url + (match[2] ?? "")] : [];
+        })
+        .join(", ");
+    if (attr === "style" || attr === "#text")
+      return value.replace(
+        /url\("urn:shep-remote:([0-9a-f]{64})"\)/g,
+        (_, key) =>
+          remoteBlobs.has(key) ? `url("${remoteBlobs.get(key)}")` : "none",
+      );
+    const match = /^urn:shep-remote:([0-9a-f]{64})$/.exec(value);
+    return match ? (remoteBlobs.get(match[1]) ?? "") : value;
+  }
+  function fill(slot) {
+    const value = resolved(slot);
+    if (slot.attr === "#text") slot.node.textContent = value;
+    else if (value) slot.node.setAttribute(slot.attr, value);
+    else slot.node.removeAttribute(slot.attr);
+  }
+  // The first text visible at the top of the viewport. A reader at the
+  // start stays at the start, so no anchor is needed there.
+  function position() {
+    if (scrollY <= 0) return null;
+    for (const list of chunks)
+      for (const { node } of list) {
+        if (!node.isConnected) continue;
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const rect = range.getBoundingClientRect();
+        if ((rect.width || rect.height) && rect.bottom > 0)
+          return { node, top: rect.top, x: scrollX, y: scrollY };
+      }
+    return null;
+  }
+  // Newer user scrolling wins over the adjustment.
+  function restore(anchor) {
+    if (
+      !anchor ||
+      !anchor.node.isConnected ||
+      scrollX !== anchor.x ||
+      scrollY !== anchor.y
+    )
+      return;
+    const range = document.createRange();
+    range.selectNodeContents(anchor.node);
+    const shift = range.getBoundingClientRect().top - anchor.top;
+    if (shift)
+      window.scrollTo({ top: scrollY + shift, left: scrollX, behavior: "auto" });
+  }
+  function settled(image) {
+    return Promise.race([
+      image.decode().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]);
+  }
+  async function deliver(images) {
+    const added = [];
+    for (const [key, image] of Object.entries(images)) {
+      if (
+        !wanted.has(key) ||
+        remoteBlobs.has(key) ||
+        typeof image?.bytes !== "string" ||
+        image.bytes.length > MAX_REMOTE_BYTES
+      )
+        continue;
+      let bytes;
+      try {
+        bytes = Uint8Array.from(atob(image.bytes), (value) =>
+          value.charCodeAt(0),
+        );
+      } catch {
+        continue;
+      }
+      remoteBlobs.set(
+        key,
+        URL.createObjectURL(new Blob([bytes], { type: "image/webp" })),
+      );
+      added.push(key);
+    }
+    if (!added.length) return;
+    await Promise.all(
+      added.map((key) => {
+        const probe = new Image();
+        probe.src = remoteBlobs.get(key);
+        return settled(probe);
+      }),
+    );
+    if (disposed) return;
+    const anchor = position();
+    const shown = [];
+    for (const slot of slots)
+      if (slot.keys.some((key) => added.includes(key))) {
+        fill(slot);
+        if (slot.node.localName === "img") shown.push(slot.node);
+      }
+    await Promise.all(shown.map(settled));
+    if (disposed) return;
+    restore(anchor);
+    send("images", { keys: added });
+  }
   function command(value) {
     if (!value || value.generation !== generation) return;
     if (value.type === "configure") {
@@ -344,6 +472,16 @@
     )
       highlight(value);
     else if (booted && value.type === "index") collect();
+    else if (
+      booted &&
+      value.type === "images" &&
+      value.images &&
+      typeof value.images === "object" &&
+      !Array.isArray(value.images)
+    ) {
+      const images = value.images;
+      delivery = delivery.then(() => deliver(images)).catch(() => {});
+    }
   }
   Object.defineProperty(window, "shepReaderCommand", { value: command });
   function dispose() {
@@ -352,7 +490,11 @@
     clearTimeout(resizeTimer);
     clear();
     for (const url of blobs.values()) URL.revokeObjectURL(url);
+    for (const url of remoteBlobs.values()) URL.revokeObjectURL(url);
     blobs.clear();
+    remoteBlobs.clear();
+    slots.length = 0;
+    wanted.clear();
     data.images = {};
     document.body.replaceChildren();
   }
@@ -451,6 +593,10 @@
       // Sender CSS must not disable the reader's ordinary selection/Copy.
       node.style.setProperty("user-select", "text", "important");
       node.style.setProperty("-webkit-user-select", "text", "important");
+      for (const attr of ["src", "srcset", "background", "style"])
+        if (node.hasAttribute(attr))
+          track(node, attr, node.getAttribute(attr));
+      if (node.localName === "style") track(node, "#text", node.textContent);
     }
     await Promise.all(decoded);
     if (disposed) return;
@@ -460,6 +606,7 @@
     for (const attr of [...first.attributes])
       if (!attr.name.startsWith("data-"))
         document.body.setAttribute(attr.name, attr.value);
+    for (const slot of slots) if (slot.node === first) slot.node = document.body;
     while (first.firstChild) first.before(first.firstChild);
     first.remove();
     document.body.append(template.content);
@@ -482,6 +629,9 @@
       "auto",
       "important",
     );
+    // Image arrivals keep the reading position explicitly in every engine.
+    for (const node of [document.documentElement, document.body])
+      node.style.setProperty("overflow-anchor", "none", "important");
     setQuotes();
     canvas();
     booted = true;
