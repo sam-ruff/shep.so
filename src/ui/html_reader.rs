@@ -389,18 +389,11 @@ impl App {
                             |r| super::Message::Html(Message::LinkResult(r)),
                         );
                     }
-                } else if let Ok(url) = url::Url::parse(&url)
-                    && url.scheme() == "mailto"
-                {
+                } else if let Ok(mailto) = crate::mailto::Mailto::address(&url) {
+                    // A message's link supplies only its address, never hidden
+                    // recipients, headers or attachments.
                     let task = self.handle(super::Message::NewMessage);
-                    // Treat the link as addresses only; do not accept hidden
-                    // recipients/headers or attachments supplied by a message.
-                    self.edit_compose_field(
-                        "to",
-                        percent_encoding::percent_decode_str(url.path())
-                            .decode_utf8_lossy()
-                            .into_owned(),
-                    );
+                    self.edit_compose_field("to", mailto.to);
                     return task;
                 }
             }

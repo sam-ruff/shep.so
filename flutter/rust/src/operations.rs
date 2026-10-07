@@ -566,6 +566,12 @@ pub enum Request {
     SaveDraft {
         draft: Draft,
     },
+    MailtoDraft {
+        id: String,
+        account: String,
+        link: String,
+        message: bool,
+    },
     DiscardDraft {
         id: String,
         revision: u64,
@@ -1157,6 +1163,9 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::SaveDraft{draft} => {
             db.write(move|db|crate::drafts::save_text(db,draft)).await?;
             Ok(json!({"saved":true}))
+        }
+        Request::MailtoDraft{id,account,link,message} => {
+            db.write(move|db|crate::drafts::create_mailto(db,&id,&account,&link,message)).await
         }
         Request::DiscardDraft{id,revision} => {
             db.write(move|db|{

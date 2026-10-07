@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use shep_mail_content::mailto::Mailto;
 use shep_mail_core::{
     compose::{FilePart, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS},
     model::*,
@@ -259,6 +260,76 @@ pub fn create_forward(
         params![draft.id, source],
     )?;
     let result = value(&tx, &draft.id)?;
+    tx.commit()?;
+    Ok(result)
+}
+
+/// Saves a new unsent draft from a `mailto:` link. Operating-system links
+/// prefill every draft field; links inside received mail only their address.
+/// An exact retry returns the same draft and never replaces another one.
+pub fn create_mailto(
+    db: &mut Connection,
+    id: &str,
+    account: &str,
+    link: &str,
+    message: bool,
+) -> Result<Value> {
+    anyhow::ensure!(
+        uuid::Uuid::parse_str(id).is_ok(),
+        "Choose a new draft identity before retrying."
+    );
+    let fields = if message {
+        Mailto::address(link)
+    } else {
+        Mailto::parse(link)
+    }?;
+    let draft = Draft {
+        id: id.to_owned(),
+        account_id: account.to_owned(),
+        to: fields.to,
+        cc: fields.cc,
+        bcc: fields.bcc,
+        subject: fields.subject,
+        body: fields.body,
+        ..Default::default()
+    };
+    let tx = db.transaction()?;
+    if !account.is_empty() {
+        crate::accounts::available(&tx, account)?;
+        let connected: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM accounts WHERE id=?1)",
+            [account],
+            |r| r.get(0),
+        )?;
+        anyhow::ensure!(
+            connected,
+            "This account is no longer connected. Choose another account and open the link again."
+        );
+    }
+    let saved: Option<String> = tx
+        .query_row("SELECT content FROM drafts WHERE id=?1", [id], |r| r.get(0))
+        .optional()?;
+    if let Some(saved) = saved {
+        anyhow::ensure!(
+            serde_json::from_str::<Draft>(&saved)? == draft,
+            "This draft identity is already used. Open the link again for a new draft."
+        );
+    } else {
+        let used: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM outgoing WHERE draft_id=?1) OR EXISTS(SELECT 1 FROM discarded_drafts WHERE id=?1)",
+            [id],
+            |r| r.get(0),
+        )?;
+        anyhow::ensure!(
+            !used,
+            "This draft identity is already used. Open the link again for a new draft."
+        );
+        tx.execute(
+            "INSERT INTO drafts(id,revision,content) VALUES(?1,0,?2)",
+            params![id, serde_json::to_string(&draft)?],
+        )?;
+    }
+    let result = value(&tx, id)?;
     tx.commit()?;
     Ok(result)
 }

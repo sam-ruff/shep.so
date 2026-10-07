@@ -1,7 +1,6 @@
 import 'mail_action_banner.dart';
 import 'mail_error.dart';
 import 'dart:async';
-import 'package:url_launcher/url_launcher.dart';
 import '../data/formatted_message.dart';
 import '../model/formatted_message.dart';
 import 'formatted_view.dart';
@@ -15,6 +14,7 @@ import '../model/mail.dart';
 import '../model/workspace.dart';
 import 'composer.dart';
 import 'icons.dart';
+import 'message_link.dart';
 import 'theme.dart';
 import 'reader_headers.dart';
 
@@ -113,89 +113,23 @@ class _ReaderState extends State<Reader> {
   }
 
   Future<void> reviewLink(String value) async {
-    final url = Uri.tryParse(value);
-    if (linkOpen ||
-        url == null ||
-        !['https', 'http', 'mailto'].contains(url.scheme) ||
-        url.userInfo.isNotEmpty) {
-      return;
-    }
+    if (linkOpen) return;
     linkOpen = true;
-    String? status;
+    final Draft? draft;
     try {
-      await showDialog<void>(
-        context: context,
-        builder: (context) => StatefulBuilder(
-          builder: (context, update) => AlertDialog(
-            title: const Text('Message link'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SelectableText(url.toString()),
-                if (status != null)
-                  Semantics(liveRegion: true, child: Text(status!)),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Close'),
-              ),
-              TextButton(
-                onPressed: () async {
-                  try {
-                    await Clipboard.setData(
-                      ClipboardData(text: url.toString()),
-                    );
-                    if (context.mounted) {
-                      update(() => status = 'Address copied.');
-                    }
-                  } catch (_) {
-                    if (context.mounted) {
-                      update(
-                        () => status = 'Select and copy the address above.',
-                      );
-                    }
-                  }
-                },
-                child: const Text('Copy address'),
-              ),
-              FilledButton(
-                onPressed: () async {
-                  try {
-                    final opened = await launchUrl(
-                      url,
-                      mode: LaunchMode.externalApplication,
-                    );
-                    if (context.mounted) {
-                      if (opened) {
-                        Navigator.pop(context);
-                      } else {
-                        update(
-                          () => status =
-                              'No application could open this link. Copy the address instead.',
-                        );
-                      }
-                    }
-                  } catch (_) {
-                    if (context.mounted) {
-                      update(
-                        () => status =
-                            'Could not open this link. Copy the address instead.',
-                      );
-                    }
-                  }
-                },
-                child: const Text('Open link'),
-              ),
-            ],
-          ),
-        ),
-      );
+      draft = await reviewMessageLink(context, workspace, value);
     } finally {
       linkOpen = false;
     }
+    if (draft == null || !mounted) return;
+    final opened = draft;
+    unawaited(workspace.finishReading());
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => Composer(workspace: workspace, draft: opened),
+      ),
+    );
   }
 
   void syncFind() {
