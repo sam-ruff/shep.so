@@ -1,0 +1,125 @@
+{
+  "cases": [
+    {
+      "name": "blocked by default",
+      "rules": { "policy": "BlockAll" },
+      "message": "m1",
+      "sender": "Ada <ada@example.com>",
+      "address": "ada@example.com",
+      "domain": "example.com",
+      "allowed": false
+    },
+    {
+      "name": "message exception is exact",
+      "rules": { "policy": "BlockAll", "messages": ["m1"] },
+      "message": "m1",
+      "sender": "Ada <ada@example.com>",
+      "address": "ada@example.com",
+      "domain": "example.com",
+      "allowed": true
+    },
+    {
+      "name": "another message stays blocked",
+      "rules": { "policy": "BlockAll", "messages": ["m1"] },
+      "message": "m2",
+      "sender": "Ada <ada@example.com>",
+      "address": "ada@example.com",
+      "domain": "example.com",
+      "allowed": false
+    },
+    {
+      "name": "sender exception ignores address case",
+      "rules": { "policy": "BlockAll", "senders": ["ada@example.com"] },
+      "message": "m3",
+      "sender": "Ada <ADA@Example.COM>",
+      "address": "ada@example.com",
+      "domain": "example.com",
+      "allowed": true
+    },
+    {
+      "name": "domain exception allows the exact domain",
+      "rules": { "policy": "BlockAll", "domains": ["example.com"] },
+      "message": "m4",
+      "sender": "news@example.com",
+      "address": "news@example.com",
+      "domain": "example.com",
+      "allowed": true
+    },
+    {
+      "name": "lookalike domain stays blocked",
+      "rules": { "policy": "BlockAll", "domains": ["example.com"] },
+      "message": "m5",
+      "sender": "Ada <ada@evil-example.com>",
+      "address": "ada@evil-example.com",
+      "domain": "evil-example.com",
+      "allowed": false
+    },
+    {
+      "name": "subdomain is not the trusted domain",
+      "rules": { "policy": "BlockAll", "domains": ["example.com"] },
+      "message": "m6",
+      "sender": "ada@mail.example.com",
+      "address": "ada@mail.example.com",
+      "domain": "mail.example.com",
+      "allowed": false
+    },
+    {
+      "name": "display name cannot borrow a trusted address",
+      "rules": { "policy": "BlockAll", "senders": ["ada@example.com"] },
+      "message": "m7",
+      "sender": "\"ada@example.com\" <eve@attacker.test>",
+      "address": "eve@attacker.test",
+      "domain": "attacker.test",
+      "allowed": false
+    },
+    {
+      "name": "contacts policy matches a contact in any case",
+      "rules": { "policy": "Contacts", "contacts": ["ADA@EXAMPLE.COM"] },
+      "message": "m8",
+      "sender": "Ada <ada@example.com>",
+      "address": "ada@example.com",
+      "domain": "example.com",
+      "allowed": true
+    },
+    {
+      "name": "contacts are ignored when blocking all",
+      "rules": { "policy": "BlockAll", "contacts": ["ada@example.com"] },
+      "message": "m9",
+      "sender": "Ada <ada@example.com>",
+      "address": "ada@example.com",
+      "domain": "example.com",
+      "allowed": false
+    },
+    {
+      "name": "contacts policy blocks strangers",
+      "rules": { "policy": "Contacts", "contacts": ["ada@example.com"] },
+      "message": "m10",
+      "sender": "Eve <eve@attacker.test>",
+      "address": "eve@attacker.test",
+      "domain": "attacker.test",
+      "allowed": false
+    },
+    {
+      "name": "allow all needs no sender",
+      "rules": { "policy": "AllowAll" },
+      "message": "m11",
+      "sender": "not an address",
+      "address": null,
+      "domain": null,
+      "allowed": true
+    },
+    {
+      "name": "unparsed sender matches no exception",
+      "rules": {
+        "policy": "BlockAll",
+        "domains": ["example.com"],
+        "senders": ["not an address"]
+      },
+      "message": "m12",
+      "sender": "not an address",
+      "address": null,
+      "domain": null,
+      "allowed": false
+    }
+  ]
+}

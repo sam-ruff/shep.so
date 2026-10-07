@@ -240,21 +240,26 @@ async fn pass(owner: &mut Owner<'_>, source: &dyn Source, local: &Preferences) -
         current.initialized && !current.removed,
         "This shared profile is incomplete or removed. Local preferences have been kept."
     );
-    if local.values.contains_key("reply_include_original")
-        && !owner
-            .subscription
-            .bases
-            .contains_key("reply_include_original")
-    {
-        owner.subscription.bases.insert(
-            "reply_include_original".into(),
-            Basis {
-                operation: None,
-                value: Value::Null,
-                native_revision: None,
-                observed: 0,
-            },
-        );
+    // A subscription seeded by an older release has no basis for later fields.
+    let missing: Vec<String> = local
+        .fields()
+        .filter(|field| {
+            super::super::enrollment::added(field) && !owner.subscription.bases.contains_key(*field)
+        })
+        .map(str::to_owned)
+        .collect();
+    if !missing.is_empty() {
+        for field in missing {
+            owner.subscription.bases.insert(
+                field,
+                Basis {
+                    operation: None,
+                    value: Value::Null,
+                    native_revision: None,
+                    observed: 0,
+                },
+            );
+        }
         owner.save().await?;
     }
     // Lost acknowledgments retry the same operation before any new intent.

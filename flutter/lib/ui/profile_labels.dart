@@ -8,6 +8,7 @@ const profileSettingLabels = {
   'reply_display': 'Quoted history',
   'reply_include_original': 'Include original message in new replies',
   'tooltips': 'Tooltips',
+  'image_policy': 'External images',
 };
 String profileSettingLabel(String field) =>
     profileSettingLabels[field] ?? field;

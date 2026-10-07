@@ -12,6 +12,10 @@ test-support = []
 staged-receive = ["dep:tempfile", "dep:memmap2"]
 # Saved CONDSTORE folder states; needs a client that persists them.
 condstore = ["staged-receive"]
+# The pinned, address-checked remote image fetch service.
+remote-images = ["dep:reqwest", "dep:url"]
+# Exposes the fetch transport's mock to downstream client tests.
+remote-images-test = ["remote-images", "dep:mockall"]
 
 [dependencies]
 shep-mail-content = { path = "../mail-content" }
@@ -35,7 +39,13 @@ tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 tempfile = { version = "3.27.0", optional = true }
 memmap2 = { version = "0.9.11", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"], optional = true }
+image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
+mockall = { version = "0.15", optional = true }
+url = { version = "2", optional = true }
 
 [dev-dependencies]
 mockall = "0.15.0"
+rcgen = "0.14"
 tokio = { version = "1", features = ["test-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }

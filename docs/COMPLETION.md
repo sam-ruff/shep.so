@@ -1,5 +1,76 @@
 # Completion audit
 
+## Mobile remote images, 7 October 2026 (#36, first part)
+
+External images stay blocked by default. Block all, Contacts only and Allow all
+is the existing shared `image_policy` profile key; the Flutter adapters now carry
+it, accepting the 8-, 9- and 10-field generations so older device snapshots,
+exact requests and receipts keep their original fields, and an older
+subscription gains a basis for the new field before admitting local intent.
+Message, sender and domain exceptions and a Contacts list stay on the device,
+matching desktop; message IDs are local cache identities.
+
+`shared/mail-core::remote_images` now owns the rules (desktop delegates its
+`allowed`, address parsing, public-address check and WebP conversion) and,
+behind the `remote-images` feature, the fetch service. A mockable `Transport`
+resolves every hop, refuses any non-public or mismatched address before
+connecting, pins the connection to the checked addresses with rustls and the
+bundled web roots, follows at most three redirects itself without an https
+downgrade, accepts only 2xx, streams at most 4 MiB, and decodes within
+2048 pixels and 32 MiB before converting to WebP on a blocking worker. Errors are
+fixed messages without server text. Desktop's own fetch now uses this service.
+
+The mobile native `remote_images` request re-derives the message's remote images
+from cached MIME with the shared discovery (no inline image conversion), checks
+the rules natively, including aliases from moves, and fetches only requested
+keys from that set in batches of eight with four concurrent downloads. Bytes
+live in a 128-entry, 16 MiB memory cache; nothing is written to disk.
+`forget_remote_images` clears it and advances an epoch, so a fetch already
+running can neither repopulate the cache nor return its bytes. Formatted
+responses carry the natively parsed sender address and domain that exceptions
+match. Print embeds only cached bytes for a permitted message and never fetches.
+
+Documents prepared with `remote_placeholders` keep `urn:shep-remote:<sha256>`
+slots in `src`, `srcset`, `background`, style attributes and style sheets. The
+shared runtime leaves them empty at start, exactly as blocked images were, and
+fills them from host `images` commands as blob URLs; the CSP is unchanged and
+the document never sees an image address. Before applying arrivals it records
+the first visible text node, disables engine scroll anchoring and restores that
+node's position unless the reader scrolled meanwhile; a reader at the start
+stays there. Selection and Find highlights live on untouched text nodes. The
+browser client does not request placeholders yet, so its documents are
+unchanged apart from the runtime hash.
+
+Flutter's reader bar offers Load images, Always for the sender or domain, Retry
+images and Block images, with fixed status text. Preferences gains the External
+images policy, removable exceptions with Clear, and a Contacts list, all
+searchable. Narrowing a permission clears the native cache, and the reader
+replaces a document that had shown images. The new host test exposed that the
+reader's global key could carry the old WebView across a reload in the same
+frame; the formatted view is now keyed by generation, so a reload always gets a
+new WebView.
+
+Verification, with logs under `artifacts/logs/`: 16 shared remote-image tests
+(shared policy cases, mocked orchestration, loopback HTTP and TLS with a fixture
+authority) and all `shep-mail-content` tests including two placeholder/discovery
+cases and one cached-print case (`mail-core-remote-images.log`,
+`mail-content-tests.log`); 229 mobile native tests including five remote-image
+requests and one `image_policy` profile-sync test (`mobile-native-all.log`);
+426 Flutter host tests with the three existing skips, including seven model and
+settings cases and four real-control cases in light and dark with reviewed
+compact goldens (`flutter-test-all.log`); the shared runtime in Chromium and
+WebKit (`remote-images-runtime.log`, captures in `artifacts/web/remote-images/`).
+Root and mobile Clippy pass with `-D warnings`, Flutter analysis is clean, the
+backend still builds and the formatted fixture matches current preparation.
+Two existing connection-recovery goldens changed because Preferences grew; they
+were regenerated and reviewed. Three Flutter tests needed the new tenth setting
+or a visible Re-enter control.
+
+Remaining: Android and Apple execution, a live network fetch, profile sync of the
+exception and Contacts lists (a codec decision shared with desktop), the browser
+equivalent (policy controls and a gateway fetch service) and a 64-image cap per
+message that desktop does not have.
+
 ## Mobile reply original and portable default, 6 October 2026 (#30)
 
 Reply and Reply all now retain an immutable original separately from typed text,

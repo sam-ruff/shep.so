@@ -14,7 +14,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 async-trait = "0.1"
 flutter_rust_bridge = "=2.13.0"
-shep-mail-core = { path = "../../shared/mail-core" }
+shep-mail-core = { version = "0.1.0", path = "../../shared/mail-core", features = ["remote-images"] }
 shep-action-core = { version = "0.1.0", path = "../../shared/action-core" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
@@ -43,6 +43,7 @@ native-tls = { version = "0.2", features = ["vendored"] }
 [dev-dependencies]
 mockall = "0.15.0"
 shep-calendar-core = { path = "../../shared/calendar-core", features = ["test-support"] }
+shep-mail-core = { path = "../../shared/mail-core", features = ["remote-images-test"] }
 tempfile = "3"
 
 [lints.rust]

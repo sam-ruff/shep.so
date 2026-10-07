@@ -31,6 +31,16 @@ pub struct Prepared {
 }
 
 pub fn prepare(raw: &[u8], options: &Options) -> Result<Prepared> {
+    prepare_with_cached(raw, options, &|_| None)
+}
+
+/// Embeds remote images only from `cached`, which must answer for permitted
+/// images the client already holds. Printing never fetches a resource.
+pub fn prepare_with_cached(
+    raw: &[u8],
+    options: &Options,
+    cached: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Result<Prepared> {
     anyhow::ensure!(
         !options.generation.is_empty() && options.generation.len() <= 128,
         "Invalid print generation."
@@ -87,7 +97,7 @@ pub fn prepare(raw: &[u8], options: &Options) -> Result<Prepared> {
     }
     let document::Content {
         content, resources, ..
-    } = document::sanitize(&body);
+    } = document::sanitize_with(&body, document::Remote::Cached(cached), true);
     let data = serde_json::json!({"generation": options.generation, "images": resources.images, "headers": headers, "files": files});
     let data = serde_json::to_string(&data)?.replace('<', "\\u003c");
     let runtime = runtime_csp_source();

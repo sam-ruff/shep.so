@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import '../src/rust/api.dart';
 import '../src/rust/frb_generated.dart';
 import '../model/mail.dart';
+import '../model/remote_images.dart';
 import 'repository.dart';
 import 'accounts.dart';
 import 'incoming_sync.dart';
@@ -39,6 +40,7 @@ class NativeRepository
         AccountRemovalRepository,
         TextSearchRepository,
         FormattedMessageRepository,
+        RemoteImageRepository,
         PrintRepository,
         MailActivityRepository,
         DurableAccountRepository,
@@ -106,11 +108,13 @@ class NativeRepository
     String id, {
     required String generation,
     required bool plain,
+    ImageRules? images,
   }) async => PreparedPrint.fromJson(
     await call({
       'op': 'print',
       'id': id,
       'options': {'generation': generation, 'plain': plain},
+      if (images != null) 'images': images.toJson(),
     }),
   );
 
@@ -124,10 +128,35 @@ class NativeRepository
     await call({
           'op': 'formatted',
           'id': id,
-          'options': {'generation': generation, 'dark': dark, 'quotes': quotes},
+          'options': {
+            'generation': generation,
+            'dark': dark,
+            'quotes': quotes,
+            'remote_placeholders': true,
+          },
         })
         as Map<String, dynamic>,
   );
+
+  @override
+  Future<RemoteImageBatch> remoteImages(
+    String id, {
+    required List<String> keys,
+    required ImageRules rules,
+  }) async => RemoteImageBatch.fromJson(
+    await call({
+          'op': 'remote_images',
+          'id': id,
+          'keys': keys,
+          'rules': rules.toJson(),
+        })
+        as Map<String, dynamic>,
+  );
+
+  @override
+  Future<void> forgetRemoteImages() async {
+    await call({'op': 'forget_remote_images'});
+  }
 
   @override
   Future<List<SearchHit>> findText(

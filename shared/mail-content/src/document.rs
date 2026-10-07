@@ -8,6 +8,7 @@ mod resources;
 use crate::reader::{Body, RawHtmlPart, escape};
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose::STANDARD};
+pub(crate) use resources::Remote;
 use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -34,6 +35,10 @@ pub struct Options {
     pub dark: bool,
     #[serde(default)]
     pub quotes: bool,
+    /// Leave a slot for each remote image so the display runtime can show
+    /// permitted bytes later without reloading the document.
+    #[serde(default)]
+    pub remote_placeholders: bool,
 }
 #[derive(Debug, Serialize)]
 pub struct Prepared {
@@ -43,10 +48,12 @@ pub struct Prepared {
     pub remote_images: Vec<RemoteImage>,
     pub issues: Vec<String>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RemoteImage {
     pub url: String,
     pub alt: String,
+    /// The SHA-256 of `url`, naming its placeholder in prepared documents.
+    pub key: String,
 }
 #[derive(Debug, Serialize)]
 pub(crate) struct Image {
@@ -62,6 +69,15 @@ pub fn prepare(raw: &[u8], options: &Options) -> Result<Prepared> {
     );
     let body = crate::reader::decode(raw)?;
     from_body(body, format!("{:x}", Sha256::digest(raw)), options)
+}
+/// The remote images `prepare` would discover, without converting inline images.
+pub fn remote_images(raw: &[u8]) -> Result<Vec<RemoteImage>> {
+    let body = crate::reader::decode(raw)?;
+    Ok(sanitize_with(&body, Remote::Omit, false)
+        .resources
+        .remote
+        .into_values()
+        .collect())
 }
 fn sanitizer() -> ammonia::Builder<'static> {
     let mut clean = ammonia::Builder::default();
@@ -102,11 +118,16 @@ fn from_body(body: Body, signature: String, options: &Options) -> Result<Prepare
             issues: vec![],
         });
     }
+    let mode = if options.remote_placeholders {
+        Remote::Placeholder
+    } else {
+        Remote::Omit
+    };
     let Content {
         content,
         resources,
         links,
-    } = sanitize(&body);
+    } = sanitize_with(&body, mode, true);
     let data = serde_json::json!({"generation":options.generation,"dark":options.dark,"quotes":options.quotes,"images":resources.images,"links":links});
     let data = serde_json::to_string(&data)?.replace('<', "\\u003c");
     let runtime = runtime_csp_source();
@@ -127,7 +148,7 @@ fn from_body(body: Body, signature: String, options: &Options) -> Result<Prepare
 fn attributes(
     element: ElementRef<'_>,
     output: &mut String,
-    resources: &mut resources::Resources,
+    resources: &mut resources::Resources<'_>,
     base: Option<&Url>,
     part: &RawHtmlPart,
     body: &Body,
@@ -147,13 +168,9 @@ fn attributes(
                 }
                 continue;
             }
-            "src" if name == "img" => resources
-                .image(value, alt, base, part, body)
-                .map(|key| format!("urn:shep-image:{key}")),
-            "background" => resources
-                .image(value, "Email background", base, part, body)
-                .map(|key| format!("urn:shep-image:{key}")),
-            "style" => Some(css::rewrite(value, |url| {
+            "src" if name == "img" => resources.image(value, alt, base, part, body),
+            "background" => resources.image(value, "Email background", base, part, body),
+            "style" => Some(css::rewrite_urls(value, |url| {
                 resources.image(url, "Email background", base, part, body)
             })),
             "srcset" => Some(srcset(value, |url| {
@@ -200,21 +217,21 @@ fn srcset(value: &str, mut image: impl FnMut(&str) -> Option<String>) -> String 
                 .strip_suffix('w')
                 .and_then(|v| v.parse::<u32>().ok())
                 .is_some_and(|v| v > 0);
-        if valid && let Some(key) = image(url) {
-            candidates.push(format!("urn:shep-image:{key} {descriptor}"));
+        if valid && let Some(resource) = image(url) {
+            candidates.push(format!("{resource} {descriptor}"));
         }
     }
     candidates.join(", ")
 }
 
-pub(crate) struct Content {
+pub(crate) struct Content<'a> {
     pub content: String,
-    pub resources: resources::Resources,
+    pub resources: resources::Resources<'a>,
     pub links: BTreeMap<String, String>,
 }
 
-pub(crate) fn sanitize(body: &Body) -> Content {
-    let mut resources = resources::Resources::default();
+pub(crate) fn sanitize_with<'a>(body: &Body, remote: Remote<'a>, inline: bool) -> Content<'a> {
+    let mut resources = resources::Resources::new(remote, inline);
     let mut content = String::new();
     let mut links = BTreeMap::new();
     let clean = sanitizer();
@@ -273,7 +290,7 @@ pub(crate) fn sanitize(body: &Body) -> Content {
                     continue;
                 }
                 if name == "style" {
-                    let css = css::rewrite(&element.text().collect::<String>(), |url| {
+                    let css = css::rewrite_urls(&element.text().collect::<String>(), |url| {
                         resources.image(url, "Email background", base.as_ref(), part, body)
                     });
                     content.push_str(&format!("<style>{css}</style>"));

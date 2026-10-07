@@ -23,17 +23,9 @@ pub(crate) struct Preferences {
     pub values: BTreeMap<String, Value>,
     pub revisions: BTreeMap<String, u64>,
 }
-pub(super) const LEGACY_SETTINGS: [&str; 8] = [
-    "appearance",
-    "left_swipe",
-    "right_swipe",
-    "preview_lines",
-    "sender_pictures",
-    "unified_inbox",
-    "reply_display",
-    "tooltips",
-];
-pub(super) const SETTINGS: [&str; 9] = [
+/// Fields are appended in release order; an older device snapshot or receipt
+/// holds a prefix of this list.
+pub(super) const SETTINGS: [&str; 10] = [
     "appearance",
     "left_swipe",
     "right_swipe",
@@ -43,15 +35,17 @@ pub(super) const SETTINGS: [&str; 9] = [
     "reply_display",
     "tooltips",
     "reply_include_original",
+    "image_policy",
 ];
+/// Lengths of the field sets earlier releases saved.
+const GENERATIONS: [usize; 3] = [8, 9, 10];
+/// Fields later releases added; older subscriptions gain a basis for them.
+pub(super) fn added(field: &str) -> bool {
+    SETTINGS[GENERATIONS[0]..].contains(&field)
+}
 pub(super) fn valid_revisions(revisions: &BTreeMap<String, u64>) -> bool {
-    let fields = if revisions.contains_key("reply_include_original") {
-        SETTINGS.as_slice()
-    } else {
-        LEGACY_SETTINGS.as_slice()
-    };
-    revisions.len() == fields.len()
-        && fields.iter().all(|field| {
+    GENERATIONS.contains(&revisions.len())
+        && SETTINGS[..revisions.len()].iter().all(|field| {
             revisions
                 .get(*field)
                 .is_some_and(|value| *value <= 9_007_199_254_740_991)

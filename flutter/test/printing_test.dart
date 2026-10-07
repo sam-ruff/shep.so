@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shep_mobile/data/printing.dart';
+import 'package:shep_mobile/model/preferences.dart';
+import 'package:shep_mobile/model/remote_images.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'support/preview_repository.dart';
 import 'workspace_test.dart' show MemorySettings;
@@ -12,6 +14,7 @@ class PrintSource extends PreviewRepository implements PrintRepository {
           String id,
           String generation,
           bool plain,
+          ImageRules? images,
           Completer<PreparedPrint> result,
         })
       >[];
@@ -20,12 +23,14 @@ class PrintSource extends PreviewRepository implements PrintRepository {
     String id, {
     required String generation,
     required bool plain,
+    ImageRules? images,
   }) {
     final result = Completer<PreparedPrint>();
     requests.add((
       id: id,
       generation: generation,
       plain: plain,
+      images: images,
       result: result,
     ));
     return result.future;
@@ -56,13 +61,20 @@ void main() {
     'pending print captures source and mode without blocking a new reader or replacing errors',
     () async {
       final repo = PrintSource(), printer = Printer();
-      final w = Workspace(repo, MemorySettings(), printer: printer);
+      final settings = MemorySettings()
+        ..value = const Preferences(
+          imageTrust: ImageTrust(senders: ['ada@example.test']),
+        );
+      final w = Workspace(repo, settings, printer: printer);
       addTearDown(w.dispose);
+      await w.initialize();
       final job = w.printMessage('1', plain: true);
       expect(w.isPrinting('1'), true);
       await w.printMessage('1', plain: false);
       expect(repo.requests.length, 1);
       expect(repo.requests.single.plain, true);
+      // Native embeds only already cached images these rules allow.
+      expect(repo.requests.single.images?.trust.senders, ['ada@example.test']);
       w.retainReader('2');
       w.error = 'A newer independent error';
       repo.requests.single.result.complete(prepared);

@@ -5,6 +5,7 @@ import 'package:shep_mobile/data/formatted_message.dart';
 import 'package:shep_mobile/data/printing.dart';
 import 'package:shep_mobile/data/drafts.dart';
 import 'package:shep_mobile/model/mail.dart';
+import 'package:shep_mobile/model/remote_images.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/ui/app.dart';
 import '../workspace_test.dart' show MemorySettings;
@@ -38,6 +39,7 @@ class ReaderActionsRepository extends PagedRepository
     String id, {
     required String generation,
     required bool plain,
+    ImageRules? images,
   }) {
     final result = Completer<PreparedPrint>();
     prints.add(result);

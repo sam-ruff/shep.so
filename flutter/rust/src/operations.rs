@@ -37,6 +37,7 @@ pub struct Operations {
     pub(crate) groups: Arc<Mutex<()>>,
     pub(crate) outgoing: crate::outgoing::Runtime,
     pub(crate) sent: crate::sent::Runtime,
+    pub(crate) remote_images: crate::remote_images::Runtime,
     #[cfg(test)]
     pub(crate) provider: std::sync::Mutex<Option<Arc<dyn shep_mail_core::providers::MailProvider>>>,
     #[cfg(test)]
@@ -168,6 +169,7 @@ impl Operations {
             groups: Arc::new(Mutex::new(())),
             outgoing: crate::outgoing::Runtime::default(),
             sent: crate::sent::Runtime::default(),
+            remote_images: crate::remote_images::Runtime::default(),
             #[cfg(test)]
             provider: std::sync::Mutex::new(None),
             #[cfg(test)]
@@ -511,11 +513,20 @@ pub enum Request {
     Print {
         id: String,
         options: shep_mail_core::printing::Options,
+        /// Already cached remote images are included only when these allow it.
+        #[serde(default)]
+        images: Option<crate::remote_images::ImageRules>,
     },
     Formatted {
         id: String,
         options: shep_mail_core::document::Options,
     },
+    RemoteImages {
+        id: String,
+        keys: Vec<String>,
+        rules: crate::remote_images::ImageRules,
+    },
+    ForgetRemoteImages,
     Attachment {
         id: String,
         file: String,
@@ -1055,16 +1066,24 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
         Request::Page{folder,account,query,filter,oldest,offset,projection} => db.read(move |db| {
             crate::paging::page(db, folder, account, query, filter, oldest, offset, projection)
         }).await,
-        Request::Print{id,options} => {
+        Request::Print{id,options,images} => {
             let permit=profile.operations.printing.clone().try_acquire_owned().context("Print preparation is busy. Finish a preview and retry.")?;
-            let (account,raw):(String,Vec<u8>)=db.read(move |db| {
+            let requested=id.clone();
+            let (summary,raw):(Mail,Vec<u8>)=db.read(move |db| {
                 let summary=stored_mail(db,&id)?;
-                Ok((summary.account_id,db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?))
+                let raw=db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?;
+                Ok((summary,raw))
             }).await?;
+            let allowed=match &images {
+                Some(rules)=>rules.allows(&[summary.id.as_str(),requested.as_str()],&summary.sender)?,
+                None=>false,
+            };
+            // Printing never fetches: only images already cached for this reader.
+            let cached=profile.operations.remote_images.cached(allowed);
             tokio::task::spawn_blocking(move || {
                 let _permit=permit;
-                let mut value=serde_json::to_value(shep_mail_core::printing::prepare(&raw,&options).context("Could not prepare this print. Try plain text or refresh and retry.")?)?;
-                value["account_id"]=account.into();
+                let mut value=serde_json::to_value(shep_mail_core::printing::prepare_with_cached(&raw,&options,&cached).context("Could not prepare this print. Try plain text or refresh and retry.")?)?;
+                value["account_id"]=summary.account_id.into();
                 Ok(value)
             }).await?
         }
@@ -1073,14 +1092,24 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
             // Admission precedes the cache read, and the blocking task owns its
             // permit through cancellation. Provider and Find slots stay separate.
             let permit=profile.operations.rendering.clone().try_acquire_owned().context("The formatted reader is busy. Use plain text or retry shortly.")?;
-            let raw:Vec<u8>=db.read(move |db| {
+            let (sender,raw):(String,Vec<u8>)=db.read(move |db| {
                 let summary=stored_mail(db,&id)?;
-                Ok(db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?)
+                let raw=db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?;
+                Ok((summary.sender,raw))
             }).await?;
             tokio::task::spawn_blocking(move || {
                 let _permit=permit;
-                Ok(serde_json::to_value(shep_mail_core::document::prepare(&raw,&options).context("Could not format this cached message. Use plain text or retry.")?)?)
+                let mut value=serde_json::to_value(shep_mail_core::document::prepare(&raw,&options).context("Could not format this cached message. Use plain text or retry.")?)?;
+                // Exceptions name the parsed address the native check will match.
+                value["sender_address"]=shep_mail_core::remote_images::sender_address(&sender).into();
+                value["sender_domain"]=shep_mail_core::remote_images::sender_domain(&sender).into();
+                Ok(value)
             }).await?
+        }
+        Request::RemoteImages{id,keys,rules} => crate::remote_images::load(profile,id,keys,rules).await,
+        Request::ForgetRemoteImages => {
+            profile.operations.remote_images.forget();
+            Ok(json!({"forgotten":true}))
         }
         Request::Detail{id} => {
             let (summary,text,raw)=db.read(move |db| {

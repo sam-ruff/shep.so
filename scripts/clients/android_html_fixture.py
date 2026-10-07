@@ -39,7 +39,7 @@ class HTMLDriver(AndroidPicker):
             state=self.adb('shell','run-as',PACKAGE,'cat',REQUEST,check=False).decode().strip()
             if state.startswith('capture:'):
                 name=state.removeprefix('capture:')
-                if name not in ('native-formatted-light','native-formatted-find-tail','native-formatted-retry','complete'):
+                if name not in ('native-formatted-images','native-formatted-light','native-formatted-find-tail','native-formatted-retry','complete'):
                     raise ValueError('Unexpected capture name')
                 if name!='complete': self.capture(name)
                 self.adb('shell','run-as',PACKAGE,'sh','-c',f"'echo captured:{name} > {REQUEST}'")

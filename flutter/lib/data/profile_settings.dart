@@ -1,11 +1,21 @@
 import '../model/preferences.dart';
+import '../model/remote_images.dart';
+
+/// Portable fields added after the first release, in release order. Older
+/// snapshots, requests and receipts hold the fields before a suffix of these.
+const _addedFields = ['reply_include_original', 'image_policy'];
 
 bool validProfileFieldSet(Iterable<String> fields) {
   final current = const Preferences().profileSettings().keys.toSet();
-  final legacy = {...current}..remove('reply_include_original');
   final selected = fields.toSet();
-  return (selected.length == current.length && selected.containsAll(current)) ||
-      (selected.length == legacy.length && selected.containsAll(legacy));
+  for (var dropped = 0; dropped <= _addedFields.length; dropped++) {
+    final expected = {...current}
+      ..removeAll(_addedFields.sublist(_addedFields.length - dropped));
+    if (selected.length == expected.length && selected.containsAll(expected)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 class ProfileSettingsSnapshot {
@@ -15,9 +25,8 @@ class ProfileSettingsSnapshot {
   final Map<String, int> revisions;
   Map<String, Object?> get values {
     final result = preferences.profileSettings();
-    if (validProfileFieldSet(revisions.keys) &&
-        !revisions.containsKey('reply_include_original')) {
-      result.remove('reply_include_original');
+    if (validProfileFieldSet(revisions.keys)) {
+      result.removeWhere((key, _) => !revisions.containsKey(key));
     }
     return result;
   }
@@ -61,7 +70,12 @@ class ProfileSettingsReceipt {
 /// after a lost acknowledgment. No receipt or revision is exported to Google.
 abstract interface class ProfileSettingsStore {
   Future<ProfileSettingsSnapshot> profileSnapshot();
-  Future<Preferences> saveLocal(Map<String, Object?> changes);
+
+  /// `imageTrust` replaces the saved device-local image exceptions.
+  Future<Preferences> saveLocal(
+    Map<String, Object?> changes, {
+    ImageTrust? imageTrust,
+  });
   Future<ProfileSettingsReceipt> applyProfile({
     required String id,
     required ProfileSettingsSnapshot baseline,

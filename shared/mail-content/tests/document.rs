@@ -4,7 +4,86 @@ fn options() -> Options {
         generation: "fixture-generation".into(),
         dark: false,
         quotes: false,
+        remote_placeholders: false,
     }
+}
+
+fn sha256(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(value.as_bytes()))
+}
+
+const REMOTE_SOURCES: &str = r#"Content-Type: text/html
+
+<body background="https://images.example.test/body.webp"><style>.hero{background:url("https://images.example.test/css.webp")}</style>
+<p style="background-image:url(https://images.example.test/inline-style.webp)">Styled</p>
+<img src="https://images.example.test/img.webp" srcset="https://images.example.test/large.webp 2x, data:image/gif;base64,R0lGODlhAQABAAAAACw= 1x" alt="Logo">
+<img src="cid:missing" alt="Missing"></body>"#;
+
+#[test]
+fn remote_placeholders_are_opt_in_keyed_and_never_expose_urls() {
+    let fixture = include_bytes!("../../html-reader-fixture.eml");
+    let blocked = document::prepare(fixture, &options()).unwrap();
+    let banner = "https://images.example.test/news/banner.webp";
+    assert_eq!(blocked.remote_images[0].key, sha256(banner));
+    let blocked = blocked.document.unwrap();
+    assert!(!blocked.contains(&format!("urn:shep-remote:{}", sha256(banner))));
+    let prepared = document::prepare(
+        fixture,
+        &Options {
+            remote_placeholders: true,
+            ..options()
+        },
+    )
+    .unwrap();
+    let html = prepared.document.unwrap();
+    assert!(html.contains(&format!("urn:shep-remote:{}", sha256(banner))));
+    assert!(!html.contains("images.example.test"));
+    assert!(html.contains("img-src blob:;"));
+    assert!(html.contains("connect-src 'none'"));
+    assert_eq!(html.matches("<script").count(), 2);
+
+    let prepared = document::prepare(
+        REMOTE_SOURCES.as_bytes(),
+        &Options {
+            remote_placeholders: true,
+            ..options()
+        },
+    )
+    .unwrap();
+    let html = prepared.document.unwrap();
+    assert!(!html.contains("images.example.test"));
+    assert_eq!(prepared.remote_images.len(), 5);
+    for image in &prepared.remote_images {
+        assert_eq!(image.key, sha256(&image.url));
+        assert!(
+            html.contains(&format!("urn:shep-remote:{}", image.key)),
+            "{}",
+            image.url
+        );
+    }
+    assert!(html.contains("urn:shep-image:"), "Inline data stays inline");
+}
+
+#[test]
+fn discovery_matches_preparation_without_converting_inline_images() {
+    for raw in [
+        include_bytes!("../../html-reader-fixture.eml").as_slice(),
+        REMOTE_SOURCES.as_bytes(),
+    ] {
+        let prepared = document::prepare(raw, &options()).unwrap();
+        assert_eq!(
+            document::remote_images(raw).unwrap(),
+            prepared.remote_images
+        );
+    }
+    assert!(
+        document::remote_images(
+            b"Content-Type: text/plain\r\n\r\nhttps://images.example.test/a.png"
+        )
+        .unwrap()
+        .is_empty()
+    );
 }
 
 #[test]

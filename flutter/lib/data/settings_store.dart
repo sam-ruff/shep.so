@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../model/preferences.dart';
+import '../model/remote_images.dart';
 import 'profile_settings.dart';
 
 abstract interface class SettingsStore {
@@ -59,12 +60,15 @@ class DeviceSettings implements SettingsStore, ProfileSettingsStore {
     await _storage.write(current.update(value).encode());
   });
   @override
-  Future<Preferences> saveLocal(Map<String, Object?> changes) {
+  Future<Preferences> saveLocal(
+    Map<String, Object?> changes, {
+    ImageTrust? imageTrust,
+  }) {
     final selected = Map<String, Object?>.unmodifiable(changes);
     return _ordered(() async {
       final current = await _read();
       final next = current.update(
-        current.preferences.applyProfile(selected),
+        current.preferences.applyProfile(selected).copy(imageTrust: imageTrust),
         intent: selected.keys.toSet(),
       );
       await _storage.write(next.encode());

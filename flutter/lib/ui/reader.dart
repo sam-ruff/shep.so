@@ -17,6 +17,7 @@ import 'composer.dart';
 import 'icons.dart';
 import 'theme.dart';
 import 'reader_headers.dart';
+import 'remote_images.dart';
 
 class Reader extends StatefulWidget {
   const Reader({
@@ -82,6 +83,7 @@ class _ReaderState extends State<Reader> {
         dark: Theme.of(context).brightness == Brightness.dark,
         quotes: showQuotes,
       );
+      syncImages();
       if (formatted?.highlight(find) == true) {
         final target = formattedKey.currentContext;
         if (target != null) {
@@ -89,6 +91,44 @@ class _ReaderState extends State<Reader> {
         }
       }
     });
+  }
+
+  /// Permitted images load into the existing document; a revoked permission
+  /// rebuilds it so no previously shown pixels remain.
+  void syncImages() {
+    final document = formatted;
+    final prepared = document?.prepared;
+    if (document == null ||
+        prepared == null ||
+        !document.html ||
+        !document.supportsImages ||
+        prepared.remoteImages.isEmpty) {
+      return;
+    }
+    final rules = workspace.preferences.imageRules;
+    final allowed = rules.allows(
+      id,
+      address: prepared.senderAddress,
+      domain: prepared.senderDomain,
+    );
+    if (!allowed) {
+      if (document.loadedImages.isNotEmpty) {
+        unawaited(
+          document.load(
+            dark: Theme.of(context).brightness == Brightness.dark,
+            quotes: showQuotes,
+          ),
+        );
+      } else {
+        document.cancelImages();
+      }
+      return;
+    }
+    if (!document.imagesLoading &&
+        document.imagesError == null &&
+        document.imagesPending) {
+      unawaited(document.loadImages(rules));
+    }
   }
 
   void runtimeMessage(FormattedMessage source, Map<String, dynamic> value) {
@@ -686,15 +726,10 @@ class _ReaderState extends State<Reader> {
                           const SizedBox(height: 12),
                         ],
                         if (html && document!.prepared!.remoteImages.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Text(
-                              '${document.prepared!.remoteImages.length} remote image${document.prepared!.remoteImages.length == 1 ? '' : 's'} blocked.',
-                              style: TextStyle(
-                                color: scheme.onSurfaceVariant,
-                                fontSize: 12,
-                              ),
-                            ),
+                          RemoteImageBar(
+                            workspace: workspace,
+                            document: document,
+                            id: id,
                           ),
                         if (html)
                           for (final issue in document!.prepared!.issues)
@@ -722,7 +757,13 @@ class _ReaderState extends State<Reader> {
                                   color: document.canvas == null
                                       ? Colors.transparent
                                       : Color(document.canvas!),
+                                  // The global key above can carry this subtree
+                                  // across a reload; a new generation always
+                                  // gets a new WebView and its own document.
                                   child: FormattedView(
+                                    key: ValueKey(
+                                      'formatted-view:${document.generation}',
+                                    ),
                                     background: document.canvas == null
                                         ? null
                                         : Color(document.canvas!),
