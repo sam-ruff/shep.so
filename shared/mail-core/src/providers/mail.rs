@@ -858,7 +858,7 @@ async fn move_planned_imap_session<
 ) -> anyhow::Result<Option<String>> {
     let capabilities = session.capabilities().await?;
     if folders::encoding(&capabilities) != target.encoding {
-        return Err(crate::mail_actions::MoveRefused(
+        return Err(crate::mail_actions::DestinationChanged(
             "The server folder encoding changed. Review this saved destination before moving mail."
                 .into(),
         )
@@ -1660,7 +1660,15 @@ mod tests {
             let error = move_planned_imap_session(session, &mail.summary, target)
                 .await
                 .expect_err("changed encoding");
-            assert!(error.is::<crate::mail_actions::MoveRefused>(), "{error:#}");
+            assert!(
+                error.is::<crate::mail_actions::DestinationChanged>(),
+                "{error:#}"
+            );
+            assert_eq!(
+                crate::mail_actions::classify_move_failure(&error),
+                crate::mail_actions::MoveFailure::Uncertain,
+                "a local destination check is not a server refusal"
+            );
             server.await?;
         }
         Ok(())

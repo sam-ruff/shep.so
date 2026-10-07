@@ -6,6 +6,7 @@ use crate::{database::Database, folders, operations};
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use shep_mail_core::{
     folders::{FolderRole, Mailbox},
     mail_actions::connection_key,
@@ -152,6 +153,60 @@ pub(crate) fn owns(db: &Connection, destination: &Destination) -> Result<bool> {
         return Ok(false);
     };
     operations::action_source_matches(db, &mail, &serde_json::from_str(&physical)?)
+}
+
+/// Records a non-ready outcome only while the action is still queued or
+/// waiting, so a finished action keeps its saved result and intent.
+pub(crate) fn settle(db: &mut Connection, action: &str, outcome: Resolution) -> Result<Value> {
+    let tx = db.transaction()?;
+    let (status, mail, physical, revision): (String, String, String, i64) = tx.query_row(
+        "SELECT status,mail,physical,intent_revision FROM individual_mail_actions WHERE id=?1",
+        [action],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    if !matches!(status.as_str(), "queued" | "waiting") {
+        return Ok(operations::saved_reply(action, &status));
+    }
+    let (status, warning, creation) = match outcome {
+        Resolution::Waiting { creation, message } => ("waiting", Some(message), creation),
+        Resolution::Rejected { message } => ("rejected", Some(message), None),
+        Resolution::Obsolete => {
+            let owned: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM mail_intents WHERE mail=?1 AND field='folder' AND revision=?2)",
+                params![mail, revision],
+                |row| row.get(0),
+            )?;
+            let same_source = match operations::stored_mail(&tx, &mail) {
+                Ok(current) => operations::action_source_matches(
+                    &tx,
+                    &current,
+                    &serde_json::from_str(&physical)?,
+                )?,
+                Err(_) => false,
+            };
+            if owned && !same_source {
+                (
+                    "rejected",
+                    Some(operations::CHANGED_SOURCE.to_owned()),
+                    None,
+                )
+            } else {
+                ("cancelled", None, None)
+            }
+        }
+        Resolution::Ready(_) => anyhow::bail!("A ready destination has no waiting outcome."),
+    };
+    tx.execute(
+        "UPDATE individual_mail_actions SET status=?2,error=?3 WHERE id=?1",
+        params![action, status, warning],
+    )?;
+    if status != "waiting" {
+        operations::release_action_intent(&tx, action)?;
+    }
+    tx.commit()?;
+    Ok(
+        json!({"action_id":action,"status":status,"committed":false,"warning":warning,"folder_creation":creation}),
+    )
 }
 
 fn save(db: &Connection, before: &Destination, after: &Destination) -> Result<Destination> {
@@ -375,17 +430,23 @@ pub(crate) async fn cached(db: &Database, destination: &Destination) -> Result<O
             .context("The saved folder target is missing.")?;
         return ready(db, destination, target).await.map(Some);
     }
+    if job.status == "rejected" {
+        return rejected(db, destination, CREATE_REFUSED).await.map(Some);
+    }
     if matches!(
         job.status.as_str(),
-        "uncertain" | "running" | "checking" | "rejected" | "cancelled" | "dismissed" | "succeeded"
+        "uncertain" | "running" | "checking" | "cancelled" | "dismissed" | "succeeded"
     ) {
         return block(db,destination,"blocked","This destination needs review in Folder activity. An existence check cannot confirm the original CREATE. Cancel this mail action before choosing a new checked destination.").await.map(Some);
     }
     Ok(None)
 }
 
-async fn rejected(db: &Database, destination: &Destination) -> Result<Resolution> {
-    let message = "The destination name or namespace is unavailable. Cancel this action and review its destination before trying again.";
+const UNAVAILABLE: &str =
+    "The destination name or namespace is unavailable. Review its folders, then retry this action.";
+const CREATE_REFUSED: &str = "The server did not create the destination folder. Check the account's folder permissions, then retry this action.";
+
+async fn rejected(db: &Database, destination: &Destination, message: &str) -> Result<Resolution> {
     let saved = block(db, destination, "rejected", message).await?;
     Ok(if matches!(saved, Resolution::Obsolete) {
         Resolution::Obsolete
@@ -394,6 +455,54 @@ async fn rejected(db: &Database, destination: &Destination) -> Result<Resolution
             message: message.into(),
         }
     })
+}
+
+fn plan_rejected(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<shep_mail_core::folder_actions::creation::PlanRejected>()
+        .is_some()
+}
+
+async fn stored_catalogue(db: &Database, account: &str) -> Result<Vec<Mailbox>> {
+    let account = account.to_owned();
+    db.read(move |db| {
+        db.query_row(
+            "SELECT mailboxes FROM folder_catalogues WHERE account_id=?1",
+            [account],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|value| serde_json::from_str(&value).map_err(anyhow::Error::from))
+        .transpose()
+        .map(Option::unwrap_or_default)
+    })
+    .await
+}
+
+/// Saves a fresh listing while the action still owns its destination.
+async fn listed(
+    db: &Database,
+    destination: &Destination,
+    listed: Vec<Mailbox>,
+) -> Result<Option<Vec<Mailbox>>> {
+    ensure!(
+        listed.len() <= 8192,
+        "The folder catalogue exceeded the supported limit."
+    );
+    let checked = destination.clone();
+    let stored = listed.clone();
+    let retained = db
+        .write(move |db| {
+            let tx = db.transaction()?;
+            if !owns(&tx, &checked)? {
+                return Ok(false);
+            }
+            folders::save_catalogue(&tx, &checked.account, &stored)?;
+            tx.commit()?;
+            Ok(true)
+        })
+        .await?;
+    Ok(retained.then_some(listed))
 }
 
 fn planned_parts(candidate: &Mailbox) -> (Option<String>, String) {
@@ -422,71 +531,60 @@ pub(crate) async fn resolve(
         return Ok(Resolution::Obsolete);
     }
     if destination.target.is_none() {
-        let account = destination.account.clone();
-        let mut catalogue: Vec<Mailbox> = db
-            .read(move |db| {
-                db.query_row(
-                    "SELECT mailboxes FROM folder_catalogues WHERE account_id=?1",
-                    [account],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?
-                .map(|value| serde_json::from_str(&value).map_err(anyhow::Error::from))
-                .transpose()
-                .map(Option::unwrap_or_default)
-            })
-            .await?;
+        let mut catalogue = stored_catalogue(db, &destination.account).await?;
+        let mut relisted = false;
         if catalogue.is_empty()
-            && let Ok(listed) = api.catalogue().await
+            && let Ok(fresh) = api.catalogue().await
         {
-            ensure!(
-                listed.len() <= 8192,
-                "The folder catalogue exceeded the supported limit."
-            );
-            let checked = destination.clone();
-            let stored = listed.clone();
-            let retained = db
-                .write(move |db| {
-                    let tx = db.transaction()?;
-                    if !owns(&tx, &checked)? {
-                        return Ok(false);
-                    }
-                    folders::save_catalogue(&tx, &checked.account, &stored)?;
-                    tx.commit()?;
-                    Ok(true)
-                })
-                .await?;
-            if !retained {
+            let Some(fresh) = listed(db, &destination, fresh).await? else {
                 return Ok(Resolution::Obsolete);
-            }
-            catalogue = listed;
+            };
+            catalogue = fresh;
+            relisted = true;
         }
         if !alive(db, &destination).await? {
             return Ok(Resolution::Obsolete);
         }
-        let requested =
-            shep_mail_core::folders::resolve_destination(&catalogue, destination.role.requested());
-        let known = catalogue
-            .iter()
-            .find(|mailbox| mailbox.usable() && mailbox.name == requested)
-            .cloned();
-        let mut target = if let Some(candidate) = known.as_ref() {
+        let (known, requested) = loop {
+            let requested = shep_mail_core::folders::resolve_destination(
+                &catalogue,
+                destination.role.requested(),
+            );
+            let known = catalogue
+                .iter()
+                .find(|mailbox| mailbox.usable() && mailbox.name == requested)
+                .cloned();
+            let Some(candidate) = known.as_ref() else {
+                break (known, requested);
+            };
             match api.inspect(candidate.clone()).await {
                 Ok(Some(observed)) if observed.usable() && observed.name==candidate.name && observed.encoding==candidate.encoding => return ready(db,&destination,candidate.clone()).await,
-                Ok(None) => {},
+                Ok(None) if !relisted => {}
+                Ok(None) => break (known, requested),
                 _ => return block(db,&destination,"waiting","Could not verify the saved destination. Reconnect or refresh its folders, then retry this action.").await,
             }
+            // The cached folder is gone, so choose again from a fresh listing.
+            let fresh = match api.catalogue().await {
+                Ok(fresh) => fresh,
+                Err(_) => return block(db,&destination,"waiting","The saved destination folder is missing. Reconnect or refresh its folders, then retry this action.").await,
+            };
+            let Some(fresh) = listed(db, &destination, fresh).await? else {
+                return Ok(Resolution::Obsolete);
+            };
+            catalogue = fresh;
+            relisted = true;
+        };
+        let mut target = if let Some(candidate) = known.as_ref() {
             let (parent, name) = planned_parts(candidate);
             match api.plan(parent,name).await {
                 Ok(planned) if planned.name==candidate.name && planned.encoding==candidate.encoding => planned,
-                Err(error) if error.downcast_ref::<shep_mail_core::folder_actions::creation::PlanRejected>().is_some() => return rejected(db,&destination).await,
-                Ok(_) => return rejected(db,&destination).await,
-                _ => return block(db,&destination,"waiting","The saved folder namespace is unavailable. Refresh its folders and review this action.").await,
+                Err(error) if plan_rejected(&error) => return rejected(db,&destination,UNAVAILABLE).await,
+                _ => return block(db,&destination,"waiting","The saved folder namespace changed. Refresh its folders, then retry this action.").await,
             }
         } else {
             match api.plan(None,requested).await {
                 Ok(planned) => planned,
-                Err(error) if error.downcast_ref::<shep_mail_core::folder_actions::creation::PlanRejected>().is_some() => return rejected(db,&destination).await,
+                Err(error) if plan_rejected(&error) => return rejected(db,&destination,UNAVAILABLE).await,
                 Err(_) => return block(db,&destination,"waiting","Could not discover the destination namespace. Reconnect or refresh its folders, then retry this action.").await,
             }
         };
@@ -536,6 +634,9 @@ pub(crate) async fn resolve(
             folders::get(db, &id)?.context("The saved destination folder request is missing.")
         })
         .await?;
+    // From queued or waiting no CREATE has been sent, so a folder this run
+    // finds before CREATE is checked state rather than an unknown result.
+    let unsent = matches!(job.status.as_str(), "queued" | "waiting");
     let created = match folders::execute(db,api,job).await {
         Ok(created) => created,
         Err(_) => return block(db,&destination,"creating","Could not finish the saved destination. Open Folder activity to inspect or repair it; MOVE has not started.").await,
@@ -543,7 +644,13 @@ pub(crate) async fn resolve(
     if !alive(db, &destination).await? {
         return Ok(Resolution::Obsolete);
     }
-    if created.status == "succeeded" && created.acknowledged && created.receipt.is_some() {
+    if created.status == "rejected" && !created.acknowledged {
+        return rejected(db, &destination, CREATE_REFUSED).await;
+    }
+    if created.status == "succeeded"
+        && created.receipt.is_some()
+        && (created.acknowledged || unsent)
+    {
         return ready(
             db,
             &destination,

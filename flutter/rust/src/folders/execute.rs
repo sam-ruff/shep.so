@@ -45,7 +45,8 @@ impl CreationApi for ImapCreation {
     }
     async fn create(&self, target: Mailbox) -> Result<CreateOutcome> {
         let mut provider = ImapFolders::open(&self.account, &self.password).await?;
-        Ok(provider.create_planned_folder(&target).await)
+        // Only logical destinations save a role; user folders plan without one.
+        Ok(provider.create_planned_role_folder(&target).await)
     }
 }
 

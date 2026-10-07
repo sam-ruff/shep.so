@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS folder_role_names(
  name TEXT NOT NULL,encoding TEXT NOT NULL,observed INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(account_id,role,name)
 );
 CREATE INDEX IF NOT EXISTS folder_role_lookup ON folder_role_names(role,account_id,name);
+CREATE TRIGGER IF NOT EXISTS logical_destination_creation_end AFTER UPDATE OF status ON folder_creations
+WHEN new.status NOT IN ('queued','waiting','planning') BEGIN
+ DELETE FROM logical_mail_destinations WHERE creation_id=new.id AND owner_kind='individual'
+ AND NOT EXISTS(SELECT 1 FROM individual_mail_actions a WHERE a.id=logical_mail_destinations.owner);
+END;
 INSERT OR IGNORE INTO folder_role_names(account_id,role,name,encoding)
  SELECT c.account_id,json_extract(m.value,'$.role'),json_extract(m.value,'$.name'),COALESCE(json_extract(m.value,'$.encoding'),'Utf8')
  FROM folder_catalogues c,json_each(c.mailboxes) m

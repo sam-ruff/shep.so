@@ -2,6 +2,7 @@ use super::*;
 mod cache;
 mod mutation;
 mod restart;
+mod review;
 use crate::folders::execute::MockCreationApi;
 use crate::tests::{profile, request, seed};
 use mockall::predicate::eq;
@@ -9,12 +10,47 @@ use serde_json::json;
 use shep_mail_core::{
     folder_actions::creation::{CreateOutcome, PlanRejected},
     folders::NameEncoding,
-    model::Protocol,
+    model::{Account, Mail, MailSyncItem, Protocol},
 };
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+
+mockall::mock! {
+    DestinationProvider {}
+    #[async_trait::async_trait]
+    impl shep_mail_core::providers::MailProvider for DestinationProvider {
+        async fn sync(&self, account: &Account, password: &secrecy::SecretString, known: &std::collections::HashSet<String>, output: tokio::sync::mpsc::Sender<MailSyncItem>) -> anyhow::Result<Vec<String>>;
+        async fn move_mail(&self, account: &Account, password: &secrecy::SecretString, mail: &Mail, folder: &str) -> anyhow::Result<Option<String>>;
+        async fn move_planned_mail(&self, account: &Account, password: &secrecy::SecretString, mail: &Mail, target: Mailbox) -> anyhow::Result<Option<String>>;
+        async fn set_flags(&self, account: &Account, password: &secrecy::SecretString, mail: &Mail, flags: shep_mail_core::mail_actions::Flags) -> anyhow::Result<()>;
+    }
+}
+
+fn install(
+    profile: &crate::api::MobileProfile,
+    creation: Arc<dyn crate::folders::execute::CreationApi>,
+    provider: MockDestinationProvider,
+) {
+    *profile
+        .operations
+        .folder_provider
+        .lock()
+        .expect("fixture folder provider") = Some(creation);
+    *profile
+        .operations
+        .provider
+        .lock()
+        .expect("fixture mail provider") = Some(Arc::new(provider));
+}
+
+fn worker(profile: &crate::api::MobileProfile) -> crate::api::MobileProfile {
+    crate::api::MobileProfile {
+        database: profile.database.clone(),
+        operations: profile.operations.clone(),
+    }
+}
 
 struct HeldApi {
     base: MockCreationApi,

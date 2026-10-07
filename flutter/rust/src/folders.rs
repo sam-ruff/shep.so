@@ -386,7 +386,8 @@ pub(crate) fn admit_destination(
         active < 32,
         "Folder requests are catching up. Review Folder activity before continuing this action."
     );
-    let duplicate: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM folder_creations INDEXED BY folder_creation_active WHERE account_id=?1 AND connection=?2 AND status IN ('queued','waiting','planning','running','checking','repair','rejected','uncertain') AND (json_extract(target,'$.name')=?3 OR (target IS NULL AND parent IS NULL AND name=?4)))", params![destination.account,destination.connection,target.name,destination.role.requested()], |row|row.get(0))?;
+    // A refused CREATE made no folder, so a reviewed retry may plan again.
+    let duplicate: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM folder_creations INDEXED BY folder_creation_active WHERE account_id=?1 AND connection=?2 AND status IN ('queued','waiting','planning','running','checking','repair','rejected','uncertain') AND NOT (status='rejected' AND acknowledged=0) AND (json_extract(target,'$.name')=?3 OR (target IS NULL AND parent IS NULL AND name=?4)))", params![destination.account,destination.connection,target.name,destination.role.requested()], |row|row.get(0))?;
     anyhow::ensure!(
         !duplicate,
         "This destination has another saved folder request. Review Folder activity before continuing."

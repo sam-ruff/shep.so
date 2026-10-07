@@ -88,7 +88,7 @@ CREATE INDEX IF NOT EXISTS individual_mail_action_history ON individual_mail_act
 CREATE TABLE IF NOT EXISTS group_jobs(seq INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT NOT NULL UNIQUE,action TEXT NOT NULL,fields TEXT NOT NULL,state TEXT NOT NULL,scope TEXT NOT NULL,created INTEGER NOT NULL,approved INTEGER,undone INTEGER,total INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 0,error TEXT);
 CREATE INDEX IF NOT EXISTS group_job_state ON group_jobs(state,seq);
 CREATE INDEX IF NOT EXISTS group_history_cursor ON group_jobs(seq DESC) WHERE state IN ('staging','review','running','undoing','paused','finished');
-CREATE TABLE IF NOT EXISTS group_items(job TEXT NOT NULL REFERENCES group_jobs(id) ON DELETE CASCADE,position INTEGER NOT NULL,mail TEXT NOT NULL,account TEXT NOT NULL,folder TEXT NOT NULL,remote_id TEXT NOT NULL,unread INTEGER NOT NULL,starred INTEGER NOT NULL,state TEXT NOT NULL,fields TEXT,attempt TEXT,receipt TEXT,reason TEXT,lineage TEXT,PRIMARY KEY(job,position));
+CREATE TABLE IF NOT EXISTS group_items(job TEXT NOT NULL REFERENCES group_jobs(id) ON DELETE CASCADE,position INTEGER NOT NULL,mail TEXT NOT NULL,account TEXT NOT NULL,folder TEXT NOT NULL,remote_id TEXT NOT NULL,unread INTEGER NOT NULL,starred INTEGER NOT NULL,state TEXT NOT NULL,fields TEXT,attempt TEXT,receipt TEXT,reason TEXT,PRIMARY KEY(job,position));
 CREATE INDEX IF NOT EXISTS group_item_state ON group_items(job,state,position);
 CREATE INDEX IF NOT EXISTS group_item_mail ON group_items(mail,state);
 CREATE INDEX IF NOT EXISTS group_item_account ON group_items(account,state);

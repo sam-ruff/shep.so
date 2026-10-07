@@ -1,8 +1,7 @@
 use super::*;
 
 #[tokio::test]
-async fn create_rejection_retains_frozen_target_and_requires_explicit_folder_review() -> Result<()>
-{
+async fn create_rejection_retains_frozen_target_and_rejects_the_mail_action() -> Result<()> {
     let (_dir, profile, destination, _mail) = setup(Role::Archive).await?;
     let planned = target("INBOX.Archive", FolderRole::Archive);
     let mut api = MockCreationApi::new();
@@ -18,7 +17,7 @@ async fn create_rejection_retains_frozen_target_and_requires_explicit_folder_rev
         .returning(|_| Ok(CreateOutcome::Rejected("private provider detail".into())));
     assert!(matches!(
         resolve(&profile.database, &api, destination.clone()).await?,
-        Resolution::Waiting { .. }
+        Resolution::Rejected { .. }
     ));
     let creation = destination.creation.clone();
     let saved = profile
@@ -46,7 +45,7 @@ async fn create_rejection_retains_frozen_target_and_requires_explicit_folder_rev
     quiet.expect_create().times(0);
     assert!(matches!(
         resolve(&profile.database, &quiet, destination).await?,
-        Resolution::Waiting { .. }
+        Resolution::Rejected { .. }
     ));
     Ok(())
 }

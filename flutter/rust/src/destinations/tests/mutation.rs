@@ -1,16 +1,4 @@
 use super::*;
-use shep_mail_core::model::{Account, Mail, MailSyncItem};
-
-mockall::mock! {
-    DestinationProvider {}
-    #[async_trait::async_trait]
-    impl shep_mail_core::providers::MailProvider for DestinationProvider {
-        async fn sync(&self, account: &Account, password: &secrecy::SecretString, known: &std::collections::HashSet<String>, output: tokio::sync::mpsc::Sender<MailSyncItem>) -> anyhow::Result<Vec<String>>;
-        async fn move_mail(&self, account: &Account, password: &secrecy::SecretString, mail: &Mail, folder: &str) -> anyhow::Result<Option<String>>;
-        async fn move_planned_mail(&self, account: &Account, password: &secrecy::SecretString, mail: &Mail, target: Mailbox) -> anyhow::Result<Option<String>>;
-        async fn set_flags(&self, account: &Account, password: &secrecy::SecretString, mail: &Mail, flags: shep_mail_core::mail_actions::Flags) -> anyhow::Result<()>;
-    }
-}
 
 #[tokio::test]
 async fn source_replacement_during_create_retains_folder_ack_without_dispatching_old_mail()
@@ -78,8 +66,12 @@ async fn source_replacement_during_create_retains_folder_ack_without_dispatching
         .await?;
     api.release.notify_one();
     let result = running.await?;
-    assert_eq!(result["status"], "cancelled");
+    assert_eq!(result["status"], "rejected", "{result}");
     assert_eq!(result["committed"], false);
+    assert_eq!(
+        result["warning"],
+        "This message changed identity while the action was waiting. Refresh and review it before retrying."
+    );
     let creation = destination.creation;
     let saved = profile
         .database
