@@ -158,6 +158,20 @@ Use the owned test emulator and coordinate device access. This Android scenario
 uses a synthetic repository and the platform clipboard; the host FFI case proves
 the native mapping separately. Neither establishes live provider or Apple parity.
 
+Mailto drafts have real controls in `flutter/test/mailto_test.dart`: a link that
+starts the app waits for the saved workspace, a link arriving while a composer is
+open stacks above it without changing its text, repeated links open in order, a
+missing account keeps the draft with an instruction (compact light/dark goldens),
+rejected links open nothing, reader links keep only their address and a client
+without the native cache reports the link. `mailto_native_test.dart` runs every
+case in `shared/mailto-cases.json` through actual FFI and reopens the profile.
+Native `flutter/rust/src/mailto_tests.rs` and
+`cargo test -p shep-mail-content mailto` cover the operation and shared parser.
+On the owned emulator, OS routing for a cold or running app can be driven with
+`adb shell am start -W -a android.intent.action.VIEW -d 'mailto:...' so.shep.shep_mobile.preview`.
+That checks Android routing only; iOS also needs Apple's default mail app
+entitlement before the system sends mailto links to Shep.
+
 From the root, run the self-contained browser runner:
 
 ```sh

@@ -621,7 +621,7 @@ impl App {
 
     /// Opens a new draft prefilled from a `mailto` link the desktop sent.
     pub(super) fn compose_mailto(&mut self, link: &str) -> Task<Message> {
-        let Some(mailto) = crate::mailto::Mailto::parse(link) else {
+        let Ok(mailto) = crate::mailto::Mailto::parse(link) else {
             return Task::none();
         };
         self.load_draft(Draft {

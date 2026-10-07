@@ -6,6 +6,7 @@ pub mod find;
 pub mod forwarding;
 #[cfg(feature = "fuzzy")]
 pub mod fuzzy;
+pub mod mailto;
 pub mod mime;
 mod plain;
 pub mod printing;

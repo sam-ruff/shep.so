@@ -987,6 +987,19 @@ fn desktop_mailto_ignores_other_links() {
 }
 
 #[test]
+fn mailto_with_invalid_encoding_opens_no_draft() {
+    let (mut app, _) = App::new();
+    app.load_draft(draft("already-open"));
+    let _ = app.compose_mailto("mailto:friend@example.test?subject=caf%E9");
+    let revision = app.html_reader.generation;
+    let _ = app.handle(Message::Html(html_reader::Message::Backend(
+        crate::html_render::Event::Link(revision, "mailto:%FF@example.test".into()),
+    )));
+    assert_eq!(app.composer.current.draft.id, "already-open");
+    assert!(app.composer.parked.is_empty());
+}
+
+#[test]
 fn activation_opens_a_draft_for_each_queued_mailto() {
     let (mut app, _) = App::new();
     let signal = crate::activation::Signal::default();
