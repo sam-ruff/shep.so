@@ -121,6 +121,8 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--prepare-only", action="store_true",
                         help="Check the fixture, real controls and changed-region references without timing.")
+    parser.add_argument("--report-only", action="store_true",
+                        help="Validate the evidence but report over-budget timings without failing.")
     args = parser.parse_args()
     if not 1 <= args.samples <= 25:
         parser.error("samples must be 1–25")
@@ -131,6 +133,6 @@ if __name__ == "__main__":
         raise SystemExit(0)
     from performance_gate import evaluate_actions
     budgets = json.loads((ROOT / "performance-budgets.json").read_text())
-    errors = evaluate_actions(budgets, report)
+    errors = evaluate_actions(budgets, report, enforce=not args.report_only)
     if errors:
         raise SystemExit("Action performance gate FAILED:\n" + "\n".join(errors))

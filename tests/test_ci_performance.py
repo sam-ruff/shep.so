@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -33,9 +34,12 @@ mode = os.environ['SHEP_PERFORMANCE_MODE']
 args = sys.argv[1:]
 report = (pathlib.Path(os.environ['SHEP_BENCH_REPORT_DIR']) / 'backend-progress.json'
           if pathlib.Path(sys.argv[0]).name == 'cargo' else pathlib.Path(args[args.index('--output') + 1]))
+phase = 'backend' if pathlib.Path(sys.argv[0]).name == 'cargo' else 'action'
+cpu_log = pathlib.Path('artifacts/logs/runner-cpu-' + phase + '.log')
 record = {'args': args, 'mode': mode, 'source': os.environ['SHEP_PERFORMANCE_SOURCE'],
           'report': str(report), 'trace': os.environ.get('RUST_LOG'),
-          'screenshots': os.environ.get('SHEP_E2E_ARTIFACTS')}
+          'screenshots': os.environ.get('SHEP_E2E_ARTIFACTS'),
+          'cpu_samples': len(cpu_log.read_text().splitlines()) if cpu_log.is_file() else None}
 with pathlib.Path(os.environ['TIMING_TEST_CALLS']).open('a') as output:
     output.write(json.dumps(record) + '\\n')
 report.parent.mkdir(parents=True, exist_ok=True)
@@ -98,12 +102,49 @@ sys.exit(int(os.environ['TIMING_REQUIRED_EXIT' if mode == 'required' else 'TIMIN
                 for call in (required, diagnostic):
                     self.assertEqual(call["args"][:3], ["scripts/action_latency.py", "--samples", "20"])
                     self.assertEqual(call["source"], SHA)
+                # Only the required run reports its budgets; a diagnostic report never validates.
+                self.assertEqual(required["args"][-1], "--report-only")
+                self.assertNotIn("--report-only", diagnostic["args"])
+                # A sample after the required run separates it from the diagnostic replay.
+                self.assertGreater(diagnostic["cpu_samples"], required["cpu_samples"])
                 self.assertEqual(required["report"], "artifacts/performance/actions.json")
                 self.assertEqual(json.loads((self.root / required["report"]).read_text()), required)
                 self.assertEqual(diagnostic["report"], "artifacts/diagnostics/action/actions.json")
                 self.assertEqual(diagnostic["mode"], "diagnostic")
                 self.assertEqual(diagnostic["screenshots"], str(self.root / "artifacts/diagnostics/action/e2e"))
                 self.assertTrue((Path(diagnostic["screenshots"]) / "frame.webp").exists())
+
+    def test_runner_cpu_samples_stop_with_the_wrapper_and_stay_out_of_reports(self):
+        for phase, status in (("backend", "0"), ("action", "1")):
+            with self.subTest(phase=phase):
+                self.env["TIMING_REQUIRED_EXIT"] = status
+                result = self.run_script(phase)
+                self.assertEqual(result.returncode, int(status), result.stderr)
+                log = self.root / f"artifacts/logs/runner-cpu-{phase}.log"
+                samples = log.read_text().splitlines()
+                # The start and exit samples bound the whole phase even between periodic ones.
+                self.assertGreaterEqual(len(samples), 2)
+                for sample in (samples[0], samples[-1]):
+                    self.assertRegex(sample, r"^\d+ cpu +\d+( \d+){6,} \| [0-9.]+ [0-9.]+ [0-9.]+ ")
+                time.sleep(2.5)
+                self.assertEqual(log.read_text().splitlines(), samples)
+                reports = [path for path in (self.root / "artifacts").rglob("*runner-cpu*") if path.parent.name != "logs"]
+                self.assertEqual(reports, [])
+
+    def test_failed_cpu_log_setup_never_decides_the_gate(self):
+        (self.root / "artifacts").mkdir()
+        (self.root / "artifacts/logs").write_text("obstructed log directory")
+        for phase, status in (("backend", 0), ("backend", 101), ("action", 0), ("action", 3)):
+            with self.subTest(phase=phase, status=status):
+                self.calls.unlink(missing_ok=True)
+                self.env["TIMING_REQUIRED_EXIT"] = str(status)
+                result = self.run_script(phase)
+                self.assertEqual(result.returncode, status, result.stderr)
+                required = json.loads(self.calls.read_text().splitlines()[0])
+                self.assertEqual(required["mode"], "required")
+                self.assertEqual(json.loads((self.root / required["report"]).read_text()), required)
+                self.assertNotIn("runner-cpu", result.stderr)
+        self.assertEqual((self.root / "artifacts/logs").read_text(), "obstructed log directory")
 
     def test_invalid_source_or_phase_never_starts_measurement(self):
         for phase, source in (("backend", "main"), ("unknown", SHA)):

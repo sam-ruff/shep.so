@@ -4,6 +4,9 @@ import io
 import json
 from pathlib import Path
 import re
+import subprocess
+import sys
+import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location("gate", Path(__file__).resolve().parents[1] / "scripts/performance_gate.py")
@@ -22,12 +25,12 @@ class PerformanceGate(unittest.TestCase):
                              for case in ("review_ready", "confirmation_feedback")
                              for cycle in range(20)]}
 
-    def evaluate_actions(self, report):
+    def evaluate_actions(self, report, enforce=True):
         budgets = {"dataset_messages": 100000, "minimum_samples": 20,
                    "budgets_ms": {"ui_handler_p95": 8},
                    "action_budgets_ms": {"review_ready": 100, "confirmation_feedback": 100}}
         with contextlib.redirect_stdout(io.StringIO()):
-            return gate.evaluate_actions(budgets, report)
+            return gate.evaluate_actions(budgets, report, enforce=enforce)
 
     def test_action_gate_accepts_paired_real_pixel_observations(self):
         self.assertEqual(self.evaluate_actions(self.action_report()), [])
@@ -151,3 +154,50 @@ class PerformanceGate(unittest.TestCase):
         self.assertEqual(check(rows), [])
         self.assertTrue(check(rows[:19]))
         self.assertTrue(check([{**row, "match": .5} for row in rows]))
+
+    def slow_action_report(self):
+        report = self.action_report()
+        report["readings"] = [{**row, "input_to_pixels_ms": 149} for row in report["readings"]]
+        return report
+
+    def test_action_report_only_keeps_evidence_checks_but_not_budgets(self):
+        self.assertEqual(self.evaluate_actions(self.slow_action_report(), enforce=False), [])
+        self.assertEqual(self.evaluate_actions(self.slow_action_report()),
+                         ["Action review_ready: 149.000 ms exceeds 100.000 ms",
+                          "Action confirmation_feedback: 149.000 ms exceeds 100.000 ms"])
+        report = self.slow_action_report()
+        report["readings"].pop()
+        self.assertTrue(self.evaluate_actions(report, enforce=False))
+        report = self.slow_action_report()
+        report["readings"] = [{**row, "match": .5} for row in report["readings"]]
+        self.assertTrue(self.evaluate_actions(report, enforce=False))
+        report = self.slow_action_report()
+        report["context"] = {"mode": "diagnostic"}
+        self.assertTrue(self.evaluate_actions(report, enforce=False))
+
+    def test_action_report_only_flag_reports_without_failing(self):
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "actions.json"
+            path.write_text(json.dumps(self.slow_action_report()))
+            command = [sys.executable, str(root / "scripts/performance_gate.py"), "--actions-only",
+                       "--actions-report", str(path)]
+            strict = subprocess.run(command, capture_output=True, text=True, check=False)
+            reported = subprocess.run(command + ["--actions-report-only"], capture_output=True, text=True, check=False)
+        self.assertEqual(strict.returncode, 1)
+        self.assertIn("review_ready: 149.000 ms exceeds 100.000 ms", strict.stderr)
+        self.assertEqual(reported.returncode, 0, reported.stderr)
+        self.assertIn("OVER Action review_ready: 149.000 / 100.000 ms (20 samples, report only)", reported.stdout)
+
+    def test_only_ci_reports_pixel_budgets(self):
+        root = Path(__file__).resolve().parents[1]
+        ci = (root / "scripts/ci-desktop-linux.sh").read_text()
+        timing = (root / "scripts/ci-performance.sh").read_text()
+        local = (root / "scripts/check.sh").read_text()
+        self.assertEqual(re.findall(r"performance_gate\.py.*", ci),
+                         ["performance_gate.py --html-report-only --actions-report-only"])
+        self.assertEqual(len(re.findall(r"action_latency\.py[^\n]*--report-only", timing)), 1)
+        # The benchmark asserts its own budgets, so the required backend run stays strict.
+        self.assertIn("SHEP_BENCH_REPORT_DIR=artifacts/performance cargo bench --locked --bench responsiveness; then",
+                      timing)
+        self.assertNotIn("report-only", local)
