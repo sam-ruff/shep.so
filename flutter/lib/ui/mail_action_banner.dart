@@ -53,11 +53,7 @@ class MailActionBanner extends StatelessWidget {
                     child: const Text('Cancel'),
                   ),
               ],
-              child: Text(
-                action.status == 'waiting'
-                    ? 'Mail change waiting for connection'
-                    : 'Mail change waiting to sync',
-              ),
+              child: Text(action.pendingLabel),
             ),
           ),
         if (workspace.undoFailures.isNotEmpty)

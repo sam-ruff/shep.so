@@ -5,7 +5,51 @@ import 'package:shep_mobile/data/repository.dart';
 import 'package:shep_mobile/model/mail.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'support/preview_repository.dart';
-import 'workspace_test.dart' show MemorySettings;
+import 'workspace_test.dart'
+    show ActivityRepository, MemorySettings, tick, waitUntil;
+
+/// One action waits on its folder request; a later action on the same
+/// account must still resume.
+class HeldDestinationActivityRepository extends ActivityRepository {
+  HeldDestinationActivityRepository() {
+    actions
+      ..clear()
+      ..addAll([
+        MailActivity({
+          'id': 'held',
+          'mail': '1',
+          'account': 'fixture',
+          'created': 1,
+          'status': 'waiting',
+          'fields': {'folder': 'Archive', 'logical_role': 'archive'},
+          'logical_role': 'archive',
+          'folder_creation': 'creation-1',
+          'error': 'This destination needs review in Folder activity.',
+        }),
+        MailActivity({
+          'id': 'later',
+          'mail': '2',
+          'account': 'fixture',
+          'created': 2,
+          'status': 'queued',
+          'fields': {'starred': true},
+        }),
+      ]);
+  }
+
+  @override
+  Future<void> resumeMailAction(MailActivity action) async {
+    resumed.add(action.id);
+    if (action.id == 'held') {
+      throw const MailOperationFailure(
+        'This destination needs review in Folder activity.',
+        pending: true,
+        held: true,
+      );
+    }
+    actions.removeWhere((saved) => saved.id == action.id);
+  }
+}
 
 class LogicalRepository extends PreviewRepository
     implements LogicalMutationRepository {
@@ -273,6 +317,23 @@ void main() {
       await older;
       await newer;
       expect(workspace.mail(mail.id)!.folder, 'Projects');
+    },
+  );
+  test(
+    'an action held for its folder request does not block later actions',
+    () async {
+      final repository = HeldDestinationActivityRepository();
+      final workspace = Workspace(repository, MemorySettings());
+      addTearDown(workspace.dispose);
+      await workspace.initialize();
+      await waitUntil(() => repository.resumed.contains('later'));
+      for (var n = 0; n < 10; n++) {
+        await tick();
+      }
+      expect(repository.resumed.where((id) => id == 'held'), hasLength(1));
+      final held = workspace.mailActivityPending.single;
+      expect(held.pendingLabel, 'Mail change waiting for its destination folder');
+      expect(workspace.error, isNull);
     },
   );
 }

@@ -34,6 +34,15 @@ class MailActivity {
       (data['logical_role'] ?? (data['fields'] as Map?)?['logical_role'])
           as String?;
 
+  /// The folder request a waiting logical action depends on.
+  String? get folderCreation => data['folder_creation'] as String?;
+
+  String get pendingLabel => status != 'waiting'
+      ? 'Mail change waiting to sync'
+      : folderCreation != null
+      ? 'Mail change waiting for its destination folder'
+      : 'Mail change waiting for connection';
+
   Map<String, Object> get requestedFields {
     final requested = fields;
     final folder = switch (logicalRole) {

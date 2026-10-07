@@ -922,6 +922,7 @@ class NativeRepository
         pending:
             logicalRole != null &&
             const {'queued', 'waiting'}.contains(result['status']),
+        held: result['folder_creation'] is String,
         appliedFields: result['applied_fields'] is Map
             ? _displayMailFields(result['applied_fields'] as Map)
             : null,

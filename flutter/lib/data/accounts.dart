@@ -171,6 +171,7 @@ class MailOperationFailure implements Exception {
     this.refreshFirst = false,
     this.appliedFields,
     this.pending = false,
+    this.held = false,
     this.superseded = false,
     this.unchanged = false,
   });
@@ -178,6 +179,9 @@ class MailOperationFailure implements Exception {
   final bool committed, refreshFirst;
   final Map<String, Object>? appliedFields;
   final bool pending;
+
+  /// Waiting on this action's own destination folder request.
+  final bool held;
   final bool superseded;
   final bool unchanged;
   @override

@@ -81,6 +81,8 @@ class Workspace extends ChangeNotifier {
   final Set<String> _resumingMailAccounts = {};
   final Set<String> _seenMailResumeAccounts = {};
   final Set<String> _blockedMailResumeAccounts = {};
+  // Actions waiting on their own folder request; skipped for the sweep only.
+  final Set<String> _heldMailResumeActions = {};
   bool _mailResumeSweep = false, _mailResumePump = false;
   bool _mailResumeProgressed = false;
   int? _mailResumeAfterCreated;
@@ -699,6 +701,7 @@ class Workspace extends ChangeNotifier {
       _mailResumeAfterCreated = null;
       _mailResumeAfterId = null;
       _blockedMailResumeAccounts.clear();
+      _heldMailResumeActions.clear();
       _seenMailResumeAccounts.clear();
     }
     if (_mailResumePump) return;
@@ -750,6 +753,7 @@ class Workspace extends ChangeNotifier {
           _mailResumeAfterCreated = action.created;
           _mailResumeAfterId = action.id;
           if (_resumingMailActivity.contains(action.id) ||
+              _heldMailResumeActions.contains(action.id) ||
               _resumingMailAccounts.contains(action.account) ||
               _seenMailResumeAccounts.contains(action.account) ||
               _blockedMailResumeAccounts.contains(action.account)) {
@@ -797,8 +801,14 @@ class Workspace extends ChangeNotifier {
       await source.resumeMailAction(action);
       _mailResumeProgressed = true;
     } catch (e) {
-      error = '$e';
-      _blockedMailResumeAccounts.add(action.account);
+      if (e is MailOperationFailure && e.held) {
+        // Only this action waits on its folder request; later work proceeds.
+        _heldMailResumeActions.add(action.id);
+        _mailResumeProgressed = true;
+      } else {
+        error = '$e';
+        _blockedMailResumeAccounts.add(action.account);
+      }
     } finally {
       _resumingMailActivity.remove(action.id);
       _resumingMailAccounts.remove(action.account);
