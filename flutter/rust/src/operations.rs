@@ -520,6 +520,9 @@ pub enum Request {
         id: String,
         file: String,
     },
+    OriginalMessage {
+        id: String,
+    },
     Sync {
         #[serde(default)]
         credential_slot: Option<String>,
@@ -1123,6 +1126,18 @@ pub async fn run(profile: &MobileProfile, request: Request) -> Result<Value> {
                 use base64::Engine;
                 let (info,bytes)=shep_mail_core::attachments::read(&raw,&file)?;
                 Ok(json!({"info":info,"bytes":base64::engine::general_purpose::STANDARD.encode(bytes)}))
+            }).await?
+        }
+        // The exact cached MIME, unparsed, for Save original message.
+        Request::OriginalMessage{id} => {
+            let raw:Vec<u8>=db.read(move |db| {
+                let summary=stored_mail(db,&id)?;
+                Ok(db.query_row("SELECT raw FROM mail WHERE id=?1",[&summary.id],|r|r.get(0))?)
+            }).await?;
+            anyhow::ensure!(!raw.is_empty(),"This message has no cached original yet. Refresh its folder and retry.");
+            tokio::task::spawn_blocking(move || {
+                use base64::Engine;
+                Ok(json!({"size":raw.len(),"bytes":base64::engine::general_purpose::STANDARD.encode(&raw)}))
             }).await?
         }
         Request::Drafts => db.read(crate::drafts::list).await,

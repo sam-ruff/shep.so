@@ -14,6 +14,8 @@ mod folders;
 mod forward_tests;
 #[cfg(test)]
 mod mailto_tests;
+#[cfg(test)]
+mod original_tests;
 
 mod outgoing;
 #[cfg(test)]

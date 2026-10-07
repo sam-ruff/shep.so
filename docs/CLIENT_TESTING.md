@@ -172,6 +172,14 @@ On the owned emulator, OS routing for a cold or running app can be driven with
 That checks Android routing only; iOS also needs Apple's default mail app
 entitlement before the system sends mailto links to Shep.
 
+Save original message has real controls in `flutter/test/original_message_test.dart`
+(exact picker arguments and bytes, cancellation, retried failures, the shared
+picker and compact light/dark goldens). `original_message_native_test.dart`
+compares the actual FFI result with the incoming fixture's SQLite row, and
+`flutter/rust/src/original_tests.rs` covers exact bytes, aliases and refusals.
+The picker itself is the attachment save path that the incoming Android
+scenario already verifies through DocumentsUI.
+
 From the root, run the self-contained browser runner:
 
 ```sh

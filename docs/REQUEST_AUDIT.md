@@ -6,8 +6,10 @@ and links inside received mail as new unsent drafts. The desktop parser moved to
 set; desktop now also refuses malformed encodings instead of opening drafts with
 replacement characters. Existing drafts and open editors are never replaced and
 nothing is sent automatically. Android routing was checked manually on an
-emulator. Save original message, a saved Android scenario, Apple execution,
-Android SENDTO extras and the browser equivalent remain tracked in
+emulator. Save original message then exports the exact cached MIME through the
+native picker as `message.eml`, separately from Print and attachment saves, and
+a manual Android save matched the cached bytes. Saved Android scenarios, Apple
+execution, Android SENDTO extras and the browser equivalents remain tracked in
 [TODO](https://github.com/sam-ruff/shep.so/blob/main/TODO.md); evidence is in
 [Completion](COMPLETION.md).
 

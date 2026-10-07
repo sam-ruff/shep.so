@@ -37,6 +37,7 @@ class NativeRepository
         OutgoingRepository,
         SentPreferencesRepository,
         AttachmentRepository,
+        OriginalMessageRepository,
         AccountRemovalRepository,
         TextSearchRepository,
         FormattedMessageRepository,
@@ -703,6 +704,18 @@ class NativeRepository
       );
     }
     return compute(base64Decode, result['bytes'] as String);
+  }
+
+  @override
+  Future<Uint8List> originalMessage(String id) async {
+    final result = await call({'op': 'original_message', 'id': id});
+    final bytes = await compute(base64Decode, result['bytes'] as String);
+    if (bytes.length != result['size']) {
+      throw const MailOperationFailure(
+        'The original message could not be read completely. Retry.',
+      );
+    }
+    return bytes;
   }
 
   @override

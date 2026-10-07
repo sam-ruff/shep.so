@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import '../data/message_search.dart';
 import '../model/message_find.dart';
 import 'message_find.dart';
+import '../data/accounts.dart' show MailOperationFailure;
 import '../data/attachments.dart';
 import 'package:flutter/material.dart';
 import '../model/mail.dart';
@@ -36,8 +37,8 @@ class _ReaderState extends State<Reader> {
   Workspace get workspace => widget.workspace;
   String get id => widget.id;
   void Function(String, MailAction) get act => widget.act;
-  String? saving, fileStatus;
-  bool fileError = false;
+  String? saving, fileStatus, originalStatus;
+  bool fileError = false, savingOriginal = false, originalError = false;
   late final MessageFind find;
   final findQuery = TextEditingController();
   final findFocus = FocusNode();
@@ -233,7 +234,7 @@ class _ReaderState extends State<Reader> {
   }
 
   Future<void> save(ReceivedAttachment file) async {
-    if (saving != null) return;
+    if (saving != null || savingOriginal) return;
     setState(() {
       saving = file.id;
       fileStatus = null;
@@ -263,6 +264,46 @@ class _ReaderState extends State<Reader> {
       }
     } finally {
       if (mounted) setState(() => saving = null);
+    }
+  }
+
+  /// Saves the exact cached MIME as `message.eml`, as desktop Export does.
+  Future<void> saveOriginal() async {
+    if (savingOriginal || saving != null) return;
+    setState(() {
+      savingOriginal = true;
+      originalStatus = null;
+      originalError = false;
+    });
+    try {
+      final repository = workspace.repository;
+      if (repository is! OriginalMessageRepository) {
+        throw const MailOperationFailure(
+          'Saving the original message needs the installed Shep app.',
+        );
+      }
+      final bytes = await (repository as OriginalMessageRepository)
+          .originalMessage(id);
+      if (!mounted) return;
+      final saved = await const AttachmentSaver().saveOriginal(bytes);
+      if (mounted) {
+        setState(
+          () => originalStatus = saved
+              ? 'Original message saved.'
+              : 'Save cancelled.',
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          originalError = true;
+          originalStatus = e is MailOperationFailure
+              ? e.message
+              : 'Could not save the original message. Retry, or choose another location.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => savingOriginal = false);
     }
   }
 
@@ -729,7 +770,8 @@ class _ReaderState extends State<Reader> {
                                 ? mail.files
                                       .map(
                                         (file) => OutlinedButton.icon(
-                                          onPressed: saving == null
+                                          onPressed:
+                                              saving == null && !savingOriginal
                                               ? () => save(file)
                                               : null,
                                           icon: saving == file.id
@@ -773,6 +815,36 @@ class _ReaderState extends State<Reader> {
                                 fileStatus!,
                                 style: TextStyle(
                                   color: fileError
+                                      ? scheme.error
+                                      : scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 24),
+                        OutlinedButton.icon(
+                          key: const ValueKey('reader-save-original'),
+                          onPressed: savingOriginal || saving != null
+                              ? null
+                              : saveOriginal,
+                          icon: actionIcon('download', savingOriginal),
+                          label: Text(
+                            'Save original message',
+                            semanticsLabel: savingOriginal
+                                ? 'Saving original message…'
+                                : 'Save original message',
+                          ),
+                        ),
+                        if (originalStatus != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Semantics(
+                              liveRegion: true,
+                              child: Text(
+                                originalStatus!,
+                                key: const ValueKey('reader-original-status'),
+                                style: TextStyle(
+                                  color: originalError
                                       ? scheme.error
                                       : scheme.onSurfaceVariant,
                                 ),

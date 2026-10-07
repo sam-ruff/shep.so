@@ -1,6 +1,39 @@
 # Completion audit
 
+## Mobile Save original message, 7 October 2026 (#44, part two)
+
+The reader has a Save original message control below the attachments, separate
+from Print and attachment saves. It reads the exact cached raw MIME through the
+native `original_message` operation, which resolves message aliases and refuses
+missing or empty originals, and checks the decoded length. The bytes go through
+the existing platform save picker as `message.eml` (`message/rfc822`), matching
+the desktop's default export name. Saved, cancelled and failed results have
+their own status line; cancelling is not an error, read and picker failures can
+be retried, and attachment saves wait while an original save holds the shared
+picker.
+
+Verification: 2 native tests cover CRLF, bare LF, 8-bit bytes, trailing
+spaces, aliases, an unchanged cache row and missing or empty originals. An
+actual FFI test compares the bytes with the fixture's SQLite row, including
+through an alias. 7 real-control Flutter tests cover the exact picker arguments
+and bytes, cancellation, retried read and picker failures, the shared picker,
+a client without the native cache and compact light/dark goldens, which were
+reviewed. The full Flutter suite passes 438 tests (3 existing skips) and all 231
+mobile native tests pass with Clippy denying warnings.
+
+On the isolated read-only `shep-e2e` Android 16 emulator, the production entry
+opened the incoming fixture profile handed over before launch. DocumentsUI
+offered `message.eml`; Back reported Save cancelled, and Save wrote a 4,448-byte
+file with 128 CRLF line ends whose SHA-256 matched the fixture's SQLite row
+(`30db4b61...68d02`). Captures, the expected and saved files are in
+`artifacts/android-mailto/export/` in the lane worktree. This was driven with
+adb, not a saved automated scenario.
+
+Remaining: a saved Android scenario, iOS execution and the browser equivalent.
+
 ## Mobile mailto drafts, 6 October 2026 (#44, part one)
+
+Implementation: [PR #70](https://github.com/sam-ruff/shep.so/pull/70).
 
 The desktop `mailto:` parser now lives in `shared/mail-content/src/mailto.rs`
 with shared cases in `shared/mailto-cases.json`. Launcher links prefill
