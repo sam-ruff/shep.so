@@ -66,6 +66,19 @@ Two existing connection-recovery goldens changed because Preferences grew; they
 were regenerated and reviewed. Three Flutter tests needed the new tenth setting
 or a visible Re-enter control.
 
+`formatted_android_test.dart` now also checks the blocked banner, an explicit
+Load images whose reserved fixture host fails natively without credential
+access, and Block images, all before its existing Find and Retry steps. It is
+not yet verified on Android. On the dedicated `shep-e2e` emulator the first run
+built and launched but the formatted view went offstage right after the document
+appeared (`ensureVisible` found no view), before any new step; frames took up to
+18 seconds with host load near 80 on 16 cores, which most likely exceeded the
+reader's existing 10-second WebView start bound, though that was not proven. A
+rerun could not install because the emulator's data partition was below
+Android's low-storage threshold, and its driver log replaced the first one in
+`android-formatted-integration.log`. The emulator started for this was stopped
+afterwards.
+
 Remaining: Android and Apple execution, a live network fetch, profile sync of the
 exception and Contacts lists (a codec decision shared with desktop), the browser
 equivalent (policy controls and a gateway fetch service) and a 64-image cap per
