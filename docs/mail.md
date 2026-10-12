@@ -32,6 +32,8 @@ Use the forward arrow beside Reply, or `F`, to create a new draft with the origi
 
 New messages and replies open in the preview pane. Replies keep the original conversation below the editor; **Include original message** controls whether quoted text is sent with your reply. Preferences → General → Composing chooses whether new replies start with it ticked; forwards always include the original. Switch messages to work on several replies, then return to resume the matching draft. Collapse a draft with its chevron, or close the editor with × or Escape.
 
+Addresses in To, Cc and Bcc turn into chips as you type a comma, a semicolon or a space after a full address, press Enter or move to another field. Pasting a list, such as `a@example.com; b@example.com` or a column copied from a spreadsheet, adds one chip per address. Remove one with its ×, or press Backspace in the empty field to edit the last one. A chip with a red outline and "!" holds an address that Send would reject. Ctrl+Z (Command+Z on a Mac) undoes the last change in the field you are typing in, including removed chips, and Ctrl+Shift+Z or Ctrl+Y redoes it.
+
 Drafts save automatically and appear in the collapsible **Drafts** group. Right-click a draft or use the bin in its editor to discard it. Review the draft and any attached files before confirming; **Keep draft** or Escape cancels. Attached files are copied into the draft, so moving the originals will not break it. Interrupted sends appear in **Outbox** for review; they are not retried automatically.
 
 ## Adjust your reading preferences

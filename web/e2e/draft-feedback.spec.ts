@@ -3,10 +3,13 @@ import { seed, profile } from "./mailbox-fixture";
 
 async function navigate(page: Page, name: string) {
   const button = page.getByRole("button", { name, exact: true });
-  if (!(await button.isVisible()))
-    await page
-      .getByRole("button", { name: "Toggle navigation", exact: true })
-      .click();
+  const toggle = page.getByRole("button", {
+    name: "Toggle navigation",
+    exact: true,
+  });
+  // Wait for the app to mount after a reload before choosing a path.
+  await expect(button.or(toggle).first()).toBeVisible();
+  if (!(await button.isVisible())) await toggle.click();
   await button.click();
 }
 async function compose(page: Page, subject: string) {

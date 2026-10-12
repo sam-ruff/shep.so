@@ -392,12 +392,12 @@ export async function providerFlows(page, context, origin, output, session) {
     .getByRole("button", { name: "The beta transport fixture", exact: true })
     .click();
   await page.getByRole("button", { name: "Reply all", exact: true }).click();
-  await expect(dialog.getByLabel("To", { exact: true })).toHaveValue(
-    "Support <support@example.test>, Peer <peer@example.test>",
-  );
-  await expect(dialog.getByLabel("Cc", { exact: true })).toHaveValue(
-    "Copy <copy@example.test>",
-  );
+  await expect(
+    dialog.getByRole("list", { name: "To recipients", exact: true }).getByRole("listitem"),
+  ).toHaveText(["Support <support@example.test>", "Peer <peer@example.test>"]);
+  await expect(
+    dialog.getByRole("list", { name: "Cc recipients", exact: true }).getByRole("listitem"),
+  ).toHaveText(["Copy <copy@example.test>"]);
   await expect(dialog.getByLabel("Message", { exact: true })).toHaveValue(
     /On 06 Sep 2026/,
   );

@@ -1296,3 +1296,348 @@ async fn changing_the_preference_never_rewrites_parked_or_saved_replies() {
     assert_eq!(app.composer.current.draft.id, "saved-reply");
     assert_eq!(reply_include(&app), Some(false));
 }
+
+fn type_body(app: &mut App, text: &str) {
+    for c in text.chars() {
+        let _ = app.handle(Message::Editor(text_editor::Action::Edit(
+            text_editor::Edit::Insert(c),
+        )));
+    }
+}
+
+fn chips(app: &App, index: usize) -> Vec<String> {
+    app.composer.current.addresses[index]
+        .chips
+        .iter()
+        .map(|chip| chip.text.clone())
+        .collect()
+}
+
+/// Recipient entry text from a freshly drawn view.
+fn entry(app: &App, field: &'static str, value: &str) -> Message {
+    let index = address_index(field).expect("recipient field");
+    Message::RecipientEntry(
+        field,
+        EntryInput {
+            generation: app.composer.current.entries[index].generation,
+            base: app.composer.current.addresses[index].entry.clone(),
+            value: value.into(),
+        },
+    )
+}
+
+#[test]
+fn keys_batched_before_a_redraw_never_repeat_a_chip() {
+    let (mut app, _) = App::new();
+    app.load_draft(Draft {
+        to: String::new(),
+        ..draft("current")
+    });
+    // Every key in one batch edits the input's own text from the last view.
+    let batch = |app: &App| {
+        let (generation, base) = (
+            app.composer.current.entries[0].generation,
+            app.composer.current.addresses[0].entry.clone(),
+        );
+        move |value: &str| {
+            Message::RecipientEntry(
+                "to",
+                EntryInput {
+                    generation,
+                    base: base.clone(),
+                    value: value.into(),
+                },
+            )
+        }
+    };
+    let typed = batch(&app);
+    for value in [
+        "alex@example.com;",
+        "alex@example.com; ",
+        "alex@example.com; s",
+        "alex@example.com; sa",
+    ] {
+        let _ = app.handle(typed(value));
+    }
+    assert_eq!(chips(&app, 0), ["alex@example.com"]);
+    assert_eq!(app.composer.current.addresses[0].entry, "sa");
+    assert_eq!(app.compose_field("to"), "alex@example.com, sa");
+
+    // Deleting into the last chip and typing on, again before a redraw.
+    let typed = batch(&app);
+    for value in ["s", "", "", "x"] {
+        let _ = app.handle(typed(value));
+    }
+    assert!(chips(&app, 0).is_empty());
+    assert_eq!(app.composer.current.addresses[0].entry, "alex@example.comx");
+
+    // An undo that the input has not been redrawn for yet.
+    let typed = batch(&app);
+    let _ = app.handle(typed("alex@example.comx;"));
+    let _ = app.handle(ctrl_z("to", keyboard::Modifiers::COMMAND));
+    assert_eq!(app.composer.current.addresses[0].entry, "alex@example.comx");
+    let _ = app.handle(typed("alex@example.comx;y"));
+    assert!(chips(&app, 0).is_empty());
+    assert_eq!(
+        app.composer.current.addresses[0].entry,
+        "alex@example.comxy"
+    );
+}
+
+fn ctrl_z(field: &'static str, modifiers: keyboard::Modifiers) -> Message {
+    Message::Key(
+        Key::Character("z".into()),
+        modifiers,
+        false,
+        native_input::Focus {
+            compose: true,
+            field: Some(field),
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn undo_keys_become_body_history_bindings_instead_of_text() {
+    let shortcuts = crate::shortcuts::Keymap::default();
+    let press = |character: &str, modifiers| text_editor::KeyPress {
+        key: Key::Character(character.into()),
+        modified_key: Key::Character(character.into()),
+        physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyZ),
+        modifiers,
+        text: Some(character.into()),
+        status: text_editor::Status::Focused { is_hovered: false },
+    };
+    let command = keyboard::Modifiers::COMMAND;
+    for (character, modifiers, expected) in [
+        ("z", command, Step::Undo),
+        ("Z", command | keyboard::Modifiers::SHIFT, Step::Redo),
+        ("y", command, Step::Redo),
+    ] {
+        assert!(matches!(
+            compose_binding(press(character, modifiers), &shortcuts),
+            Some(text_editor::Binding::Custom(Message::ComposeHistory("compose-body", step)))
+                if step == expected
+        ));
+    }
+    assert!(matches!(
+        compose_binding(press("z", keyboard::Modifiers::empty()), &shortcuts),
+        Some(text_editor::Binding::Insert('z'))
+    ));
+    assert!(!matches!(
+        compose_binding(press("z", command | keyboard::Modifiers::ALT), &shortcuts),
+        Some(text_editor::Binding::Custom(_))
+    ));
+    let unfocused = text_editor::KeyPress {
+        status: text_editor::Status::Active,
+        ..press("z", command)
+    };
+    assert!(compose_binding(unfocused, &shortcuts).is_none());
+}
+
+#[test]
+fn body_undo_steps_back_a_word_at_a_time_and_redo_replays_it() {
+    let (mut app, _) = App::new();
+    app.load_draft(Draft {
+        body: String::new(),
+        ..draft("current")
+    });
+    type_body(&mut app, "Hello there");
+    let revision = app.composer.current.draft.revision;
+    app.composer.current.dirty = None;
+    let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
+    assert_eq!(app.composer.current.editor.text(), "Hello");
+    assert!(app.composer.current.draft.revision > revision);
+    assert!(app.composer.current.dirty.is_some(), "autosave stores it");
+    let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
+    assert_eq!(app.composer.current.editor.text(), "");
+    let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
+    assert_eq!(app.composer.current.editor.text(), "");
+    let _ = app.handle(Message::ComposeHistory("compose-body", Step::Redo));
+    let _ = app.handle(Message::ComposeHistory("compose-body", Step::Redo));
+    assert_eq!(app.composer.current.editor.text(), "Hello there");
+
+    // A paste is its own step, and the cursor returns to where it was.
+    let _ = app.handle(Message::Editor(text_editor::Action::Edit(
+        text_editor::Edit::Paste(Arc::new(" and more".into())),
+    )));
+    type_body(&mut app, "!");
+    let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
+    assert_eq!(app.composer.current.editor.text(), "Hello there and more");
+    let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
+    assert_eq!(app.composer.current.editor.text(), "Hello there");
+    type_body(&mut app, ".");
+    assert_eq!(app.composer.current.editor.text(), "Hello there.");
+    assert_eq!(app.current_draft().body, "Hello there.");
+}
+
+#[test]
+fn moving_the_cursor_ends_a_typing_step() {
+    let (mut app, _) = App::new();
+    app.load_draft(Draft {
+        body: String::new(),
+        ..draft("current")
+    });
+    type_body(&mut app, "ab");
+    let _ = app.handle(Message::Editor(text_editor::Action::Move(
+        text_editor::Motion::Left,
+    )));
+    type_body(&mut app, "c");
+    assert_eq!(app.composer.current.editor.text(), "acb");
+    let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
+    assert_eq!(app.composer.current.editor.text(), "ab");
+}
+
+#[test]
+fn ctrl_z_undoes_the_focused_field_and_never_runs_a_remapped_action() {
+    let (mut app, _) = App::new();
+    app.load_draft(draft("current"));
+    app.preferences
+        .shortcuts
+        .remap(Action::Settings, "Mod+Z".into())
+        .expect("free chord");
+    let _ = app.handle(Message::ComposeField("subject", "Plans".into()));
+    type_body(&mut app, "New ");
+    let body = app.composer.current.editor.text();
+    let _ = app.handle(ctrl_z("subject", keyboard::Modifiers::COMMAND));
+    assert_eq!(app.tab, Tab::Mail);
+    assert_eq!(app.compose_field("subject"), "");
+    assert_eq!(app.composer.current.editor.text(), body);
+    let _ = app.handle(ctrl_z(
+        "subject",
+        keyboard::Modifiers::COMMAND | keyboard::Modifiers::SHIFT,
+    ));
+    assert_eq!(app.compose_field("subject"), "Plans");
+    assert_eq!(app.tab, Tab::Mail);
+}
+
+#[test]
+fn pasted_and_typed_recipient_lists_become_chips_in_the_draft_value() {
+    let (mut app, _) = App::new();
+    app.load_draft(Draft {
+        to: String::new(),
+        ..draft("current")
+    });
+    let _ = app.handle(entry(
+        &app,
+        "to",
+        "a@example.com;b@example.com, c@example.com; d@exa",
+    ));
+    assert_eq!(
+        chips(&app, 0),
+        ["a@example.com", "b@example.com", "c@example.com"]
+    );
+    assert_eq!(app.composer.current.addresses[0].entry, "d@exa");
+    assert_eq!(
+        app.compose_field("to"),
+        "a@example.com, b@example.com, c@example.com, d@exa"
+    );
+    let _ = app.handle(entry(&app, "to", "d@example.com"));
+    let _ = app.handle(Message::CommitRecipients("to"));
+    assert_eq!(chips(&app, 0).len(), 4);
+    assert_eq!(app.composer.current.addresses[0].entry, "");
+    let draft = app.current_draft();
+    let mailboxes = crate::compose::recipients(&draft.to, "To").expect("sendable");
+    assert_eq!(mailboxes.len(), 4);
+}
+
+#[test]
+fn removing_and_reopening_chips_is_undoable() {
+    let (mut app, _) = App::new();
+    app.load_draft(Draft {
+        to: "a@example.com, Sam <sam@example.com>, c@example.com".into(),
+        ..draft("current")
+    });
+    assert_eq!(chips(&app, 0).len(), 3);
+    // A position whose text changed since the view was drawn is ignored.
+    let _ = app.handle(Message::RemoveRecipient("to", 1, "c@example.com".into()));
+    assert_eq!(chips(&app, 0).len(), 3);
+    let _ = app.handle(Message::RemoveRecipient(
+        "to",
+        1,
+        "Sam <sam@example.com>".into(),
+    ));
+    assert_eq!(app.compose_field("to"), "a@example.com, c@example.com");
+    // Backspace in an empty entry reports an unchanged empty value.
+    let _ = app.handle(entry(&app, "to", ""));
+    assert_eq!(chips(&app, 0), ["a@example.com"]);
+    assert_eq!(app.composer.current.addresses[0].entry, "c@example.com");
+    assert_eq!(app.compose_field("to"), "a@example.com, c@example.com");
+    let _ = app.handle(ctrl_z("to", keyboard::Modifiers::COMMAND));
+    assert_eq!(chips(&app, 0), ["a@example.com", "c@example.com"]);
+    let _ = app.handle(ctrl_z("to", keyboard::Modifiers::COMMAND));
+    assert_eq!(
+        app.compose_field("to"),
+        "a@example.com, Sam <sam@example.com>, c@example.com"
+    );
+    assert_eq!(chips(&app, 0).len(), 3);
+}
+
+#[test]
+fn leaving_a_recipient_field_turns_its_text_into_a_chip() {
+    let (mut app, _) = App::new();
+    app.load_draft(Draft {
+        to: String::new(),
+        ..draft("current")
+    });
+    let _ = app.handle(Message::ShowRecipients);
+    let _ = app.handle(entry(&app, "to", "alex"));
+    let _ = app.handle(entry(&app, "cc", "copy@example.com"));
+    let revision = app.composer.current.draft.revision;
+    // Clicking within Cc keeps its entry; To loses focus and becomes a chip.
+    let _ = app.handle(Message::NativeFocus(Some("cc")));
+    assert_eq!(chips(&app, 0), ["alex"]);
+    assert!(!app.composer.current.addresses[0].chips[0].valid);
+    assert_eq!(app.composer.current.addresses[1].entry, "copy@example.com");
+    assert_eq!(
+        app.composer.current.draft.revision, revision,
+        "value unchanged"
+    );
+    let _ = app.handle(Message::Key(
+        Key::Named(keyboard::key::Named::Tab),
+        keyboard::Modifiers::empty(),
+        false,
+        native_input::Focus {
+            compose: true,
+            field: Some("cc"),
+            ..Default::default()
+        },
+    ));
+    assert_eq!(chips(&app, 1), ["copy@example.com"]);
+    // Undo after leaving returns to the typed text.
+    let _ = app.handle(ctrl_z("to", keyboard::Modifiers::COMMAND));
+    assert!(chips(&app, 0).is_empty());
+    assert_eq!(app.composer.current.addresses[0].entry, "");
+}
+
+#[test]
+fn recipient_edits_and_undo_wait_while_sending_and_history_survives_parking() {
+    let (mut app, _) = App::new();
+    app.load_draft(draft("current"));
+    let _ = app.handle(entry(&app, "to", "late@example.com"));
+    assert_eq!(
+        app.compose_field("to"),
+        "friend@example.com, late@example.com"
+    );
+    app.busy.insert("send:current".into());
+    let _ = app.handle(entry(&app, "to", "changed"));
+    let _ = app.handle(Message::RemoveRecipient(
+        "to",
+        0,
+        "friend@example.com".into(),
+    ));
+    let _ = app.handle(ctrl_z("to", keyboard::Modifiers::COMMAND));
+    let _ = app.handle(Message::NativeFocus(None));
+    assert_eq!(
+        app.compose_field("to"),
+        "friend@example.com, late@example.com"
+    );
+    assert_eq!(app.composer.current.addresses[0].entry, "late@example.com");
+    app.busy.remove("send:current");
+
+    app.load_draft(draft("other"));
+    app.load_draft(draft("current"));
+    assert_eq!(app.composer.current.addresses[0].entry, "late@example.com");
+    let _ = app.handle(ctrl_z("to", keyboard::Modifiers::COMMAND));
+    assert_eq!(app.compose_field("to"), "friend@example.com");
+}

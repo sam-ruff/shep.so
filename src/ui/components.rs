@@ -290,6 +290,37 @@ pub fn field(theme: &Theme, status: text_input::Status) -> text_input::Style {
         selection: p.tint,
     }
 }
+/// An input drawn inside another bordered box, such as the recipient chips.
+pub fn bare_field(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    text_input::Style {
+        background: Color::TRANSPARENT.into(),
+        border: Border::default(),
+        ..field(theme, status)
+    }
+}
+pub fn recipient_chip(theme: &Theme) -> container::Style {
+    let p = colors(theme);
+    container::Style {
+        background: Some(p.subtle.into()),
+        text_color: Some(p.text),
+        border: Border {
+            color: p.border,
+            width: 1.,
+            radius: 7.into(),
+        },
+        ..Default::default()
+    }
+}
+pub fn invalid_recipient_chip(theme: &Theme) -> container::Style {
+    let chip = recipient_chip(theme);
+    container::Style {
+        border: Border {
+            color: colors(theme).flag,
+            ..chip.border
+        },
+        ..chip
+    }
+}
 pub fn input<'a>(
     placeholder: &str,
     value: &str,

@@ -226,9 +226,12 @@ async fn dropdown_escape_keeps_composer_and_frees_the_covered_field() {
     h.key("Escape").await;
     h.expect("composer.visible", true).await;
     // The first account row covered the To field, which now takes the click.
+    // Leaving To made the typed address a chip, so new text starts a second one.
     h.click_at(900., 229.).await;
     h.type_text(".uk").await;
-    h.expect("compose_fields.to", "dropdown@example.com.uk")
+    h.expect("compose_recipients.to.chips.0", "dropdown@example.com")
+        .await;
+    h.expect("compose_fields.to", "dropdown@example.com, .uk")
         .await;
     h.expect("compose_fields.subject", "Plans").await;
     h.expect("composer.visible", true).await;
@@ -236,7 +239,118 @@ async fn dropdown_escape_keeps_composer_and_frees_the_covered_field() {
     h.expect("composer.visible", false).await;
 }
 
+/// A chip's remove button, or a point in the field's own padding.
+fn recipient_target(h: &Harness, field: &str, chip: Option<usize>) -> (f32, f32) {
+    let state = h.state();
+    let drawn = state["recipient_fields"]
+        .as_array()
+        .and_then(|fields| fields.iter().find(|entry| entry["field"] == field))
+        .unwrap_or_else(|| panic!("{field} is not drawn: {}", state["recipient_fields"]));
+    let edges = match chip {
+        Some(index) => &drawn["remove"][index],
+        None => &drawn["bounds"],
+    };
+    let [x, y, width, height] = [0, 1, 2, 3].map(|i| edges[i].as_f64().unwrap_or_default() as f32);
+    match chip {
+        Some(_) => (x + width / 2., y + height / 2.),
+        None => (x + width - 2., y + height - 2.),
+    }
+}
+
+/// `test_recipient_chips_paste_remove_and_undo`
+async fn recipient_chips_paste_remove_and_undo() {
+    let mut h = Harness::start().await;
+    h.click_at(110., 218.).await;
+    h.expect("composer.visible", true).await;
+    h.expect("focused_input", "to").await;
+    h.type_text("alex@example.com; sam").await;
+    h.expect(
+        "compose_recipients.to.chips",
+        serde_json::json!(["alex@example.com"]),
+    )
+    .await;
+    h.expect("compose_recipients.to.entry", "sam").await;
+    h.type_text("@example.com ").await;
+    h.expect("compose_recipients.to.chips.1", "sam@example.com")
+        .await;
+    h.set_clipboard("a@x.io\nb@x.io;c@x.io, d@x.io");
+    h.key("ctrl+v").await;
+    h.expect(
+        "compose_recipients.to.chips",
+        serde_json::json!([
+            "alex@example.com",
+            "sam@example.com",
+            "a@x.io",
+            "b@x.io",
+            "c@x.io"
+        ]),
+    )
+    .await;
+    h.expect("compose_recipients.to.entry", "d@x.io").await;
+    h.key("Return").await;
+    h.expect("compose_recipients.to.entry", "").await;
+    h.type_text("nobody").await;
+    // Leaving the field makes the rest a chip, marked because Send rejects it.
+    h.key("Tab").await;
+    h.expect(
+        "compose_recipients.to.invalid",
+        serde_json::json!(["nobody"]),
+    )
+    .await;
+    h.expect(
+        "compose_fields.to",
+        "alex@example.com, sam@example.com, a@x.io, b@x.io, c@x.io, d@x.io, nobody",
+    )
+    .await;
+    let (x, y) = recipient_target(&h, "to", Some(1));
+    h.click_at(x, y).await;
+    h.expect("compose_recipients.to.chips.1", "a@x.io").await;
+    // A press in the field's empty space focuses its entry for Ctrl+Z.
+    let (x, y) = recipient_target(&h, "to", None);
+    h.click_at(x, y).await;
+    h.expect("native_focus", "to").await;
+    h.key("ctrl+z").await;
+    h.expect("compose_recipients.to.chips.1", "sam@example.com")
+        .await;
+    h.key("ctrl+shift+z").await;
+    h.expect("compose_recipients.to.chips.1", "a@x.io").await;
+    h.key("ctrl+z").await;
+    h.expect("compose_recipients.to.chips.1", "sam@example.com")
+        .await;
+    // Backspace in the empty entry reopens the last chip for editing.
+    h.key("BackSpace").await;
+    h.expect("compose_recipients.to.entry", "nobody").await;
+    h.type_text("@example.com").await;
+    h.key("Return").await;
+    h.expect("compose_recipients.to.invalid", serde_json::json!([]))
+        .await;
+    // Subject and body keep their own histories; mail shortcuts never run.
+    h.key("Tab").await;
+    h.type_text("Plans").await;
+    h.expect("compose_fields.subject", "Plans").await;
+    h.key("Tab").await;
+    h.type_text("Hello there").await;
+    h.expect("editor", "Hello there").await;
+    h.key("ctrl+z").await;
+    h.expect("editor", "Hello").await;
+    h.key("ctrl+y").await;
+    h.expect("editor", "Hello there").await;
+    h.expect("compose_fields.subject", "Plans").await;
+    h.key("shift+Tab").await;
+    h.key("ctrl+z").await;
+    h.expect("compose_fields.subject", "").await;
+    h.expect("editor", "Hello there").await;
+    h.expect("tab", "Mail").await;
+    h.expect("total", 120).await;
+    h.expect(
+        "compose_fields.to",
+        "alex@example.com, sam@example.com, a@x.io, b@x.io, c@x.io, d@x.io, nobody@example.com",
+    )
+    .await;
+}
+
 scenarios!(
+    recipient_chips_paste_remove_and_undo,
     move_mouse_and_keyboard_and_typing_protection,
     delete_archive_defaults_and_mail_returns_to_inbox,
     search_mouse_focus_blocks_default_and_remapped_delete_chords,

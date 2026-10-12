@@ -413,6 +413,11 @@ impl Harness {
         }));
     }
 
+    /// Replaces what the next paste reads, like the MCP `paste` action.
+    pub fn set_clipboard(&mut self, text: &str) {
+        self.clipboard.0 = Some(text.to_owned());
+    }
+
     /// Types each character as its own key press, as xdotool does.
     pub async fn type_text(&mut self, text: &str) {
         for character in text.chars() {

@@ -1016,7 +1016,9 @@ class NativeFlows(unittest.TestCase):
                        click(1040, 182), wait(250), shot("dropdown-composer-open"),
                        key("Escape"), wait(250), check("composer.visible", True), shot("dropdown-composer-dismissed"),
                        # The first account row covered the To field, which now takes the click and typing.
-                       click(900, 229), type_text(".uk"), check("compose_fields.to", "dropdown@example.com.uk"),
+                       # Leaving To made the typed address a chip, so new text starts a second one.
+                       click(900, 229), type_text(".uk"), check("compose_recipients.to.chips.0", "dropdown@example.com"),
+                       check("compose_fields.to", "dropdown@example.com, .uk"),
                        check("compose_fields.subject", "Plans"), check("composer.visible", True))
         self.assert_dropdown_dismissed(self.artifacts, "dropdown-composer-closed", "dropdown-composer-open",
                                        "dropdown-composer-dismissed", (697, 202, 1389, 252))
@@ -5931,6 +5933,72 @@ class NativeFlows(unittest.TestCase):
                        click(98, 555), check("composer.visible", True),
                        check("compose_fields.to", "friend@example.com"), check("compose_fields.subject", "Meet me Monday"),
                        check("editor", "A message written with the mouse and keyboard.", "contains"), shot("reopened-draft"))
+
+    def recipient_target(self, field, chips, chip=None):
+        """A chip's remove button, or a point in the field's own padding.
+
+        Waits for a frame drawn with `chips` chips, since removing one can shrink
+        the box. Bounds are content coordinates, equal to window ones before scrolling."""
+        deadline = time.monotonic() + 5
+        while True:
+            drawn = self.mcp.call("desktop.state").get("recipient_fields") or []
+            entry = next((entry for entry in drawn if entry["field"] == field), None)
+            if entry and len(entry["remove"]) == chips:
+                break
+            if time.monotonic() > deadline:
+                self.fail(f"{field} is not drawn with {chips} chips: {entry}")
+            time.sleep(0.05)
+        if chip is None:
+            x, y, width, height = entry["bounds"]
+            return round(x + width - 2), round(y + height - 2)
+        x, y, width, height = entry["remove"][chip]
+        return round(x + width / 2), round(y + height / 2)
+
+    def test_recipient_chips_paste_remove_and_undo(self):
+        for compact in (False, True):
+            started = self.mcp.call("desktop.start", width=900 if compact else 1440, height=640 if compact else 920)
+            print(f"Recipient chip evidence: {started['artifacts']}", flush=True)
+            label = "compact-dark" if compact else "light"
+            if compact:
+                self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(563, 366), check("dark", True),
+                               key("ctrl+1"), check("tab", "Mail"))
+            self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
+                           type_text("alex@example.com; sam"),
+                           check("compose_recipients.to.chips", ["alex@example.com"]),
+                           check("compose_recipients.to.entry", "sam"), check("focused_input", "to"),
+                           type_text("@example.com "), check("compose_recipients.to.chips.1", "sam@example.com"),
+                           paste_text("a@x.io\nb@x.io;c@x.io, d@x.io"),
+                           check("compose_recipients.to.chips",
+                                 ["alex@example.com", "sam@example.com", "a@x.io", "b@x.io", "c@x.io"]),
+                           check("compose_recipients.to.entry", "d@x.io"), key("Return"),
+                           check("compose_recipients.to.entry", ""), type_text("nobody"),
+                           # Leaving the field makes the rest a chip, marked because Send rejects it.
+                           key("Tab"), check("compose_recipients.to.invalid", ["nobody"]),
+                           check("compose_fields.to", "alex@example.com, sam@example.com, a@x.io, b@x.io, c@x.io, d@x.io, nobody"),
+                           wait(150), shot(f"recipient-chips-{label}"))
+            x, y = self.recipient_target("to", 7, 1)
+            self.mcp.batch(click(x, y), check("compose_recipients.to.chips.1", "a@x.io"),
+                           check("compose_fields.to", "alex@example.com, a@x.io, b@x.io, c@x.io, d@x.io, nobody"))
+            # A press in the field's empty space focuses its entry for Ctrl+Z.
+            x, y = self.recipient_target("to", 6)
+            self.mcp.batch(click(x, y), check("native_focus", "to"), wait(100), shot(f"recipient-chips-focused-{label}"),
+                           key("ctrl+z"), check("compose_recipients.to.chips.1", "sam@example.com"),
+                           key("ctrl+shift+z"), check("compose_recipients.to.chips.1", "a@x.io"),
+                           key("ctrl+z"), check("compose_recipients.to.chips.1", "sam@example.com"),
+                           # Backspace in the empty entry reopens the last chip for editing.
+                           key("BackSpace"), check("compose_recipients.to.entry", "nobody"),
+                           type_text("@example.com"), key("Return"), check("compose_recipients.to.invalid", []),
+                           # Subject and body keep their own histories; mail shortcuts never run.
+                           # Tab moves focus through a widget operation, so let it apply before typing.
+                           key("Tab"), wait(80), type_text("Plans"), check("compose_fields.subject", "Plans"),
+                           key("Tab"), wait(80), type_text("Hello there"), check("editor", "Hello there"),
+                           key("ctrl+z"), check("editor", "Hello"), key("ctrl+y"), check("editor", "Hello there"),
+                           check("compose_fields.subject", "Plans"), key("shift+Tab"), wait(80), key("ctrl+z"),
+                           check("compose_fields.subject", ""), check("editor", "Hello there"),
+                           check("tab", "Mail"), check("total", 120), check("dialog", None),
+                           check("compose_fields.to",
+                                 "alex@example.com, sam@example.com, a@x.io, b@x.io, c@x.io, d@x.io, nobody@example.com"),
+                           wait(150), shot(f"recipient-chips-undone-{label}"))
 
     def test_compose_session_preserves_fields_through_preferences_and_graceful_restart(self):
         started = self.mcp.call("desktop.start", persistent=True)

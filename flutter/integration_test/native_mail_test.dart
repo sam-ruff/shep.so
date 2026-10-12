@@ -10,6 +10,7 @@ import 'package:shep_mobile/data/credentials.dart';
 import 'package:shep_mobile/data/native_repository.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/ui/app.dart';
+import 'package:shep_mobile/ui/recipient_field.dart';
 import 'package:shep_mobile/main.dart' as production;
 import '../test/native_repository_test.dart' show FixtureCredentials;
 import '../test/workspace_test.dart' show MemorySettings;
@@ -223,12 +224,15 @@ void main() {
       await wait(
         tester,
         () => !tester
-            .widget<TextField>(find.widgetWithText(TextField, 'To'))
+            .widget<RecipientField>(find.widgetWithText(RecipientField, 'To'))
             .readOnly,
       );
       expect(find.text('alex@example.test'), findsOneWidget);
       await tester.enterText(
-        find.widgetWithText(TextField, 'To'),
+        find.descendant(
+          of: find.widgetWithText(RecipientField, 'To'),
+          matching: find.byType(TextField),
+        ),
         'robin@example.test',
       );
       await tester.enterText(
@@ -264,7 +268,7 @@ void main() {
       await wait(
         tester,
         () => !tester
-            .widget<TextField>(find.widgetWithText(TextField, 'To'))
+            .widget<RecipientField>(find.widgetWithText(RecipientField, 'To'))
             .readOnly,
       );
       expect(

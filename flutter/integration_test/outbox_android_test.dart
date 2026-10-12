@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shep_mobile/data/native_repository.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/ui/app.dart';
+import 'package:shep_mobile/ui/recipient_field.dart';
 import '../test/native_repository_test.dart' show FixtureCredentials;
 import '../test/workspace_test.dart' show MemorySettings;
 
@@ -173,7 +174,7 @@ void main() {
       await tester.pumpAndSettle();
       await wait(
         () => !tester
-            .widget<TextField>(find.widgetWithText(TextField, 'To'))
+            .widget<RecipientField>(find.widgetWithText(RecipientField, 'To'))
             .readOnly,
       );
       expect(
@@ -442,7 +443,7 @@ void main() {
       await tester.pumpAndSettle();
       await wait(
         () => !tester
-            .widget<TextField>(find.widgetWithText(TextField, 'To'))
+            .widget<RecipientField>(find.widgetWithText(RecipientField, 'To'))
             .readOnly,
       );
       expect(find.byTooltip('Remove review.bin'), findsNothing);

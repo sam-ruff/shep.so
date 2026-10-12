@@ -7,6 +7,7 @@ pub struct Input<'a> {
     id: Option<Id>,
     secure: bool,
     editable: bool,
+    paste: Option<fn(&str) -> String>,
 }
 impl<'a> Input<'a> {
     pub fn new(placeholder: &str, value: &str) -> Self {
@@ -17,7 +18,13 @@ impl<'a> Input<'a> {
             id: None,
             secure: false,
             editable: false,
+            paste: None,
         }
+    }
+    /// Rewrites pasted text before the input drops its control characters.
+    pub fn map_paste(mut self, map: fn(&str) -> String) -> Self {
+        self.paste = Some(map);
+        self
     }
     pub fn on_input(mut self, action: impl Fn(String) -> Message + 'a) -> Self {
         self.native = self.native.on_input(action);
@@ -75,6 +82,7 @@ impl<'a> From<Input<'a>> for Element<'a, Message> {
                 value: input.value,
                 editable: input.editable,
                 secure: input.secure,
+                paste: input.paste,
             },
             identity: Identity::Input(input.id, input.placeholder),
             theme: None,

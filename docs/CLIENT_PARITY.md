@@ -1,5 +1,14 @@
 # Client parity
 
+Recipient chips and composer undo (R113, R114): all three clients show To, Cc
+and Bcc as removable chips split by the shared `recipient-cases.json` rules,
+while drafts keep the comma-separated value. Desktop keeps its own bounded undo
+for the body, Subject and each recipient field, because iced has none. The
+browser and Flutter keep native undo for Subject and the body and add a
+per-field history for chip changes, with Ctrl/Cmd+Z, Ctrl+Shift+Z and Ctrl+Y.
+Flutter's Android integration tests and Apple execution, and browsers other
+than Chromium, remain unverified; see `composer-recipient-chips-and-undo`.
+
 First-download composer ownership: desktop preserves the current draft and
 typing target when the first mail page arrives, while explicit mail selection
 can still park it. Flutter's separate composer route and browser's retained

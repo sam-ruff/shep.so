@@ -47,8 +47,11 @@ test("reader, select text, full window, Escape and reply refusal", async ({
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Reply", exact: true }).click();
   await expect(
+    page.getByRole("list", { name: "To recipients", exact: true }),
+  ).toHaveText("alex@example.test");
+  await expect(
     page.getByRole("textbox", { name: "To", exact: true }),
-  ).toHaveValue("alex@example.test");
+  ).toHaveValue("");
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText(
     "Preview cannot send mail",

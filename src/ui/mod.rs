@@ -211,6 +211,14 @@ pub enum Message {
     NewMessage,
     ShowRecipients,
     ComposeField(&'static str, String),
+    /// Text typed or pasted into a recipient field's unfinished entry.
+    RecipientEntry(&'static str, composing::EntryInput),
+    /// Undo or redo in the composer field with this widget id.
+    ComposeHistory(&'static str, composing::Step),
+    /// Removes a recipient chip by field, position and the text it showed.
+    RemoveRecipient(&'static str, usize, String),
+    /// Turns a recipient field's unfinished text into a chip.
+    CommitRecipients(&'static str),
     CloseComposer,
     ToggleComposer,
     IncludeOriginal(bool),
@@ -2755,7 +2763,10 @@ impl App {
                 }
                 return self.handle(Message::Focus(id, 0));
             }
-            Message::NativeFocus(id) => self.native_focus = id,
+            Message::NativeFocus(id) => {
+                self.native_focus = id;
+                self.commit_recipients_except(id);
+            }
             Message::PointerPressed => {
                 self.pointer_presses += 1;
                 self.pending_focus = None;
@@ -2949,6 +2960,12 @@ impl App {
             Message::ChosenAttachments(draft, paths) => self.attach_chosen(draft, paths),
             Message::RemoveDraftAttachment(id) => self.remove_draft_attachment(id),
             Message::ComposeField(key, value) => self.edit_compose_field(key, value),
+            Message::RecipientEntry(field, input) => self.edit_recipient_entry(field, input),
+            Message::ComposeHistory(field, step) => return self.compose_history(field, step),
+            Message::RemoveRecipient(field, index, text) => {
+                self.remove_recipient(field, index, &text)
+            }
+            Message::CommitRecipients(field) => self.commit_recipients(field),
             Message::CloseComposer => {
                 self.close_composer();
                 return widget::operation::focus("unfocused");
@@ -3479,6 +3496,7 @@ impl App {
                 if !self.compose_visible() || self.dialog.is_some() || self.compose_locked() {
                     return Task::none();
                 }
+                self.record_body_edit(&action);
                 if action.is_edit() {
                     self.draft_edited();
                 }
@@ -4664,6 +4682,7 @@ impl App {
             "bcc": self.compose_field("bcc"),
             "subject": self.compose_field("subject"),
         });
+        data["compose_recipients"] = self.recipients_observation();
         data["composer"] = serde_json::json!({
             "visible": self.compose_visible(),
             "id": self.composer.current.draft.id,
@@ -4697,6 +4716,7 @@ impl App {
             data["drawn_rows"] =
                 serde_json::json!(draw_log::review(frame, rows, &ids, mail_list::ROW_HEIGHT));
             data["help_tips"] = serde_json::json!(self.draw_log.help());
+            data["recipient_fields"] = serde_json::json!(self.draw_log.drawn_recipients());
         }
         data["mail_selection"] = serde_json::json!({
             "mode": self.mail_selection.mode, "count": self.mail_selection.count,

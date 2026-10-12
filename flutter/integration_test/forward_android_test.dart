@@ -8,6 +8,7 @@ import 'package:shep_mobile/data/native_repository.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/model/preferences.dart';
 import 'package:shep_mobile/ui/app.dart';
+import 'package:shep_mobile/ui/recipient_field.dart';
 import '../test/native_repository_test.dart' show FixtureCredentials;
 import '../test/support/forward_repository.dart';
 import '../test/workspace_test.dart' show MemorySettings;
@@ -79,9 +80,17 @@ void main() {
         }
       }
 
-      Finder field(String label) => find.widgetWithText(TextField, label);
-      String text(String label) =>
-          tester.widget<TextField>(field(label)).controller!.text;
+      Finder recipients(String label) =>
+          find.widgetWithText(RecipientField, label);
+      Finder field(String label) => label == 'To'
+          ? find.descendant(
+              of: recipients(label),
+              matching: find.byType(TextField),
+            )
+          : find.widgetWithText(TextField, label);
+      String text(String label) => label == 'To'
+          ? tester.widget<RecipientField>(recipients(label)).controller.value
+          : tester.widget<TextField>(field(label)).controller!.text;
       Future<void> editable() => wait(
         () =>
             field('To').evaluate().isNotEmpty &&

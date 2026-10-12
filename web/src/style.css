@@ -469,6 +469,98 @@ select {
 .field textarea::placeholder {
   color: var(--muted);
 }
+.recipient-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  cursor: text;
+  font-weight: 400;
+}
+.recipient-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.recipient-chips {
+  display: contents;
+  list-style: none;
+}
+.recipient-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 32px;
+  padding: 0 1px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--soft);
+  font-size: 13px;
+  cursor: default;
+}
+.recipient-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recipient-chip.invalid {
+  border-color: var(--error);
+  box-shadow: 0 0 0 1px var(--error);
+  background: var(--error-bg);
+}
+.recipient-warning {
+  color: var(--error);
+  font-weight: 800;
+}
+.recipient-remove {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+}
+.recipient-remove:hover {
+  background: var(--tint);
+  color: var(--text);
+}
+.recipient-remove:disabled {
+  background: transparent;
+}
+.recipient-remove svg {
+  width: 14px;
+  height: 14px;
+}
+.field .recipient-entry {
+  flex: 1 1 140px;
+  min-width: 140px;
+  min-height: 30px;
+  border: 0;
+  padding: 4px 6px;
+  background: transparent;
+}
+.field .recipient-entry:focus-visible {
+  border: 0;
+  box-shadow: none;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 input[type="checkbox"] {
   appearance: none;
   width: 18px;

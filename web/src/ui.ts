@@ -15,6 +15,7 @@ import {
 } from "./shortcut_keys";
 import { renderReaderTree } from "./reader_actions";
 import { openMoveChooser } from "./move_ui";
+import { recipientField, type RecipientField } from "./recipient_field";
 import { knownFolders } from "./move_candidates";
 import { PrintController } from "./printing_controller";
 import { MessageFind, SearchWorker } from "./message_find";
@@ -1198,17 +1199,19 @@ export function mount(
       label.append(input);
       fields.append(label);
     }
-    for (const key of ["to", "cc", "bcc", "subject", "body"] as const) {
-      const label =
-        key === "body"
-          ? "Message"
-          : key === "subject"
-            ? "Subject"
-            : key === "bcc"
-              ? "Bcc"
-              : key === "cc"
-                ? "Cc"
-                : "To";
+    const recipients = new Map<"to" | "cc" | "bcc", RecipientField>();
+    for (const [key, label] of [["to", "To"], ["cc", "Cc"], ["bcc", "Bcc"]] as const) {
+      const view = recipientField(label, draft[key], placeholders[label], (v) => {
+        if (v !== draft[key]) {
+          draft[key] = v;
+          edited();
+        }
+      });
+      recipients.set(key, view);
+      fields.append(view.view);
+    }
+    for (const key of ["subject", "body"] as const) {
+      const label = key === "body" ? "Message" : "Subject";
       const view = field(
         label,
         draft[key],
@@ -1436,7 +1439,8 @@ export function mount(
           const expected = observeDraft(draft);
           const current = await gateway.readDraft(draft.id);
           if (d.isConnected && session.refreshSaved(current, expected)) {
-            for (const [key, label] of [["to", "To"], ["cc", "Cc"], ["bcc", "Bcc"], ["subject", "Subject"], ["body", "Message"]] as const) {
+            for (const [key, view] of recipients) view.set(draft[key]);
+            for (const [key, label] of [["subject", "Subject"], ["body", "Message"]] as const) {
               const input = d.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${label}"]`);
               if (input) input.value = draft[key];
             }

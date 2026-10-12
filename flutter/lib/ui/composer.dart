@@ -8,6 +8,7 @@ import '../model/mail.dart';
 import '../model/workspace.dart';
 import 'controls.dart';
 import 'icons.dart';
+import 'recipient_field.dart';
 
 class Composer extends StatefulWidget {
   const Composer({super.key, required this.workspace, required this.draft});
@@ -20,9 +21,9 @@ class Composer extends StatefulWidget {
 enum _DraftSavePhase { idle, pending, saving, saved, failed }
 
 class _ComposerState extends State<Composer> with WidgetsBindingObserver {
-  late final to = TextEditingController(text: widget.draft.to);
-  late final cc = TextEditingController(text: widget.draft.cc);
-  late final bcc = TextEditingController(text: widget.draft.bcc);
+  late final to = RecipientsController(widget.draft.to);
+  late final cc = RecipientsController(widget.draft.cc);
+  late final bcc = RecipientsController(widget.draft.bcc);
   late final subject = TextEditingController(text: widget.draft.subject);
   late final body = TextEditingController(text: widget.draft.body);
   late String accountId = widget.draft.accountId.isNotEmpty
@@ -51,9 +52,9 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
   Draft get draft => Draft(
     id: widget.draft.id,
     accountId: accountId,
-    to: to.text,
-    cc: cc.text,
-    bcc: bcc.text,
+    to: to.value,
+    cc: cc.value,
+    bcc: bcc.value,
     subject: subject.text,
     body: body.text,
     revision: revision,
@@ -69,7 +70,7 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
     super.initState();
     latestDraft = draft;
     WidgetsBinding.instance.addObserver(this);
-    showCopy = cc.text.isNotEmpty || bcc.text.isNotEmpty;
+    showCopy = cc.value.isNotEmpty || bcc.value.isNotEmpty;
     if (widget.workspace.draftSaveError(widget.draft.id) case final saved?) {
       savePhase = _DraftSavePhase.failed;
       statusRevision = revision;
@@ -168,9 +169,9 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
       return;
     }
     if (send &&
-        ((to.text.trim().isEmpty &&
-                cc.text.trim().isEmpty &&
-                bcc.text.trim().isEmpty) ||
+        ((to.value.trim().isEmpty &&
+                cc.value.trim().isEmpty &&
+                bcc.value.trim().isEmpty) ||
             subject.text.trim().isEmpty)) {
       setState(() => error = 'Add a recipient and subject before sending.');
       return;
@@ -317,25 +318,32 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  // Fields are keyed because the save status appears above them on the first
+  // edit; unkeyed list children would be rebuilt, dropping focus and undo.
+  Widget recipients(RecipientsController controller, String label) =>
+      RecipientField(
+        key: ValueKey(label),
+        controller: controller,
+        label: label,
+        readOnly: locked,
+        onChanged: edited,
+      );
+
   Widget field(
     TextEditingController controller,
     String label, {
     bool multiline = false,
   }) => TextField(
+    key: ValueKey(label),
     controller: controller,
     onChanged: (_) => edited(),
     readOnly: locked,
     minLines: multiline ? 10 : 1,
     maxLines: multiline ? null : 1,
-    keyboardType: multiline
-        ? TextInputType.multiline
-        : label == 'To'
-        ? TextInputType.emailAddress
-        : TextInputType.text,
+    keyboardType: multiline ? TextInputType.multiline : TextInputType.text,
     decoration: InputDecoration(
       labelText: label,
       hintText: switch (label) {
-        'To' || 'Cc' || 'Bcc' => 'name@example.com',
         'Subject' => 'Add a subject',
         'Message' => 'Write your message…',
         _ => null,
@@ -470,7 +478,7 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 14),
           ],
-          field(to, 'To'),
+          recipients(to, 'To'),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(
@@ -479,9 +487,9 @@ class _ComposerState extends State<Composer> with WidgetsBindingObserver {
             ),
           ),
           if (showCopy) ...[
-            field(cc, 'Cc'),
+            recipients(cc, 'Cc'),
             const SizedBox(height: 12),
-            field(bcc, 'Bcc'),
+            recipients(bcc, 'Bcc'),
             const SizedBox(height: 12),
           ],
           field(subject, 'Subject'),

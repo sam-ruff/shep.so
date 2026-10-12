@@ -4,6 +4,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/model/mail.dart';
 import 'package:shep_mobile/ui/app.dart';
+import 'package:shep_mobile/ui/recipient_field.dart';
 import '../test/support/preview_repository.dart';
 import '../test/workspace_test.dart' show MemorySettings;
 
@@ -39,7 +40,10 @@ void main() {
     await tester.tap(find.widgetWithText(FloatingActionButton, 'New message'));
     await tester.pumpAndSettle();
     await tester.enterText(
-      find.widgetWithText(TextField, 'To'),
+      find.descendant(
+        of: find.widgetWithText(RecipientField, 'To'),
+        matching: find.byType(TextField),
+      ),
       'test@example.test',
     );
     await tester.enterText(

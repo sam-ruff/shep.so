@@ -117,6 +117,7 @@ enum Kind<'a> {
         value: widget::text_input::Value,
         editable: bool,
         secure: bool,
+        paste: Option<fn(&str) -> String>,
     },
     Editor {
         content: &'a widget::text_editor::Content,
@@ -174,6 +175,7 @@ impl<'a> TextContext<'a> {
                 value,
                 editable,
                 secure,
+                ..
             } => {
                 let state = tree.state.downcast_ref::<widget::text_input::State<
                     <Renderer as iced::advanced::text::Renderer>::Paragraph,
@@ -423,6 +425,19 @@ impl Widget<Message, Theme, Renderer> for TextContext<'_> {
             shell.request_redraw();
             return;
         }
+        let mut mapped;
+        let clipboard: &mut dyn Clipboard = match &self.kind {
+            Kind::Input {
+                paste: Some(map), ..
+            } => {
+                mapped = MappedClipboard {
+                    native: clipboard,
+                    map: *map,
+                };
+                &mut mapped
+            }
+            _ => clipboard,
+        };
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -589,12 +604,18 @@ impl MenuOverlay<'_, '_> {
             };
             shell.publish(Message::Html(super::html_reader::Message::Input(input)));
         } else {
-            let value = self
+            let mut value = self
                 .state
                 .clip
                 .lock()
                 .ok()
                 .and_then(|clip| clip.value.clone());
+            if let Kind::Input {
+                paste: Some(map), ..
+            } = self.kind
+            {
+                value = value.map(|value| map(&value));
+            }
             let mut clipboard = CachedClipboard {
                 native: clipboard,
                 value,
@@ -649,6 +670,18 @@ struct CachedClipboard<'a> {
 impl Clipboard for CachedClipboard<'_> {
     fn read(&self, _: iced::advanced::clipboard::Kind) -> Option<String> {
         self.value.clone()
+    }
+    fn write(&mut self, kind: iced::advanced::clipboard::Kind, value: String) {
+        self.native.write(kind, value);
+    }
+}
+struct MappedClipboard<'a> {
+    native: &'a mut dyn Clipboard,
+    map: fn(&str) -> String,
+}
+impl Clipboard for MappedClipboard<'_> {
+    fn read(&self, kind: iced::advanced::clipboard::Kind) -> Option<String> {
+        self.native.read(kind).map(|value| (self.map)(&value))
     }
     fn write(&mut self, kind: iced::advanced::clipboard::Kind, value: String) {
         self.native.write(kind, value);

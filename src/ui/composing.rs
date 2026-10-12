@@ -2,20 +2,151 @@ use super::views::{Choice, truncate};
 use super::*;
 use crate::store::DraftState;
 use crate::ui::dropdown::pick_list;
+mod history;
+mod recipient_box;
+mod recipients;
 mod sessions;
 #[cfg(test)]
 #[path = "composing_tests.rs"]
 mod tests;
+use history::{Edit, History};
 use iced::{
     Alignment, Length,
     widget::{button, column, container, row, scrollable, space, text},
 };
+use recipients::Recipients;
+
+const ADDRESS_FIELDS: [&str; 3] = ["to", "cc", "bcc"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Undo,
+    Redo,
+}
+
+impl Step {
+    fn apply<T: history::Weight>(
+        self,
+        history: &mut History<T>,
+        current: impl FnOnce() -> T,
+    ) -> Option<T> {
+        match self {
+            Step::Undo => history.undo(current),
+            Step::Redo => history.redo(current),
+        }
+    }
+}
+
+/// Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo (Command on macOS).
+pub(super) fn history_step(key: &Key, modifiers: keyboard::Modifiers) -> Option<Step> {
+    let Key::Character(text) = key else {
+        return None;
+    };
+    let mut chars = text.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => step_for(c, modifiers),
+        _ => None,
+    }
+}
+
+fn step_for(c: char, modifiers: keyboard::Modifiers) -> Option<Step> {
+    if !modifiers.command() || modifiers.alt() {
+        return None;
+    }
+    match c.to_ascii_lowercase() {
+        'z' if modifiers.shift() => Some(Step::Redo),
+        'z' => Some(Step::Undo),
+        'y' if !modifiers.shift() => Some(Step::Redo),
+        _ => None,
+    }
+}
+
+fn address_index(key: &str) -> Option<usize> {
+    ADDRESS_FIELDS.iter().position(|field| *field == key)
+}
+
+fn address_mut(draft: &mut Draft, index: usize) -> &mut String {
+    match index {
+        0 => &mut draft.to,
+        1 => &mut draft.cc,
+        _ => &mut draft.bcc,
+    }
+}
+
+fn addresses(draft: &Draft) -> [Recipients; 3] {
+    [draft.to.as_str(), draft.cc.as_str(), draft.bcc.as_str()].map(Recipients::parse)
+}
+
+/// The message body with its cursor, as one undo step saves it.
+pub(super) struct BodyState {
+    text: String,
+    cursor: text_editor::Cursor,
+}
+
+impl BodyState {
+    fn capture(editor: &text_editor::Content) -> Self {
+        Self {
+            text: editor.text(),
+            cursor: editor.cursor(),
+        }
+    }
+
+    fn restore(self) -> text_editor::Content {
+        let mut editor = text_editor::Content::with_text(&self.text);
+        editor.move_to(self.cursor);
+        editor
+    }
+}
+
+impl history::Weight for BodyState {
+    fn weight(&self) -> usize {
+        self.text.len()
+    }
+}
+
+/// A recipient entry's new text, with the view it was drawn from.
+#[derive(Debug, Clone)]
+pub struct EntryInput {
+    generation: u64,
+    /// The entry text that view gave the input.
+    base: String,
+    value: String,
+}
+
+/// The text a recipient entry widget holds, which can trail the model until
+/// the next view: every event in one batch edits the input's previous text.
+#[derive(Default)]
+pub(super) struct EntryWidget {
+    generation: u64,
+    seen: Option<u64>,
+    value: String,
+}
+
+#[derive(Default)]
+pub(super) struct Histories {
+    body: History<BodyState>,
+    subject: History<String>,
+    addresses: [History<Recipients>; 3],
+}
 
 fn compose_binding(
     key: text_editor::KeyPress,
     shortcuts: &crate::shortcuts::Keymap,
 ) -> Option<text_editor::Binding<Message>> {
     let modifiers = key.modifiers;
+    if !matches!(key.status, text_editor::Status::Focused { .. }) {
+        return None;
+    }
+    if let Some(step) = key
+        .key
+        .to_latin(key.physical_key)
+        .and_then(|c| step_for(c, modifiers))
+    {
+        return Some(text_editor::Binding::Custom(Message::ComposeHistory(
+            "compose-body",
+            step,
+        )));
+    }
     let navigation = modifiers.command()
         && chord(&key.key, modifiers)
             .as_deref()
@@ -60,6 +191,10 @@ pub(super) struct Session {
     pub explicit_save: bool,
     pub show_recipients: bool,
     pub minimized: bool,
+    /// To, Cc and Bcc as chips; the draft keeps their comma-separated value.
+    pub addresses: [Recipients; 3],
+    pub entries: [EntryWidget; 3],
+    pub history: Histories,
 }
 #[derive(Default)]
 pub(super) struct Composer {
@@ -440,22 +575,19 @@ impl App {
         ]
         .spacing(10);
         let address_row = |label: &'static str,
-                           key: &'static str,
+                           index: usize,
                            placeholder: &'static str|
          -> Element<'_, Message> {
             row![
                 muted(label).width(52),
-                input(placeholder, self.compose_field(key), move |v| {
-                    Message::ComposeField(key, v)
-                })
-                .id(key)
+                self.recipient_field(index, placeholder)
             ]
             .align_y(Alignment::Center)
             .into()
         };
         form = form.push(
             row![
-                address_row("To", "to", "name@example.com"),
+                address_row("To", 0, "name@example.com"),
                 button(text("Cc / Bcc").size(11))
                     .padding([11, 10])
                     .style(ghost)
@@ -469,10 +601,19 @@ impl App {
             || !self.compose_field("bcc").is_empty()
         {
             form = form
-                .push(address_row("Cc", "cc", "Copy recipients"))
-                .push(address_row("Bcc", "bcc", "Hidden recipients"));
+                .push(address_row("Cc", 1, "Copy recipients"))
+                .push(address_row("Bcc", 2, "Hidden recipients"));
         }
-        form = form.push(address_row("Subject", "subject", "Add a subject"));
+        form = form.push(
+            row![
+                muted("Subject").width(52),
+                input("Add a subject", self.compose_field("subject"), |v| {
+                    Message::ComposeField("subject", v)
+                })
+                .id("subject")
+            ]
+            .align_y(Alignment::Center),
+        );
         form = form.push(
             super::text_context::TextContext::editor(
                 widget::text_editor(&self.composer.current.editor)
@@ -635,23 +776,330 @@ impl App {
         self.focus_after_layout("to")
     }
 
+    fn compose_editable(&self) -> bool {
+        self.compose_visible() && self.dialog.is_none() && !self.compose_locked()
+    }
+
     pub(super) fn edit_compose_field(&mut self, key: &str, value: String) {
-        if !self.compose_visible() || self.dialog.is_some() || self.compose_locked() {
+        if !self.compose_editable() {
             return;
         }
-        let draft = &mut self.composer.current.draft;
+        if let Some(index) = address_index(key) {
+            return self.set_address(index, &value);
+        }
+        let session = &mut self.composer.current;
         let field = match key {
-            "account" => &mut draft.account_id,
-            "to" => &mut draft.to,
-            "cc" => &mut draft.cc,
-            "bcc" => &mut draft.bcc,
-            "subject" => &mut draft.subject,
+            "account" => &mut session.draft.account_id,
+            "subject" => &mut session.draft.subject,
             _ => return,
         };
+        if *field == value {
+            return;
+        }
+        if key == "subject" {
+            let before = std::mem::replace(field, value);
+            let edit = Edit::between(&before, field);
+            session
+                .history
+                .subject
+                .record(edit, Instant::now(), || before);
+        } else {
+            *field = value;
+        }
+        self.draft_edited();
+    }
+
+    /// Replaces a whole recipient field, keeping any unfinished text as the entry.
+    fn set_address(&mut self, index: usize, value: &str) {
+        let session = &mut self.composer.current;
+        if address_mut(&mut session.draft, index).as_str() == value {
+            return;
+        }
+        let mut next = Recipients::default();
+        next.input(value);
+        let before = std::mem::replace(&mut session.addresses[index], next);
+        session.history.addresses[index].record(Edit::Other, Instant::now(), || before);
+        self.write_address(index);
+    }
+
+    pub(super) fn edit_recipient_entry(&mut self, key: &str, input: EntryInput) {
+        let Some(index) = address_index(key) else {
+            return;
+        };
+        if !self.compose_editable() {
+            return;
+        }
+        let session = &mut self.composer.current;
+        let widget = &mut session.entries[index];
+        let shown = if widget.seen == Some(input.generation) {
+            std::mem::take(&mut widget.value)
+        } else {
+            input.base
+        };
+        widget.seen = Some(input.generation);
+        widget.generation += 1;
+        widget.value.clone_from(&input.value);
+        let recipients = &mut session.addresses[index];
+        let mut next = recipients.clone();
+        // The input reports an unchanged empty value for Backspace with
+        // nothing left to delete: that reopens the last chip for editing.
+        let edit = if shown.is_empty() && input.value.is_empty() {
+            next.reopen_last();
+            Edit::Other
+        } else {
+            next.input(&recipients::apply_input(
+                &recipients.entry,
+                &shown,
+                &input.value,
+            ));
+            if next.chips.len() == recipients.chips.len() {
+                Edit::between(&recipients.entry, &next.entry)
+            } else {
+                Edit::Other
+            }
+        };
+        if next == *recipients {
+            return;
+        }
+        let before = std::mem::replace(recipients, next);
+        session.history.addresses[index].record(edit, Instant::now(), || before);
+        self.write_address(index);
+    }
+
+    /// Copies a recipient field's chips back into the draft value.
+    fn write_address(&mut self, index: usize) {
+        let session = &mut self.composer.current;
+        // The next view gives the input new text, so later edits start there.
+        session.entries[index].generation += 1;
+        let value = session.addresses[index].value();
+        let field = address_mut(&mut session.draft, index);
         if *field != value {
             *field = value;
             self.draft_edited();
         }
+    }
+
+    pub(super) fn remove_recipient(&mut self, key: &str, position: usize, text: &str) {
+        let Some(index) = address_index(key) else {
+            return;
+        };
+        if !self.compose_editable() {
+            return;
+        }
+        let session = &mut self.composer.current;
+        let before = session.addresses[index].clone();
+        if !session.addresses[index].remove(position, text) {
+            return;
+        }
+        session.history.addresses[index].record(Edit::Other, Instant::now(), || before);
+        self.write_address(index);
+    }
+
+    pub(super) fn commit_recipients(&mut self, key: &str) {
+        if let Some(index) = address_index(key)
+            && self.compose_editable()
+        {
+            self.commit_address(index);
+        }
+    }
+
+    /// Turns unfinished recipient text into chips once focus leaves its field.
+    pub(super) fn commit_recipients_except(&mut self, focused: Option<&str>) {
+        if !self.compose_editable() {
+            return;
+        }
+        for (index, key) in ADDRESS_FIELDS.into_iter().enumerate() {
+            if focused != Some(key) {
+                self.commit_address(index);
+            }
+        }
+    }
+
+    fn commit_address(&mut self, index: usize) {
+        let session = &mut self.composer.current;
+        if session.addresses[index].commit() {
+            // Undo after a commit returns to the typed text, not the chip.
+            session.history.addresses[index].seal();
+            self.write_address(index);
+        }
+    }
+
+    pub(super) fn compose_history(&mut self, field: &str, step: Step) -> Task<Message> {
+        if !self.compose_editable() {
+            return Task::none();
+        }
+        let session = &mut self.composer.current;
+        if field == "compose-body" {
+            let editor = &session.editor;
+            let Some(state) = step.apply(&mut session.history.body, || BodyState::capture(editor))
+            else {
+                return Task::none();
+            };
+            session.editor = state.restore();
+        } else if field == "subject" {
+            let subject = &session.draft.subject;
+            let Some(state) = step.apply(&mut session.history.subject, || subject.clone()) else {
+                return Task::none();
+            };
+            session.draft.subject = state;
+        } else if let Some(index) = address_index(field) {
+            let recipients = &session.addresses[index];
+            let Some(state) =
+                step.apply(&mut session.history.addresses[index], || recipients.clone())
+            else {
+                return Task::none();
+            };
+            session.addresses[index] = state;
+            session.entries[index].generation += 1;
+            *address_mut(&mut session.draft, index) = session.addresses[index].value();
+        } else {
+            return Task::none();
+        }
+        self.draft_edited();
+        Task::none()
+    }
+
+    /// Saves the body before an edit so Ctrl+Z can return to it.
+    pub(super) fn record_body_edit(&mut self, action: &text_editor::Action) {
+        let session = &mut self.composer.current;
+        let text_editor::Action::Edit(edit) = action else {
+            // Moving the cursor ends the current typing step.
+            if !matches!(action, text_editor::Action::Scroll { .. }) {
+                session.history.body.seal();
+            }
+            return;
+        };
+        let kind = match edit {
+            _ if session.editor.cursor().selection.is_some() => Edit::Other,
+            text_editor::Edit::Insert(c) => Edit::Insert {
+                space: c.is_whitespace(),
+            },
+            text_editor::Edit::Backspace | text_editor::Edit::Delete => Edit::Delete,
+            _ => Edit::Other,
+        };
+        let editor = &session.editor;
+        session
+            .history
+            .body
+            .record(kind, Instant::now(), || BodyState::capture(editor));
+    }
+
+    fn recipient_field(&self, index: usize, placeholder: &'static str) -> Element<'_, Message> {
+        let key = ADDRESS_FIELDS[index];
+        let recipients = &self.composer.current.addresses[index];
+        let generation = self.composer.current.entries[index].generation;
+        let editable = !self.compose_locked();
+        let entry = input(
+            if recipients.chips.is_empty() {
+                placeholder
+            } else {
+                ""
+            },
+            &recipients.entry,
+            move |value| {
+                Message::RecipientEntry(
+                    key,
+                    EntryInput {
+                        generation,
+                        base: recipients.entry.clone(),
+                        value,
+                    },
+                )
+            },
+        )
+        .id(key)
+        .on_submit(Message::CommitRecipients(key))
+        .map_paste(recipients::paste_lines)
+        .padding([7, 6])
+        .style(bare_field);
+        let chips = recipients
+            .chips
+            .iter()
+            .enumerate()
+            .map(|(position, chip)| self.recipient_chip(key, position, chip, editable));
+        let field = recipient_box::RecipientBox::new(entry, recipients.entry.is_empty(), chips);
+        #[cfg(feature = "test-support")]
+        let field = field.observed(key, self.draw_log.clone());
+        field.into()
+    }
+
+    fn recipient_chip<'a>(
+        &self,
+        key: &'static str,
+        position: usize,
+        chip: &'a recipients::Chip,
+        editable: bool,
+    ) -> Element<'a, Message> {
+        let remove = button(icon("close", 12.))
+            .padding(4)
+            .style(ghost)
+            .on_press_maybe(
+                editable.then(|| Message::RemoveRecipient(key, position, chip.text.clone())),
+            );
+        let remove: Element<'a, Message> = if self.preferences.tooltips {
+            widget::tooltip(
+                remove,
+                container(text(format!("Remove {}", truncate(&chip.text, 48))).size(12))
+                    .padding(8)
+                    .style(card),
+                widget::tooltip::Position::Bottom,
+            )
+            .gap(5)
+            .into()
+        } else {
+            remove.into()
+        };
+        // Long addresses are cut with an ellipsis, keeping room for the x.
+        let address = || super::ellipsis::Ellipsis::new(chip.text.clone(), 12.).shrink(24.);
+        let label: Element<'a, Message> = if chip.valid {
+            address().into()
+        } else {
+            // Send would reject this address; mark it with more than colour.
+            row![
+                text("!")
+                    .size(12)
+                    .font(BOLD)
+                    .style(|theme: &Theme| text::Style {
+                        color: Some(colors(theme).flag)
+                    }),
+                address()
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        container(row![label, remove].spacing(2).align_y(Alignment::Center))
+            .padding(iced::Padding {
+                left: 8.,
+                right: 1.,
+                top: 1.,
+                bottom: 1.,
+            })
+            .style(if chip.valid {
+                recipient_chip
+            } else {
+                invalid_recipient_chip
+            })
+            .into()
+    }
+
+    pub(super) fn recipients_observation(&self) -> serde_json::Value {
+        let session = &self.composer.current;
+        ADDRESS_FIELDS
+            .iter()
+            .zip(&session.addresses)
+            .map(|(key, recipients)| {
+                (
+                    key.to_string(),
+                    serde_json::json!({
+                        "chips": recipients.chips.iter().map(|chip| &chip.text).collect::<Vec<_>>(),
+                        "invalid": recipients.chips.iter().filter(|chip| !chip.valid).map(|chip| &chip.text).collect::<Vec<_>>(),
+                        "entry": recipients.entry,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>()
+            .into()
     }
 
     pub(super) fn current_draft(&self) -> Draft {

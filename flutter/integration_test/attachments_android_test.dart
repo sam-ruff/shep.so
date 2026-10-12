@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shep_mobile/data/native_repository.dart';
 import 'package:shep_mobile/model/workspace.dart';
 import 'package:shep_mobile/ui/app.dart';
+import 'package:shep_mobile/ui/recipient_field.dart';
 import '../test/native_repository_test.dart' show FixtureCredentials;
 import '../test/workspace_test.dart' show MemorySettings;
 
@@ -61,11 +62,10 @@ void main() {
         await tester.pumpAndSettle();
       }
 
-      Future<void> editable() => wait(
-        () => !tester
-            .widget<TextField>(find.widgetWithText(TextField, 'To'))
-            .readOnly,
+      RecipientField recipients(String label) => tester.widget<RecipientField>(
+        find.widgetWithText(RecipientField, label),
       );
+      Future<void> editable() => wait(() => !recipients('To').readOnly);
       Future<void> reopen() async {
         await tester.pumpWidget(const SizedBox());
         workspace.dispose();
@@ -96,19 +96,10 @@ void main() {
       await tester.pumpAndSettle();
       await editable();
       expect(
-        tester
-            .widget<TextField>(find.widgetWithText(TextField, 'To'))
-            .controller!
-            .text,
+        recipients('To').controller.value,
         'Support <support@example.test>, Peer <peer@example.test>',
       );
-      expect(
-        tester
-            .widget<TextField>(find.widgetWithText(TextField, 'Cc'))
-            .controller!
-            .text,
-        'Copy <copy@example.test>',
-      );
+      expect(recipients('Cc').controller.value, 'Copy <copy@example.test>');
       expect(
         tester
             .widget<TextField>(find.widgetWithText(TextField, 'Message'))
@@ -122,11 +113,7 @@ void main() {
         await tester.tap(find.text('Attach files'));
         await tester.pump();
         // Observe the lock while the helper drives native DocumentsUI controls.
-        await wait(
-          () => tester
-              .widget<TextField>(find.widgetWithText(TextField, 'To'))
-              .readOnly,
-        );
+        await wait(() => recipients('To').readOnly);
         await editable();
       }
 

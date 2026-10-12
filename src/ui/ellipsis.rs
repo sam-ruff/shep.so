@@ -21,6 +21,8 @@ pub(super) struct Ellipsis {
     label: String,
     size: f32,
     font: Option<Font>,
+    /// Width left free for later siblings in a row, so they are never squeezed.
+    reserve: Option<f32>,
 }
 impl Ellipsis {
     pub fn new(label: String, size: f32) -> Self {
@@ -28,10 +30,16 @@ impl Ellipsis {
             label,
             size,
             font: None,
+            reserve: None,
         }
     }
     pub fn font(mut self, font: Font) -> Self {
         self.font = Some(font);
+        self
+    }
+    /// Takes only the shaped label's width, leaving `reserve` for what follows.
+    pub fn shrink(mut self, reserve: f32) -> Self {
+        self.reserve = Some(reserve);
         self
     }
 }
@@ -43,7 +51,12 @@ impl Widget<Message, Theme, Renderer> for Ellipsis {
         tree::State::new(State::default())
     }
     fn size(&self) -> Size<Length> {
-        Size::new(Length::Fill, Length::Shrink)
+        let width = if self.reserve.is_some() {
+            Length::Shrink
+        } else {
+            Length::Fill
+        };
+        Size::new(width, Length::Shrink)
     }
     fn layout(
         &mut self,
@@ -52,7 +65,7 @@ impl Widget<Message, Theme, Renderer> for Ellipsis {
         limits: &layout::Limits,
     ) -> layout::Node {
         let state = tree.state.downcast_mut::<State>();
-        let width = limits.max().width;
+        let width = (limits.max().width - self.reserve.unwrap_or_default()).max(0.);
         let font = self.font.unwrap_or(renderer.default_font());
         if state.original != self.label
             || state.width != width
@@ -96,7 +109,12 @@ impl Widget<Message, Theme, Renderer> for Ellipsis {
             state.size = self.size;
             state.font = font;
         }
-        layout::Node::new(Size::new(width, self.size))
+        let shown = if self.reserve.is_some() {
+            state.paragraph.min_bounds().width.min(width)
+        } else {
+            width
+        };
+        layout::Node::new(Size::new(shown, self.size))
     }
     fn draw(
         &self,

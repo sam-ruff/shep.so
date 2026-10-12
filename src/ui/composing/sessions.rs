@@ -157,6 +157,7 @@ impl App {
                 ui_key,
                 editor: text_editor::Content::with_text(&draft.body),
                 show_recipients: !draft.cc.is_empty() || !draft.bcc.is_empty(),
+                addresses: addresses(&draft),
                 dirty: (!saved).then(Instant::now),
                 saved_revision: saved.then_some(draft.revision),
                 draft,

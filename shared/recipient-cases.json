@@ -1,0 +1,51 @@
+{
+  "split": [
+    { "name": "plain typing stays in the entry", "input": "alex@example.com", "chips": [], "entry": "alex@example.com" },
+    { "name": "a comma finishes an address", "input": "alex@example.com,", "chips": ["alex@example.com"], "entry": "" },
+    { "name": "a semicolon finishes an address", "input": "alex@example.com;", "chips": ["alex@example.com"], "entry": "" },
+    { "name": "semicolon list", "input": "a@example.com;b@example.com", "chips": ["a@example.com"], "entry": "b@example.com" },
+    { "name": "semicolon and space list", "input": "a@example.com; b@example.com; ", "chips": ["a@example.com", "b@example.com"], "entry": "" },
+    { "name": "comma list", "input": "a@example.com,b@example.com", "chips": ["a@example.com"], "entry": "b@example.com" },
+    { "name": "comma and space list", "input": "a@example.com, b@example.com, c@example.com", "chips": ["a@example.com", "b@example.com"], "entry": "c@example.com" },
+    { "name": "mixed separators", "input": "a@example.com;b@example.com, c@example.com ; d@example.com,", "chips": ["a@example.com", "b@example.com", "c@example.com", "d@example.com"], "entry": "" },
+    { "name": "empty segments are dropped", "input": ",, ;a@example.com;;", "chips": ["a@example.com"], "entry": "" },
+    { "name": "a space after a complete address finishes it", "input": "a@example.com b@example.com", "chips": ["a@example.com"], "entry": "b@example.com" },
+    { "name": "a space inside a display name does not split", "input": "Alex Doe", "chips": [], "entry": "Alex Doe" },
+    { "name": "display names keep their address", "input": "Alex Doe <alex@example.com>, Sam <sam@example.com>", "chips": ["Alex Doe <alex@example.com>"], "entry": "Sam <sam@example.com>" },
+    { "name": "a space after a closing bracket finishes the address", "input": "Alex <alex@example.com> Sam <sam@example.com>", "chips": ["Alex <alex@example.com>"], "entry": "Sam <sam@example.com>" },
+    { "name": "commas inside quotes do not split", "input": "\"Doe, Alex\" <alex@example.com>, b@example.com", "chips": ["\"Doe, Alex\" <alex@example.com>"], "entry": "b@example.com" },
+    { "name": "escaped quotes stay quoted", "input": "\"Al \\\"Ace\\\"; Doe\" <al@example.com>;", "chips": ["\"Al \\\"Ace\\\"; Doe\" <al@example.com>"], "entry": "" },
+    { "name": "separators inside angle brackets do not split", "input": "Odd <odd;name@example.com>;", "chips": ["Odd <odd;name@example.com>"], "entry": "" },
+    { "name": "an unfinished address keeps its spaces", "input": "a@example.com, Alex ", "chips": ["a@example.com"], "entry": "Alex " },
+    { "name": "leading spaces leave the entry", "input": "   ", "chips": [], "entry": "" },
+    { "name": "an incomplete address does not split on a space", "input": "alex@ example.com", "chips": [], "entry": "alex@ example.com" },
+    { "name": "line breaks separate addresses", "input": "a@example.com\nb@example.com\r\nc@example.com", "chips": ["a@example.com", "b@example.com"], "entry": "c@example.com" },
+    { "name": "unicode addresses", "input": "Zoë <zoë@例え.jp>; ünï@example.com", "chips": ["Zoë <zoë@例え.jp>"], "entry": "ünï@example.com" }
+  ],
+  "stored": [
+    { "name": "every saved address is a chip", "value": "a@example.com, Alex Doe <alex@example.com>", "chips": ["a@example.com", "Alex Doe <alex@example.com>"] },
+    { "name": "older drafts without spaces", "value": "a@example.com,b@example.com", "chips": ["a@example.com", "b@example.com"] },
+    { "name": "semicolons in older drafts", "value": "a@example.com; b@example.com", "chips": ["a@example.com", "b@example.com"] },
+    { "name": "empty", "value": "", "chips": [] },
+    { "name": "unfinished text becomes a chip", "value": "Alex Doe ", "chips": ["Alex Doe"] }
+  ],
+  "value": [
+    { "name": "chips and entry", "chips": ["a@example.com", "b@example.com"], "entry": "c@exa", "value": "a@example.com, b@example.com, c@exa" },
+    { "name": "chips only", "chips": ["a@example.com"], "entry": "", "value": "a@example.com" },
+    { "name": "entry only", "chips": [], "entry": "a@exa", "value": "a@exa" },
+    { "name": "empty", "chips": [], "entry": "", "value": "" }
+  ],
+  "paste": [
+    { "name": "one line is unchanged", "clipboard": "a@example.com; b@example.com", "text": "a@example.com; b@example.com" },
+    { "name": "a copied column", "clipboard": "a@example.com\nb@example.com\r\nc@example.com\n", "text": "a@example.com, b@example.com, c@example.com" },
+    { "name": "blank lines and tabs", "clipboard": "Alex\talex@example.com\n\n  b@example.com  ", "text": "Alex alex@example.com, b@example.com" }
+  ],
+  "valid": [
+    { "chip": "alex@example.com", "valid": true },
+    { "chip": "Alex Doe <alex@example.com>", "valid": true },
+    { "chip": "\"Doe, Alex\" <alex@example.com>", "valid": true },
+    { "chip": "alex", "valid": false },
+    { "chip": "alex@", "valid": false },
+    { "chip": "Alex Doe", "valid": false }
+  ]
+}

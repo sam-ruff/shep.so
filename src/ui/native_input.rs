@@ -10,7 +10,11 @@ pub struct Focus {
     pub search: bool,
     pub find: bool,
     pub compose: bool,
+    /// The focused composer field, by its widget id.
+    pub field: Option<&'static str>,
 }
+
+const COMPOSE_FIELDS: [&str; 5] = ["to", "cc", "bcc", "subject", "compose-body"];
 
 impl Operation for Focus {
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
@@ -26,18 +30,14 @@ impl Operation for Focus {
         self.search |= id == Some(search);
         self.find |= id == Some(find);
         static COMPOSE_IDS: std::sync::OnceLock<[Id; 5]> = std::sync::OnceLock::new();
-        self.compose |= COMPOSE_IDS
-            .get_or_init(|| {
-                [
-                    Id::new("to"),
-                    Id::new("cc"),
-                    Id::new("bcc"),
-                    Id::new("subject"),
-                    Id::new("compose-body"),
-                ]
-            })
+        if let Some(index) = COMPOSE_IDS
+            .get_or_init(|| COMPOSE_FIELDS.map(Id::new))
             .iter()
-            .any(|candidate| id == Some(candidate));
+            .position(|candidate| id == Some(candidate))
+        {
+            self.compose = true;
+            self.field = Some(COMPOSE_FIELDS[index]);
+        }
     }
 }
 
@@ -86,7 +86,15 @@ impl App {
         focus: Focus,
     ) -> Task<Message> {
         if focus.compose && self.dialog.is_none() && self.remapping.is_none() {
+            // Undo/redo are native editing keys, never mail or remapped actions.
+            if let Some(step) = composing::history_step(&key, modifiers) {
+                return match focus.field {
+                    Some(field) => self.compose_history(field, step),
+                    None => Task::none(),
+                };
+            }
             if key == Key::Named(keyboard::key::Named::Tab) {
+                self.commit_recipients_except(None);
                 return if modifiers.shift() {
                     widget::operation::focus_previous()
                 } else {

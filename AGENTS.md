@@ -1651,6 +1651,18 @@ clear hidden focus when collapsing. Preserve the saved inline switching/restart,
 selection, Find, send-preparation and compact typing scenarios, alongside all
 existing forwarding, recipients, file picker, discard and Outbox flows.
 
+To/Cc/Bcc chips (`ui/composing/recipients.rs`) are an editing model only:
+drafts keep the comma-separated string, and `shared/recipient-cases.json` is
+the splitting contract for every client. `RecipientBox` keeps the entry as its
+first widget child so chip changes cannot drop its focus. A batch of native keys
+edits the input's previous text, so entry messages carry their view generation
+and `apply_input` applies the input's own edit; never trust the raw value after
+a split. `ui/composing/history.rs` gives the body, Subject and each recipient
+field a bounded undo history (iced has none). Ctrl/Cmd+Z, Ctrl+Shift+Z and
+Ctrl+Y are native editing keys routed by the focused field, never mail or
+remapped actions. Preserve the shared-case, batched-input and remapped-chord
+tests and the `recipient_chips_paste_remove_and_undo` simulator/native flows.
+
 
 ## Complete database export
 

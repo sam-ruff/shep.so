@@ -20,11 +20,24 @@ pub(super) struct DrawnHelp {
     pub tip: Option<[f32; 4]>,
 }
 
+/// A recipient field drawn in the latest frame, with each chip's remove button.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub(super) struct DrawnRecipients {
+    pub field: &'static str,
+    pub bounds: [f32; 4],
+    pub remove: Vec<[f32; 4]>,
+}
+
+fn edges(bounds: iced::Rectangle) -> [f32; 4] {
+    [bounds.x, bounds.y, bounds.width, bounds.height]
+}
+
 #[derive(Default)]
 struct Frames {
     frame: u64,
     rows: Vec<DrawnRow>,
     help: Vec<DrawnHelp>,
+    recipients: Vec<DrawnRecipients>,
 }
 
 /// Shared between the view tree and the controller; the root widget opens a
@@ -42,6 +55,28 @@ impl Log {
         frames.frame += 1;
         frames.rows.clear();
         frames.help.clear();
+        frames.recipients.clear();
+    }
+    pub fn recipients(
+        &self,
+        field: &'static str,
+        bounds: iced::Rectangle,
+        remove: impl Iterator<Item = iced::Rectangle>,
+    ) {
+        let Ok(mut frames) = self.frames.lock() else {
+            return;
+        };
+        frames.recipients.push(DrawnRecipients {
+            field,
+            bounds: edges(bounds),
+            remove: remove.map(edges).collect(),
+        });
+    }
+    pub fn drawn_recipients(&self) -> Vec<DrawnRecipients> {
+        self.frames
+            .lock()
+            .map(|frames| frames.recipients.clone())
+            .unwrap_or_default()
     }
     pub fn row(&self, id: &str, bounds: iced::Rectangle) {
         let Ok(mut frames) = self.frames.lock() else {
