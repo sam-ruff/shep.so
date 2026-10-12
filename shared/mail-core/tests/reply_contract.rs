@@ -1,5 +1,57 @@
+use anyhow::Context;
 use serde_json::{Value, json};
 use shep_mail_core::{compose::ReplyHeaders, model::*};
+
+#[test]
+fn reply_quote_choice_keeps_thread_headers_and_private_envelope() -> anyhow::Result<()> {
+    let account: Account = serde_json::from_value(
+        json!({"id":"fixture", "name":"Fixture", "email":"owner@example.test", "protocol":"Pop3", "host":"mail.example.test", "port":995, "username":"owner", "smtp_host":"mail.example.test", "smtp_port":465}),
+    )?;
+    let mut draft = Draft {
+        id: "reply".into(),
+        account_id: account.id.clone(),
+        to: "sender@example.test".into(),
+        bcc: "private@example.test".into(),
+        subject: "Re: Plan".into(),
+        body: "Typed answer".into(),
+        in_reply_to: Some("<original@example.test>".into()),
+        references: vec![
+            "<root@example.test>".into(),
+            "<original@example.test>".into(),
+        ],
+        reply_context: Some(ReplyContext {
+            account_id: account.id.clone(),
+            mail_id: "original".into(),
+            quote: "\n\nOn yesterday, Sender wrote:\n> Original text".into(),
+            include_quote: true,
+        }),
+        ..Default::default()
+    };
+    for include in [true, false, true] {
+        draft
+            .reply_context
+            .as_mut()
+            .context("Reply context")?
+            .include_quote = include;
+        let message = shep_mail_core::compose::build_with_message_id(
+            &account,
+            &draft,
+            vec![],
+            "<reply@example.test>",
+        )?;
+        let bytes = message.formatted();
+        let parsed = mailparse::parse_mail(&bytes)?;
+        let body = parsed.get_body()?;
+        assert!(body.contains("Typed answer"));
+        assert_eq!(body.contains("Original text"), include);
+        assert!(!String::from_utf8_lossy(&bytes).contains("Bcc:"));
+        assert_eq!(message.envelope().to().len(), 2);
+        assert!(String::from_utf8_lossy(&bytes).contains("In-Reply-To: <original@example.test>"));
+        assert!(String::from_utf8_lossy(&bytes).contains("<root@example.test>"));
+        assert_eq!(draft.body, "Typed answer");
+    }
+    Ok(())
+}
 
 #[test]
 fn cached_envelope_and_reply_match_shared_browser_fixtures() {

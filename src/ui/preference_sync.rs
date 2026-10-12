@@ -299,9 +299,17 @@ mod tests {
         let mut sync = PreferenceSync::new(snapshot(1, &original));
         live.reply_include_original = false;
         let first = sync.changed();
+        assert_eq!(
+            sync.write(live.clone()).portable.reply_include_original,
+            Some(false)
+        );
         let first_saved = snapshot(2, &live);
         live.reply_include_original = true;
         let second = sync.changed();
+        assert_eq!(
+            sync.write(live.clone()).portable.reply_include_original,
+            Some(true)
+        );
         let second_saved = snapshot(3, &live);
         sync.acknowledge(first, first_saved.clone(), &mut live);
         assert!(live.reply_include_original);

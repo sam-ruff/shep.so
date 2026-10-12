@@ -1,5 +1,81 @@
 # Conversation request audit
 
+**6 October reply-original delivery (#30):** Mobile Reply and Reply all gain a
+per-draft Include original message control and searchable new-reply default.
+Typed text remains independent of the saved original through files, autosave,
+reopen and reviewed uncertain Outbox recovery. The R97 default becomes one
+portable profile key across desktop/mobile/browser adapters; old mobile
+eight-field snapshots, exact requests and receipts do not approve the ninth
+field. Forward and legacy inline-quote drafts retain their established content.
+Browser composer application remains an explicit active gap. Verification and
+device/provider limits are recorded in [Completion](COMPLETION.md).
+
+**6 October reader metadata continuation (#47):** Flutter now displays exact
+cached From/To independently of receiving-account identity and exposes selectable
+headers with visible Copy controls before body completion. Host native FFI,
+actual reader controls and the saved compact browser clipboard/frame scenario
+pass. Android's synthetic repository and actual platform clipboard controls pass
+in light and dark separately from host FFI; Apple and live provider execution
+remain open in the platform audit. See
+[completion](COMPLETION.md) for exact verification and preserved failures.
+
+**6 October mobile queued bulk Undo (#49):** Continue parity delivery with Undo
+for approved groups before any acknowledged item, including pending, paused and
+held-first-step work. Keep the immutable saved group and decision revisions;
+inspect/retry the same Undo after lost replies. Clear its forward projection from
+the checked decision while preserving newer fields and actual in-flight receipts.
+Real notice/History controls, occupied provider capacity, partial completion,
+restart and native/model regressions are required. Root owns integration and
+Android execution; selection retention and bounded History remain intact.
+Independent review additionally reproduced #58: Undo, Resume or Retry requested
+during the pump's final held History observation loses its wake. Preserve that
+checked request after observation completes, using the same existing owner.
+
+**6 October mobile bulk History (#50):** Keep one 50-item detail page and one
+20-group History page, with visible navigation to older retained records.
+Recovery controls must keep their exact group/item identity through delayed
+Retry or Accept, group changes, page changes and leaving/reopening the same
+group. Loading and failed detail reads cannot block Pause, Resume, Undo or error
+recovery. Bound the control without deleting durable history or truncating the
+execution/attention owner. Native cursors, actual held-control/cardinality
+regressions and compact light/dark captures are required; #49 pending-group Undo
+remains separate. The user explicitly requires an independent agent review before
+root merges PR #57. That review found no #50 blockers; its separate scheduling
+finding is reproduced and tracked in #58 for the Undo lane.
+
+**6 October mobile review and parallel delivery:** Review Android/iOS
+functionality against current desktop behaviour, excluding mobile usability
+adaptations; file GitHub issues and assign GPT-6.1 Sol agents at high reasoning.
+The primary thread reviews PRs, answers questions, tests combined changes and
+handles merging. The [source audit](agents/MOBILE_FUNCTIONAL_AUDIT.md) links
+24 functional gaps and a separate platform-evidence issue. This session permits
+three concurrent child agents, so delivery uses waves within the requested
+maximum of five. Existing unrelated changes remain outside these PRs.
+Initial fixes are account-bound notices in
+[PR #53](https://github.com/sam-ruff/shep.so/pull/53), retained bulk selection
+in [PR #54](https://github.com/sam-ruff/shep.so/pull/54) and Preferences search
+in [PR #55](https://github.com/sam-ruff/shep.so/pull/55) and calendar scheduling
+in [PR #56](https://github.com/sam-ruff/shep.so/pull/56), with bounded History
+in [PR #57](https://github.com/sam-ruff/shep.so/pull/57) and queued Undo in
+[PR #60](https://github.com/sam-ruff/shep.so/pull/60). Reader headers are in
+[PR #59](https://github.com/sam-ruff/shep.so/pull/59); reply quote controls and
+provider folder destinations remain active implementation lanes. The user also
+requested a separate agent investigate and fix failing CI. The tracker retains
+the remaining functional and platform gaps.
+
+**6 October mobile calendar scheduling (#29):** Native Start date, Last date,
+From, To and All day controls now support timed and multi-day events. Validation,
+nominal all-day projection, preserved event metadata and exact held/lost
+admissions have host control/FFI and positive/negative-offset evidence. The
+calendar remains fixed after the first submission so an unknown save cannot
+become another CREATE on a different source. Untouched legacy non-midnight
+all-day timestamps retain their existing interpretation; no history migration
+or automatic provider correction is performed. Descriptions remain preserved;
+desktop has no description editor either. Saved Android date/time/all-day and
+native journal close/reopen controls pass; captures are reviewed. Apple and live
+provider execution, full recurrence editing and shared Calendar Undo remain
+separately tracked.
+
 **28 September sync notice, tray and reader report:** The user's screenshot
 shows an account sync no-progress timeout and a blank formatted reader. It does
 not establish the provider cause or a renderer defect. The user asked that a
@@ -12,8 +88,14 @@ episode, bind results to each account's incoming connection identity, and keep
 mail sync, calendar refresh, unattended automatic backup and automatic
 move-recovery failures from reopening a hidden window or cancelling Quit while
 user-started writes keep their recovery. Desktop
-is implemented with the evidence in [the completion log](COMPLETION.md); Flutter
-and browser parity and the blank-reader question remain open.
+is implemented with the evidence in [the completion log](COMPLETION.md).
+Flutter's foreground notice policy is implemented in
+[PR #53](https://github.com/sam-ruff/shep.so/pull/53), including exact incoming
+identities, delayed automatic episodes, immediate Refresh and owned recovery.
+Its independent scheduling and OS lifecycle work remain in
+[#35](https://github.com/sam-ruff/shep.so/issues/35) and
+[#46](https://github.com/sam-ruff/shep.so/issues/46). Browser notice parity and
+the blank-reader question remain open.
 
 The next architecture continuation integrates checked Flutter folder changes and
 desktop Activity through existing owners. Mobile integrated gates pass198 Rust
@@ -489,7 +571,7 @@ hook test executions passing; see the newest completion entry. OAuth and the sha
 | R96 | Reply buttons float at the bottom of the preview panel so replying needs no scrolling (11 September 2026) | Reproduced in native conversations: the expanded card carried Reply/Reply all/Forward/Print inside its scroller. The reader now reserves a footer outside those cards and binds it to the focused physical message, including collapsed cards and HTML preparation. Evidence and remaining integration/shipping are recorded in completion; individual reader and client footers were already outside the body. |
 | R97 | Configurable option to include the previous email thread in replies (11 September 2026) | Desktop delivered on `feat/reply-include-original-preference` (22 September): Preferences → General → Composing sets the starting state of the per-reply Include original message checkbox for new Reply and Reply all drafts, default on; saved and parked drafts keep their own choice and forwards always include the original. Browser/Flutter controls, a portable profile key and shipping stay open in TODO |
 | R98 | Small ? help icons with tooltips beside easily misunderstood settings only, not every option (11 September 2026) | Desktop delivered on `feat/settings-help-tooltips`: seven reviewed settings get a focusable ? with hover/click/Tab help that hides through its own synced help-icons preference; unit and native scenarios recorded in completion. Browser/Flutter parity and screen reader exposure remain open in TODO |
-| R99 | Settings search should search all settings (11 September 2026) | Search-demo catalogue adds control captions, weighted typo matching, cached results and persisted-field coverage review. 23 September: rendered-caption catalogue, individual-control reveal and focus, a guard that fails for an uncatalogued Preferences caption, and the "shared profile" regression fix. Browser/Flutter parity and the unbuilt review states remain open in TODO; see [Preferences search](agents/SETTINGS_SEARCH.md) |
+| R99 | Settings search should search all settings (11 September 2026) | Desktop rendered-caption catalogue, individual-control reveal/focus, coverage guard and the "shared profile" regression fix. Flutter #26 adds a local available-control catalogue, shared native matching, actual-control/destination reveal and retained unsaved state with model/widget/preview controls and executed Android native search/reveal/Theme evidence. Browser search, wider Android/iOS execution, unimplemented mobile settings (#41) and desktop unbuilt review states remain open in TODO; see [Preferences search](agents/SETTINGS_SEARCH.md) |
 | R100 | "Could not load related messages: Query returned no rows" keeps appearing after archiving and is not useful (14 September 2026) | Fixed and pushed as `3dabf16`: a removed or never-synced conversation anchor returns an empty conversation instead of a raw SQLite error; regression test added. Flutter/browser clients have no grouped conversation view, so nothing there can fail the same way; grouping parity itself is an open client gap |
 | R114 | Entered addresses become chips with an ×, including pasted `a;b`, `a,b`, `a; b` and `a, b` lists (12 October 2026) | Implemented on desktop, browser and Flutter against the shared `recipient-cases.json`, uncommitted; drafts keep the comma-separated value. Device/Apple and non-Chromium verification are tracked in TODO |
 | R113 | Ctrl+Z undo while drafting an email (12 October 2026) | Desktop has its own bounded per-field history because iced has none; browser and Flutter keep native undo for Subject/body and add chip-change history. Uncommitted; tracked in TODO |

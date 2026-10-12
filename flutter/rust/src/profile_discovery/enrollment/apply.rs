@@ -141,17 +141,21 @@ pub(super) fn confirm(
     let mut receipt = serde_json::json!({"applied": applied, "kept": kept});
     if let Some(revisions) = revisions {
         ensure!(
-            revisions.len() == SETTINGS.len()
-                && SETTINGS
+            super::valid_revisions(&revisions)
+                && applied
                     .iter()
+                    .chain(&kept)
+                    .all(|field| revisions.contains_key(field))
+                && revisions
+                    .keys()
                     .all(
-                        |field| revisions.get(*field).is_some_and(|revision| *revision
+                        |field| revisions.get(field).is_some_and(|revision| *revision
                             <= 9_007_199_254_740_991
                             && review
                                 .baseline
                                 .revisions
-                                .get(*field)
-                                .is_some_and(|before| revision >= before))
+                                .get(field)
+                                .is_none_or(|before| revision >= before))
                     ),
             "Invalid original preference revisions. Resume with the saved device receipt."
         );

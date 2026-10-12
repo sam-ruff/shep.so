@@ -5,7 +5,7 @@ use shep_profile_core::{
     history::{Journal, LocalEdit, Record},
 };
 pub(in crate::profile_discovery) fn preferences() -> Preferences {
-    let values = serde_json::from_value(serde_json::json!({"appearance":"System","left_swipe":"archive","right_swipe":"read","preview_lines":2,"sender_pictures":true,"unified_inbox":true,"reply_display":"Collapsed","tooltips":true})).unwrap();
+    let values = serde_json::from_value(serde_json::json!({"appearance":"System","left_swipe":"archive","right_swipe":"read","preview_lines":2,"sender_pictures":true,"unified_inbox":true,"reply_display":"Collapsed","tooltips":true,"reply_include_original":true})).unwrap();
     Preferences {
         values,
         revisions: SETTINGS.into_iter().map(|s| (s.into(), 0)).collect(),
@@ -640,6 +640,8 @@ async fn removed_device_mapping_stays_unselected_and_unknown_connection_fields_c
 async fn original_platform_revisions_survive_failed_native_receipts_restart_and_changed_retries() {
     let (dir, profile) = profile().await;
     let mut baseline = preferences();
+    baseline.values.remove("reply_include_original");
+    baseline.revisions.remove("reply_include_original");
     baseline.revisions.values_mut().for_each(|value| *value = 3);
     let mut review = prepared_preferences(&profile, &source(0), baseline.clone()).await;
     let key = scope().storage_key().unwrap();
@@ -653,6 +655,7 @@ async fn original_platform_revisions_survive_failed_native_receipts_restart_and_
     review = apply::step(&profile, &key, review).await.unwrap();
     assert_eq!(review.phase, "settings");
     let mut revisions = baseline.revisions.clone();
+    assert_eq!(baseline.values.len(), 8);
     revisions.insert("appearance".into(), 4);
     // Decode through the production command boundary, including missing legacy proof.
     let command = serde_json::json!({"kind":"confirm_settings", "id":id,

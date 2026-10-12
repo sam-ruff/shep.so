@@ -102,6 +102,7 @@ class GoogleConnectionCard extends StatelessWidget {
                 runSpacing: 8,
                 children: [
                   FilledButton(
+                    key: const ValueKey('google-connect'),
                     onPressed: c.loaded && !c.busy && !c.cleanupPending
                         ? c.connect
                         : null,
@@ -115,6 +116,7 @@ class GoogleConnectionCard extends StatelessWidget {
                   ),
                   if (active != null)
                     OutlinedButton(
+                      key: const ValueKey('google-disconnect'),
                       onPressed: c.busy || !c.loaded
                           ? null
                           : () async {
@@ -145,6 +147,7 @@ class GoogleConnectionCard extends StatelessWidget {
                     ),
                   if (c.cleanupPending)
                     OutlinedButton(
+                      key: const ValueKey('google-cleanup'),
                       onPressed: c.busy || !c.loaded ? null : c.disconnect,
                       child: const Text('Retry cleanup'),
                     ),
@@ -173,11 +176,13 @@ class GoogleConnectionCard extends StatelessWidget {
                 ),
                 if (!c.loaded)
                   TextButton(
+                    key: const ValueKey('google-retry-read'),
                     onPressed: c.busy ? null : c.load,
                     child: const Text('Retry reading Google connection'),
                   ),
                 if (c.loaded && c.choicesUnsaved && !c.busy)
                   TextButton(
+                    key: const ValueKey('google-retry-save'),
                     onPressed: c.saveChoices,
                     child: const Text('Retry saving choices'),
                   ),

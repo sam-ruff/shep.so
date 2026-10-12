@@ -258,16 +258,46 @@ impl Plan {
     }
 
     pub fn counts(&self, c: &Connection) -> anyhow::Result<(usize, usize)> {
-        Ok(c.query_row(
-            &self.counts_query(),
-            rusqlite::params_from_iter(&self.values),
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as usize,
-                    row.get::<_, i64>(1)? as usize,
-                ))
-            },
-        )?)
+        #[cfg(feature = "test-support")]
+        let started = tracing::enabled!(target: "shep::query_timing", tracing::Level::DEBUG)
+            .then(std::time::Instant::now);
+        let mut statement = c.prepare(&self.counts_query())?;
+        let result = statement.query_row(rusqlite::params_from_iter(&self.values), |row| {
+            Ok((
+                row.get::<_, i64>(0)? as usize,
+                row.get::<_, i64>(1)? as usize,
+            ))
+        })?;
+        #[cfg(feature = "test-support")]
+        if let Some(started) = started {
+            let original_ms = started.elapsed().as_secs_f64() * 1000.;
+            let split = std::time::Instant::now();
+            let alternate = (|| -> anyhow::Result<(usize, usize)> {
+                let total = c.query_row(
+                    &format!(
+                        "{}SELECT COUNT(*) FROM {} WHERE {}",
+                        self.prefix, self.from, self.condition
+                    ),
+                    rusqlite::params_from_iter(&self.values),
+                    |row| row.get::<_, i64>(0),
+                )?;
+                let unread = c.query_row(
+                    &format!(
+                        "{}SELECT COUNT(*) FROM {} WHERE {} AND unread=1",
+                        self.prefix, self.from, self.condition
+                    ),
+                    rusqlite::params_from_iter(&self.values),
+                    |row| row.get::<_, i64>(0),
+                )?;
+                Ok((usize::try_from(total)?, usize::try_from(unread)?))
+            })();
+            tracing::debug!(target: "shep::query_timing", phase = "counts", original_ms,
+                original_vm_steps = statement.get_status(rusqlite::StatementStatus::VmStep),
+                original_fullscan_steps = statement.get_status(rusqlite::StatementStatus::FullscanStep),
+                split_ms = split.elapsed().as_secs_f64() * 1000.,
+                split_matches = alternate.is_ok_and(|value| value == result));
+        }
+        Ok(result)
     }
 
     pub fn counted_page(

@@ -306,6 +306,49 @@ async fn abandoned_submitting_is_uncertain_only_after_exclusive_profile_handover
         "Original"
     );
 }
+
+#[tokio::test]
+async fn uncertain_reply_recovery_retains_quote_choice_and_exact_thread_headers()
+-> anyhow::Result<()> {
+    let (dir, p) = profile().await;
+    let original = json!({"account_id":"fixture","mail_id":"source","quote":"\n\n> Original", "include_quote":false});
+    let mut reply = draft(1, "Typed answer");
+    reply["reply_context"] = original.clone();
+    reply["in_reply_to"] = json!("<original@example.test>");
+    reply["references"] = json!(["<root@example.test>", "<original@example.test>"]);
+    request(&p, json!({"op":"save_account","account":account()})).await;
+    request(&p, json!({"op":"save_draft","draft":reply})).await;
+    let stored = reply.to_string();
+    p.database.write(move |db| {
+        db.execute("INSERT INTO outgoing VALUES('reply-unknown','draft-one','submitting','fixture','<reply@example.test>',?1,?2)",
+            params![b"From: alex@example.test\r\nSubject: Reply\r\n\r\nTyped answer".to_vec(),stored])?;
+        Ok(())
+    }).await?;
+    drop(p);
+    let reopened = MobileProfile::open(
+        dir.path()
+            .join("mail.sqlite3")
+            .to_string_lossy()
+            .into_owned(),
+    )
+    .await?;
+    assert_eq!(
+        request(&reopened, json!({"op":"delivery","id":"draft-one"})).await["state"],
+        "uncertain"
+    );
+    request(
+        &reopened,
+        json!({"op":"recover_outgoing","id":"reply-unknown","action":"return","confirmed":true}),
+    )
+    .await;
+    let recovered = request(&reopened, json!({"op":"drafts"})).await[0].clone();
+    assert_eq!(recovered["reply_context"], original);
+    assert_eq!(recovered["body"], "Typed answer");
+    assert_eq!(recovered["in_reply_to"], reply["in_reply_to"]);
+    assert_eq!(recovered["references"], reply["references"]);
+    assert_eq!(recovered["bcc"], reply["bcc"]);
+    Ok(())
+}
 #[tokio::test]
 async fn accepted_smtp_survives_sent_cache_failure_and_preserves_newer_local_edits() {
     let (_dir, p) = profile().await;

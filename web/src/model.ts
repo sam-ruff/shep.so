@@ -124,6 +124,7 @@ export interface Preferences {
   previewLines: number;
   avatars: boolean;
   quoteMode: "Collapsed" | "Expanded" | "Latest only";
+  replyIncludeOriginal: boolean;
   sidebarWidth: number;
   listWidth: number;
   /** Allow moving mail between accounts. */
@@ -151,6 +152,7 @@ export const defaults: Preferences = {
   previewLines: 2,
   avatars: true,
   quoteMode: "Collapsed",
+  replyIncludeOriginal: true,
   sidebarWidth: 218,
   listWidth: 370,
   crossAccountMoves: false,
@@ -192,6 +194,8 @@ export class BrowserSettings implements SettingsStore {
       quoteMode: ["Collapsed", "Expanded", "Latest only"].includes(p.quoteMode)
         ? p.quoteMode
         : "Collapsed",
+      replyIncludeOriginal: typeof p.replyIncludeOriginal === "boolean"
+        ? p.replyIncludeOriginal : defaults.replyIncludeOriginal,
       sidebarWidth: Number.isFinite(p.sidebarWidth)
         ? Math.max(180, Math.min(320, p.sidebarWidth))
         : 218,

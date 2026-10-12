@@ -6,6 +6,11 @@
       "error": null
     },
     {
+      "name": "reply-include-original-false",
+      "patches": [{"path": "/changes", "value": [{"kind": "setting", "key": "reply_include_original", "value": false, "future_choice": {"retain": true}}]}],
+      "error": null
+    },
+    {
       "name": "future-minor",
       "patches": [
         {

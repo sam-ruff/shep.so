@@ -54,6 +54,8 @@ class Mail {
     this.accountId = '',
     this.bodyLoaded = true,
     this.lineage,
+    this.recipient = '',
+    this.senderHeader,
   });
   final String id, sender, address, subject, preview, body, account, folder;
   final DateTime date;
@@ -64,10 +66,14 @@ class Mail {
   final String accountId;
   final bool bodyLoaded;
   final String? lineage;
+  final String recipient;
+  final String? senderHeader;
 
   Mail patch(Map<String, Object> fields) => Mail(
     id: fields['id'] as String? ?? id,
     sender: sender,
+    senderHeader: senderHeader,
+    recipient: recipient,
     address: address,
     subject: subject,
     preview: preview,
@@ -88,6 +94,8 @@ class Mail {
   Mail withoutBody() => Mail(
     id: id,
     sender: sender,
+    senderHeader: senderHeader,
+    recipient: recipient,
     address: address,
     subject: subject,
     preview: preview,
@@ -108,6 +116,8 @@ class Mail {
   Mail withDetail(Mail detail) => Mail(
     id: id,
     sender: sender,
+    senderHeader: senderHeader,
+    recipient: recipient,
     address: address,
     subject: subject,
     preview: preview,
@@ -165,20 +175,32 @@ class CalendarEntry {
     'etag': etag,
     'remote_url': remoteUrl,
   };
-  factory CalendarEntry.fromCalendarJson(Map<String, dynamic> json) =>
-      CalendarEntry(
-        json['id'] as String,
-        json['title'] as String,
-        DateTime.parse(json['start'] as String).toLocal(),
-        DateTime.parse(json['end'] as String).toLocal(),
-        calendar: json['source_id'] as String,
-        sourceId: json['source_id'] as String,
-        location: json['location'] as String? ?? '',
-        description: json['description'] as String? ?? '',
-        allDay: json['all_day'] as bool? ?? false,
-        etag: json['etag'] as String?,
-        remoteUrl: json['remote_url'] as String?,
-      );
+  factory CalendarEntry.fromCalendarJson(Map<String, dynamic> json) {
+    final start = DateTime.parse(json['start'] as String);
+    final end = DateTime.parse(json['end'] as String);
+    bool nominal(DateTime value) =>
+        value.isUtc &&
+        value.hour == 0 &&
+        value.minute == 0 &&
+        value.second == 0 &&
+        value.millisecond == 0 &&
+        value.microsecond == 0;
+    // Non-midnight pairs retain their existing instant interpretation.
+    final dates = json['all_day'] == true && nominal(start) && nominal(end);
+    return CalendarEntry(
+      json['id'] as String,
+      json['title'] as String,
+      dates ? start : start.toLocal(),
+      dates ? end : end.toLocal(),
+      calendar: json['source_id'] as String,
+      sourceId: json['source_id'] as String,
+      location: json['location'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      allDay: json['all_day'] as bool? ?? false,
+      etag: json['etag'] as String?,
+      remoteUrl: json['remote_url'] as String?,
+    );
+  }
   CalendarEntry withSource(CalendarSourceView source) => CalendarEntry(
     id,
     title,
@@ -260,6 +282,35 @@ class ForwardQuote {
   };
 }
 
+class ReplyContext {
+  const ReplyContext({
+    required this.accountId,
+    required this.mailId,
+    required this.quote,
+    this.includeQuote = true,
+  });
+  final String accountId, mailId, quote;
+  final bool includeQuote;
+  ReplyContext including(bool value) => ReplyContext(
+    accountId: accountId,
+    mailId: mailId,
+    quote: quote,
+    includeQuote: value,
+  );
+  Map<String, Object?> toJson() => {
+    'account_id': accountId,
+    'mail_id': mailId,
+    'quote': quote,
+    'include_quote': includeQuote,
+  };
+  factory ReplyContext.fromJson(Map<String, dynamic> value) => ReplyContext(
+    accountId: value['account_id'],
+    mailId: value['mail_id'],
+    quote: value['quote'],
+    includeQuote: value['include_quote'],
+  );
+}
+
 class Draft {
   const Draft({
     required this.id,
@@ -272,6 +323,7 @@ class Draft {
     this.revision = 0,
     this.fileRevision = 0,
     this.forward,
+    this.replyContext,
     this.inReplyTo,
     this.references = const [],
     this.attachments = const [],
@@ -281,6 +333,7 @@ class Draft {
   final int revision, fileRevision;
   final String? inReplyTo;
   final ForwardQuote? forward;
+  final ReplyContext? replyContext;
   final List<String> references;
   final List<DraftAttachment> attachments;
   Map<String, Object?> toJson() => {
@@ -296,6 +349,7 @@ class Draft {
     'references': references,
     'file_revision': fileRevision,
     'forward': forward?.toJson(),
+    'reply_context': replyContext?.toJson(),
     'attachments': attachments.map((a) => a.toJson()).toList(),
   };
   factory Draft.fromJson(Map<String, dynamic> json) => Draft(
@@ -311,6 +365,9 @@ class Draft {
     forward: json['forward'] == null
         ? null
         : ForwardQuote.fromJson(json['forward']),
+    replyContext: json['reply_context'] == null
+        ? null
+        : ReplyContext.fromJson(json['reply_context']),
     inReplyTo: json['in_reply_to'],
     references: (json['references'] as List? ?? []).cast<String>(),
     attachments: (json['attachments'] as List? ?? [])

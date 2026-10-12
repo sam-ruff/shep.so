@@ -90,6 +90,46 @@ async function capture(name) {
   await page.waitForTimeout(150); // Let the last frame paint before the capture.
   await page.screenshot({ path: path.join(out, `${name}.png`) });
 }
+async function preferencesSearch() {
+  const field = page.getByRole('textbox', { name: 'Search preferences', exact: true });
+  async function typeQuery(query, expected) {
+    for (let attempt = 0; ; attempt++) {
+      const box = await field.boundingBox();
+      assert.ok(box);
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await page.waitForTimeout(150);
+      await page.keyboard.press('ControlOrMeta+A');
+      await page.keyboard.type(query);
+      try {
+        await page.getByRole('button', { name: 'Clear search', exact: true })
+          .waitFor({ state: 'visible', timeout: 3000 });
+        break;
+      } catch (error) {
+        if (attempt === 2) throw error;
+      }
+    }
+    await waitText(expected);
+  }
+  await typeQuery('unfindable', 'No preferences found');
+  await capture('preferences-search-empty');
+  await clickText('Clear search');
+  await typeQuery('avatars', 'Sender pictures');
+  await capture('preferences-search-synonym');
+  await page.getByRole('button', { name: /^Sender pictures/ }).click();
+  await waitText('Showing: Sender pictures');
+  const pictures = page.getByRole('checkbox', { name: 'Sender pictures', exact: true });
+  await pictures.click();
+  await waitText('Preferences saved');
+  assert.equal(await pictures.getAttribute('aria-checked'), 'false');
+  await pictures.click();
+  await typeQuery('quoted history', 'Reading');
+  await page.getByRole('button', { name: /^Quoted history/ }).click();
+  await waitText('Showing: Quoted history');
+  await capture('preferences-search-revealed');
+  await typeQuery('theme', 'Appearance');
+  await page.getByRole('button', { name: /^Theme/ }).click();
+  await waitText('Showing: Theme');
+}
 // Visual parity captures reviewed against the desktop client: drawer, reader,
 // composer and the empty search state in the current colour scheme.
 async function visualParity(scheme) {
@@ -164,6 +204,7 @@ try {
   await clickText("Preferences");
   await waitText("Swipe left");
   await capture("preferences-light");
+  await preferencesSearch();
   await openDropdown("Theme");
   await clickText("Dark");
   await waitText("Preferences saved");
@@ -233,6 +274,7 @@ try {
           "swipe-archive",
           "undo",
           "appearance",
+          "preferences-search-no-results-synonym-reveal-control",
           "calendar",
           "Find-dark-case",
           "Google-consent-cancel-retry-disconnect",

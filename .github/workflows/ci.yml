@@ -167,4 +167,5 @@ jobs:
             artifacts/e2e/
             artifacts/performance/
             artifacts/logs/
+            artifacts/diagnostics/
           retention-days: 7

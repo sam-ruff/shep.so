@@ -53,6 +53,7 @@ class GroupJob {
       undo = data['undo'] == true,
       total = data['total'] ?? 0,
       revision = data['revision'] ?? 0,
+      sequence = data['seq'] ?? 0,
       created = data['created'] ?? 0,
       error = data['error'],
       action = Map<String, dynamic>.from(data['action'] as Map? ?? {}),
@@ -62,7 +63,7 @@ class GroupJob {
       groups = (data['groups'] as List? ?? []).cast<Map<String, dynamic>>();
   final String id, state;
   final bool undo;
-  final int total, revision, created;
+  final int total, revision, created, sequence;
   final String? error;
   final Map<String, dynamic> action;
   final Map<String, int> counts;
@@ -78,7 +79,10 @@ class GroupJob {
   bool get finished => state == 'finished';
   bool get paused => state == 'paused';
   bool get inReview => state == 'review' || state == 'staging';
-  bool get canUndo => !undo && (active || finished) && count('done') > 0;
+  bool get canUndo =>
+      !undo &&
+      (active || finished) &&
+      count('done') + count('pending') + count('sending') > 0;
   bool get canPause => state == 'running' || state == 'undoing';
   bool get canRemove =>
       state == 'finished' || state == 'cancelled' || state == 'interrupted';

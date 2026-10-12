@@ -6,6 +6,7 @@ const profileSettingLabels = {
   'sender_pictures': 'Sender pictures',
   'unified_inbox': 'Unified inbox',
   'reply_display': 'Quoted history',
+  'reply_include_original': 'Include original message in new replies',
   'tooltips': 'Tooltips',
 };
 String profileSettingLabel(String field) =>

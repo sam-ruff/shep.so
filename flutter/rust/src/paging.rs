@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
 
 fn with_lineage(db: &Connection, message: &shep_mail_core::model::Mail) -> Result<Value> {
-    let mut value = serde_json::to_value(message)?;
+    let mut value = crate::headers::display_metadata(message)?;
     value["lineage"] = db
         .query_row(
             "SELECT token FROM mail_lineage WHERE id=?1",

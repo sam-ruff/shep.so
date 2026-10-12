@@ -1,5 +1,388 @@
 # Completion audit
 
+## Mobile reply original and portable default, 6 October 2026 (#30)
+
+Reply and Reply all now retain an immutable original separately from typed text,
+with an Include original message checkbox and a bounded read-only preview.
+Preferences exposes the searchable default-on choice, captured before reply
+preparation and applied only to new replies. Existing saved choices and Forward
+content remain unchanged. Schema26 fences older native writers that would erase
+the new hidden original during autosave. Upgrading schema25 preserves exact
+draft JSON and file bytes. Old inline-quote drafts remain unchanged without
+guessing a quotation boundary; omitted context in current text saves preserves
+the saved original and choice.
+
+The R97 default is now the shared `reply_include_original` boolean across
+desktop, mobile and browser profile adapters. Explicit false and per-field
+change/revert ownership survive application and restart. Known legacy eight-field
+mobile reviews, exact application requests and receipts retain their original
+fields; absence cannot observe or approve the ninth field. Raw profile operations
+and optional extensions retain the existing history ownership.
+
+Integrated main `5461d23` passes 415 Flutter tests and 223 native tests, native
+Clippy and clean Flutter analysis. The three normal-suite skips are two
+zone-conditional Calendar cases and the optional older-library probe; their
+separate execution is recorded below. Both London and Los Angeles Calendar
+suites pass 20 cases. Browser verification passes 305 tests,
+a production build and 33 actual WASM profile fixtures. Shared MIME/codec and
+desktop metadata/field-intent tests pass, with strict documentation and normal
+hooks required before shipping.
+Compact reply and changed Preferences failure goldens have been inspected.
+The first full Flutter run exposed five expected fixture/capture updates for the
+new field and section; corrected focused cases pass. Failed captures remain under
+ignored `artifacts/reply-first-failures/`.
+
+The saved Android scenario now changes the default and reply choice through real
+controls, uses DocumentsUI for attachment changes and releases the old opaque
+handle before reopen. Its first run passed the new quote/default controls, then
+the attachment fixture incorrectly inspected an offscreen field; the corrected
+fixture observes the fixed Save control's lock. The rerun built/installed but
+timed out before application launch at the unchanged 600-second bound. Logs and
+platform state are retained in `artifacts/reply-android-launch-failure/`; the owned
+emulator is rebooted without a wipe before another unchanged attempt. Normal
+checkpoint hooks pass, including 1,203 desktop library tests. The saved Android
+scenario passes with exactly `native-reply-original-default-files-reopen` in
+`artifacts/flutter/native/integration-compose-result.json`. Its reply and Waiting
+Outbox PNGs are retained there; a final spacing recapture is pending on the larger
+dedicated emulator under the primary thread; the final 16-pixel separation is
+covered by passing compact host goldens. Earlier normal-hook failures and the
+first Android control failure are retained under ignored artifacts. The third
+run completed quote/default, picker/removal and three owned close/reopen checks,
+then exposed the fixture's obsolete immediate Send-error assumption. It now
+checks durable Waiting Outbox, visible Cancel and retained files/context instead;
+production Send ownership is unchanged. A later IME caret layout displaced a
+scrolled checkbox in the next run; the fixture now observes its actual visible
+target after layout before tapping, within the unchanged bound.
+
+The native exact25-to26 upgrade/current legacy-autosave regression passes. A
+separate Dart process loaded the verified prior schema25 native library from
+`ccbd5c9`: it reproduced quote loss on an unfenced legacy autosave, then rejected
+schema26 without changing draft/file bytes. Its hash and passing log are retained
+in `artifacts/logs/reply-schema25-library.sha256` and `reply-old-writer-proof.log`.
+The library SHA-256 is
+`ecef436e99050ac9d22b493350964c1cff66567d213bf73482d53bc75907b27c`.
+The optional saved probe runs when supplied that library; normal suites skip it
+explicitly. Browser composer control/default
+application, Apple runtime and live provider execution remain active gaps.
+
+## Mobile cached reader headers, 6 October 2026 (#47)
+
+Implementation: [PR #59](https://github.com/sam-ruff/shep.so/pull/59).
+
+Flutter carries cached To and exact From through metadata pages, confirmed alias
+rows and detail reads. Receiving-account identity has its own line. Subject,
+From, single parsed sender address and To use selectable controls with visible
+Copy actions before body completion and through failure. Empty fields have
+noncopyable placeholders; no recipient or Bcc is inferred. The separate address
+uses the existing bounded shared mailbox parser and stays empty for invalid or
+ambiguous From values, preserving the exact original header independently.
+
+Focused model, actual FFI and reader/footer checks pass all 13 cases, including
+quoted angle brackets, surrounding whitespace, Unicode, multiple recipients,
+body failure/Retry, metadata refresh, alias adoption and late clipboard replies.
+Both native parser regressions pass and Flutter analysis is clean. The saved
+Flutter-web harness passes `header-copy-before-body` and
+`metadata-refresh-retains-frame`, checking actual clipboard values and the same
+formatted frame through two metadata refreshes. Three compact light/loading/dark
+captures were visually reviewed under `artifacts/flutter/reader-headers/`.
+
+The first native FFI failure exposed whitespace handling in parsed addresses;
+the unchanged exact From assertion already passed. That failure is retained in
+`reader-headers-parser-ffi.log`, with the passing corrected run in
+`reader-headers-ffi-fixed.log`. Browser observation/navigation failures are also
+preserved; the final real clipboard-based flow passes without relaxed deadlines.
+Full baseline verification passes 318 Flutter tests and all 208 native tests;
+native Clippy denies warnings and pinned strict documentation builds cleanly.
+Android execution passes `reader-headers-clipboard-refresh-light` and
+`reader-headers-clipboard-refresh-dark` with a synthetic repository and the actual
+system clipboard, separately from host FFI. Both saved native captures were
+visually reviewed. The first dark test read the clipboard before asynchronous
+Copy completion; its log, partial report and light capture are retained. The
+shared helper now awaits the current field's rendered Copy completion, with a
+host assertion rejecting existing same-label feedback. Its six focused host
+controls pass. The normal checkpoint hooks pass. Integration with `main`
+`0858706` passes 388 Flutter tests with the two existing zone-specific Calendar
+skips, and all 215 native tests, retaining Calendar scheduling, Preferences search
+and History changes. Native formatting also corrects the existing Preferences
+capacity test without changing its data or assertions. Final analysis, native
+Clippy, formatting, strict documentation and the current-main browser rerun pass.
+Normal merge hooks gate publication. Apple and live-provider verification remain
+open.
+
+Root integration with `main` at `9939956` retains queued Undo and the History
+wake fix, passing 405 Flutter tests and all 219 native tests. The two existing
+Calendar timezone skips remain covered by the unchanged London/Los Angeles
+cases from the preceding integration. Native Clippy and Flutter analysis pass.
+Root also reviewed the three saved browser and two Android captures and the
+exact system-clipboard assertions, with the synthetic Android repository kept
+separate from host FFI evidence.
+
+## Mobile queued bulk Undo checkpoint, 6 October 2026 (#49/#58)
+
+Implementation: [PR #60](https://github.com/sam-ruff/shep.so/pull/60).
+
+Approved queued/paused/held-first-step groups now expose Undo in the notice and
+History. The checked existing local decision cancels unsent membership and clears
+forward projection while preserving sending items and their later actual receipt.
+Native same-group retries keep the original Undo revision; unknown Dart replies
+inspect that exact saved group before another request. Dedicated Retry Undo
+feedback survives close and other owner errors, with bounded pending decisions,
+visible capacity recovery and exact removal fences.
+
+Independent review also reproduced a lost owner wake (#58): Undo, Resume and
+Retry during the final held History read each left one step call instead of the
+expected second call. The failed-before log is retained. Explicit wakes now
+restart the existing pump after its final observation, without authorising an
+automatic retry of failed or uncertain provider work.
+
+Focused model/actual controls, native provider fixtures and actual Dart FFI pass.
+The native fixture holds all admission/provider slots for local queued Undo and
+holds a real first MOVE reply through Undo, receipt and restart. It also retains
+unknown replies without replay and preserves newer read/star fields. Five real
+control scenarios cover queued light/dark, paused History/held receipt, partial
+completion and lost status after close. Both compact queued captures are reviewed.
+Full checkpoint host gates pass 376 Flutter and 217 native tests, with clean
+analysis/native Clippy and pinned strict documentation. Normal checkpoint hooks
+pass. Merging main `0858706` leaves native/shared source unchanged and the final
+Flutter suite passes 395 tests, with two zone-conditional Calendar skips covered
+separately in London/Los Angeles. The first combined run hit the previously
+reported existing group FFI settle timeout; its unchanged isolated and full
+reruns pass, with the failed log retained and no timeout changes. Final merged
+analysis/documentation and merge hooks are recorded with the PR. Android,
+Apple and live-provider evidence remain separate; no performance-under-load
+claim follows from controlled held-provider tests.
+
+## Mobile bulk History checkpoint, 6 October 2026 (#50)
+
+Implementation: [PR #57](https://github.com/sam-ruff/shep.so/pull/57).
+
+The Flutter History control now keeps one 20-group page and one 50-item page,
+with visible cursor navigation and exact older recovery targets. Schema25
+separates a 20-active admission bound from retained completed history and fences
+older binaries that would delete those records. The existing owner reads active
+and attention state independently of the displayed page; next-step lookup seeks
+one indexed eligible item per active group. No provider dispatcher was added.
+
+Recovery callbacks keep their group/item/page generation through held Retry or
+Accept, another group, another page and same-group away-and-back. Page and owner
+observations fence local command revisions, including two removals during a held
+read and stale failed replies. Iterative group, detail and owner
+one-read/latest-replacement loops share idle futures, avoiding recursive refresh
+chains and queued reads from rapid group choices. Failed detail reads retain a
+scoped Retry above the scroller; group controls and closing remain independent of
+those reads.
+Accept, Retry and Remove refresh independent attention state, including older
+off-page targets; actual banner controls cover accepting and removing that group.
+
+Before current-main integration, the full host gates pass 317 Flutter and 206
+native tests, with clean analysis/native Clippy and reviewed compact light/dark
+captures. Focused native evidence includes 100,000 completed groups: next-item
+92 VM steps, active admission 66, attention count 48 and target 34, all with zero
+full-scan steps. That query-plan regression is not latency/performance evidence.
+The actual FFI case covers final and empty-boundary cursors. Attention counting
+still scans matching failed/uncertain entries, and group summaries aggregate
+their members; the completed-history regression does not establish fixed cost
+for large attention sets or large groups. Integration with main `22d6bbc` passes
+all 359 Flutter and 213 native tests, including the final read-coalescing and
+attention-banner regressions, with clean analysis and reviewed captures.
+Checkpoint normal hooks and pinned strict documentation pass. Final merged
+Clippy/documentation and merge hooks are recorded with the PR. Android/Apple,
+live providers and large-active-group performance remain separate requirements.
+Pending-group Undo stays in #49.
+
+Primary integration with `main` `31d004a` passes 378 Flutter tests, with the two
+existing zone-specific cases covered by the Calendar evidence below. Analysis
+and four Android report-guard tests pass. Native Rust and History production
+sources are unchanged from the reviewed head with 213 native tests and clean
+Clippy. The saved Android bulk runner passes all three native scenarios and all
+four Appium preview flows. Root reviewed the light/dark native History captures,
+the Appium light review and dark History captures. Evidence is under ignored
+`artifacts/logs/history-integrated-*` and `artifacts/flutter/native/`.
+
+An independent agent reviewed the complete change and found no #50 blockers.
+Its separate pre-existing final-observation scheduling finding was reproduced
+for Undo, Resume and Retry and is tracked in #58 alongside #49. Final integration
+hooks and strict documentation results are recorded in PR #57. Apple, live
+providers and large-active-group performance remain unverified.
+
+## Mobile calendar scheduling, 6 October 2026 (#29)
+
+Implementation: [PR #56](https://github.com/sam-ruff/shep.so/pull/56),
+commit `b20ad45`.
+
+The event editor now has native Start date, Last date, From and To pickers and
+an All day switch. It supports timed and multi-day events, rejects invalid ranges
+and nonexistent spring-DST times, and keeps read-only/expanded recurring events
+view-only. Last date is inclusive for all-day events; the stored end is the next
+nominal date at UTC midnight. Month and day projections include spanning events
+without exposing a canonical all-day event on neighbouring local dates.
+
+Canonical midnight all-day pairs remain UTC nominal dates when decoded. Older
+non-midnight pairs retain their previous local instant interpretation and exact
+serialised timestamps. Title/location-only edits preserve the original start/end;
+only an explicit schedule edit adopts the nominal date representation. No journal
+history is migrated and no previously sent provider event is corrected implicitly.
+Descriptions, source, ETag and resource URL remain intact; desktop also lacks a
+description editor.
+
+Submitted input is frozen through the existing journal owner. Later text/time/date
+input stays open after an older completion. The calendar becomes fixed after the
+first submission so an unknown save cannot create another event on a different
+source. Closing a submitted form keeps admitted work reachable through Calendar.
+Exact retries and conditional provider/cache recovery remain owned by Workspace.
+
+Evidence: the default-zone full Flutter suite passes 293 tests, with two
+zone-specific cases run separately. London and Los Angeles each pass 29 focused
+tests, including actual spring-gap controls, nominal DST ranges and retained
+legacy/timed timestamps. Nine host FFI tests include explicit native profile
+disposal before reopening and exact admitted-request comparisons. The native
+calendar Rust filter passes 37 tests, native Clippy and Flutter analysis are clean,
+and four harness tests retain independent calendar/bulk completion guards.
+
+The saved `android_e2e.py --calendar-only` scenario passes timed and all-day saves
+in light/dark through the production Workspace/native journal, followed by owned
+profile close/reopen. Both Android captures and compact light/dark/view-only
+goldens were reviewed. The first Android run read the journal before admission;
+its logs/capture remain under ignored `artifacts/calendar-failed-before`. The
+saved test now observes the actual journal and form outcome with bounded waits
+and visible failure diagnostics. Live Google/CalDAV, Apple execution, full
+recurrence editing and acknowledged Calendar Undo remain unverified or unfinished.
+
+Primary integration with `main` `22d6bbc` passes 349 Flutter tests, with the two
+zone-specific cases covered by 20 model/control tests in each of London and Los
+Angeles. All four report-guard tests pass. Native Rust sources are identical to
+the main revision whose 210 tests and Clippy passed during PR #55 integration.
+The first combined Flutter run could not load suites because its generated
+package configuration lacked the newly merged Preferences dependency; resolving
+packages left the lockfile and source unchanged, and the full rerun passes.
+The complete source diff, both compact scheduling goldens, the recurring view-only
+golden and both Android captures were reviewed before integration.
+
+## Mobile Preferences search, 6 October 2026 (#26)
+
+Implementation [PR #55](https://github.com/sam-ruff/shep.so/pull/55), commit
+`24ca8a8`, implements issue #26. Its available-control
+catalogue reveals actual local, mail, Google, profile and CalDAV settings while
+retaining save/Retry ownership and open form input. Installed native builds use
+the shared WordMatcher off-thread through the existing request boundary; bounded
+coalescing rejects older input and replaced catalogue identities. The preview
+matcher has explicitly narrower typo/recomposition/ranking support.
+
+Validation passes 296 Flutter tests with serial workers, 207 Flutter Rust tests,
+four shared-matching/bounds/capacity checks, native all-target Clippy with warnings
+denied, Flutter analysis, strict Zensical and eight real-input preview flows.
+Normal commit hooks pass. Root also executed the saved Android native FFI/control
+scenario and reviewed its accent-result and revealed-dark captures; the report
+contains exactly `native-preferences-shared-search-controls` and both images.
+Evidence is in `artifacts/logs/preferences-android-captures-root.log`,
+`artifacts/flutter/native/` and `artifacts/flutter/web/`.
+
+Primary integration with `main` `021d093` passes all 330 Flutter and 210 native
+Rust tests. Flutter analysis and strict documentation checks pass. The primary
+review inspected the complete implementation and all four changed recovery/save
+goldens. Source is unchanged by integration; both completion records are retained.
+The first native integration compile failed with conflicting cached dependency
+identities in a target previously shared with the desktop workspace. The unchanged
+source passes in a dedicated native target; the failed log is retained.
+
+Earlier normal-hook compilation was interrupted with exit 143; the unchanged
+rerun passes. Existing native selection/group settle checks intermittently failed
+in parallel host suites; isolated and complete unchanged reruns pass, and the
+final serial suite passes without changing deadlines. Failed logs are retained.
+These checks use temporary profiles and fixtures, not personal provider access.
+Browser search, absent desktop controls (#41), wider Android/iOS scenarios, live
+Google/provider parity and final latency measurements remain separate work.
+
+## Mobile bulk review selection, 6 October 2026 (#27)
+
+Preparing, cancelling or dismissing a Flutter bulk review keeps the original
+native capture, including off-page membership. Preparation releases its frozen
+copy. Durable approval releases only the matching selection generation and scope.
+Lost preparation/approval replies inspect the reserved job without creating a
+second review or dispatching work. Failed decisions retain the exact review;
+Retry reopens it or retries failed cleanup, and obsolete preparations retire
+through the existing journal. Back and barrier dismissal share that cleanup.
+
+Host verification passes 289 Flutter tests, including the updated actual FFI
+group case and light/dark paged controls, plus four focused failure/held-decision
+controls. The standalone native suite passes 206 tests; its 11 group cases also
+cover read-only inspection of live/removed jobs, invalid identities and a
+transaction-aborted review page that retains the original capture and releases
+its frozen copy. Analysis and standalone Clippy are clean. Two compact captures
+with packaged fonts show failed approval and visible cleanup recovery; both were
+reviewed. Normal commit hooks gate the published checkpoint.
+
+Updated Flutter-web and Appium bulk flows reuse the retained selection after
+Cancel. Root Android verification passed the three named light/dark control and
+native-journal restart scenarios with the exact SQLite report. All four Appium
+flows pass, covering selection, declined review, approval/Pause/Resume/Undo and
+dark History. Ordinary light/dark review, completion and History captures were
+visually inspected; their button labels render correctly. Some integration
+captures omit filled-button labels, so those captures alone are not a visual
+pass. The interrupted Android wrapper was resumed at its unchanged Appium stage
+after restarting the owned emulator and installing the harness dependencies.
+Evidence remains under `artifacts/flutter/native/` and `artifacts/logs/` in the
+bulk-selection review worktree.
+
+Implementation: [PR #54](https://github.com/sam-ruff/shep.so/pull/54),
+commit `07f033c`. Primary integration with `main` `f854910` passes all 308 Flutter
+and 206 native tests, native Clippy and strict documentation checks. The reviewed
+implementation is unchanged apart from two formatter indentation corrections.
+Flutter-web execution, Apple, live IMAP and large-group
+performance remain separate verification requirements. Pending-group Undo (#49),
+bounded History retention and stale detail reloads (#50), and common-domain
+Activity (#45) remain active gaps. The existing compose button also overlaps the
+centre of the compact list's paging control; the new paging regression uses its
+exposed left portion with a real pointer tap.
+
+## Mobile foreground sync notices, 6 October 2026 (#28)
+
+Automatic mail checks now publish an account-bound warning only after 30 seconds
+from the first observed failure in a continuous episode. Typed results arrive as
+each account finishes, so another held account cannot delay the notice clock.
+Explicit Refresh remains immediate and retains its origin when queued behind an
+automatic check. Incoming settings and the active credential slot fence results;
+renames retain episodes, while reconnect, reconfiguration, removal and expired
+foreground generations reject stale replies. Successful checks end their own
+episodes. Unrelated action/save failures retain their recovery controls.
+
+The extracted notice model uses an injected clock and a monotonic production
+clock, with a one-shot deadline owned by the foreground workspace. Native account
+snapshots include content-free credential-slot identities and reject older replies.
+Private credential-store and unexpected provider exceptions retain fixed public
+errors. Retry and Dismiss use the existing visible mail controls.
+
+Evidence: 19 new controlled-clock, native orchestration and real Flutter-control
+tests pass, including held-second-account and failed-final-snapshot cases. The
+full Flutter suite passes 293 tests and the native Rust suite passes 203 tests;
+Flutter analysis is clean. Compact light/dark notice goldens were reviewed for
+readable account errors and reachable Retry/Dismiss controls. The actual Rust
+activation/restart regression checks legacy and newly activated snapshot slots.
+Implementation: [PR #53](https://github.com/sam-ruff/shep.so/pull/53),
+commit `2b1d7db`; the primary review checked the complete diff and both captures.
+
+Serial account scheduling and the fixed 15-second polling interval remain tracked
+separately in #35. OS-background scheduling, push/IDLE, live mail providers and
+actual Android/Apple lifecycle execution are unverified by these fixture tests.
+
+## Mobile source audit and issue inventory, 6 October 2026
+
+The [functional audit](agents/MOBILE_FUNCTIONAL_AUDIT.md) compares Flutter
+Android/iOS against desktop `main` `4dec758`, covering all application domains
+and excluding mobile layout adaptations and incomplete shared features.
+[GitHub #51](https://github.com/sam-ruff/shep.so/issues/51) links 24 confirmed
+functional gaps and a separate platform/provider verification issue. Each
+ticket includes baseline source evidence and acceptance criteria.
+
+Existing mobile folder mutations, CalDAV, durable bulk actions and preference
+reconciliation were checked in source, correcting stale broad missing-feature
+claims. The review also found lost selection after a declined bulk review,
+missing Undo before the first group acknowledgement, unbounded History item
+accumulation and the reader's account label being shown as recipient metadata.
+Implementation PRs and their executed checks are recorded separately. This
+inventory does not claim runtime or full-parity completion. The pinned strict
+Zensical documentation build passes.
+
 ## Real-server iced_test coverage, 5 October 2026 (desktop)
 
 The opt-in desktop suite drives actual widgets through `iced_test` with the

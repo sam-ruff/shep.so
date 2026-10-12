@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 import '../data/selection.dart';
 import 'mail.dart' show newDraftIdentity;
 
@@ -9,6 +10,13 @@ class _Gesture {
   final bool all;
   final (int, int)? range;
   bool failed = false;
+}
+
+class SelectionCapture {
+  SelectionCapture(this.snapshot, this.generation, this.scope);
+  final SelectionSnapshot snapshot;
+  final int generation;
+  final Map<String, Object?> scope;
 }
 
 /// A bounded gesture queue and rendered-row observations, never a full inbox's
@@ -32,12 +40,28 @@ class MailSelection {
   final _watched = <String, int>{};
   final _dirty = <String, int>{};
   int _observationGeneration = 0;
+  int _intentGeneration = 0;
   final _positions = <String, int>{};
   final _chosen = <String>{};
   final _aliases = <String, String>{};
   String _canonical(String id) => _aliases[id] ?? id;
   bool get pending => mode && (snapshot == null || _gestures.isNotEmpty);
   bool get ready => mode && !pending && error == null && count > 0;
+  SelectionCapture? get capture => ready
+      ? SelectionCapture(snapshot!, _intentGeneration, Map.of(scope()))
+      : null;
+
+  bool owns(SelectionCapture capture) =>
+      !_disposed &&
+      mode &&
+      _id == capture.snapshot.id &&
+      _intentGeneration == capture.generation &&
+      jsonEncode(scope()) == jsonEncode(capture.scope);
+
+  void complete(SelectionCapture capture) {
+    if (owns(capture)) done();
+  }
+
   int get count {
     var result = snapshot?.selected ?? 0;
     final chosen = Set<String>.of(_chosen);
@@ -153,6 +177,7 @@ class MailSelection {
   void start() {
     if (mode || _disposed) return;
     mode = true;
+    _intentGeneration++;
     _id = newDraftIdentity();
     snapshot = null;
     error = null;
@@ -162,6 +187,7 @@ class MailSelection {
   }
 
   void done() {
+    _intentGeneration++;
     mode = false;
     _id = null;
     anchor = null;
@@ -243,6 +269,7 @@ class MailSelection {
       return false;
     }
     warning = null;
+    _intentGeneration++;
     _gestures.add(gesture);
     changed();
     unawaited(_pump());

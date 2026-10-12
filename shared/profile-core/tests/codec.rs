@@ -9,6 +9,21 @@ fn decode(value: &Value) -> Result<Operation, Error> {
 }
 
 #[test]
+fn reply_default_false_preserves_complete_operation_and_extensions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut value = golden();
+    value["changes"] = json!([{"kind":"setting", "key":"reply_include_original", "value":false,
+        "future_change":{"preserve":true}}]);
+    value["future_operation"] = json!({"preserve":"exact"});
+    let operation = Operation::decode(&serde_json::to_vec(&value)?)?;
+    let encoded: Value = serde_json::from_slice(&operation.encode()?)?;
+    assert_eq!(encoded, value);
+    value["changes"][0]["value"] = json!("false");
+    assert!(decode(&value).is_err());
+    Ok(())
+}
+
+#[test]
 fn common_native_browser_contract_cases() {
     let cases: Value = serde_json::from_str(include_str!("../../profile-cases.json")).unwrap();
     for case in cases["cases"].as_array().unwrap() {

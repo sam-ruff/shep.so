@@ -290,11 +290,14 @@ async fn seeding_uses_original_revisions_and_leaves_kept_and_legacy_fields_pendi
     // A legacy receipt proves nothing for any field.
     let (_dir, profile) = crate::tests::profile().await;
     let legacy = Device::new();
+    let mut original = preferences();
+    original.values.remove("reply_include_original");
+    original.revisions.remove("reply_include_original");
     let review = enrolled(
         &profile,
         legacy.snapshot_now(),
         &legacy,
-        preferences(),
+        original,
         vec!["appearance".into()],
         None,
     )
@@ -310,6 +313,16 @@ async fn seeding_uses_original_revisions_and_leaves_kept_and_legacy_fields_pendi
     .await
     .unwrap();
     assert_eq!(status["unproven"], 8);
+    let key = scope().storage_key().expect("Scope");
+    assert!(
+        !profile
+            .database
+            .read(move |db| Ok(require(db, &key)?
+                .bases
+                .contains_key("reply_include_original")))
+            .await
+            .expect("Read subscription")
+    );
     let appearance = basis(&status, "appearance");
     assert_eq!(appearance.native_revision, None);
     assert_eq!(appearance.observed, 3);
@@ -340,6 +353,52 @@ async fn local_intent_is_admitted_before_pulling_and_published_to_the_other_devi
     assert_eq!(status["last"]["admitted"], 0);
     assert_eq!(status["last"]["published"], 0);
     assert_eq!(device.uploads.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn reply_default_false_and_reverted_intent_publish_once_through_restart() -> Result<()> {
+    let (dir, profile) = profile().await;
+    let device = Device::new();
+    subscribed(&profile, &device).await;
+    let local = snapshot(
+        serde_json::json!({"appearance":"Dark","reply_include_original":false}),
+        &[("appearance", 1), ("reply_include_original", 1)],
+    );
+    let status = cycle(&profile, &device, &local).await;
+    assert_eq!(status["last"]["admitted"], 1);
+    assert_eq!(
+        device.current("reply_include_original"),
+        vec![Value::Bool(false)]
+    );
+    let operation = basis(&status, "reply_include_original").operation;
+    drop(profile);
+    let reopened =
+        MobileProfile::open(dir.path().join("mail.sqlite3").to_string_lossy().into()).await?;
+    let status = cycle(&reopened, &device, &local).await;
+    assert_eq!(status["last"]["admitted"], 0);
+    assert_eq!(
+        basis(&status, "reply_include_original").operation,
+        operation
+    );
+    let reverted = snapshot(
+        serde_json::json!({"appearance":"Dark","reply_include_original":false}),
+        &[("appearance", 1), ("reply_include_original", 3)],
+    );
+    let status = cycle(&reopened, &device, &reverted).await;
+    assert_eq!(status["last"]["admitted"], 1);
+    assert_ne!(
+        basis(&status, "reply_include_original").operation,
+        operation
+    );
+    assert_eq!(
+        basis(&status, "reply_include_original").native_revision,
+        Some(3)
+    );
+    assert_eq!(
+        device.current("reply_include_original"),
+        vec![Value::Bool(false)]
+    );
+    Ok(())
 }
 
 #[tokio::test]

@@ -141,7 +141,10 @@ async fn seed_bases(
         Ok(rows)
     }).await?;
     let mut bases = BTreeMap::new();
-    for field in SETTINGS {
+    for field in snapshot.fields() {
+        if !review.baseline.values.contains_key(field) {
+            continue;
+        }
         let row = rows
             .iter()
             .find(|(target, _, _)| target == &super::target(field));
@@ -310,12 +313,7 @@ pub(super) fn confirm(
     ensure!(
         applied.len() + kept.len() == 1
             && applied.iter().chain(&kept).all(|f| *f == field)
-            && revisions.len() == SETTINGS.len()
-            && SETTINGS.iter().all(|f| {
-                revisions
-                    .get(*f)
-                    .is_some_and(|r| *r <= 9_007_199_254_740_991)
-            }),
+            && super::super::enrollment::valid_revisions(&revisions),
         "Invalid preference application receipt. Resume with the saved device receipt."
     );
     let request: Value = serde_json::from_str(&request)?;

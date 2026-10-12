@@ -8,6 +8,7 @@ import 'package:shep_mobile/data/native_repository.dart';
 import 'package:shep_mobile/data/accounts.dart';
 import 'package:shep_mobile/data/repository.dart';
 import 'package:shep_mobile/model/mail.dart';
+import 'package:shep_mobile/model/event_schedule.dart';
 import 'package:shep_mobile/src/rust/frb_generated.dart';
 
 class UnusedCredentials implements CredentialStore {
@@ -88,6 +89,95 @@ void main() {
       ),
     );
   });
+
+  test(
+    'timed and nominal all-day schedule requests retain exact bytes through admission and reopen',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'shep-calendar-schedule-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/mail.sqlite';
+      var repository = await NativeRepository.open(
+        path,
+        credentials: UnusedCredentials(),
+      );
+      addTearDown(() {
+        if (!repository.profile.isDisposed) repository.profile.dispose();
+      });
+      final seeded = await Process.run('sqlite3', [
+        path,
+        '''INSERT INTO calendar_sources(id,source) VALUES('primary','{"id":"primary","name":"Personal","read_only":false}'); INSERT INTO calendar_binding(id,subject) VALUES(1,'fixture-google-user');''',
+      ]);
+      expect(seeded.exitCode, 0, reason: '${seeded.stderr}');
+      final dates = EventSchedule(
+        date: DateTime(2026, 3, 28),
+      ).copy(lastDate: DateTime(2026, 3, 30));
+      final times = dates.copy(
+        allDay: false,
+        fromHour: 14,
+        fromMinute: 15,
+        toHour: 16,
+        toMinute: 45,
+      );
+      final events = [
+        CalendarEntry('days', 'Days off', dates.start, dates.end, allDay: true),
+        CalendarEntry(
+          'times',
+          'Trip',
+          times.start,
+          times.end,
+          location: 'Office',
+          description: 'Retain',
+        ),
+      ];
+      final retained = <String, Object?>{};
+      for (final event in events) {
+        final attempt = 'schedule-${event.id}';
+        final first = await repository.admitCalendarAction(
+          attempt,
+          event,
+          null,
+          subject: 'fixture-google-user',
+        );
+        final after = Map<String, dynamic>.from(
+          (first.mutation['save'] as Map)['after'] as Map,
+        );
+        expect(
+          CalendarEntry.fromCalendarJson(after).toCalendarJson(),
+          event.toCalendarJson(),
+        );
+        retained[attempt] = first.data['mutation'];
+        expect(
+          (await repository.admitCalendarAction(
+            attempt,
+            event,
+            null,
+            subject: 'fixture-google-user',
+          )).id,
+          attempt,
+        );
+      }
+      repository.profile.dispose();
+      repository = await NativeRepository.open(
+        path,
+        credentials: UnusedCredentials(),
+      );
+      final snapshot = await repository.calendarSnapshot();
+      for (final event in events) {
+        final action = await repository.calendarActionAdmission(
+          'schedule-${event.id}',
+        );
+        expect(action?.data['mutation'], retained['schedule-${event.id}']);
+        expect(
+          snapshot.events
+              .singleWhere((cached) => cached.id == event.id)
+              .toCalendarJson(),
+          event.toCalendarJson(),
+        );
+      }
+    },
+  );
 
   test(
     'calendar admission is durable through the actual FFI and cancel',

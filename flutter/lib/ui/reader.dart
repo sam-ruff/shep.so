@@ -14,9 +14,9 @@ import 'package:flutter/material.dart';
 import '../model/mail.dart';
 import '../model/workspace.dart';
 import 'composer.dart';
-import 'format.dart';
 import 'icons.dart';
 import 'theme.dart';
+import 'reader_headers.dart';
 
 class Reader extends StatefulWidget {
   const Reader({
@@ -601,96 +601,19 @@ class _ReaderState extends State<Reader> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          mail.subject,
-                          style: TextStyle(
-                            fontSize: ShepText.heading,
-                            fontWeight: FontWeight.w600,
-                            color: c.text,
-                          ),
-                        ),
-                        const SizedBox(height: 20),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 41,
-                              height: 41,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: avatarColors(0).$1,
-                                shape: BoxShape.circle,
-                              ),
-                              child: Text(
-                                avatarInitials(mail.sender),
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                  color: avatarColors(0).$2,
-                                ),
-                              ),
+                        ReaderHeaders(mail: mail),
+                        if (!mail.bodyLoaded) ...[
+                          if (workspace.loadingBody(id))
+                            const LinearProgressIndicator()
+                          else
+                            TextButton.icon(
+                              onPressed: () => workspace.loadBody(id),
+                              icon: const ShepIcon('sync'),
+                              label: const Text('Load message'),
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    mail.sender,
-                                    style: TextStyle(
-                                      fontSize: ShepText.body,
-                                      fontWeight: FontWeight.w600,
-                                      color: c.text,
-                                    ),
-                                  ),
-                                  if (!mail.bodyLoaded) ...[
-                                    if (workspace.loadingBody(id))
-                                      const LinearProgressIndicator()
-                                    else
-                                      TextButton.icon(
-                                        onPressed: () => workspace.loadBody(id),
-                                        icon: const ShepIcon('sync'),
-                                        label: const Text('Load message'),
-                                      ),
-                                    if (workspace.bodyError(id)
-                                        case final String error)
-                                      Text(
-                                        error,
-                                        style: TextStyle(color: c.flag),
-                                      ),
-                                    const SizedBox(height: 16),
-                                  ],
-                                  const SizedBox(height: 5),
-                                  SelectableText(
-                                    mail.address,
-                                    style: TextStyle(
-                                      color: c.muted,
-                                      fontSize: ShepText.caption,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 5),
-                                  Text(
-                                    'To: ${mail.account}',
-                                    style: TextStyle(
-                                      color: c.muted,
-                                      fontSize: ShepText.caption,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              readerDate(mail.date),
-                              textAlign: TextAlign.right,
-                              style: TextStyle(
-                                color: c.muted,
-                                fontSize: ShepText.caption,
-                                height: 1.8,
-                              ),
-                            ),
-                          ],
-                        ),
+                          if (workspace.bodyError(id) case final String error)
+                            Text(error, style: TextStyle(color: c.flag)),
+                        ],
                         const Padding(
                           padding: EdgeInsets.symmetric(vertical: 20),
                           child: Divider(),

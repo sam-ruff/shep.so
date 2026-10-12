@@ -142,6 +142,7 @@ pub enum Action {
 pub enum SettingKey {
     Appearance,
     ReplyDisplay,
+    ReplyIncludeOriginal,
     ImagePolicy,
     UnifiedInbox,
     CrossAccountMoves,

@@ -34,6 +34,7 @@ if [[ ${SHEP_DESKTOP_CONTAINER:-0} != 1 ]]; then
     --security-opt "seccomp=$shep_root/.github/desktop-linux-seccomp.json" \
     --security-opt no-new-privileges \
     --mount "type=bind,source=$shep_root,target=/workspace" \
+    --tmpfs "/e2e:rw,exec,nosuid,nodev,size=3221225472,mode=1777" \
     --env SHEP_DESKTOP_CONTAINER=1 \
     "${shep_environment[@]}" "$shep_image" \
     bash scripts/ci-desktop-linux.sh "$shep_version" "$shep_source"
@@ -51,6 +52,13 @@ gnome-shell --version
 ldd --version
 # Fail before the long build if the runner disallows Chromium's namespace sandbox.
 unshare --user --map-root-user true
+# Docker mounts tmpfs noexec unless told otherwise, and the print fixture runs
+# its browser launcher from the functional run directory.
+shep_exec_probe=$(mktemp /e2e/exec-probe.XXXXXX)
+printf '#!/bin/sh\n' > "$shep_exec_probe"
+chmod 700 "$shep_exec_probe"
+"$shep_exec_probe"
+rm "$shep_exec_probe"
 node scripts/ci-browser-smoke.mjs
 
 if [[ -n "$shep_version" ]]; then
@@ -65,13 +73,22 @@ python3 scripts/test_profile_core.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 cargo build --locked --release --no-default-features -p shep --bin shep
 cargo build --locked --profile test-ui --features test-support
-cargo bench --locked --bench responsiveness
-python3 scripts/e2e.py
+bash scripts/ci-performance.sh backend "$shep_source"
+# The functional flows keep their fixture data in memory: SQLite commits on the
+# runner's rotational pool stalled for tens of seconds under shared load. The
+# timing scripts below stay on disk. Evidence is copied back for upload whether
+# or not the suite passes.
+copy_e2e_evidence() { mkdir -p artifacts/e2e && cp -a /e2e/. artifacts/e2e/; }
+trap copy_e2e_evidence EXIT
+SHEP_E2E_ARTIFACTS=/e2e python3 scripts/e2e.py
+trap - EXIT
+copy_e2e_evidence
 python3 scripts/html_latency.py --samples 20 --output artifacts/performance/html.json
-python3 scripts/action_latency.py --samples 20 --output artifacts/performance/actions.json
-# The runner renders HTML 3-4x slower than a quiet workstation, so CI reports
-# those pixel timings; scripts/check.sh keeps the strict budgets.
-python3 scripts/performance_gate.py --html-report-only
+bash scripts/ci-performance.sh action "$shep_source"
+# The runner renders HTML and bulk review pixels 3-4x slower than a quiet
+# workstation, so CI reports those pixel timings; backend budgets stay strict
+# here and scripts/check.sh keeps every budget strict.
+python3 scripts/performance_gate.py --html-report-only --actions-report-only
 if [[ -n "$shep_version" ]]; then
   python3 scripts/release.py "$shep_version" --no-stamp \
     --target x86_64-unknown-linux-gnu --source "$shep_source"

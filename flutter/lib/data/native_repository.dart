@@ -13,6 +13,7 @@ import '../src/rust/frb_generated.dart';
 import '../model/mail.dart';
 import 'repository.dart';
 import 'accounts.dart';
+import 'incoming_sync.dart';
 import 'credentials.dart';
 import 'drafts.dart';
 import 'outgoing.dart';
@@ -28,6 +29,7 @@ class NativeRepository
         GroupRepository,
         MailRepository,
         AccountRepository,
+        IncomingSyncRepository,
         ProfileAccountRepository,
         DraftRepository,
         ForwardRepository,
@@ -55,6 +57,17 @@ class NativeRepository
   List<CalendarEntry> events = [];
   @override
   List<MailAccount> mailAccounts = [];
+  final Map<String, String> _incomingSlots = {};
+  int _accountSnapshotGeneration = 0;
+  @override
+  List<IncomingAccount> get incomingAccounts => [
+    for (final account in mailAccounts)
+      IncomingAccount(
+        account.id,
+        account.name,
+        incomingIdentity(account, _incomingSlots[account.id] ?? account.id),
+      ),
+  ];
   @override
   Map<String, List<String>> folderNames = {};
   @override
@@ -138,10 +151,17 @@ class NativeRepository
   List<AccountConnectionAttempt> connectionAttempts = const [];
   @override
   Future<void> refreshProfileAccounts() async {
+    final generation = ++_accountSnapshotGeneration;
     final state = await call({'op': 'accounts'}) as Map<String, dynamic>;
+    if (generation != _accountSnapshotGeneration) return;
     mailAccounts = (state['accounts'] as List)
         .map((a) => MailAccount.fromJson(a))
         .toList();
+    _incomingSlots
+      ..clear()
+      ..addAll(
+        (state['incoming_slots'] as Map? ?? const {}).cast<String, String>(),
+      );
     folderNames = (state['folders'] as Map<String, dynamic>).map(
       (k, v) => MapEntry(k, (v as List).cast<String>()),
     );
@@ -218,6 +238,8 @@ class NativeRepository
           'review': review.data,
           'discard_unresolved': discardUnresolved,
         });
+        _accountSnapshotGeneration++;
+        _incomingSlots.remove(review.id);
         mailAccounts.removeWhere((a) => a.id == review.id);
         folderNames.remove(review.id);
         savedDrafts.removeWhere((d) => d.accountId == review.id);
@@ -412,6 +434,8 @@ class NativeRepository
     connectionAttempts = connectionAttempts
         .where((item) => item.id != attempt.id)
         .toList(growable: false);
+    _accountSnapshotGeneration++;
+    _incomingSlots[savedAccount.id] = slot;
     mailAccounts = [
       ...mailAccounts.where((a) => a.id != savedAccount.id),
       savedAccount,
@@ -480,7 +504,7 @@ class NativeRepository
     return {'credential_slot': slot, 'password': await _readPassword(slot)};
   }
 
-  Mail mailFrom(
+  Mail _mail(
     Map<String, dynamic> m, {
     String body = '',
     List<String>? attachments,
@@ -488,16 +512,18 @@ class NativeRepository
     bool? loaded,
     String? fileError,
   }) {
-    final sender = (m['sender'] as String).trim().isEmpty
+    final senderHeader = m['sender'] as String;
+    final sender = senderHeader.trim().isEmpty
         ? 'Unknown sender'
-        : m['sender'] as String;
-    final address =
-        RegExp(r'<([^<>]+)>').firstMatch(sender)?.group(1) ?? sender;
+        : senderHeader;
+    final address = m['sender_address'] as String? ?? '';
     return Mail(
       id: m['id'],
       sender: sender
           .replaceFirst(RegExp(r'\s*<[^<>]+>$'), '')
           .replaceAll('"', ''),
+      senderHeader: senderHeader,
+      recipient: m['recipient'] as String? ?? '',
       address: address,
       subject: m['subject'],
       preview: m['preview'],
@@ -622,7 +648,7 @@ class NativeRepository
               'projection': projection,
             })
             as Map<String, dynamic>;
-    final mail = (data['mail'] as List).map((m) => mailFrom(m)).toList();
+    final mail = (data['mail'] as List).map((m) => _mail(m)).toList();
     cached = mail;
     return MailPage(
       mail,
@@ -630,7 +656,7 @@ class NativeRepository
       data['unread'],
       confirmed: {
         for (final m in data['confirmed'] as List? ?? [])
-          m['id'] as String: mailFrom(m),
+          m['id'] as String: _mail(m),
       },
       aliases: (data['aliases'] as Map<String, dynamic>? ?? {})
           .cast<String, String>(),
@@ -650,7 +676,7 @@ class NativeRepository
   @override
   Future<Mail> detail(String id) async {
     final data = await call({'op': 'detail', 'id': id});
-    return mailFrom(
+    return _mail(
       data['summary'],
       body: data['body'],
       attachments: (data['attachments'] as List).cast<String>(),
@@ -681,29 +707,85 @@ class NativeRepository
   @override
   Future<List<Mail>> refresh() async {
     warning = null;
+    final results = await refreshIncoming();
+    await initialize();
+    warning = results
+        .where((result) => result.error != null)
+        .map((result) => result.error)
+        .join('\n');
+    if (warning!.isEmpty) warning = null;
+    return cached;
+  }
+
+  bool _currentIncoming(IncomingAccount account) => incomingAccounts.any(
+    (current) =>
+        current.id == account.id && current.identity == account.identity,
+  );
+
+  @override
+  Future<List<IncomingResult>> refreshIncoming({
+    bool Function()? canDispatch,
+    void Function(IncomingResult)? onResult,
+  }) async {
     if (mailAccounts.isEmpty) {
       throw const MailOperationFailure(
         'Add a mail account in Preferences to refresh.',
       );
     }
-    final errors = <String>[];
-    for (final account in mailAccounts) {
+    final results = <IncomingResult>[];
+    void observed(IncomingResult result) {
+      results.add(result);
+      if (canDispatch?.call() != false) onResult?.call(result);
+    }
+
+    final targets = incomingAccounts;
+    for (final target in targets) {
+      final account = mailAccounts
+          .where((account) => account.id == target.id)
+          .firstOrNull;
+      if (account == null ||
+          !_currentIncoming(target) ||
+          canDispatch?.call() == false) {
+        continue;
+      }
       try {
+        final slot = await _credentialSlot(account);
+        if (!_currentIncoming(target) ||
+            slot != target.identity.slot ||
+            canDispatch?.call() == false) {
+          continue;
+        }
+        final password = await _readPassword(slot);
+        if (!_currentIncoming(target) || canDispatch?.call() == false) continue;
         final result = await call({
           'op': 'sync',
           'account': account.id,
-          ...await _incoming(account),
+          'credential_slot': slot,
+          'password': password,
         });
-        if ((result['skipped_large'] as int) > 0) {
-          errors.add('Some mail exceeds the current 25 MiB download limit.');
-        }
+        if (!_currentIncoming(target)) continue;
+        observed(
+          IncomingResult(
+            target,
+            error: (result['skipped_large'] as int) > 0
+                ? 'Some mail exceeds the current 25 MiB download limit.'
+                : null,
+          ),
+        );
       } catch (error) {
-        errors.add('$error');
+        if (!_currentIncoming(target)) continue;
+        observed(
+          IncomingResult(
+            target,
+            error: error is MailOperationFailure
+                ? error.message
+                : 'Could not refresh mail. Check the connection and retry.',
+          ),
+        );
       }
     }
-    await initialize();
-    warning = errors.isEmpty ? null : errors.join('\n');
-    return cached;
+    await refreshProfileAccounts();
+    return results;
   }
 
   @override

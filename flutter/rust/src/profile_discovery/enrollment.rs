@@ -23,7 +23,7 @@ pub(crate) struct Preferences {
     pub values: BTreeMap<String, Value>,
     pub revisions: BTreeMap<String, u64>,
 }
-pub(super) const SETTINGS: [&str; 8] = [
+pub(super) const LEGACY_SETTINGS: [&str; 8] = [
     "appearance",
     "left_swipe",
     "right_swipe",
@@ -33,13 +33,47 @@ pub(super) const SETTINGS: [&str; 8] = [
     "reply_display",
     "tooltips",
 ];
+pub(super) const SETTINGS: [&str; 9] = [
+    "appearance",
+    "left_swipe",
+    "right_swipe",
+    "preview_lines",
+    "sender_pictures",
+    "unified_inbox",
+    "reply_display",
+    "tooltips",
+    "reply_include_original",
+];
+pub(super) fn valid_revisions(revisions: &BTreeMap<String, u64>) -> bool {
+    let fields = if revisions.contains_key("reply_include_original") {
+        SETTINGS.as_slice()
+    } else {
+        LEGACY_SETTINGS.as_slice()
+    };
+    revisions.len() == fields.len()
+        && fields.iter().all(|field| {
+            revisions
+                .get(*field)
+                .is_some_and(|value| *value <= 9_007_199_254_740_991)
+        })
+}
 impl Preferences {
+    pub(super) fn fields(&self) -> impl Iterator<Item = &str> {
+        SETTINGS
+            .into_iter()
+            .filter(|field| self.values.contains_key(*field))
+    }
     pub(super) fn validate(&self) -> Result<()> {
         ensure!(
-            self.values.len() == SETTINGS.len() && self.revisions.len() == SETTINGS.len(),
+            valid_revisions(&self.revisions)
+                && self.values.len() == self.revisions.len()
+                && self
+                    .values
+                    .keys()
+                    .all(|field| self.revisions.contains_key(field)),
             "Refresh the device preferences before reviewing this profile."
         );
-        for key in SETTINGS {
+        for key in self.fields() {
             ensure!(
                 self.values.contains_key(key)
                     && self

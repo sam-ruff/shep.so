@@ -14,15 +14,21 @@ class PreviewRepository
     this.fail = false,
     this.includeLineage = true,
     String? firstBody,
+    Map<String, Object?> firstHeaders = const {},
     List<Mail> extra = const [],
   }) {
     final data = jsonDecode(fixtureJson) as Map<String, dynamic>;
+    ((data['messages'] as List).first as Map<String, dynamic>).addAll(
+      firstHeaders,
+    );
     if (firstBody != null) data['messages'][0]['body'] = firstBody;
     _mail = (data['messages'] as List).map((raw) {
       final m = raw as Map<String, dynamic>;
       return Mail(
         id: m['id'],
         sender: m['sender'],
+        senderHeader: m['senderHeader'] as String?,
+        recipient: m['recipient'] as String? ?? '',
         address: m['address'],
         subject: m['subject'],
         preview: m['preview'],

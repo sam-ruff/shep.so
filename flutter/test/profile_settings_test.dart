@@ -31,6 +31,134 @@ class Bytes implements PreferenceStorage {
 
 void main() {
   test(
+    'an unfinished old review produces only its eight original revision proofs',
+    () async {
+      final store = DeviceSettings(storage: Bytes());
+      final values = const Preferences().profileSettings()
+        ..remove('reply_include_original');
+      final baseline = ProfileSettingsSnapshot.fromJson({
+        'values': values,
+        'revisions': {for (final key in values.keys) key: 0},
+      });
+      final receipt = await store.applyProfile(
+        id: 'unfinished-legacy',
+        baseline: baseline,
+        changes: {'appearance': 'Light'},
+      );
+      expect(receipt.revisions.keys.toSet(), values.keys.toSet());
+      expect(receipt.preferences.replyIncludeOriginal, isTrue);
+      expect(
+        (await store.profileSnapshot()).revisions['reply_include_original'],
+        0,
+      );
+    },
+  );
+
+  test(
+    'old eight-key review and saved receipt replay exactly after restart',
+    () async {
+      final bytes = Bytes();
+      final values = const Preferences().profileSettings()
+        ..remove('reply_include_original');
+      final baseline = ProfileSettingsSnapshot.fromJson({
+        'values': values,
+        'revisions': {for (final key in values.keys) key: 0},
+      });
+      Map<String, Object?> ordered(Map<String, Object?> map) => {
+        for (final key in map.keys.toList()..sort()) key: map[key],
+      };
+      final request = jsonEncode({
+        'values': ordered(values),
+        'revisions': ordered(baseline.revisions),
+        'changes': {'appearance': 'Light'},
+      });
+      final old =
+          jsonDecode(const Preferences(appearance: ThemeMode.light).encode())
+                as Map<String, dynamic>
+            ..remove('replyIncludeOriginal');
+      final originalRevisions = {
+        for (final key in values.keys) key: key == 'appearance' ? 1 : 0,
+      };
+      old['_profile_preferences'] = {
+        'version': 1,
+        'clock': 1,
+        'revisions': originalRevisions,
+        'receipt': {
+          'id': 'legacy-review',
+          'request': request,
+          'applied': ['appearance'],
+          'kept': <String>[],
+          'revisions': originalRevisions,
+        },
+      };
+      old['future_optional'] = {'retain': 'exact'};
+      bytes.value = jsonEncode(old);
+      final savedBytes = bytes.value;
+      final store = DeviceSettings(storage: bytes);
+      final replay = await store.applyProfile(
+        id: 'legacy-review',
+        baseline: baseline,
+        changes: {'appearance': 'Light'},
+      );
+      expect(bytes.value, savedBytes);
+      expect(replay.revisions, originalRevisions);
+      expect(replay.revisions.containsKey('reply_include_original'), isFalse);
+      expect(baseline.toJson()['values'], values);
+      await store.saveLocal({'reply_include_original': false});
+      final restarted = DeviceSettings(storage: bytes);
+      final again = await restarted.applyProfile(
+        id: 'legacy-review',
+        baseline: baseline,
+        changes: {'appearance': 'Light'},
+      );
+      expect(again.preferences.replyIncludeOriginal, isFalse);
+      expect(again.revisions, originalRevisions);
+      expect(
+        (jsonDecode(bytes.value!) as Map)['future_optional'],
+        old['future_optional'],
+      );
+      expect(
+        (jsonDecode(bytes.value!)
+            as Map)['_profile_preferences']['receipt']['request'],
+        request,
+      );
+      await expectLater(
+        restarted.applyProfile(
+          id: 'new-choice',
+          baseline: baseline,
+          changes: {'reply_include_original': false},
+        ),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test(
+    'new reply default keeps explicit false and change-revert ownership through profile apply',
+    () async {
+      final bytes = Bytes();
+      final owned = DeviceSettings(storage: bytes);
+      final baseline = await owned.profileSnapshot();
+      await owned.saveLocal({'reply_include_original': false});
+      expect(
+        (await DeviceSettings(storage: bytes).read()).replyIncludeOriginal,
+        isFalse,
+      );
+      await owned.saveLocal({'reply_include_original': true});
+      final receipt = await owned.applyProfile(
+        id: 'remote-default',
+        baseline: baseline,
+        changes: {'reply_include_original': false},
+      );
+      expect(receipt.kept, ['reply_include_original']);
+      expect(receipt.preferences.replyIncludeOriginal, isTrue);
+      expect(
+        (await owned.profileSnapshot()).revisions['reply_include_original'],
+        greaterThan(0),
+      );
+    },
+  );
+  test(
     'reverted intent after a failed save remains newer than a frozen profile',
     () async {
       final bytes = Bytes();
