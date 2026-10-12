@@ -2017,6 +2017,35 @@ pub(crate) fn delivery(db: &Connection, id: &str) -> Result<Value> {
         None => Value::Null,
     })
 }
+
+const SYNC_REASON_CHARS: usize = 240;
+
+/// Turns a finished sync task into a per-account error that keeps its cause.
+fn sync_outcome<T>(
+    account_name: &str,
+    result: std::result::Result<Result<T>, tokio::task::JoinError>,
+) -> Result<()> {
+    match result {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => {
+            let reason = format!("{error:#}")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let reason = match reason.char_indices().nth(SYNC_REASON_CHARS) {
+                Some((end, _)) => format!("{}…", &reason[..end]),
+                None => reason,
+            };
+            anyhow::bail!(
+                "{account_name}: mail sync did not finish ({reason}). Cached mail was kept; retry Refresh."
+            )
+        }
+        Err(_) => anyhow::bail!(
+            "{account_name}: mail sync stopped unexpectedly. Cached mail was kept; retry Refresh."
+        ),
+    }
+}
+
 async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
     let operations = &profile.operations;
     let _admission = operations
@@ -2064,6 +2093,7 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                 .await?;
             let pop = account.protocol == Protocol::Pop3;
             let account_id = account.id.clone();
+            let account_name = account.name.clone();
             let (events, mut receive) = mpsc::channel(8);
             let provider = operations.mail_provider(account.protocol);
             let mut task =
@@ -2073,18 +2103,19 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             let mut reconcile = Vec::new();
             let mut skipped = 0;
             loop {
-                let event =
-                    match tokio::time::timeout(Duration::from_secs(45), receive.recv()).await {
-                        Ok(Some(event)) => event,
-                        Ok(None) => break,
-                        Err(_) => {
-                            task.abort();
-                            let _ = task.await;
-                            anyhow::bail!(
-                                "Mail stopped responding. Your cache was kept; retry Refresh."
-                            );
-                        }
-                    };
+                let event = match tokio::time::timeout(Duration::from_secs(45), receive.recv())
+                    .await
+                {
+                    Ok(Some(event)) => event,
+                    Ok(None) => break,
+                    Err(_) => {
+                        task.abort();
+                        let _ = task.await;
+                        anyhow::bail!(
+                            "{account_name}: mail stopped responding. Your cache was kept; retry Refresh."
+                        );
+                    }
+                };
                 let saved=match event {
                     MailSyncItem::Message(mail)=>db.write(move|db|insert_mail(db,mail,pop)).await,
                     MailSyncItem::Flags(flags)=>db.write(move|db|{
@@ -2105,11 +2136,7 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
                     return Err(error);
                 }
             }
-            let result = (&mut task).await;
-            anyhow::ensure!(
-                matches!(result, Ok(Ok(_))),
-                "Mail sync did not finish. Cached mail was kept; check the connection and retry."
-            );
+            sync_outcome(&account_name, (&mut task).await)?;
             if !pop {
                 db.write(move |db| {
                     let tx = db.transaction()?;
@@ -2472,5 +2499,49 @@ async fn network(profile: &MobileProfile, request: Request) -> Result<Value> {
             .await
         }
         _ => unreachable!(),
+    }
+}
+
+#[cfg(test)]
+mod sync_outcome_tests {
+    use super::sync_outcome;
+
+    #[tokio::test]
+    async fn success_is_ok() {
+        let result = tokio::spawn(async { anyhow::Ok(()) }).await;
+        assert!(sync_outcome("Work", result).is_ok());
+    }
+
+    #[tokio::test]
+    async fn failure_names_the_account_and_keeps_the_cause() {
+        let result = tokio::spawn(async {
+            Err::<(), _>(anyhow::anyhow!("NO [LIMIT] too many connections").context("Fetch INBOX"))
+        })
+        .await;
+        let message = sync_outcome("Fastmail", result).unwrap_err().to_string();
+        assert_eq!(
+            message,
+            "Fastmail: mail sync did not finish (Fetch INBOX: NO [LIMIT] too many connections). Cached mail was kept; retry Refresh."
+        );
+    }
+
+    #[tokio::test]
+    async fn long_causes_are_shortened_on_a_character_boundary() {
+        let result = tokio::spawn(async { Err::<(), _>(anyhow::anyhow!("é".repeat(400))) }).await;
+        let message = sync_outcome("Work", result).unwrap_err().to_string();
+        assert!(message.contains(&format!("({}…)", "é".repeat(240))));
+    }
+
+    #[tokio::test]
+    async fn a_crashed_task_is_reported_per_account() {
+        let result = tokio::spawn(async {
+            if true {
+                panic!("boom");
+            }
+            anyhow::Ok(())
+        })
+        .await;
+        let message = sync_outcome("Shep", result).unwrap_err().to_string();
+        assert!(message.starts_with("Shep: mail sync stopped unexpectedly."));
     }
 }
