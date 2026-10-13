@@ -2887,7 +2887,7 @@ class NativeFlows(unittest.TestCase):
                        check("selected", subject), shot("move-transposition-enter-result"))
 
     def test_background_mail_arrives_without_refresh_and_manual_clicks_queue(self):
-        result=self.mcp.call("desktop.start", background_sync=True)
+        result=self.mcp.call("desktop.start", background_sync="held")
         self.mcp.batch(check("background_sync", True), check("refreshing", False),
                        check("refresh_animation.running",False),check("refresh_animation.angle",0),
                        check("mail_check_seconds", 5), shot("background-sync-refresh-idle"),
@@ -2899,11 +2899,13 @@ class NativeFlows(unittest.TestCase):
                        check("refresh_animation.running",True),
                        {"type":"hover","x":1100,"y":36},shot("background-queued-turn-one"),wait(80),
                        shot("background-queued-turn-two"),
+                       {"type":"release_background_sync"},
                        check("sync_round", 1), check("total", 121),
                        check("background_sync", False), check("refreshing", True),
                        check("refresh_animation.running",True),
                        shot("manual-refresh-queued-after-background"),
-                       {**check("sync_round", 2), "timeout_ms": 5000}, check("refreshing", False),
+                       {"type":"release_background_sync"},
+                       check("sync_round", 2), check("refreshing", False),
                        check("refresh_animation.running",False),check("refresh_animation.angle",0),
                        check("total", 121), click(420, 247),
                        check("selected", "New mail from the background"), shot("background-arrival-readable"))
@@ -3057,10 +3059,11 @@ class NativeFlows(unittest.TestCase):
                                shot("badge-"+action+"-undo"))
 
     def test_desktop_badge_background_arrival_and_failed_action(self):
-        self.mcp.call("desktop.start",desktop_badges=True,background_sync=True)
+        self.mcp.call("desktop.start",desktop_badges=True,background_sync="held")
         self.mcp.batch(check("desktop_badge.visible",True),check("background_sync",True))
         count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
-        self.mcp.batch(check("total",121),check("desktop_badge.count",count+1),shot("badge-new-arrival"))
+        self.mcp.batch({"type":"release_background_sync"},check("total",121),
+                       check("desktop_badge.count",count+1),shot("badge-new-arrival"))
         self.mcp.call("desktop.start",desktop_badges=True,mail_actions="fail")
         self.mcp.batch(check("desktop_badge.visible",True),check("unread",True))
         count = self.mcp.call("desktop.state")["desktop_badge"]["count"]
@@ -5235,12 +5238,12 @@ class NativeFlows(unittest.TestCase):
                        check("mail_selection.mode", False), shot("selection-text-focus"))
 
     def test_mail_selection_checkbox_can_include_an_arrival_without_losing_prior_choices(self):
-        result=self.mcp.call("desktop.start", background_sync=True)
+        result=self.mcp.call("desktop.start", background_sync="held")
         print(f"Arrival checkbox evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(check("background_sync", True), click(584,164),
                        check("mail_selection.mode",True), check("mail_selection.drawn",True),
                        click(274,mail_row_y(0)), check("mail_selection.count",1), check("mail_selection.pending",False),
-                       check("total",121), check("mail_rows.0.subject","New mail from the background"),
+                       {"type":"release_background_sync"}, check("total",121), check("mail_rows.0.subject","New mail from the background"),
                        check("mail_selection.count",1), check("mail_selection.pending",False),
                        shot("selection-arrival-unselected"), click(274,mail_row_y(0)),
                        check("mail_selection.count",2), check("mail_selection.pending",False),
@@ -5249,12 +5252,12 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"), check("dialog",None), check("mail_selection.count",2))
 
     def test_mail_selection_ctrl_click_and_shift_range_follow_arrivals(self):
-        result=self.mcp.call("desktop.start", background_sync=True)
+        result=self.mcp.call("desktop.start", background_sync="held")
         print(f"Arrival range evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(check("background_sync",True), click(584,164),
                        check("mail_selection.mode",True), check("mail_selection.drawn",True),
                        click(274,mail_row_y(0)), check("mail_selection.count",1), check("mail_selection.pending",False),
-                       check("total",121), check("mail_rows.0.subject","New mail from the background"),
+                       {"type":"release_background_sync"}, check("total",121), check("mail_rows.0.subject","New mail from the background"),
                        check("mail_selection.count",1),
                        {"type":"click","x":400,"y":mail_row_y(0),"modifiers":["ctrl"]},
                        check("mail_selection.count",2), check("mail_selection.pending",False),

@@ -705,14 +705,37 @@ pub async fn sync_mail(
 ) -> anyhow::Result<(u64, Option<crate::notifications::Arrival>)> {
     let background = std::env::args().any(|arg| arg == "--background-sync");
     let fail_once = std::env::args().any(|arg| arg == "--sync-failure-once");
-    sync_mail_with(store, background, fail_once).await
+    let release = std::env::args().find_map(|arg| {
+        arg.strip_prefix("--background-sync-release=")
+            .map(std::path::PathBuf::from)
+    });
+    sync_mail_with(store, background, fail_once, release.as_deref()).await
+}
+
+/// A held fixture server answers check `round` only after the harness has
+/// appended that many lines to `path`, so tests order checks by input.
+async fn await_release(path: &std::path::Path, round: u64) -> anyhow::Result<()> {
+    loop {
+        let released = match tokio::fs::read_to_string(path).await {
+            Ok(text) => text.lines().count() as u64,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => return Err(error.into()),
+        };
+        if released >= round {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 }
 
 const BACKGROUND_ARRIVAL_UID: &str = "1.9000";
 
 fn background_arrival() -> anyhow::Result<StoredMail> {
-    parse_mail("preview-work", BACKGROUND_ARRIVAL_UID, "INBOX",
-        b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)
+    let mut mail = parse_mail("preview-work", BACKGROUND_ARRIVAL_UID, "INBOX",
+        b"From: Morgan <morgan@example.test>\r\nTo: alex@studio.example\r\nSubject: New mail from the background\r\n\r\nThis fictional message arrived through the automatic refresh.".to_vec(), true, false)?;
+    // Newer than every seeded message however soon the check is answered.
+    mail.summary.timestamp = chrono::Utc::now().timestamp() + 300;
+    Ok(mail)
 }
 
 /// The fixture server holds one new Inbox message. It reaches the cache once
@@ -737,19 +760,24 @@ pub async fn sync_mail_with(
     store: &Store,
     background: bool,
     fail_once: bool,
+    release: Option<&std::path::Path>,
 ) -> anyhow::Result<(u64, Option<crate::notifications::Arrival>)> {
     let round = store.get::<u64>("preview-sync-round").await? + 1;
     store.put("preview-sync-round", round).await?;
     let overlap_pending_send =
         background && fail_once && std::env::args().any(|arg| arg == "--mail-actions=slow");
-    tokio::time::sleep(std::time::Duration::from_millis(if overlap_pending_send {
-        4000
-    } else if background {
-        2500
+    if let Some(path) = release {
+        await_release(path, round).await?;
     } else {
-        1500
-    }))
-    .await;
+        tokio::time::sleep(std::time::Duration::from_millis(if overlap_pending_send {
+            4000
+        } else if background {
+            2500
+        } else {
+            1500
+        }))
+        .await;
+    }
     anyhow::ensure!(
         !fail_once || round != 1,
         "Fixture mail server is temporarily unavailable. Try Refresh again."
@@ -981,7 +1009,7 @@ mod sync_tests {
     #[tokio::test]
     async fn background_arrival_is_listed_once_keeps_local_flags_and_never_returns_after_a_move() {
         let store = armed_store().await;
-        let (round, arrival) = sync_mail_with(&store, true, false).await.unwrap();
+        let (round, arrival) = sync_mail_with(&store, true, false, None).await.unwrap();
         assert_eq!(round, 1);
         let arrival = arrival.expect("the first check delivers the fixture arrival");
         assert_eq!(arrival.subject, "New mail from the background");
@@ -1000,12 +1028,12 @@ mod sync_tests {
             )
             .await
             .unwrap();
-        let (_, repeat) = sync_mail_with(&store, true, false).await.unwrap();
+        let (_, repeat) = sync_mail_with(&store, true, false, None).await.unwrap();
         assert!(repeat.is_none(), "a later check is not a new arrival");
         assert_eq!(inbox_rows(&store).await, vec![(id.clone(), false)]);
         // Once a move relocated the identity, a check cannot bring it back.
         store.remove(id.clone()).await.unwrap();
-        let (_, after_move) = sync_mail_with(&store, true, false).await.unwrap();
+        let (_, after_move) = sync_mail_with(&store, true, false, None).await.unwrap();
         assert!(after_move.is_none());
         assert!(inbox_rows(&store).await.is_empty());
     }
@@ -1013,11 +1041,37 @@ mod sync_tests {
     #[tokio::test]
     async fn manual_checks_deliver_nothing_and_the_first_failing_check_reports_once() {
         let store = armed_store().await;
-        let failed = sync_mail_with(&store, false, true).await;
+        let failed = sync_mail_with(&store, false, true, None).await;
         assert!(failed.is_err());
-        let (round, arrival) = sync_mail_with(&store, false, true).await.unwrap();
+        let (round, arrival) = sync_mail_with(&store, false, true, None).await.unwrap();
         assert_eq!(round, 2);
         assert!(arrival.is_none());
         assert!(inbox_rows(&store).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn held_checks_answer_only_after_their_release() {
+        let store = armed_store().await;
+        let directory = tempfile::tempdir().unwrap();
+        let release = directory.path().join("background-release");
+        let check = {
+            let (store, release) = (store.clone(), release.clone());
+            tokio::spawn(async move { sync_mail_with(&store, true, false, Some(&release)).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(!check.is_finished(), "an unreleased check stays held");
+        assert!(inbox_rows(&store).await.is_empty());
+        tokio::fs::write(&release, "1\n").await.unwrap();
+        let (round, arrival) = check.await.unwrap().unwrap();
+        assert_eq!(round, 1);
+        assert!(arrival.is_some());
+        let second = {
+            let (store, release) = (store.clone(), release.clone());
+            tokio::spawn(async move { sync_mail_with(&store, true, false, Some(&release)).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(!second.is_finished(), "one release answers one check");
+        tokio::fs::write(&release, "1\n2\n").await.unwrap();
+        assert_eq!(second.await.unwrap().unwrap().0, 2);
     }
 }

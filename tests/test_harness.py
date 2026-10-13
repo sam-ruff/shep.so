@@ -87,6 +87,30 @@ class HarnessTests(unittest.TestCase):
         modes = tool["inputSchema"]["properties"]["bulk_history"]["oneOf"]
         self.assertEqual(modes[1]["enum"], ["flag-repair"])
 
+    def test_held_background_checks_validate_and_release_one_check_per_action(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in (1, None, "unknown"):
+                with self.assertRaisesRegex(ValueError, "Background sync fixture"):
+                    desktop.start(background_sync=value)
+            launch.assert_not_called()
+        tool = next(t for t in harness.TOOLS if t["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["background_sync"]["oneOf"][1]["enum"], ["held"])
+        desktop.command, desktop.screenshot = Mock(), Mock()
+        desktop.app = Mock()
+        desktop.app.poll.return_value = None
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                desktop.directory = Path(directory)
+                desktop.state = Mock(return_value={})
+                with self.assertRaisesRegex(RuntimeError, "not held"):
+                    desktop.batch([{"type": "release_background_sync"}])
+                desktop.background_release = Path(directory) / "background-release"
+                desktop.batch([{"type": "release_background_sync"}, {"type": "release_background_sync"}])
+                self.assertEqual(len(desktop.background_release.read_text().splitlines()), 2)
+        finally:
+            desktop.app = None
+
     def test_native_notifications_require_an_owned_bus_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

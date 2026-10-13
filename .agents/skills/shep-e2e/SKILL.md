@@ -141,7 +141,7 @@ For optimistic mail behavior use `desktop.start(mail_actions="slow")` or `"fail"
 Shortcut primary and secondary fields each have their own clear × (approximately x=982 and x=1150 in a standard Preferences window). Test the primary and secondary separately, cancel an active capture, revisit saved settings and verify the disabled action does not execute. The compact dark case checks layout; do not infer hit targets solely from a state assertion.
 
 
-For background mail checks, launch `desktop.start(background_sync=true)`; add `sync_failure_once=true` for a failed initial check followed by recovery. The fixture delivers **New mail from the background** through the ordinary cache/update path. Observe `background_sync`, `refreshing`, `sync_round`, `mail_check_seconds`, `total` and `notice`. Automatic activity must leave the refresh icon idle; click it while background work is pending and await the queued manual round. Repeated clicks coalesce. Keep the saved three sync scenarios, including searching Preferences for background checks, rejecting zero seconds and saving a valid interval without retaining the old error. The production scheduler's long waits/overlap/timeout cases use virtual-time Rust tests, not real-time performance measurements.
+For background mail checks, launch `desktop.start(background_sync=true)`; add `sync_failure_once=true` for a failed initial check followed by recovery. When a scenario must act while a check is still running, use `background_sync="held"`: each check then waits for one `release_background_sync` batch action (the fictional server answering) instead of a fixed delay, so a slow runner cannot finish it before the input lands. Never rely on the timed fixture for that ordering. The fixture delivers **New mail from the background** through the ordinary cache/update path. Observe `background_sync`, `refreshing`, `sync_round`, `mail_check_seconds`, `total` and `notice`. Automatic activity must leave the refresh icon idle; click it while background work is pending and await the queued manual round. Repeated clicks coalesce. Keep the saved three sync scenarios, including searching Preferences for background checks, rejecting zero seconds and saving a valid interval without retaining the old error. The production scheduler's long waits/overlap/timeout cases use virtual-time Rust tests, not real-time performance measurements.
 
 
 For ranked search use `desktop.start(search_mail=true)`. Search for `test`; the older **Quick note**, with body `test`, must be first and the sort control must read Best match (`sort == "Relevance"`). Select Newest first from the actual menu to put **Testing checklist** first. Clearing search restores the browsing sort; starting another search selects Best match again. Repeat during a fixture refresh. The Move scenario searches `cafe`, checks Café is highlighted, moves with Enter and opens that sidebar folder to verify its contents; it also types `archvie` and Return without a settling wait and checks Archive afterward. Preserve both saved native equivalents and WebP evidence.
@@ -304,9 +304,9 @@ widget-level regression for that sequence, with redraws between motion and
 press. Captured popup motion shares the root tracker; preserve dropdown and
 interface-scale native scenarios when changing input dispatch.
 
-Preserve the two arrival selection flows. `background_sync=true` supplies a
+Preserve the two arrival selection flows. `background_sync="held"` supplies a
 fictional incoming message through the normal cache refresh. Select an existing
-row before it arrives, assert unchanged selection on arrival, then use checkbox
+row before releasing it, assert unchanged selection on arrival, then use checkbox
 or Ctrl-click and a Shift range. Verify the ensuing bulk review count. No direct
 state mutation may substitute for those inputs.
 
