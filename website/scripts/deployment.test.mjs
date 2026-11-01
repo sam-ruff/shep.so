@@ -53,12 +53,28 @@ test('Docker context allows only the promotional and demo build inputs', () => {
     '!web/public/', '!web/public/**', '!web/src/', '!web/src/**', 'web/src/wasm/',
   ]);
   const docker = read('website/Dockerfile');
-  for (const stage of [/FROM rust:[\d.]+-slim-bookworm@sha256:[a-f0-9]{64} AS wasm/, /FROM node:24\.17\.0-alpine@sha256:[a-f0-9]{64} AS demo/, /FROM scratch AS demo-files/, /FROM node:24\.17\.0-alpine@sha256:[a-f0-9]{64} AS build/]) {
+  for (const stage of [/FROM rust:[\d.]+-slim-bookworm@sha256:[a-f0-9]{64} AS wasm/, /FROM node:24\.[\d.]+-alpine@sha256:[a-f0-9]{64} AS demo/, /FROM scratch AS demo-files/, /FROM node:24\.[\d.]+-alpine@sha256:[a-f0-9]{64} AS build/]) {
     assert.match(docker, stage);
   }
-  assert.match(docker, /--version 0\.2\.128 wasm-bindgen-cli/);
   assert.match(docker, /node scripts\/clients\/build_mail_content\.mjs/);
   assert.match(docker, /COPY --from=demo \/app\/web\/dist-preview \/app\/web\/dist-preview/);
+});
+
+test('image toolchains stay digest-pinned and in step with their CI and crate pins', () => {
+  const docker = read('website/Dockerfile');
+  for (const from of docker.matchAll(/^FROM (\S+)/gm)) {
+    if (from[1] !== 'scratch') assert.match(from[1], /@sha256:[a-f0-9]{64}$/, from[1]);
+  }
+  // wasm-bindgen glue only loads with the exact crate version it was generated for.
+  const bindgen = docker.match(/--version ([\d.]+) wasm-bindgen-cli/)[1];
+  for (const manifest of ['shared/mail-content/Cargo.toml', 'shared/profile-core/Cargo.toml']) {
+    assert.ok(read(manifest).includes(`wasm-bindgen = "=${bindgen}"`), manifest);
+  }
+  assert.ok(read('scripts/clients/build_mail_content.mjs').includes(`"wasm-bindgen ${bindgen}"`));
+  const rust = docker.match(/FROM rust:([\d.]+)-slim/)[1];
+  assert.ok(read('.github/workflows/ci.yml').includes(`RUSTUP_TOOLCHAIN: '${rust}'`), rust);
+  const node = [...docker.matchAll(/FROM node:([\d.]+)-alpine/g)].map((match) => match[1]);
+  assert.deepEqual(new Set(node), new Set([read('.github/workflows/website.yml').match(/node-version: '([\d.]+)'/)[1]]));
 });
 
 test('CI builds the demo through the image stage and serves it with a trailing slash', () => {

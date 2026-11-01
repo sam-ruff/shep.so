@@ -58,14 +58,14 @@ pub(super) fn prepare(raw: &[u8], options: Options, nonce: &str) -> anyhow::Resu
         if let Some(mut node) = document.tree.get_mut(id)
             && let scraper::Node::Element(element) = node.value()
         {
-            let img = element.name.local.as_ref() == "img";
+            let img = &*element.name.local == "img";
             // Missing images have no broken-image glyph or retained tracking URL.
             let missing_image = img
                 && element
                     .attr("src")
                     .is_none_or(|src| !images.contains_key(resource_key(src).as_str()));
             element.attrs.retain_mut(|(name, value)| {
-                let name = name.local.as_ref();
+                let name = &*name.local;
                 if name.starts_with("on")
                     || matches!(
                         name,
@@ -104,7 +104,7 @@ pub(super) fn prepare(raw: &[u8], options: Options, nonce: &str) -> anyhow::Resu
                 element.name.local = "span".into();
                 element
                     .attrs
-                    .retain(|(name, _)| matches!(name.local.as_ref(), "alt"));
+                    .retain(|(name, _)| matches!(&*name.local, "alt"));
             }
         }
     }

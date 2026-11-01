@@ -32,7 +32,7 @@ jobs:
       - name: Require the successful current main revision
         id: source
         run: python3 scripts/release_ci.py source
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: desktop-release-plan
           path: artifacts/release-plan
@@ -43,24 +43,24 @@ jobs:
         run: python3 scripts/release_ci.py plan artifacts/release-plan/release-plan.json
         env:
           SHEP_RELEASE_SOURCE: ${{ steps.source.outputs.source }}
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         if: steps.plan.outputs.version != ''
         with:
           name: desktop-release-linux
           path: dist
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         if: steps.plan.outputs.version != ''
         with:
           name: desktop-release-windows
           path: dist
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         if: steps.plan.outputs.version != ''
         with:
-          node-version: '24.21.0'
+          node-version: '24.22.2'
       - name: Install pinned release tooling
         if: steps.plan.outputs.version != ''
         run: npm ci

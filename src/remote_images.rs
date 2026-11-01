@@ -86,8 +86,8 @@ pub(crate) fn extract_document(html: &scraper::Html) -> Vec<RemoteImage> {
     images
 }
 fn css_images(source: &str, add: &mut impl FnMut(&str, &str)) {
-    use cssparser::{Parser, ParserInput, Token};
-    fn scan<'i>(parser: &mut Parser<'i, '_>, add: &mut impl FnMut(&str, &str), depth: u8) {
+    use cssparser::{Parser, Token};
+    fn scan<'i>(parser: &mut Parser<'i>, add: &mut impl FnMut(&str, &str), depth: u8) {
         while let Ok(token) = parser.next().cloned() {
             match token {
                 Token::AtKeyword(name)
@@ -103,13 +103,12 @@ fn css_images(source: &str, add: &mut impl FnMut(&str, &str)) {
                 }
                 Token::UnquotedUrl(url) => add(&url, "Email background"),
                 Token::Function(name) if name.eq_ignore_ascii_case("url") => {
-                    let _: Result<(), cssparser::ParseError<'i, ()>> =
-                        parser.parse_nested_block(|p| {
-                            if let Ok(value) = p.expect_string() {
-                                add(value, "Email background");
-                            }
-                            Ok(())
-                        });
+                    let _: Result<(), cssparser::ParseError<()>> = parser.parse_nested_block(|p| {
+                        if let Ok(value) = p.expect_string() {
+                            add(value, "Email background");
+                        }
+                        Ok(())
+                    });
                 }
                 Token::Function(_)
                 | Token::ParenthesisBlock
@@ -117,17 +116,16 @@ fn css_images(source: &str, add: &mut impl FnMut(&str, &str)) {
                 | Token::CurlyBracketBlock
                     if depth < 64 =>
                 {
-                    let _: Result<(), cssparser::ParseError<'i, ()>> =
-                        parser.parse_nested_block(|p| {
-                            scan(p, add, depth + 1);
-                            Ok(())
-                        });
+                    let _: Result<(), cssparser::ParseError<()>> = parser.parse_nested_block(|p| {
+                        scan(p, add, depth + 1);
+                        Ok(())
+                    });
                 }
                 _ => {}
             }
         }
     }
-    scan(&mut Parser::new(&mut ParserInput::new(source)), add, 0);
+    scan(&mut Parser::new(source), add, 0);
 }
 pub fn public_ip(ip: IpAddr) -> bool {
     match ip {

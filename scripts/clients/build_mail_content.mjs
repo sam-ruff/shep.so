@@ -16,10 +16,10 @@ const cli =
   process.env.SHEP_WASM_BINDGEN ?? (existsSync(local) ? local : "wasm-bindgen");
 if (
   execFileSync(cli, ["--version"], { encoding: "utf8" }).trim() !==
-  "wasm-bindgen 0.2.128"
+  "wasm-bindgen 0.2.130"
 ) {
   throw new Error(
-    "Install wasm-bindgen-cli 0.2.128 with cargo install --locked --root artifacts/wasm-tools --version 0.2.128 wasm-bindgen-cli",
+    "Install wasm-bindgen-cli 0.2.130 with cargo install --locked --root artifacts/wasm-tools --version 0.2.130 wasm-bindgen-cli",
   );
 }
 const target = path.join(root, "artifacts/mail-content-target");

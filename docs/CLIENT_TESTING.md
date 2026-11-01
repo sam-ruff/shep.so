@@ -125,7 +125,7 @@ ETag PATCH/DELETE headers, retryable authentication/rate limits, conflicts and
 lost responses. Fast orchestration tests mock `CalendarProvider` separately;
 neither layer establishes live Google or Apple execution.
 
-Flutter is pinned to **3.44.2 / Dart 3.12.2**, with flutter_rust_bridge 2.13.0 and Rust 1.96.0. The native-assets hook builds `flutter/rust` against `shared/mail-core`; Android builds require SDK 37, NDK 28.2, Perl and make. The hook honors Android minSdk 24 for C/OpenSSL and handles the Linux Snap Perl mismatch. Apple native TLS uses platform trust. iOS now targets 14.0 for WebP support in WKWebView; this minimum is not an Apple execution claim. From `flutter/`:
+Flutter is pinned to **3.44.2 / Dart 3.12.2**, with flutter_rust_bridge 2.13.0 and Rust 1.99.1. The native-assets hook builds `flutter/rust` against `shared/mail-core`; Android builds require SDK 37, NDK 28.2, Perl and make. The hook honors Android minSdk 24 for C/OpenSSL and handles the Linux Snap Perl mismatch. Apple native TLS uses platform trust. iOS now targets 14.0 for WebP support in WKWebView; this minimum is not an Apple execution claim. From `flutter/`:
 
 ```sh
 flutter pub get
@@ -220,7 +220,7 @@ Browser builds/tests require the Rust WASM target and matching wasm-bindgen CLI.
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version 0.2.128 --locked --root artifacts/wasm-tools
+cargo install wasm-bindgen-cli --version 0.2.130 --locked --root artifacts/wasm-tools
 ```
 
 ```sh

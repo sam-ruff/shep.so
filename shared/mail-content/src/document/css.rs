@@ -1,5 +1,5 @@
 //! Parse escaped URLs as CSS tokens; never look for network resources by regex.
-use cssparser::{Parser, ParserInput, ToCss, Token};
+use cssparser::{Parser, ToCss, Token};
 
 pub(super) fn rewrite(source: &str, mut image: impl FnMut(&str) -> Option<String>) -> String {
     rewrite_urls(source, |url| {
@@ -9,7 +9,7 @@ pub(super) fn rewrite(source: &str, mut image: impl FnMut(&str) -> Option<String
 
 pub(crate) fn rewrite_urls(source: &str, mut image: impl FnMut(&str) -> Option<String>) -> String {
     fn scan<'i>(
-        parser: &mut Parser<'i, '_>,
+        parser: &mut Parser<'i>,
         image: &mut impl FnMut(&str) -> Option<String>,
         depth: u8,
         image_set: bool,
@@ -39,7 +39,7 @@ pub(crate) fn rewrite_urls(source: &str, mut image: impl FnMut(&str) -> Option<S
                     output.push_str(&resource(&value, image))
                 }
                 Token::Function(ref name) if name.eq_ignore_ascii_case("url") => {
-                    let value: Result<String, cssparser::ParseError<'i, ()>> = parser
+                    let value: Result<String, cssparser::ParseError<()>> = parser
                         .parse_nested_block(|p| {
                             let value = p.expect_string()?.to_string();
                             p.expect_exhausted()?;
@@ -60,7 +60,7 @@ pub(crate) fn rewrite_urls(source: &str, mut image: impl FnMut(&str) -> Option<S
                         continue;
                     }
                     let set = matches!(&token, Token::Function(name) if name.eq_ignore_ascii_case("image-set") || name.eq_ignore_ascii_case("-webkit-image-set"));
-                    let inner: Result<String, cssparser::ParseError<'i, ()>> =
+                    let inner: Result<String, cssparser::ParseError<()>> =
                         parser.parse_nested_block(|p| Ok(scan(p, image, depth + 1, set)));
                     if let Ok(inner) = inner {
                         let _ = token.to_css(&mut output);
@@ -87,11 +87,5 @@ pub(crate) fn rewrite_urls(source: &str, mut image: impl FnMut(&str) -> Option<S
     }
     // CSS string escapes can decode to an HTML raw-text end tag. Keep that tag
     // inert when the rewritten stylesheet is serialized into a <style> node.
-    scan(
-        &mut Parser::new(&mut ParserInput::new(source)),
-        &mut image,
-        0,
-        false,
-    )
-    .replace("</", "<\\/")
+    scan(&mut Parser::new(source), &mut image, 0, false).replace("</", "<\\/")
 }

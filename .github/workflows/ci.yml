@@ -15,7 +15,7 @@ concurrency:
 
 env:
   CARGO_BUILD_JOBS: '4'
-  RUSTUP_TOOLCHAIN: '1.96.0'
+  RUSTUP_TOOLCHAIN: '1.99.1'
 
 jobs:
   plan:
@@ -30,16 +30,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: '24.21.0'
+          node-version: '24.22.2'
       - run: npm ci
       - name: Plan without publishing
         id: plan
         run: node scripts/release_plan.mjs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: desktop-release-plan
           path: artifacts/release-plan.json
@@ -88,10 +88,10 @@ jobs:
       - name: Install the verified Rust toolchain
         if: matrix.platform == 'windows'
         run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         if: matrix.platform == 'windows'
         with:
-          node-version: '24.21.0'
+          node-version: '24.22.2'
       - name: Stamp the planned desktop version
         if: matrix.platform == 'windows' && needs.plan.outputs.version != ''
         run: ${{ matrix.python }} scripts/release.py "$RELEASE_VERSION" --stamp-only --source "$GITHUB_SHA"
@@ -150,7 +150,7 @@ jobs:
           RELEASE_TARGET: ${{ matrix.target }}
           SHEP_GOOGLE_CLIENT_ID: ${{ vars.SHEP_GOOGLE_CLIENT_ID }}
           SHEP_GOOGLE_CLIENT_SECRET: ${{ secrets.SHEP_GOOGLE_CLIENT_SECRET }}
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: needs.plan.outputs.version != ''
         with:
           name: desktop-release-${{ matrix.platform }}
@@ -159,7 +159,7 @@ jobs:
             dist/*.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: desktop-evidence-${{ matrix.platform }}

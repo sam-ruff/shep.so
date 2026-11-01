@@ -17,7 +17,7 @@ Build the demo once, then the site:
 ```sh
 cd website
 npm ci
-npm run build:demo   # needs Rust with wasm32-unknown-unknown and wasm-bindgen-cli 0.2.128
+npm run build:demo   # needs Rust with wasm32-unknown-unknown and wasm-bindgen-cli 0.2.130
 npm run build
 npm run preview
 ```
