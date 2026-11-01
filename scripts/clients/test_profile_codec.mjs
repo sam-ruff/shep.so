@@ -20,7 +20,7 @@ const cli =
   process.env.SHEP_WASM_BINDGEN ?? (existsSync(local) ? local : "wasm-bindgen");
 assert.equal(
   execFileSync(cli, ["--version"], { encoding: "utf8" }).trim(),
-  "wasm-bindgen 0.2.128",
+  "wasm-bindgen 0.2.130",
 );
 const target = path.join(root, "artifacts/profile-codec-target");
 const output = path.join(root, "artifacts/profile-codec-wasm");

@@ -69,7 +69,7 @@ pub fn flatten(body: Body) -> Option<FlatHtml> {
                 && let scraper::Node::Element(element) = node.value()
             {
                 element.attrs.retain_mut(|(name, value)| {
-                    let rewritten = match name.local.as_ref() {
+                    let rewritten = match &*name.local {
                         "src" | "href" | "background" | "poster" => resource(value),
                         "style" => Some(crate::document::css::rewrite_urls(value, &mut resource)),
                         "srcset" => None,

@@ -19,7 +19,9 @@ await rm(output, { recursive: true, force: true });
 await mkdir(new URL('assets/', output), { recursive: true });
 await cp(new URL('website/public/', root), output, { recursive: true });
 // Type-check src/ and emit its classic scripts beside the public files.
-execFileSync(process.execPath, [createRequire(import.meta.url).resolve('typescript/bin/tsc'), '-p', fileURLToPath(new URL('website/tsconfig.json', root))], { stdio: 'inherit' });
+// TypeScript 7 exports only package.json, so locate its launcher from there.
+const tsc = new URL('bin/tsc', pathToFileURL(createRequire(import.meta.url).resolve('typescript/package.json')));
+execFileSync(process.execPath, [fileURLToPath(tsc), '-p', fileURLToPath(new URL('website/tsconfig.json', root))], { stdio: 'inherit' });
 for (const [source, name] of [
   ['docs/images/mail-light.webp', 'mail-light.webp'],
   ['docs/images/calendar-dark.webp', 'calendar-dark.webp'],

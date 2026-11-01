@@ -22,8 +22,8 @@ iced = { version = "0.14", default-features = false, features = ["tiny-skia", "t
 iced_tiny_skia = { version = "=0.14.0", optional = true }
 image = { version = "0.25", default-features = false, features = ["webp", "png", "jpeg", "gif"] }
 rfd = "0.17"
-scraper = "0.27"
-cssparser = "0.37"
+scraper = "0.29"
+cssparser = "0.38"
 litehtml = "=0.2.6"
 shep-html-pixbuf = { path = "vendor/shep-html-pixbuf" }
 shep-profile-core = { path = "shared/profile-core", features = ["drive", "vault"] }
@@ -46,22 +46,22 @@ curl-sys = "0.4.89"
 mailparse = "0.16"
 mime_guess = "2"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-native-tls"] }
-rusty-s3 = { version = "0.10.2", default-features = false, features = ["rustcrypto", "xml"] }
-russh = { version = "0.63.2", default-features = false, features = ["ring", "rsa"] }
+rusty-s3 = { version = "0.11.0", default-features = false, features = ["rustcrypto", "xml"] }
+russh = { version = "0.65.0", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "3.0.0"
 tokio-util = { version = "0.7", features = ["codec", "io"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 secrecy = { version = "0.10", features = ["serde"] }
 aes-gcm = { version = "0.10", features = ["stream"] }
-argon2 = "0.5"
+argon2 = "0.6"
 rand = "0.8"
 sha2 = "0.10"
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 percent-encoding = "2"
 zeroize = { version = "1", features = ["derive"] }
-zstd = "0.13"
+zstd = "0.14"
 url = "2"
 webbrowser = "1"
 roxmltree = "0.21"
@@ -78,7 +78,7 @@ shep-action-core = { path = "shared/action-core" }
 shep-mail-content = { path = "shared/mail-content", features = ["fuzzy"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ksni = "=0.3.6"
+ksni = "=0.3.7"
 zbus = { version = "5.19", default-features = false, features = ["tokio"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
@@ -94,7 +94,7 @@ dispatch2 = "=0.3.1"
 [target.'cfg(target_os = "windows")'.dependencies]
 ab_glyph = "=0.2.32"
 windows = { version = "=0.62.2", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_System_Com"] }
-winreg = "0.55"
+winreg = "0.56"
 same-file = "1"
 
 [dev-dependencies]

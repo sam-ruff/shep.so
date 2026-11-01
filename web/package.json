@@ -15,16 +15,16 @@
     "prebuild:preview": "node ../scripts/clients/build_mail_content.mjs"
   },
   "devDependencies": {
-    "@axe-core/playwright": "4.13.0",
-    "@playwright/test": "1.63.0",
-    "@types/node": "24.13.3",
-    "fake-indexeddb": "6.2.5",
-    "prettier": "3.8.2",
-    "typescript": "5.9.3",
-    "vite": "7.3.6",
-    "vitest": "4.1.11"
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.64.1",
+    "@types/node": "24.19.2",
+    "fake-indexeddb": "6.2.7",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
   },
   "dependencies": {
-    "@sqlite.org/sqlite-wasm": "3.53.0-build1"
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1"
   }
 }

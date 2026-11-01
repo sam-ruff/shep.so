@@ -124,8 +124,8 @@ pub fn prepare(raw: &[u8]) -> anyhow::Result<PreparedForward> {
                 && let scraper::Node::Element(element) = node.value()
             {
                 element.attrs.retain(|(name, value)| {
-                    !(name.local.as_ref().starts_with("on")
-                        || matches!(name.local.as_ref(), "href" | "src" | "action")
+                    !(name.local.starts_with("on")
+                        || matches!(&*name.local, "href" | "src" | "action")
                             && value.trim().to_ascii_lowercase().starts_with("javascript:"))
                 });
             }

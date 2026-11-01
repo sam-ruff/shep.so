@@ -80,6 +80,8 @@ impl Signal {
             .unwrap_or_default()
     }
 
+    // `try_update` replaces this from Rust 1.95, above the crate's declared MSRV.
+    #[allow(deprecated)]
     fn admit(&self, restart: bool) -> Option<u64> {
         let previous = self
             .0

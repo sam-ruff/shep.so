@@ -16,8 +16,8 @@ shep-mail-core = { path = "../shared/mail-core" }
 axum = "0.8.9"
 async-trait = "0.1"
 anyhow = "1"
-base64 = "0.22"
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+base64 = "0.23"
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 serde = { version = "1", features = ["derive"] }
@@ -29,7 +29,7 @@ sha2 = "0.10"
 subtle = "2.6"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time", "fs"] }
 tower = { version = "0.5", features = ["util", "limit"] }
-tower-http = { version = "0.6", features = ["fs", "limit"] }
+tower-http = { version = "0.7", features = ["fs", "limit"] }
 url = "2"
 zeroize = { version = "1", features = ["derive"] }
 shep-calendar-core = { version = "0.1.0", path = "../shared/calendar-core", features = ["http"] }
