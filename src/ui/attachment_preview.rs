@@ -469,22 +469,10 @@ impl App {
 
     pub(super) fn attachment_preview_form(&self) -> Element<'_, super::Message> {
         let state = &self.attachment_preview;
-        let truncated = match state.preview.as_deref().map(|p| &p.content) {
-            Some(Content::Text { truncated, .. } | Content::Document { truncated, .. }) => {
-                *truncated
-            }
-            Some(Content::Sheets(sheets)) => sheets.get(state.sheet).is_some_and(|s| s.truncated),
-            _ => false,
-        };
+        let truncated = self.preview_truncated();
         let refusal = state.preview.as_ref().and_then(|p| p.refusal);
         // Header, actions and notes stay visible without scrolling the dialog.
-        let height = if state.full_screen {
-            // Title, metadata and actions take about 236 px; each note 32 px.
-            let notes = f32::from(u8::from(truncated) + u8::from(refusal.is_some()));
-            (self.size.height - 236. - 32. * notes).max(160.)
-        } else {
-            (self.size.height - 390.).clamp(160., 640.)
-        };
+        let height = (self.size.height - 390.).clamp(160., 640.);
         let wrap = |message| super::Message::AttachmentPreview(message);
         let mut body = column![].spacing(14);
         let content: Element<'_, super::Message> = match (&state.preview, &state.error) {
@@ -514,48 +502,216 @@ impl App {
         if let Some(refusal) = refusal {
             body = body.push(muted(refusal.note()).size(12));
         }
-        let openable = refusal.is_none() && state.target.is_some();
         let mut actions = row![
-            button(
-                row![
-                    icon_bright("external", 18.),
-                    text(if state.opening { "Opening…" } else { "Open" }).size(12)
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
-            )
-            .padding([10, 16])
-            .style(primary)
-            .on_press_maybe((openable && !state.opening).then_some(wrap(Message::Open))),
-            button(
-                row![icon("download", 18.), text("Save a copy…").size(12)]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-            )
-            .padding([10, 14])
-            .style(outline)
-            .on_press_maybe(state.target.is_some().then_some(wrap(Message::Save))),
+            self.open_button([10, 16]),
+            self.save_button([10, 14]),
             space().width(Length::Fill),
         ]
         .spacing(10)
         .align_y(Alignment::Center);
-        if let Some(target) = state.target.as_ref().filter(|t| t.count > 1) {
-            actions = actions
-                .push(self.icon_action_maybe(
-                    "left",
-                    "Previous attachment",
-                    (target.index > 0).then_some(wrap(Message::Step(false))),
-                ))
-                .push(muted(format!("{} of {}", target.index + 1, target.count)).size(12))
-                .push(self.icon_action_maybe(
-                    "chevron",
-                    "Next attachment",
-                    (target.index + 1 < target.count).then_some(wrap(Message::Step(true))),
-                ));
+        if let Some(steps) = self.step_controls() {
+            actions = actions.push(steps);
         }
         body.push(actions).into()
     }
+
+    /// Full screen keeps every control in one slim bar so the preview takes
+    /// the rest of the window.
+    pub(super) fn attachment_full_screen_view(&self) -> Element<'_, super::Message> {
+        let state = &self.attachment_preview;
+        let wrap = |message| super::Message::AttachmentPreview(message);
+        let mut title = row![
+            text(self.attachment_preview_title())
+                .size(14)
+                .font(BOLD)
+                .wrapping(iced::widget::text::Wrapping::None)
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center);
+        if let Some(preview) = &state.preview {
+            title = title.push(
+                muted(format!("{} · {}", preview.kind, size_label(preview.size)))
+                    .size(11)
+                    .wrapping(iced::widget::text::Wrapping::None),
+            );
+        }
+        let mut bar = row![container(title).width(Length::Fill).clip(true)]
+            .spacing(6)
+            .height(FULL_SCREEN_BAR)
+            .align_y(Alignment::Center);
+        if let Some(Content::Pages { page, pages, .. }) =
+            state.preview.as_deref().map(|p| &p.content)
+        {
+            let label = if state.loading {
+                "Preparing…".to_owned()
+            } else {
+                format!("Page {} of {pages}", page + 1)
+            };
+            bar = bar
+                .push(self.icon_action_maybe(
+                    "left",
+                    "Previous page",
+                    (*page > 0).then_some(wrap(Message::Page(false))),
+                ))
+                .push(muted(label).size(11))
+                .push(self.icon_action_maybe(
+                    "chevron",
+                    "Next page",
+                    (page + 1 < *pages).then_some(wrap(Message::Page(true))),
+                ));
+        }
+        if let Some(steps) = self.step_controls() {
+            bar = bar.push(steps);
+        }
+        bar = bar
+            .push(self.open_button([6, 12]))
+            .push(self.save_button([6, 10]))
+            .push(self.attachment_full_screen_action())
+            .push(self.icon_action("close", "Close dialog", super::Message::Close));
+
+        let mut notes = Vec::new();
+        if self.preview_truncated() {
+            notes.push("Showing the beginning of this file. Open it to see everything.");
+        }
+        if let Some(refusal) = state.preview.as_ref().and_then(|p| p.refusal) {
+            notes.push(refusal.note());
+        }
+        if let Some((notice, true, _)) = &self.notice {
+            notes.push(notice.as_str());
+        }
+        let used = 2. * FULL_SCREEN_PADDING
+            + FULL_SCREEN_BAR
+            + FULL_SCREEN_GAP
+            + notes.len() as f32 * (FULL_SCREEN_NOTE + FULL_SCREEN_GAP);
+        let height = (self.size.height - used).max(120.);
+        let mut body = column![bar].spacing(FULL_SCREEN_GAP);
+        for note in notes {
+            body = body.push(
+                muted(note)
+                    .size(11)
+                    .wrapping(iced::widget::text::Wrapping::None),
+            );
+        }
+        let content: Element<'_, super::Message> = match (&state.preview, &state.error) {
+            (_, Some(error)) => column![
+                text(error).size(13),
+                action("Try again", wrap(Message::Retry)),
+            ]
+            .spacing(12)
+            .into(),
+            (Some(preview), None) => match &preview.content {
+                // Page controls live in the bar, so the page takes all the height.
+                Content::Pages { handle, .. } => container(
+                    image(handle.clone())
+                        .content_fit(iced::ContentFit::Contain)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .center(Length::Fill)
+                .height(height)
+                .style(subtle)
+                .into(),
+                _ => self.preview_content(preview, height),
+            },
+            (None, None) => container(muted("Preparing preview…").size(13))
+                .center(Length::Fill)
+                .height(height)
+                .into(),
+        };
+        container(body.push(content).clip(true))
+            .padding(FULL_SCREEN_PADDING)
+            .width(self.size.width)
+            .height(self.size.height)
+            .style(card)
+            .into()
+    }
+
+    fn preview_truncated(&self) -> bool {
+        let state = &self.attachment_preview;
+        match state.preview.as_deref().map(|p| &p.content) {
+            Some(Content::Text { truncated, .. } | Content::Document { truncated, .. }) => {
+                *truncated
+            }
+            Some(Content::Sheets(sheets)) => sheets.get(state.sheet).is_some_and(|s| s.truncated),
+            _ => false,
+        }
+    }
+
+    fn open_button(&self, padding: [u16; 2]) -> Element<'_, super::Message> {
+        let state = &self.attachment_preview;
+        let openable = state.target.is_some()
+            && !state
+                .preview
+                .as_ref()
+                .is_some_and(|preview| !preview.openable());
+        button(
+            row![
+                icon_bright("external", 18.),
+                text(if state.opening { "Opening…" } else { "Open" }).size(12)
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding(padding)
+        .style(primary)
+        .on_press_maybe(
+            (openable && !state.opening)
+                .then_some(super::Message::AttachmentPreview(Message::Open)),
+        )
+        .into()
+    }
+
+    fn save_button(&self, padding: [u16; 2]) -> Element<'_, super::Message> {
+        button(
+            row![icon("download", 18.), text("Save a copy…").size(12)]
+                .spacing(8)
+                .align_y(Alignment::Center),
+        )
+        .padding(padding)
+        .style(outline)
+        .on_press_maybe(
+            self.attachment_preview
+                .target
+                .is_some()
+                .then_some(super::Message::AttachmentPreview(Message::Save)),
+        )
+        .into()
+    }
+
+    /// Previous/next attachment, shown when the message has more than one.
+    fn step_controls(&self) -> Option<Element<'_, super::Message>> {
+        let target = self
+            .attachment_preview
+            .target
+            .as_ref()
+            .filter(|t| t.count > 1)?;
+        let wrap = |message| super::Message::AttachmentPreview(message);
+        Some(
+            row![
+                self.icon_action_maybe(
+                    "left",
+                    "Previous attachment",
+                    (target.index > 0).then_some(wrap(Message::Step(false))),
+                ),
+                muted(format!("{} of {}", target.index + 1, target.count)).size(12),
+                self.icon_action_maybe(
+                    "chevron",
+                    "Next attachment",
+                    (target.index + 1 < target.count).then_some(wrap(Message::Step(true))),
+                ),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .into(),
+        )
+    }
 }
+
+const FULL_SCREEN_PADDING: f32 = 8.;
+const FULL_SCREEN_BAR: f32 = 40.;
+const FULL_SCREEN_GAP: f32 = 6.;
+/// One line of size-11 text.
+const FULL_SCREEN_NOTE: f32 = 16.;
 
 impl App {
     fn preview_content<'a>(

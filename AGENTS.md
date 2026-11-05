@@ -1081,33 +1081,28 @@ evicting the open message last, skips attachments over 16 MiB and remembers
 failures. A click served from it sends no command; a prepared result arriving
 for a click still loading replaces that request. Keep the cache, ordering,
 engine and native `test_attachment_preview_is_prepared_*` regressions.
-
-## Printing from the reader
-
-Print is the footer printer icon or remappable Mod+P, including both binding slots and disable behavior. It snapshots the expanded physical message and current Formatted/Plain choice. Preparation has its own bounded capacity-two command channel and worker, independent of provider jobs and foreground reads. MIME parsing and raster conversion run off-thread using complete cached raw mail, including quoted history and attachment names. Only CID resources and already cached images permitted for this message are embedded, as WebP; printing never fetches remote resources. The current R23 download/cache limits still apply.
 Open is enabled while a preview is still preparing (Sam's request): only a
 ready preview that reports a refusal disables it, and the engine's own check
 reports the refusal otherwise. The header's full-screen toggle fills the window
 with the preview, survives stepping between attachments, and Escape leaves full
-screen before closing; closing always resets it. Keep the native
+screen before closing; closing always resets it. Full screen uses its own view
+(`attachment_full_screen_view`): one slim top bar holds the title, page and
+attachment arrows, Open, Save, exit and close, with notes on single lines, so
+the preview takes the remaining window height. Keep chrome out of that view. Keep the native
 `test_attachment_preview_full_screen_*` light and compact dark flows.
 Requests carry ids so late previews or open replies cannot replace a newer
 choice, and Save a copy exports the previewed message rather than the selection.
 Keep the unit, ordering, engine, simulator and native `test_attachment_preview_*`
 regressions.
 
-`printing::Service` serves a self-contained document from memory on a random IPv4 loopback port and unguessable single-use path. Validate Host/method/path, bound headers/connections/timeouts, send no-store/no-referrer/CSP and stop after serving, cancellation or five-minute expiry. At most two unconsumed previews retain documents. The default browser owns printer/PDF selection; opening it is not evidence that the user printed. Retain the preview handle while its browser load may still be pending; dropping it stops an unconsumed server. Launcher and preparation failures remain visible and retry clears only the matching error. Printing does not mutate messages or block native navigation.
+## Printing from the reader
+
+Print is the footer printer icon or remappable Mod+P, including both binding slots and disable behavior. It snapshots the expanded physical message and current Formatted/Plain choice. Preparation has its own bounded capacity-two command channel and worker, independent of provider jobs and foreground reads. MIME parsing and raster conversion run off-thread using complete cached raw mail, including quoted history and attachment names. Only CID resources and already cached images permitted for this message are embedded, as WebP; printing never fetches remote resources. The current R23 download/cache limits still apply.
+
 
 The trusted parent prints its sandboxed srcdoc child, so long messages paginate. The child has allow-same-origin/allow-modals, never allow-scripts, forms or popups; a stricter child CSP blocks scripts and all network resources. Remove active elements/attributes and unsafe links before serialization; the parent prevents message navigation. Escape srcdoc and header data separately and substitute template markers once, never recursively into user text. Header insertion must wait for the actual srcdoc document, not the initial about:blank document. Review actual PDFs, not just serialized markup.
 
-
-Discover remote image references while preparing `HtmlBody` on the backend,
-including CSS backgrounds and base-relative URLs. The blocked-image control
-must exist before the first frame; rendering must never insert that control
-above an already displayed body. Discovery is metadata only: fetch only resources
-actually requested by the renderer and permitted by the existing image policy.
-
-Horizontal panning belongs inside the visible HTML canvas. Reserve its small
+`printing::Service` serves a self-contained document from memory on a random IPv4 loopback port and unguessable single-use path. Validate Host/method/path, bound headers/connections/timeouts, send no-store/no-referrer/CSP and stop after serving, cancellation or five-minute expiry. At most two unconsumed previews retain documents. The default browser owns printer/PDF selection; opening it is not evidence that the user printed. Retain the preview handle while its browser load may still be pending; dropping it stops an unconsumed server. Launcher and preparation failures remain visible and retry clears only the matching error. Printing does not mutate messages or block native navigation.
 The saved native Print flows start `desktop.start(print_browser="pdf" | "dialog" | "fail")`. An isolated Chrome/Chromium profile lives under the run artifacts and **must pass --ozone-platform=x11** so it stays on the harness-owned Xvfb display even on a Wayland host. The fixture-only launcher never falls back to the personal browser. PDF mode uses the actual browser print path with Save as PDF and kiosk printing, never a physical printer. Batch `print_output` asserts PDF text/pages and captures a first-page WebP; `browser_screenshot` captures the owned display, `cancel_print` uses native Escape, and `focus_app` raises/refocuses only the fixture window. Stop the owned browser process group before Xvfb. All scenarios remain in scripts/e2e.py. Linux Chromium evidence does not establish Firefox/Safari/macOS/Windows printing.
 
 Adding Print moves bottom-scrolled shortcut rows: Print y=780, Forward y=720, Find y=660, Inbox y=600 and Delete y=540 at 1440×920 without a bottom notice. Verify the actual presentation before adjusting coordinate tests. Performance measurements remain deferred; controlled preparation delays are correctness checks.
@@ -1124,6 +1119,14 @@ two columns, with navigation sharing the action row so the body remains readable
 Retain at most one set of current-query Find results that arrives before its
 matching layout frame. A rejected resize paint followed by a pan-only paint
 must not lose those results; reject older query/document revisions as usual.
+
+Discover remote image references while preparing `HtmlBody` on the backend,
+including CSS backgrounds and base-relative URLs. The blocked-image control
+must exist before the first frame; rendering must never insert that control
+above an already displayed body. Discovery is metadata only: fetch only resources
+actually requested by the renderer and permitted by the existing image policy.
+
+Horizontal panning belongs inside the visible HTML canvas. Reserve its small
 
 The fixture-only `html_delay_ms` MCP start option (0–2000) pauses the renderer
 worker, never iced, and must be paired with `--demo`. Use it for readiness/layout

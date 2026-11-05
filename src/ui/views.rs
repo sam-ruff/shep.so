@@ -8,9 +8,6 @@ use iced::{
     },
 };
 
-/// Space left around a full-screen attachment preview.
-const FULL_SCREEN_MARGIN: f32 = 8.;
-
 impl App {
     pub(super) fn layout(&self) -> Element<'_, Message> {
         let content = if self.full_reader && self.tab == Tab::Mail {
@@ -111,7 +108,7 @@ impl App {
             let modal = container(opaque(self.dialog_view(dialog)))
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
-                .padding(if full_screen { FULL_SCREEN_MARGIN } else { 24. });
+                .padding(if full_screen { 0. } else { 24. });
             stack![base, opaque(overlay), modal].into()
         } else {
             // Keep the base widget tree alive as dialogs open and close. Replacing the
@@ -2481,7 +2478,9 @@ impl App {
         )
     }
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
-        let full_screen = dialog == Dialog::Attachment && self.attachment_preview.full_screen;
+        if dialog == Dialog::Attachment && self.attachment_preview.full_screen {
+            return self.attachment_full_screen_view();
+        }
         let (title, subtitle) = match dialog {
             Dialog::Activity => ("Activity", ""),
             Dialog::ActivityBackup => ("Backup activity", ""),
@@ -2642,14 +2641,8 @@ impl App {
                     Length::Shrink
                 }),
         )
-        .max_height(if full_screen {
-            self.size.height - 2. * FULL_SCREEN_MARGIN
-        } else {
-            (self.size.height - 65.).max(400.)
-        })
-        .width(if full_screen {
-            self.size.width - 2. * FULL_SCREEN_MARGIN
-        } else if dialog == Dialog::Attachment {
+        .max_height((self.size.height - 65.).max(400.))
+        .width(if dialog == Dialog::Attachment {
             (self.size.width - 80.).clamp(570., 960.)
         } else {
             570.

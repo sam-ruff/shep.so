@@ -2914,9 +2914,10 @@ class NativeFlows(unittest.TestCase):
                        click(1277, 784), check("dialog", "Attachment"), check("attachment_preview.loading", False),
                        click(1105, 133), check("attachment_preview.full_screen", True),
                        check("attachment_preview.pages", [1, 2]), wait(150), shot("attachment-full-screen-pdf"),
-                       click(779, 809), check("attachment_preview.pages", [2, 2]),
+                       # Full screen keeps every control in one bar along the top.
+                       click(977, 27), check("attachment_preview.pages", [2, 2]),
                        check("attachment_preview.loading", False),
-                       click(1385, 863), check("attachment_preview.index", 3),
+                       click(1107, 27), check("attachment_preview.index", 3),
                        check("attachment_preview.full_screen", True), check("attachment_preview.loading", False),
                        wait(150), shot("attachment-full-screen-sheet"),
                        # Escape leaves full screen first, then closes the preview.
@@ -2925,7 +2926,7 @@ class NativeFlows(unittest.TestCase):
                        key("Escape"), check("dialog", None),
                        click(1277, 784), check("dialog", "Attachment"), check("attachment_preview.full_screen", False),
                        click(1105, 133), check("attachment_preview.full_screen", True),
-                       click(1333, 56), check("attachment_preview.full_screen", False),
+                       click(1366, 27), check("attachment_preview.full_screen", False),
                        key("Escape"), check("dialog", None))
         # Compact and dark: the toggle still fits beside the close button.
         self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(690, 366), check("dark", True),
