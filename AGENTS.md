@@ -1047,14 +1047,6 @@ Matching references: [RegexBuilder Unicode case folding](https://docs.rs/regex/l
 Typed results match the request/source/reader generation. A late result after navigation or opening another composer stays in Drafts and must not replace the current editor. Repeated Forward while preparation is pending is coalesced. Show Preparing immediately, keep navigation available, wait before window close and clear only the matching failed-preparation notice after retry. `mail_actions="slow"` delays fixture preparation; `"fail"` rejects the first fixture forward and allows retry. These never touch a personal account. Rust tests cover complete source, MIME/header/attachment roundtrip, restart, rollback, native editor roundtrip, stale results and saturated-provider dispatch. Preserve saved native forwarding scenarios with WebP evidence.
 
 
-## Printing from the reader
-
-Print is the footer printer icon or remappable Mod+P, including both binding slots and disable behavior. It snapshots the expanded physical message and current Formatted/Plain choice. Preparation has its own bounded capacity-two command channel and worker, independent of provider jobs and foreground reads. MIME parsing and raster conversion run off-thread using complete cached raw mail, including quoted history and attachment names. Only CID resources and already cached images permitted for this message are embedded, as WebP; printing never fetches remote resources. The current R23 download/cache limits still apply.
-
-`printing::Service` serves a self-contained document from memory on a random IPv4 loopback port and unguessable single-use path. Validate Host/method/path, bound headers/connections/timeouts, send no-store/no-referrer/CSP and stop after serving, cancellation or five-minute expiry. At most two unconsumed previews retain documents. The default browser owns printer/PDF selection; opening it is not evidence that the user printed. Retain the preview handle while its browser load may still be pending; dropping it stops an unconsumed server. Launcher and preparation failures remain visible and retry clears only the matching error. Printing does not mutate messages or block native navigation.
-
-The trusted parent prints its sandboxed srcdoc child, so long messages paginate. The child has allow-same-origin/allow-modals, never allow-scripts, forms or popups; a stricter child CSP blocks scripts and all network resources. Remove active elements/attributes and unsafe links before serialization; the parent prevents message navigation. Escape srcdoc and header data separately and substitute template markers once, never recursively into user text. Header insertion must wait for the actual srcdoc document, not the initial about:blank document. Review actual PDFs, not just serialized markup.
-
 ## Attachment preview and temporary copies
 
 Reader attachment chips open `Dialog::Attachment` (`ui/attachment_preview.rs`);
@@ -1086,11 +1078,30 @@ regressions.
 The saved native Print flows start `desktop.start(print_browser="pdf" | "dialog" | "fail")`. An isolated Chrome/Chromium profile lives under the run artifacts and **must pass --ozone-platform=x11** so it stays on the harness-owned Xvfb display even on a Wayland host. The fixture-only launcher never falls back to the personal browser. PDF mode uses the actual browser print path with Save as PDF and kiosk printing, never a physical printer. Batch `print_output` asserts PDF text/pages and captures a first-page WebP; `browser_screenshot` captures the owned display, `cancel_print` uses native Escape, and `focus_app` raises/refocuses only the fixture window. Stop the owned browser process group before Xvfb. All scenarios remain in scripts/e2e.py. Linux Chromium evidence does not establish Firefox/Safari/macOS/Windows printing.
 
 Adding Print moves bottom-scrolled shortcut rows: Print y=780, Forward y=720, Find y=660, Inbox y=600 and Delete y=540 at 1440×920 without a bottom notice. Verify the actual presentation before adjusting coordinate tests. Performance measurements remain deferred; controlled preparation delays are correctness checks.
+Sam asked for previews to be ready when a message opens. `select` and arriving
+details call `prepare_attachment_previews`: first pages for the open message's
+attachments (sharing the reader's `Arc` bytes) and for the two nearest unread
+rows with attachments within six rows (body-cache bytes, else one engine read).
+`PrepareAttachmentPreviews` has its own capacity-two, one-worker lane, separate
+from interactive previews and body prefetch; a full queue drops the request
+quietly. `ui/attachment_preview/prepared.rs` keeps at most 32 previews / 64 MiB,
+evicting the open message last, skips attachments over 16 MiB and remembers
+failures. A click served from it sends no command; a prepared result arriving
+for a click still loading replaces that request. Keep the cache, ordering,
+engine and native `test_attachment_preview_is_prepared_*` regressions.
 
 References: [Window.print](https://developer.mozilla.org/en-US/docs/Web/API/Window/print), [iframe sandbox](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe), [srcdoc isolation](https://developer.mozilla.org/en-US/docs/Web/API/HTMLIFrameElement/srcdoc).
 
 
 ## HTML frame preparation and geometry
+## Printing from the reader
+
+Print is the footer printer icon or remappable Mod+P, including both binding slots and disable behavior. It snapshots the expanded physical message and current Formatted/Plain choice. Preparation has its own bounded capacity-two command channel and worker, independent of provider jobs and foreground reads. MIME parsing and raster conversion run off-thread using complete cached raw mail, including quoted history and attachment names. Only CID resources and already cached images permitted for this message are embedded, as WebP; printing never fetches remote resources. The current R23 download/cache limits still apply.
+
+`printing::Service` serves a self-contained document from memory on a random IPv4 loopback port and unguessable single-use path. Validate Host/method/path, bound headers/connections/timeouts, send no-store/no-referrer/CSP and stop after serving, cancellation or five-minute expiry. At most two unconsumed previews retain documents. The default browser owns printer/PDF selection; opening it is not evidence that the user printed. Retain the preview handle while its browser load may still be pending; dropping it stops an unconsumed server. Launcher and preparation failures remain visible and retry clears only the matching error. Printing does not mutate messages or block native navigation.
+
+The trusted parent prints its sandboxed srcdoc child, so long messages paginate. The child has allow-same-origin/allow-modals, never allow-scripts, forms or popups; a stricter child CSP blocks scripts and all network resources. Remove active elements/attributes and unsafe links before serialization; the parent prevents message navigation. Escape srcdoc and header data separately and substitute template markers once, never recursively into user text. Header insertion must wait for the actual srcdoc document, not the initial about:blank document. Review actual PDFs, not just serialized markup.
+
 
 Discover remote image references while preparing `HtmlBody` on the backend,
 including CSS backgrounds and base-relative URLs. The blocked-image control

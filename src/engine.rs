@@ -155,6 +155,10 @@ pub enum Command {
     /// Request, message, attachment index and PDF page.
     PreviewAttachment(u64, String, usize, usize),
     OpenAttachment(u64, String, usize),
+    /// Speculative first-page previews for a message's attachments. The
+    /// attachments travel with the request when the reader already has them;
+    /// otherwise they are read from the cache.
+    PrepareAttachmentPreviews(String, Option<Arc<Vec<Attachment>>>, Vec<usize>),
     ExportMessage(String, String),
     #[cfg(test)]
     HoldBackend {
@@ -354,6 +358,9 @@ pub enum Event {
     Print(u64, Result<Arc<crate::printing::Preview>, String>),
     AttachmentPreview(u64, Result<Arc<crate::attachment_files::Preview>, String>),
     AttachmentOpened(u64, Result<std::path::PathBuf, String>),
+    /// A speculative preview for a message and attachment index; `None` when it
+    /// could not be prepared.
+    AttachmentPreviewPrepared(String, usize, Option<Arc<crate::attachment_files::Preview>>),
     Sent(String, u64),
     SubmissionQueued(String, u64),
     OutgoingPage(u64, Result<Arc<crate::outgoing::OutgoingPage>, String>),
@@ -1937,6 +1944,37 @@ impl Engine {
                         result.map(Arc::new).map_err(|e| format!("{e:#}")),
                     ))
                     .await?;
+            }
+            Command::PrepareAttachmentPreviews(id, attachments, indices) => {
+                let attachments = match attachments {
+                    Some(attachments) => Some(attachments),
+                    None => self
+                        .store
+                        .detail(id.clone())
+                        .await
+                        .ok()
+                        .map(|detail| detail.attachments.clone()),
+                };
+                // One at a time keeps this lane from competing with a click.
+                for index in indices {
+                    let attachment = attachments
+                        .as_ref()
+                        .and_then(|all| all.get(index))
+                        .filter(|a| a.bytes.len() <= crate::attachment_files::PREPARE_LIMIT)
+                        .cloned();
+                    let preview = match attachment {
+                        Some(attachment) => tokio::task::spawn_blocking(move || {
+                            crate::attachment_files::preview(&attachment.name, &attachment.bytes, 0)
+                        })
+                        .await
+                        .ok()
+                        .map(Arc::new),
+                        None => None,
+                    };
+                    output
+                        .send(Event::AttachmentPreviewPrepared(id.clone(), index, preview))
+                        .await?;
+                }
             }
             Command::OpenAttachment(request, id, index) => {
                 let result = async {

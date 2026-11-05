@@ -6,6 +6,18 @@ use crate::attachment_files::{Content, Preview as Prepared};
 use tokio::sync::mpsc::Receiver;
 
 async fn reader() -> anyhow::Result<(App, Receiver<Command>, Receiver<Command>, String)> {
+    let (app, attachments, network, _, id) = reader_lanes().await?;
+    Ok((app, attachments, network, id))
+}
+
+/// The reader plus the speculative preparation lane.
+async fn reader_lanes() -> anyhow::Result<(
+    App,
+    Receiver<Command>,
+    Receiver<Command>,
+    Receiver<Command>,
+    String,
+)> {
     let store = crate::store::Store::memory()?;
     let raw = "Subject: Files\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n\
         --b\r\nContent-Type: text/plain\r\n\r\nBody\r\n\
@@ -16,11 +28,27 @@ async fn reader() -> anyhow::Result<(App, Receiver<Command>, Receiver<Command>, 
     let id = mail.summary.id.clone();
     store.upsert(vec![mail]).await?;
     let (mut app, _) = App::new();
-    let (sender, attachments, network) = engine::CommandSender::attachment_test_channels();
+    let (sender, attachments, network, preparing) =
+        engine::CommandSender::attachment_test_channels();
     app.tx = Some(sender);
     app.selected = Some(id.clone());
     app.detail = Some(Arc::new(store.detail(id.clone()).await?));
-    Ok((app, attachments, network, id))
+    Ok((app, attachments, network, preparing, id))
+}
+
+type PrepareRequest = (
+    String,
+    Option<Arc<Vec<crate::model::Attachment>>>,
+    Vec<usize>,
+);
+
+fn prepare_request(commands: &mut Receiver<Command>) -> Option<PrepareRequest> {
+    match commands.try_recv().ok()? {
+        Command::PrepareAttachmentPreviews(source, attachments, indices) => {
+            Some((source, attachments, indices))
+        }
+        _ => None,
+    }
 }
 
 fn prepared(name: &str, openable: bool) -> Arc<Prepared> {
@@ -327,5 +355,166 @@ async fn sheet_tabs_switch_locally_and_reset_for_another_file() -> anyhow::Resul
 
     let _ = app.handle(Message::AttachmentPreview(Preview::Step(true)));
     assert_eq!(app.attachment_preview.sheet, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_open_message_is_prepared_with_the_attachments_it_already_has() -> anyhow::Result<()> {
+    let (mut app, _, _, mut preparing, id) = reader_lanes().await?;
+    app.prepare_attachment_previews();
+    let (source, attachments, indices) = prepare_request(&mut preparing).expect("prepare");
+    assert_eq!(
+        (source.as_str(), indices.as_slice()),
+        (id.as_str(), [0, 1].as_slice())
+    );
+    let reader = app.detail.as_ref().map(|d| d.attachments.clone());
+    assert!(
+        attachments
+            .zip(reader)
+            .is_some_and(|(a, b)| Arc::ptr_eq(&a, &b)),
+        "the reader's bytes are shared, not copied or read again"
+    );
+
+    // Nothing is requested twice while it is in flight.
+    app.prepare_attachment_previews();
+    assert!(prepare_request(&mut preparing).is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_prepared_preview_opens_without_waiting() -> anyhow::Result<()> {
+    let (mut app, mut attachments, _, mut preparing, id) = reader_lanes().await?;
+    app.prepare_attachment_previews();
+    let _ = prepare_request(&mut preparing);
+    let _ = app.handle(Message::Backend(Event::AttachmentPreviewPrepared(
+        id.clone(),
+        0,
+        Some(prepared("notes.txt", true)),
+    )));
+    let _ = app.handle(Message::Backend(Event::AttachmentPreviewPrepared(
+        id.clone(),
+        1,
+        None,
+    )));
+
+    let _ = app.handle(Message::AttachmentPreview(Preview::Show(id.clone(), 0)));
+    assert!(
+        preview_request(&mut attachments).is_none(),
+        "no work after a click"
+    );
+    let state = &app.attachment_preview;
+    assert!(state.from_cache && !state.loading);
+    assert_eq!(
+        state.preview.as_ref().map(|p| p.name.as_str()),
+        Some("notes.txt")
+    );
+
+    // An attachment that could not be prepared is requested as before.
+    let _ = app.handle(Message::AttachmentPreview(Preview::Step(true)));
+    let (_, _, index) = preview_request(&mut attachments).expect("interactive request");
+    assert_eq!(index, 1);
+    assert!(!app.attachment_preview.from_cache);
+    // A failed attempt is not retried on every selection.
+    app.prepare_attachment_previews();
+    assert!(prepare_request(&mut preparing).is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_click_waiting_for_its_preview_takes_the_prepared_one() -> anyhow::Result<()> {
+    let (mut app, mut attachments, _, _, id) = reader_lanes().await?;
+    let _ = app.handle(Message::AttachmentPreview(Preview::Show(id.clone(), 0)));
+    let (request, ..) = preview_request(&mut attachments).expect("request");
+
+    // Another attachment's preparation leaves the click waiting.
+    let _ = app.handle(Message::Backend(Event::AttachmentPreviewPrepared(
+        id.clone(),
+        1,
+        Some(prepared("setup.exe", false)),
+    )));
+    assert!(app.attachment_preview.loading);
+
+    let _ = app.handle(Message::Backend(Event::AttachmentPreviewPrepared(
+        id.clone(),
+        0,
+        Some(prepared("notes.txt", true)),
+    )));
+    assert!(!app.attachment_preview.loading);
+    // The slower interactive reply cannot replace it afterwards.
+    let _ = app.handle(Message::Backend(Event::AttachmentPreview(
+        request,
+        Ok(prepared("stale.txt", true)),
+    )));
+    assert_eq!(
+        app.attachment_preview
+            .preview
+            .as_ref()
+            .map(|p| p.name.as_str()),
+        Some("notes.txt")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn nearby_unread_messages_are_prepared_after_the_open_one() -> anyhow::Result<()> {
+    let (mut app, _, _, mut preparing, id) = reader_lanes().await?;
+    let summary = app
+        .detail
+        .as_ref()
+        .map(|d| d.summary.clone())
+        .expect("reader");
+    let neighbour = crate::model::Mail {
+        id: "neighbour".into(),
+        unread: true,
+        attachment_count: 3,
+        ..summary.clone()
+    };
+    let read = crate::model::Mail {
+        id: "read".into(),
+        unread: false,
+        attachment_count: 3,
+        ..summary.clone()
+    };
+    app.page = Arc::new(MailPage {
+        rows: vec![summary, read, neighbour],
+        ..Default::default()
+    });
+    app.prepare_attachment_previews();
+    let (first, ..) = prepare_request(&mut preparing).expect("open message");
+    assert_eq!(first, id);
+    let (source, attachments, indices) = prepare_request(&mut preparing).expect("neighbour");
+    assert_eq!(source, "neighbour");
+    assert!(
+        attachments.is_none(),
+        "not in the body cache, so read in the engine"
+    );
+    assert_eq!(indices, [0, 1, 2]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_full_preparation_queue_is_dropped_quietly_and_retried() -> anyhow::Result<()> {
+    let (mut app, _, _, mut preparing, id) = reader_lanes().await?;
+    for _ in 0..2 {
+        app.tx
+            .as_ref()
+            .expect("sender")
+            .try_send(Command::PrepareAttachmentPreviews(
+                "other".into(),
+                None,
+                vec![],
+            ))
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+    }
+    app.prepare_attachment_previews();
+    assert!(
+        app.notice.is_none(),
+        "speculative work never shows a busy notice"
+    );
+
+    while prepare_request(&mut preparing).is_some() {}
+    app.prepare_attachment_previews();
+    let (source, ..) = prepare_request(&mut preparing).expect("retried");
+    assert_eq!(source, id);
     Ok(())
 }

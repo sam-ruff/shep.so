@@ -1,5 +1,7 @@
 //! Reader attachment preview dialog. Preparation and temporary copies run in
 //! the engine; this module only tracks the current request and draws results.
+mod prepared;
+
 use super::*;
 use crate::attachment_files::{Block, Content, Preview, Sheet};
 use iced::{
@@ -41,6 +43,10 @@ pub(super) struct State {
     /// PDF page currently requested.
     pub page: usize,
     pub sheet: usize,
+    /// Previews prepared before a click; kept when the dialog closes.
+    pub prepared: prepared::Prepared,
+    /// Whether the shown preview came from `prepared`.
+    pub from_cache: bool,
 }
 impl State {
     fn clear(&mut self) {
@@ -164,12 +170,104 @@ impl App {
         Task::none()
     }
 
-    fn request_attachment_preview(&mut self, target: Target) {
+    fn request_attachment_preview(&mut self, mut target: Target) {
         let state = &mut self.attachment_preview;
         state.preview = None;
         state.sheet = 0;
+        state.from_cache = false;
+        if let Some(preview) = state.prepared.get(&target.source, target.index) {
+            // Fences any earlier request still in flight.
+            state.request += 1;
+            state.error = None;
+            state.page = 0;
+            state.loading = false;
+            state.from_cache = true;
+            target.name = preview.name.clone();
+            state.target = Some(target);
+            state.preview = Some(preview);
+            return;
+        }
         state.target = Some(target);
         self.request_attachment_page(0);
+    }
+
+    /// Prepares first-page previews in the background for the open message and
+    /// the nearest unread messages with attachments, so the dialog can show
+    /// them as soon as it opens.
+    pub(super) fn prepare_attachment_previews(&mut self) {
+        let Some(selected) = self.selected.clone() else {
+            return;
+        };
+        if self.page.is_transient_placeholder(&selected) {
+            return;
+        }
+        let mut targets = Vec::new();
+        if let Some(detail) = &self.detail
+            && !detail.attachments.is_empty()
+        {
+            targets.push((
+                detail.summary.id.clone(),
+                Some(detail.attachments.clone()),
+                detail.attachments.len(),
+            ));
+        }
+        for mail in prepared::nearby(&self.page.rows, &selected) {
+            let attachments = self
+                .detail_cache
+                .iter()
+                .find(|detail| detail.summary.id == mail.id)
+                .map(|detail| detail.attachments.clone());
+            targets.push((mail.id.clone(), attachments, mail.attachment_count));
+        }
+        for (source, attachments, count) in targets {
+            let indices = self.attachment_preview.prepared.wanted(&source, count);
+            if indices.is_empty() {
+                continue;
+            }
+            self.attachment_preview
+                .prepared
+                .requested(&source, &indices);
+            // A full queue forgets the request; the next selection retries.
+            if !self.try_command(Command::PrepareAttachmentPreviews(
+                source,
+                attachments,
+                indices,
+            )) {
+                break;
+            }
+        }
+    }
+
+    pub(super) fn attachment_preview_prepared(
+        &mut self,
+        source: String,
+        index: usize,
+        preview: Option<Arc<Preview>>,
+    ) {
+        let open = self.dialog == Some(Dialog::Attachment);
+        let state = &mut self.attachment_preview;
+        // A click that is still waiting takes the prepared preview instead.
+        if let Some(preview) = &preview
+            && open
+            && state.loading
+            && state.page == 0
+            && state
+                .target
+                .as_ref()
+                .is_some_and(|t| t.source == source && t.index == index)
+        {
+            state.request += 1;
+            state.loading = false;
+            state.from_cache = true;
+            if let Some(target) = &mut state.target {
+                target.name = preview.name.clone();
+            }
+            state.preview = Some(preview.clone());
+        }
+        let protect = self.detail.as_ref().map(|d| d.summary.id.clone());
+        self.attachment_preview
+            .prepared
+            .finished(source, index, preview, protect.as_deref());
     }
 
     /// Requests a page of the current attachment. The shown page stays until
@@ -309,6 +407,8 @@ impl App {
             "blocks": blocks,
             "sheets": sheets,
             "sheet": state.sheet,
+            "from_cache": state.from_cache,
+            "prepared": state.prepared.keys(),
             "text_bytes": text_bytes,
             "truncated": truncated,
             "loading": state.loading,

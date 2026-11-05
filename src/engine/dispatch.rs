@@ -29,6 +29,8 @@ pub struct CommandSender {
     sync: mpsc::Sender<Command>,
     printing: mpsc::Sender<Command>,
     attachments: mpsc::Sender<Command>,
+    /// Speculative attachment previews; full means the request is dropped.
+    preparing: mpsc::Sender<Command>,
     selections: mpsc::Sender<Command>,
     bulk: mpsc::Sender<Command>,
     database: mpsc::Sender<Command>,
@@ -43,6 +45,7 @@ pub(super) struct Inputs {
     sync: mpsc::Receiver<Command>,
     printing: mpsc::Receiver<Command>,
     attachments: mpsc::Receiver<Command>,
+    preparing: mpsc::Receiver<Command>,
     selections: mpsc::Receiver<Command>,
     pub(super) bulk: mpsc::Receiver<Command>,
     database: mpsc::Receiver<Command>,
@@ -120,10 +123,14 @@ impl CommandSender {
     }
 
     #[cfg(test)]
-    pub(crate) fn attachment_test_channels()
-    -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>) {
+    pub(crate) fn attachment_test_channels() -> (
+        Self,
+        mpsc::Receiver<Command>,
+        mpsc::Receiver<Command>,
+        mpsc::Receiver<Command>,
+    ) {
         let (sender, inputs) = Self::channel();
-        (sender, inputs.attachments, inputs.network)
+        (sender, inputs.attachments, inputs.network, inputs.preparing)
     }
 
     #[cfg(test)]
@@ -140,6 +147,7 @@ impl CommandSender {
         let (sync, sync_input) = mpsc::channel(1);
         let (printing, print_input) = mpsc::channel(2);
         let (attachments, attachment_input) = mpsc::channel(4);
+        let (preparing, preparing_input) = mpsc::channel(2);
         let (selections, selection_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (bulk, bulk_input) = mpsc::channel(1);
         let (database, database_input) = mpsc::channel(1);
@@ -153,6 +161,7 @@ impl CommandSender {
                 sync,
                 printing,
                 attachments,
+                preparing,
                 selections,
                 bulk,
                 database,
@@ -166,6 +175,7 @@ impl CommandSender {
                 sync: sync_input,
                 printing: print_input,
                 attachments: attachment_input,
+                preparing: preparing_input,
                 selections: selection_input,
                 bulk: bulk_input,
                 database: database_input,
@@ -204,6 +214,7 @@ impl CommandSender {
             }
             Command::Print(..) => &self.printing,
             Command::PreviewAttachment(..) | Command::OpenAttachment(..) => &self.attachments,
+            Command::PrepareAttachmentPreviews(..) => &self.preparing,
             Command::Selection(..)
             | Command::ReviewSelection(..)
             | Command::ReleaseSelection(_)
@@ -361,6 +372,7 @@ impl Engine {
             self.clone().run_reads(input.prefetch, output.clone(), 1),
             self.clone().run_reads(input.printing, output.clone(), 1),
             self.clone().run_reads(input.attachments, output.clone(), 2),
+            self.clone().run_reads(input.preparing, output.clone(), 1),
             self.clone()
                 .run_persistence(input.selections, output.clone()),
             self.clone()

@@ -960,6 +960,10 @@ impl App {
                         self.pending_details.remove(&id);
                     }
                     Command::Query(_, _, true) => self.prefetch_query = None,
+                    Command::PrepareAttachmentPreviews(source, _, indices) => self
+                        .attachment_preview
+                        .prepared
+                        .abandoned(&source, &indices),
                     _ => self.notice(
                         "The work queue is full. Please try that action again.",
                         true,
@@ -1179,6 +1183,7 @@ impl App {
                 self.preload(self.page.rows[i - 1].id.clone());
             }
         }
+        self.prepare_attachment_previews();
         self.load_remote_images();
         self.restore_reply();
     }
@@ -1843,6 +1848,7 @@ impl App {
                             if !prefetch || self.detail_cache.len() < 8 {
                                 self.cache_detail(detail);
                             }
+                            self.prepare_attachment_previews();
                             self.load_remote_images();
                             self.restore_reply();
                             if self.pending_mail_action.is_some() {
@@ -2042,6 +2048,9 @@ impl App {
                 }
                 Event::AttachmentOpened(request, result) => {
                     self.attachment_opened(request, result);
+                }
+                Event::AttachmentPreviewPrepared(source, index, preview) => {
+                    self.attachment_preview_prepared(source, index, preview);
                 }
                 Event::DraftFiles(id, result) => {
                     let current = self.composer.io.as_deref() == Some(&id);

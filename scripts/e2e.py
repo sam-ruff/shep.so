@@ -2887,6 +2887,26 @@ class NativeFlows(unittest.TestCase):
                        check("attachment_preview.opening", False), check("attachment_preview.source", None),
                        check("selected", "Site visit photos and notes"))
 
+    def test_attachment_preview_is_prepared_for_the_open_and_nearby_unread_messages(self):
+        site, quote = "preview-work:INBOX:attachments-0", "preview-work:INBOX:attachments-1"
+        started = self.mcp.call("desktop.start", attachment_mail=True)
+        print(f"Prepared attachment preview evidence: {started['artifacts']}", flush=True)
+        # The quote is prepared while it is only a nearby unread row.
+        self.mcp.batch(check("selected", "Site visit photos and notes"),
+                       check("attachment_preview.prepared", [site, 2], "contains"),
+                       check("attachment_preview.prepared", [quote, 0], "contains"),
+                       check("selected", "Site visit photos and notes"),
+                       click(1277, 784), check("dialog", "Attachment"),
+                       check("attachment_preview.from_cache", True), check("attachment_preview.loading", False),
+                       check("attachment_preview.pages", [1, 2]), shot("attachment-prepared-open-message"),
+                       key("Escape"), check("dialog", None),
+                       key("Down"), check("selected", "Kitchen quote"),
+                       click(986, 830), check("dialog", "Attachment"),
+                       check("attachment_preview.name", "kitchen-quote.pdf"),
+                       check("attachment_preview.from_cache", True), check("attachment_preview.loading", False),
+                       check("attachment_preview.pages", [1, 2]), wait(150), shot("attachment-prepared-nearby-unread"),
+                       key("Escape"), check("dialog", None))
+
     def test_attachment_preview_steps_opens_and_saves_from_the_prototype_reply(self):
         started = self.mcp.call("desktop.start")
         print(f"Prototype attachment evidence: {started['artifacts']}", flush=True)

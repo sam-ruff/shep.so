@@ -46,25 +46,47 @@ async fn preview_and_open_run_beside_saturated_provider_work() -> anyhow::Result
         Command::OpenAttachment(2, id.clone(), 0),
         Command::OpenAttachment(3, id.clone(), 1),
         Command::PreviewAttachment(4, id.clone(), 9, 0),
+        // Without attachments in the request, they are read from the cache.
+        Command::PrepareAttachmentPreviews(id.clone(), None, vec![0, 1, 9]),
     ] {
         sender
             .try_send(command)
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     }
     let (mut preview, mut opened, mut refused, mut missing) = (None, None, None, None);
+    let mut prepared = Vec::new();
     tokio::time::timeout(crate::test_wait::HANG, async {
-        while preview.is_none() || opened.is_none() || refused.is_none() || missing.is_none() {
+        while preview.is_none()
+            || opened.is_none()
+            || refused.is_none()
+            || missing.is_none()
+            || prepared.len() < 3
+        {
             match events.next().await.expect("dispatcher stopped") {
                 Event::AttachmentPreview(1, result) => preview = Some(result),
                 Event::AttachmentOpened(2, result) => opened = Some(result),
                 Event::AttachmentOpened(3, result) => refused = Some(result),
                 Event::AttachmentPreview(4, result) => missing = Some(result),
+                Event::AttachmentPreviewPrepared(source, index, result) => {
+                    assert_eq!(source, id);
+                    prepared.push((index, result));
+                }
                 _ => {}
             }
         }
     })
     .await?;
     release.notify_waiters();
+
+    // Prepared in order, one at a time; a missing attachment reports nothing.
+    let order: Vec<_> = prepared.iter().map(|(index, _)| *index).collect();
+    assert_eq!(order, [0, 1, 9]);
+    assert_eq!(
+        prepared[0].1.as_ref().map(|p| p.name.as_str()),
+        Some("notes.txt")
+    );
+    assert!(prepared[1].1.as_ref().is_some_and(|p| !p.openable()));
+    assert!(prepared[2].1.is_none());
 
     let preview = preview.and_then(Result::ok).expect("text preview");
     assert_eq!(preview.name, "notes.txt");

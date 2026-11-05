@@ -23,6 +23,8 @@ pub const TEXT_LINE_LIMIT: usize = 2_000;
 /// Longest side of a prepared image, in pixels.
 pub const IMAGE_SIDE: u32 = 2_048;
 const DECODE_ALLOCATION: u64 = 256 * 1024 * 1024;
+/// Larger attachments are only prepared when the user asks for them.
+pub const PREPARE_LIMIT: usize = 16 * 1024 * 1024;
 
 const TEXT_EXTENSIONS: &[&str] = &[
     "txt", "text", "md", "markdown", "log", "csv", "tsv", "json", "xml", "yaml", "yml", "toml",
@@ -88,6 +90,30 @@ pub struct Preview {
 impl Preview {
     pub fn openable(&self) -> bool {
         self.refusal.is_none()
+    }
+
+    /// Approximate memory held by the prepared content.
+    pub fn weight(&self) -> usize {
+        let content = match &self.content {
+            Content::Image { width, height, .. } | Content::Pages { width, height, .. } => {
+                *width as usize * *height as usize * 4
+            }
+            Content::Text { text, .. } => text.len(),
+            Content::Document { blocks, .. } => blocks
+                .iter()
+                .map(|block| match block {
+                    Block::Heading(text) | Block::Paragraph(text) => text.len(),
+                })
+                .sum(),
+            Content::Sheets(sheets) => sheets
+                .iter()
+                .flat_map(|sheet| &sheet.rows)
+                .flatten()
+                .map(String::len)
+                .sum(),
+            Content::Unsupported => 0,
+        };
+        content + self.name.len()
     }
 }
 

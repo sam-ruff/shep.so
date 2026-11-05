@@ -505,9 +505,11 @@ For attachment previews use `desktop.start(attachment_mail=true)`: the newest
 Inbox message, "Site visit photos and notes", carries a 640×400 PNG, a CSV, a
 two-page PDF, an Excel workbook (two sheets, one cell far outside the grid), a
 Word document, a Word document carrying a VBA part and a shell script, built by
-`tests/support/document_files.rs`. Observe `attachment_preview` (kind, image or
-page size, `pages`, `sheets`, `sheet`, `blocks`, text bytes, openable, `refusal`,
-opened). Demo mode writes the temporary copy
+`tests/support/document_files.rs`. Just below it, the unread "Kitchen quote"
+carries a two-page PDF, so it is prepared as a nearby unread message without
+being opened. Observe `attachment_preview` (kind, image or page size, `pages`,
+`sheets`, `sheet`, `blocks`, text bytes, openable, `refusal`, opened,
+`prepared` as `[message id, index]` pairs and `from_cache`). Demo mode writes the temporary copy
 but never launches a desktop app; the `test_attachment_preview_*` flows read the
 copy's bytes from `attachment_preview.opened`.
 
