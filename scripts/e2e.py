@@ -2907,6 +2907,36 @@ class NativeFlows(unittest.TestCase):
                        check("attachment_preview.pages", [1, 2]), wait(150), shot("attachment-prepared-nearby-unread"),
                        key("Escape"), check("dialog", None))
 
+    def test_attachment_preview_full_screen_keeps_controls_and_escape_steps_back(self):
+        started = self.mcp.call("desktop.start", attachment_mail=True)
+        print(f"Full-screen attachment preview evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("selected", "Site visit photos and notes"),
+                       click(1277, 784), check("dialog", "Attachment"), check("attachment_preview.loading", False),
+                       click(1105, 133), check("attachment_preview.full_screen", True),
+                       check("attachment_preview.pages", [1, 2]), wait(150), shot("attachment-full-screen-pdf"),
+                       click(779, 809), check("attachment_preview.pages", [2, 2]),
+                       check("attachment_preview.loading", False),
+                       click(1385, 863), check("attachment_preview.index", 3),
+                       check("attachment_preview.full_screen", True), check("attachment_preview.loading", False),
+                       wait(150), shot("attachment-full-screen-sheet"),
+                       # Escape leaves full screen first, then closes the preview.
+                       key("Escape"), check("attachment_preview.full_screen", False),
+                       check("dialog", "Attachment"), wait(150), shot("attachment-full-screen-left"),
+                       key("Escape"), check("dialog", None),
+                       click(1277, 784), check("dialog", "Attachment"), check("attachment_preview.full_screen", False),
+                       click(1105, 133), check("attachment_preview.full_screen", True),
+                       click(1333, 56), check("attachment_preview.full_screen", False),
+                       key("Escape"), check("dialog", None))
+        # Compact and dark: the toggle still fits beside the close button.
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900, 640]),
+                       wait(300), click(615, 511), check("attachment_preview.kind", "PDF document"),
+                       check("attachment_preview.loading", False), wait(150), shot("attachment-compact-before-full-screen"),
+                       click(761, 133), check("attachment_preview.full_screen", True), wait(150),
+                       shot("attachment-compact-full-screen"),
+                       key("Escape"), check("attachment_preview.full_screen", False), key("Escape"), check("dialog", None))
+
     def test_attachment_preview_steps_opens_and_saves_from_the_prototype_reply(self):
         started = self.mcp.call("desktop.start")
         print(f"Prototype attachment evidence: {started['artifacts']}", flush=True)

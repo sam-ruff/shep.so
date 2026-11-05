@@ -8,6 +8,9 @@ use iced::{
     },
 };
 
+/// Space left around a full-screen attachment preview.
+const FULL_SCREEN_MARGIN: f32 = 8.;
+
 impl App {
     pub(super) fn layout(&self) -> Element<'_, Message> {
         let content = if self.full_reader && self.tab == Tab::Mail {
@@ -104,10 +107,11 @@ impl App {
             )
             .width(Length::Fill)
             .height(Length::Fill);
+            let full_screen = dialog == Dialog::Attachment && self.attachment_preview.full_screen;
             let modal = container(opaque(self.dialog_view(dialog)))
                 .center_x(Length::Fill)
                 .center_y(Length::Fill)
-                .padding(24);
+                .padding(if full_screen { FULL_SCREEN_MARGIN } else { 24. });
             stack![base, opaque(overlay), modal].into()
         } else {
             // Keep the base widget tree alive as dialogs open and close. Replacing the
@@ -2477,6 +2481,7 @@ impl App {
         )
     }
     fn dialog_view(&self, dialog: Dialog) -> Element<'_, Message> {
+        let full_screen = dialog == Dialog::Attachment && self.attachment_preview.full_screen;
         let (title, subtitle) = match dialog {
             Dialog::Activity => ("Activity", ""),
             Dialog::ActivityBackup => ("Backup activity", ""),
@@ -2525,13 +2530,13 @@ impl App {
         if !subtitle.is_empty() {
             labels = labels.push(muted(subtitle).size(11));
         }
-        let header = row![
-            labels,
-            space().width(Length::Fill),
-            self.icon_action("close", "Close dialog", Message::Close)
-        ]
-        .spacing(12)
-        .align_y(Alignment::Center);
+        let mut header = row![labels, space().width(Length::Fill)]
+            .spacing(12)
+            .align_y(Alignment::Center);
+        if dialog == Dialog::Attachment {
+            header = header.push(self.attachment_full_screen_action());
+        }
+        let header = header.push(self.icon_action("close", "Close dialog", Message::Close));
         let mut body = column![header, line()].spacing(20);
         match dialog {
             Dialog::Activity => body=body.push(self.activity_form()),
@@ -2637,8 +2642,14 @@ impl App {
                     Length::Shrink
                 }),
         )
-        .max_height((self.size.height - 65.).max(400.))
-        .width(if dialog == Dialog::Attachment {
+        .max_height(if full_screen {
+            self.size.height - 2. * FULL_SCREEN_MARGIN
+        } else {
+            (self.size.height - 65.).max(400.)
+        })
+        .width(if full_screen {
+            self.size.width - 2. * FULL_SCREEN_MARGIN
+        } else if dialog == Dialog::Attachment {
             (self.size.width - 80.).clamp(570., 960.)
         } else {
             570.

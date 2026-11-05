@@ -4546,6 +4546,10 @@ impl App {
                 self.clear_mail_selection();
                 return Task::none();
             }
+            // Escape leaves a full-screen preview before closing it.
+            if self.leave_attachment_full_screen() {
+                return Task::none();
+            }
             return self.handle(Message::Close);
         }
         if key == Key::Named(keyboard::key::Named::Tab) {

@@ -172,19 +172,22 @@ async fn open_uses_the_previewed_file_and_ignores_stale_replies() -> anyhow::Res
     let _ = app.handle(Message::AttachmentPreview(Preview::Show(id.clone(), 0)));
     let (request, ..) = preview_request(&mut attachments).expect("request");
 
-    // Open waits until the preview says the file is safe to hand over.
-    let _ = app.handle(Message::AttachmentPreview(Preview::Open));
-    assert!(attachments.try_recv().is_err());
-
-    let _ = app.handle(Message::Backend(Event::AttachmentPreview(
-        request,
-        Ok(prepared("notes.txt", true)),
-    )));
+    // Open does not wait for the preview; the engine checks the file itself.
     let _ = app.handle(Message::AttachmentPreview(Preview::Open));
     let Ok(Command::OpenAttachment(open, source, 0)) = attachments.try_recv() else {
         anyhow::bail!("expected an open request for the first attachment");
     };
     assert_eq!(source, id);
+    assert!(app.attachment_preview.opening);
+    assert!(
+        app.attachment_preview.loading,
+        "the preview keeps preparing"
+    );
+
+    let _ = app.handle(Message::Backend(Event::AttachmentPreview(
+        request,
+        Ok(prepared("notes.txt", true)),
+    )));
     assert!(app.attachment_preview.opening);
 
     // A second click while opening is ignored.
@@ -217,6 +220,24 @@ async fn programs_cannot_be_opened_from_the_dialog() -> anyhow::Result<()> {
     let (mut app, mut attachments, _, id) = reader().await?;
     let _ = app.handle(Message::AttachmentPreview(Preview::Show(id, 1)));
     let (request, ..) = preview_request(&mut attachments).expect("request");
+
+    // Clicked before the preview is ready, the engine's refusal is shown.
+    let _ = app.handle(Message::AttachmentPreview(Preview::Open));
+    let Ok(Command::OpenAttachment(open, _, 1)) = attachments.try_recv() else {
+        anyhow::bail!("expected an early open request");
+    };
+    let _ = app.handle(Message::Backend(Event::AttachmentOpened(
+        open,
+        Err("Shep does not open programs or scripts such as setup.exe.".into()),
+    )));
+    assert!(!app.attachment_preview.opening);
+    assert!(
+        app.notice
+            .as_ref()
+            .is_some_and(|(message, error, _)| *error && message.contains("setup.exe"))
+    );
+
+    // Once the preview says so, the button no longer sends anything.
     let _ = app.handle(Message::Backend(Event::AttachmentPreview(
         request,
         Ok(prepared("setup.exe", false)),
@@ -516,5 +537,33 @@ async fn a_full_preparation_queue_is_dropped_quietly_and_retried() -> anyhow::Re
     app.prepare_attachment_previews();
     let (source, ..) = prepare_request(&mut preparing).expect("retried");
     assert_eq!(source, id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn full_screen_survives_stepping_and_escape_leaves_it_before_closing() -> anyhow::Result<()> {
+    use iced::keyboard::{self, Key};
+    let (mut app, mut attachments, _, id) = reader().await?;
+    // Full screen means nothing until a preview is open.
+    let _ = app.handle(Message::AttachmentPreview(Preview::FullScreen(true)));
+    assert!(!app.attachment_preview.full_screen);
+
+    let _ = app.handle(Message::AttachmentPreview(Preview::Show(id, 0)));
+    let _ = preview_request(&mut attachments);
+    let _ = app.handle(Message::AttachmentPreview(Preview::FullScreen(true)));
+    assert!(app.attachment_preview.full_screen);
+    let _ = app.handle(Message::AttachmentPreview(Preview::Step(true)));
+    assert!(app.attachment_preview.full_screen);
+
+    let escape = || Key::Named(keyboard::key::Named::Escape);
+    let _ = app.key(escape(), keyboard::Modifiers::default(), false);
+    assert!(!app.attachment_preview.full_screen);
+    assert_eq!(app.dialog, Some(Dialog::Attachment));
+    let _ = app.key(escape(), keyboard::Modifiers::default(), false);
+    assert_eq!(app.dialog, None);
+
+    // Reopening starts at the dialog size again.
+    let _ = app.handle(Message::AttachmentPreview(Preview::FullScreen(true)));
+    assert!(!app.attachment_preview.full_screen);
     Ok(())
 }

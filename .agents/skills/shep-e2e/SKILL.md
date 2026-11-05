@@ -509,7 +509,9 @@ Word document, a Word document carrying a VBA part and a shell script, built by
 carries a two-page PDF, so it is prepared as a nearby unread message without
 being opened. Observe `attachment_preview` (kind, image or page size, `pages`,
 `sheets`, `sheet`, `blocks`, text bytes, openable, `refusal`, opened,
-`prepared` as `[message id, index]` pairs and `from_cache`). Demo mode writes the temporary copy
+`prepared` as `[message id, index]` pairs, `from_cache` and `full_screen`). At
+1440×920 the dialog's full-screen toggle is at (1105, 133) and, once full screen,
+exit is at (1333, 56) and next attachment at (1385, 863). Demo mode writes the temporary copy
 but never launches a desktop app; the `test_attachment_preview_*` flows read the
 copy's bytes from `attachment_preview.opened`.
 

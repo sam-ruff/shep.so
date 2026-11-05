@@ -17,6 +17,8 @@ pub enum Message {
     /// Previous or next PDF page.
     Page(bool),
     Sheet(usize),
+    /// Fills the window with the preview, or returns to the dialog size.
+    FullScreen(bool),
     Retry,
     Open,
     Save,
@@ -47,6 +49,7 @@ pub(super) struct State {
     pub prepared: prepared::Prepared,
     /// Whether the shown preview came from `prepared`.
     pub from_cache: bool,
+    pub full_screen: bool,
 }
 impl State {
     fn clear(&mut self) {
@@ -57,6 +60,7 @@ impl State {
         self.error = None;
         self.page = 0;
         self.sheet = 0;
+        self.full_screen = false;
     }
 }
 
@@ -132,6 +136,11 @@ impl App {
                     self.attachment_preview.sheet = sheet;
                 }
             }
+            Message::FullScreen(full_screen) => {
+                if self.dialog == Some(Dialog::Attachment) {
+                    self.attachment_preview.full_screen = full_screen;
+                }
+            }
             Message::Retry => {
                 let page = self.attachment_preview.page;
                 if self.attachment_preview.target.is_some() {
@@ -140,7 +149,9 @@ impl App {
             }
             Message::Open => {
                 let state = &self.attachment_preview;
-                if state.opening || !state.preview.as_ref().is_some_and(|p| p.openable()) {
+                // Open need not wait for the preview: the engine applies the
+                // same program, macro and script checks before writing a copy.
+                if state.opening || state.preview.as_ref().is_some_and(|p| !p.openable()) {
                     return Task::none();
                 }
                 let Some(target) = state.target.clone() else {
@@ -408,6 +419,7 @@ impl App {
             "sheets": sheets,
             "sheet": state.sheet,
             "from_cache": state.from_cache,
+            "full_screen": state.full_screen,
             "prepared": state.prepared.keys(),
             "text_bytes": text_bytes,
             "truncated": truncated,
@@ -430,10 +442,49 @@ impl App {
             .unwrap_or("Attachment")
     }
 
+    /// The full-screen toggle shown beside the dialog's close button.
+    pub(super) fn attachment_full_screen_action(&self) -> Element<'_, super::Message> {
+        let full_screen = self.attachment_preview.full_screen;
+        let (icon, label) = if full_screen {
+            ("collapse", "Exit full screen")
+        } else {
+            ("expand", "Full screen")
+        };
+        self.icon_action(
+            icon,
+            label,
+            super::Message::AttachmentPreview(Message::FullScreen(!full_screen)),
+        )
+    }
+
+    /// Leaves full screen; returns false when the preview was not full screen.
+    pub(super) fn leave_attachment_full_screen(&mut self) -> bool {
+        let state = &mut self.attachment_preview;
+        if self.dialog != Some(Dialog::Attachment) || !state.full_screen {
+            return false;
+        }
+        state.full_screen = false;
+        true
+    }
+
     pub(super) fn attachment_preview_form(&self) -> Element<'_, super::Message> {
         let state = &self.attachment_preview;
+        let truncated = match state.preview.as_deref().map(|p| &p.content) {
+            Some(Content::Text { truncated, .. } | Content::Document { truncated, .. }) => {
+                *truncated
+            }
+            Some(Content::Sheets(sheets)) => sheets.get(state.sheet).is_some_and(|s| s.truncated),
+            _ => false,
+        };
+        let refusal = state.preview.as_ref().and_then(|p| p.refusal);
         // Header, actions and notes stay visible without scrolling the dialog.
-        let height = (self.size.height - 390.).clamp(160., 640.);
+        let height = if state.full_screen {
+            // Title, metadata and actions take about 236 px; each note 32 px.
+            let notes = f32::from(u8::from(truncated) + u8::from(refusal.is_some()));
+            (self.size.height - 236. - 32. * notes).max(160.)
+        } else {
+            (self.size.height - 390.).clamp(160., 640.)
+        };
         let wrap = |message| super::Message::AttachmentPreview(message);
         let mut body = column![].spacing(14);
         let content: Element<'_, super::Message> = match (&state.preview, &state.error) {
@@ -455,24 +506,15 @@ impl App {
                 .into(),
         };
         body = body.push(content);
-        let truncated = match state.preview.as_deref().map(|p| &p.content) {
-            Some(Content::Text { truncated, .. } | Content::Document { truncated, .. }) => {
-                *truncated
-            }
-            Some(Content::Sheets(sheets)) => sheets.get(state.sheet).is_some_and(|s| s.truncated),
-            _ => false,
-        };
         if truncated {
             body = body.push(
                 muted("Showing the beginning of this file. Open it to see everything.").size(12),
             );
         }
-        let refusal = state.preview.as_ref().and_then(|p| p.refusal);
         if let Some(refusal) = refusal {
             body = body.push(muted(refusal.note()).size(12));
         }
-        let openable = refusal.is_none();
-        let ready = state.preview.is_some() && !state.loading;
+        let openable = refusal.is_none() && state.target.is_some();
         let mut actions = row![
             button(
                 row![
@@ -484,7 +526,7 @@ impl App {
             )
             .padding([10, 16])
             .style(primary)
-            .on_press_maybe((ready && openable && !state.opening).then_some(wrap(Message::Open))),
+            .on_press_maybe((openable && !state.opening).then_some(wrap(Message::Open))),
             button(
                 row![icon("download", 18.), text("Save a copy…").size(12)]
                     .spacing(8)

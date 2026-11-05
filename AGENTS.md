@@ -1070,14 +1070,6 @@ stream cells through calamine's cells readers into a 100 x 20 grid. Never use
 calamine's dense `worksheet_range`/`Xls` readers here: one far cell allocates
 the whole span. Keep the declared-size bounds, the `document_files` fixtures and
 the XFD5000 regression.
-Requests carry ids so late previews or open replies cannot replace a newer
-choice, and Save a copy exports the previewed message rather than the selection.
-Keep the unit, ordering, engine, simulator and native `test_attachment_preview_*`
-regressions.
-
-The saved native Print flows start `desktop.start(print_browser="pdf" | "dialog" | "fail")`. An isolated Chrome/Chromium profile lives under the run artifacts and **must pass --ozone-platform=x11** so it stays on the harness-owned Xvfb display even on a Wayland host. The fixture-only launcher never falls back to the personal browser. PDF mode uses the actual browser print path with Save as PDF and kiosk printing, never a physical printer. Batch `print_output` asserts PDF text/pages and captures a first-page WebP; `browser_screenshot` captures the owned display, `cancel_print` uses native Escape, and `focus_app` raises/refocuses only the fixture window. Stop the owned browser process group before Xvfb. All scenarios remain in scripts/e2e.py. Linux Chromium evidence does not establish Firefox/Safari/macOS/Windows printing.
-
-Adding Print moves bottom-scrolled shortcut rows: Print y=780, Forward y=720, Find y=660, Inbox y=600 and Delete y=540 at 1440×920 without a bottom notice. Verify the actual presentation before adjusting coordinate tests. Performance measurements remain deferred; controlled preparation delays are correctness checks.
 Sam asked for previews to be ready when a message opens. `select` and arriving
 details call `prepare_attachment_previews`: first pages for the open message's
 attachments (sharing the reader's `Arc` bytes) and for the two nearest unread
@@ -1090,13 +1082,19 @@ failures. A click served from it sends no command; a prepared result arriving
 for a click still loading replaces that request. Keep the cache, ordering,
 engine and native `test_attachment_preview_is_prepared_*` regressions.
 
-References: [Window.print](https://developer.mozilla.org/en-US/docs/Web/API/Window/print), [iframe sandbox](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe), [srcdoc isolation](https://developer.mozilla.org/en-US/docs/Web/API/HTMLIFrameElement/srcdoc).
-
-
-## HTML frame preparation and geometry
 ## Printing from the reader
 
 Print is the footer printer icon or remappable Mod+P, including both binding slots and disable behavior. It snapshots the expanded physical message and current Formatted/Plain choice. Preparation has its own bounded capacity-two command channel and worker, independent of provider jobs and foreground reads. MIME parsing and raster conversion run off-thread using complete cached raw mail, including quoted history and attachment names. Only CID resources and already cached images permitted for this message are embedded, as WebP; printing never fetches remote resources. The current R23 download/cache limits still apply.
+Open is enabled while a preview is still preparing (Sam's request): only a
+ready preview that reports a refusal disables it, and the engine's own check
+reports the refusal otherwise. The header's full-screen toggle fills the window
+with the preview, survives stepping between attachments, and Escape leaves full
+screen before closing; closing always resets it. Keep the native
+`test_attachment_preview_full_screen_*` light and compact dark flows.
+Requests carry ids so late previews or open replies cannot replace a newer
+choice, and Save a copy exports the previewed message rather than the selection.
+Keep the unit, ordering, engine, simulator and native `test_attachment_preview_*`
+regressions.
 
 `printing::Service` serves a self-contained document from memory on a random IPv4 loopback port and unguessable single-use path. Validate Host/method/path, bound headers/connections/timeouts, send no-store/no-referrer/CSP and stop after serving, cancellation or five-minute expiry. At most two unconsumed previews retain documents. The default browser owns printer/PDF selection; opening it is not evidence that the user printed. Retain the preview handle while its browser load may still be pending; dropping it stops an unconsumed server. Launcher and preparation failures remain visible and retry clears only the matching error. Printing does not mutate messages or block native navigation.
 
@@ -1110,6 +1108,14 @@ above an already displayed body. Discovery is metadata only: fetch only resource
 actually requested by the renderer and permitted by the existing image policy.
 
 Horizontal panning belongs inside the visible HTML canvas. Reserve its small
+The saved native Print flows start `desktop.start(print_browser="pdf" | "dialog" | "fail")`. An isolated Chrome/Chromium profile lives under the run artifacts and **must pass --ozone-platform=x11** so it stays on the harness-owned Xvfb display even on a Wayland host. The fixture-only launcher never falls back to the personal browser. PDF mode uses the actual browser print path with Save as PDF and kiosk printing, never a physical printer. Batch `print_output` asserts PDF text/pages and captures a first-page WebP; `browser_screenshot` captures the owned display, `cancel_print` uses native Escape, and `focus_app` raises/refocuses only the fixture window. Stop the owned browser process group before Xvfb. All scenarios remain in scripts/e2e.py. Linux Chromium evidence does not establish Firefox/Safari/macOS/Windows printing.
+
+Adding Print moves bottom-scrolled shortcut rows: Print y=780, Forward y=720, Find y=660, Inbox y=600 and Delete y=540 at 1440×920 without a bottom notice. Verify the actual presentation before adjusting coordinate tests. Performance measurements remain deferred; controlled preparation delays are correctness checks.
+
+References: [Window.print](https://developer.mozilla.org/en-US/docs/Web/API/Window/print), [iframe sandbox](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/iframe), [srcdoc isolation](https://developer.mozilla.org/en-US/docs/Web/API/HTMLIFrameElement/srcdoc).
+
+
+## HTML frame preparation and geometry
 bottom band from the first layout, clip text selection/Find highlights above the
 track, and update the thumb immediately while the worker prepares pixels. Reject
 superseded pan frames. Horizontal arrows and Shift+wheel act only on the focused
