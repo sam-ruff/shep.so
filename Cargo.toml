@@ -76,6 +76,12 @@ fs2 = "0.4.3"
 interprocess = { version = "2.4.4", features = ["tokio"] }
 shep-action-core = { path = "shared/action-core" }
 shep-mail-content = { path = "shared/mail-content", features = ["fuzzy"] }
+open = "5.4.5"
+hayro = "0.6.0"
+calamine = { version = "0.38.0", features = ["dates"] }
+zip = { version = "9.4.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+quick-xml = "0.42.0"
+cfb = "0.16.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "=0.3.6"

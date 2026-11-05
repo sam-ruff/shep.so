@@ -2,6 +2,9 @@ mod account;
 mod account_setup;
 mod action_toasts;
 mod activity;
+mod attachment_preview;
+#[cfg(test)]
+mod attachment_preview_tests;
 mod backups;
 mod bulk;
 mod calendar_actions;
@@ -120,6 +123,7 @@ pub enum Dialog {
     DiscardDraft,
     Event,
     Export,
+    Attachment,
     Restore,
     RemoveBackup,
     Sender,
@@ -307,7 +311,8 @@ pub enum Message {
     InspectCalendarChange(u64),
     RetryCalendarChange(u64),
     SaveExport,
-    ExportAttachment(usize),
+    ExportAttachment(String, usize),
+    AttachmentPreview(attachment_preview::Message),
     SystemTheme(iced::theme::Mode),
     Resize(Size),
     SidebarResize(f32),
@@ -419,6 +424,7 @@ pub struct App {
     saved_toast: Option<Instant>,
     action_toasts: action_toasts::ActionToasts,
     printing: printing::State,
+    attachment_preview: attachment_preview::State,
     desktop_badge: Option<tokio::sync::watch::Sender<u64>>,
     #[cfg(target_os = "windows")]
     desktop_overlay: Option<Arc<crate::desktop_badge::overlay::Frame>>,
@@ -547,6 +553,7 @@ pub struct App {
     restore_id: String,
     restore_target: Option<BackupTarget>,
     export_index: Option<usize>,
+    export_source: Option<String>,
     started: Instant,
     update_samples: VecDeque<f64>,
     test_state: Option<std::path::PathBuf>,
@@ -661,6 +668,7 @@ impl App {
                 saved_toast: None,
                 action_toasts: Default::default(),
                 printing: Default::default(),
+                attachment_preview: Default::default(),
                 desktop_badge: None,
                 #[cfg(target_os = "windows")]
                 desktop_overlay: None,
@@ -790,6 +798,7 @@ impl App {
                 restore_id: String::new(),
                 restore_target: None,
                 export_index: None,
+                export_source: None,
                 started: Instant::now(),
                 update_samples: VecDeque::new(),
                 test_state,
@@ -2028,6 +2037,12 @@ impl App {
                 Event::DraftDeleted(id, result) => self.draft_deleted(id, result),
                 Event::ForwardDraft(id, result) => return self.forward_ready(id, result),
                 Event::Print(revision, result) => return self.print_ready(revision, result),
+                Event::AttachmentPreview(request, result) => {
+                    self.attachment_preview_ready(request, result);
+                }
+                Event::AttachmentOpened(request, result) => {
+                    self.attachment_opened(request, result);
+                }
                 Event::DraftFiles(id, result) => {
                     let current = self.composer.io.as_deref() == Some(&id);
                     if current {
@@ -2538,6 +2553,9 @@ impl App {
                 }
             }
             Message::Close => {
+                if self.dialog == Some(Dialog::Attachment) {
+                    self.close_attachment_preview();
+                }
                 if self.dialog == Some(Dialog::FolderChange) {
                     self.release_folder_preview();
                     self.folder_controls.serial += 1;
@@ -2964,6 +2982,9 @@ impl App {
                 }
             }
             Message::Print(message) => return self.handle_print(message),
+            Message::AttachmentPreview(message) => {
+                return self.handle_attachment_preview(message);
+            }
             Message::ChooseAttachments => return self.choose_attachments(),
             Message::ChosenAttachments(draft, paths) => self.attach_chosen(draft, paths),
             Message::RemoveDraftAttachment(id) => self.remove_draft_attachment(id),
@@ -3615,19 +3636,22 @@ impl App {
             Message::DismissCalendarChange(request) => self.dismiss_calendar_change(request),
             Message::InspectCalendarChange(request) => self.inspect_calendar_change(request),
             Message::RetryCalendarChange(request) => self.retry_calendar_change(request),
-            Message::ExportAttachment(index) => {
+            Message::ExportAttachment(source, index) => {
                 self.open(Dialog::Export);
                 self.export_index = Some(index);
-                if let Some(a) = self.detail.as_ref().and_then(|d| d.attachments.get(index)) {
-                    let filename = std::path::Path::new(&a.name)
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    self.fields.insert("path", default_export(&filename));
-                }
+                let name = self
+                    .attachment_name(&source, index)
+                    .unwrap_or("attachment.bin");
+                let filename = shep_mail_core::attachments::filename(name);
+                self.fields.insert("path", default_export(&filename));
+                self.export_source = Some(source);
             }
             Message::SaveExport => {
-                if let Some(id) = &self.selected {
+                let source = match self.export_index {
+                    Some(_) => self.export_source.clone(),
+                    None => self.selected.clone(),
+                };
+                if let Some(id) = &source {
                     let command = if let Some(index) = self.export_index {
                         Command::ExportAttachment(id.clone(), index, self.field("path").into())
                     } else {
@@ -5081,6 +5105,7 @@ impl App {
             data["print_pending"] = serde_json::json!(self.printing.pending);
             data["print_source"] = serde_json::json!(self.printing.source);
             data["print_revision"] = serde_json::json!(self.printing.revision);
+            data["attachment_preview"] = self.attachment_preview_observation();
             data["action_toast"] = serde_json::json!(
                 self.action_toasts
                     .current

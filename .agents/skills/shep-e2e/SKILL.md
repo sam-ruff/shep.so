@@ -501,6 +501,16 @@ existing Find text before typing a new query; Find deliberately retains it.
 switches between cached messages, refreshes without losing the scroller, and
 captures both app themes and compact sizes. These fixtures never contact servers.
 
+For attachment previews use `desktop.start(attachment_mail=true)`: the newest
+Inbox message, "Site visit photos and notes", carries a 640×400 PNG, a CSV, a
+two-page PDF, an Excel workbook (two sheets, one cell far outside the grid), a
+Word document, a Word document carrying a VBA part and a shell script, built by
+`tests/support/document_files.rs`. Observe `attachment_preview` (kind, image or
+page size, `pages`, `sheets`, `sheet`, `blocks`, text bytes, openable, `refusal`,
+opened). Demo mode writes the temporary copy
+but never launches a desktop app; the `test_attachment_preview_*` flows read the
+copy's bytes from `attachment_preview.opened`.
+
 Manual refresh animation uses the existing delayed `sync_failure_once` and
 `background_sync` fixtures. The two `test_refresh_animation_*` /
 `test_refresh_secondary_*` flows and extended queued-background flow compare

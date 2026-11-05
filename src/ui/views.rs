@@ -957,9 +957,10 @@ impl App {
                     Message::PreviousMessage(false),
                 ));
         }
-        for (index, attachment) in detail
+        let attachments = detail.map(|detail| (&detail.summary.id, &detail.attachments));
+        for (index, (source, attachment)) in attachments
             .into_iter()
-            .flat_map(|detail| detail.attachments.iter())
+            .flat_map(|(source, files)| files.iter().map(move |file| (source, file)))
             .enumerate()
         {
             let compact = self.compact_reader();
@@ -978,7 +979,9 @@ impl App {
             )
             .padding([10, 12])
             .style(outline)
-            .on_press(Message::ExportAttachment(index));
+            .on_press(Message::AttachmentPreview(
+                super::attachment_preview::Message::Show(source.clone(), index),
+            ));
             footer = footer.push(if compact {
                 attachment_button.width(((self.reader_width() - 64.) / 2.).max(100.))
             } else {
@@ -2511,6 +2514,7 @@ impl App {
                 "Save a copy",
                 "Choose a full file path. Existing files will never be overwritten.",
             ),
+            Dialog::Attachment => (self.attachment_preview_title(), ""),
             Dialog::RemoveBackup => ("Remove backup destination?", ""),
             Dialog::Restore => (
                 "Restore this backup?",
@@ -2606,6 +2610,7 @@ impl App {
                     .push(row![button(text("Save event").size(12)).padding([12,18]).style(primary).on_press_maybe((!self.field("source").is_empty()).then_some(Message::SaveEvent)),space().width(Length::Fill),if self.editing_event.is_some() && self.event_access().delete {Element::from(action("Delete event",Message::DeleteEvent))}else{Element::from(space())}].spacing(10));
             }
             Dialog::Export=>body=body.push(form_field("Full destination path","/home/you/Downloads/message.eml",self.field("path"),"path",false)).push(action("Browse…",Message::BrowseExport)).push(button(text("Save file").size(12)).padding([12,18]).style(primary).on_press(Message::SaveExport)),
+            Dialog::Attachment => body = body.push(self.attachment_preview_form()),
             Dialog::RemoveBackup => body = body
                 .push(text(self.field("backup_name")).font(BOLD))
                 .push(muted("This stops its schedule and removes these settings. Saved copies and pending upload receipts are kept; adding the same destination again can recover them."))
@@ -2633,7 +2638,11 @@ impl App {
                 }),
         )
         .max_height((self.size.height - 65.).max(400.))
-        .width(570.)
+        .width(if dialog == Dialog::Attachment {
+            (self.size.width - 80.).clamp(570., 960.)
+        } else {
+            570.
+        })
         .style(card)
         .into()
     }

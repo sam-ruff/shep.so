@@ -1,5 +1,6 @@
 use crate::{model::*, store::Store};
 mod activity;
+mod attachment_mail;
 pub mod backups;
 mod bulk_history;
 #[path = "html_mail.rs"]
@@ -36,6 +37,9 @@ pub async fn seed_demo(store: &Store) -> anyhow::Result<()> {
     move_recovery::seed(store).await?;
     if std::env::args().any(|arg| arg == "--reading-mail") {
         reading_mail::seed(store).await?;
+    }
+    if std::env::args().any(|arg| arg == "--attachment-mail") {
+        attachment_mail::seed(store).await?;
     }
     // These seeded accounts model a completed initial import. Only subsequent
     // fixture sync arrivals exercise notification delivery policy.

@@ -1055,6 +1055,34 @@ Print is the footer printer icon or remappable Mod+P, including both binding slo
 
 The trusted parent prints its sandboxed srcdoc child, so long messages paginate. The child has allow-same-origin/allow-modals, never allow-scripts, forms or popups; a stricter child CSP blocks scripts and all network resources. Remove active elements/attributes and unsafe links before serialization; the parent prevents message navigation. Escape srcdoc and header data separately and substitute template markers once, never recursively into user text. Header insertion must wait for the actual srcdoc document, not the initial about:blank document. Review actual PDFs, not just serialized markup.
 
+## Attachment preview and temporary copies
+
+Reader attachment chips open `Dialog::Attachment` (`ui/attachment_preview.rs`);
+`attachment_files.rs` prepares previews and copies on its own bounded engine
+channel, never on iced. Images decode with an allocation limit and scale to
+2,048 px; text stops at 64 KiB / 2,000 lines. Open writes a private copy into a
+per-session `shep-attachments-*` folder (one subfolder per copy, sanitized sender
+name, 0600 on Unix) that is removed when the engine drops, then calls the
+mockable `Launcher`. Never hand programs or scripts to the default app: the
+extension list plus ELF/PE/Mach-O/shebang content checks are enforced in the
+backend as well as the dialog. Demo mode writes the copy without launching.
+Sam asked that macros and scripts are never allowed: `attachment_files/safety.rs`
+also refuses Office macro formats, VBA/Excel 4.0 macro sheets, ActiveX, embedded
+OLE programs, remote templates, ODF Basic/scripts/event listeners, RTF objects
+and PDF JavaScript/launch/RichMedia/XFA, checking content rather than trusting
+the name. A document it cannot read (password-protected PDF, legacy PowerPoint,
+corrupt Office file) is refused as unchecked, never assumed safe. Previews parse
+markup only: PDF pages render one at a time through hayro (pure Rust, no script
+engine) with `catch_unwind`; Office/OpenDocument text uses quick-xml and sheets
+stream cells through calamine's cells readers into a 100 x 20 grid. Never use
+calamine's dense `worksheet_range`/`Xls` readers here: one far cell allocates
+the whole span. Keep the declared-size bounds, the `document_files` fixtures and
+the XFD5000 regression.
+Requests carry ids so late previews or open replies cannot replace a newer
+choice, and Save a copy exports the previewed message rather than the selection.
+Keep the unit, ordering, engine, simulator and native `test_attachment_preview_*`
+regressions.
+
 The saved native Print flows start `desktop.start(print_browser="pdf" | "dialog" | "fail")`. An isolated Chrome/Chromium profile lives under the run artifacts and **must pass --ozone-platform=x11** so it stays on the harness-owned Xvfb display even on a Wayland host. The fixture-only launcher never falls back to the personal browser. PDF mode uses the actual browser print path with Save as PDF and kiosk printing, never a physical printer. Batch `print_output` asserts PDF text/pages and captures a first-page WebP; `browser_screenshot` captures the owned display, `cancel_print` uses native Escape, and `focus_app` raises/refocuses only the fixture window. Stop the owned browser process group before Xvfb. All scenarios remain in scripts/e2e.py. Linux Chromium evidence does not establish Firefox/Safari/macOS/Windows printing.
 
 Adding Print moves bottom-scrolled shortcut rows: Print y=780, Forward y=720, Find y=660, Inbox y=600 and Delete y=540 at 1440×920 without a bottom notice. Verify the actual presentation before adjusting coordinate tests. Performance measurements remain deferred; controlled preparation delays are correctness checks.

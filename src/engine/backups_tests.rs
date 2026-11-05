@@ -57,6 +57,7 @@ fn engine(secrets: Arc<Secrets>) -> Engine {
         mail_sync_settings: Default::default(),
         provider_slots: Default::default(),
         printing: Default::default(),
+        attachment_files: Default::default(),
         bulk_control: Default::default(),
     }
 }

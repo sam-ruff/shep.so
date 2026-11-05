@@ -272,6 +272,16 @@ class HarnessTests(unittest.TestCase):
         tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
         self.assertEqual(tool["inputSchema"]["properties"]["reading_mail"], {"type":"boolean", "default":False})
 
+    def test_attachment_mail_fixture_is_explicit_and_validated_before_launch(self):
+        desktop = harness.Desktop()
+        with patch.object(harness.subprocess, "Popen") as launch:
+            for value in ("true", 1, None):
+                with self.assertRaisesRegex(ValueError, "Attachment mail fixture"):
+                    desktop.start(attachment_mail=value)
+            launch.assert_not_called()
+        tool = next(tool for tool in harness.TOOLS if tool["name"] == "desktop.start")
+        self.assertEqual(tool["inputSchema"]["properties"]["attachment_mail"], {"type":"boolean", "default":False})
+
     def test_large_incoming_fixture_is_explicit_and_validated_before_launch(self):
         desktop = harness.Desktop()
         with patch.object(harness.subprocess, "Popen") as launch:

@@ -1,5 +1,6 @@
 pub mod activation;
 pub mod appearance;
+pub mod attachment_files;
 pub mod backup;
 pub mod bulk;
 pub mod cache_cipher;
@@ -43,3 +44,7 @@ pub mod test_support;
 #[cfg(any(test, feature = "test-support"))]
 #[path = "../tests/support/complex_html.rs"]
 pub(crate) mod complex_html_fixture;
+
+#[cfg(any(test, feature = "test-support"))]
+#[path = "../tests/support/document_files.rs"]
+pub(crate) mod document_files;

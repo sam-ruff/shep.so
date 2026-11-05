@@ -2837,6 +2837,94 @@ class NativeFlows(unittest.TestCase):
         with sqlite3.connect((Path(started["artifacts"]) / "fixture.sqlite").as_uri() + "?mode=ro", uri=True) as cache:
             self.assertGreater(cache.execute("SELECT length(raw) FROM messages WHERE subject=?", ("Large incoming attachment",)).fetchone()[0], 25 * 1024 * 1024)
 
+    def test_attachment_preview_shows_image_text_and_file_then_opens_a_temporary_copy(self):
+        started = self.mcp.call("desktop.start", attachment_mail=True)
+        print(f"Attachment preview evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(check("selected", "Site visit photos and notes"), check("attachment_count", 7),
+                       wait(150), shot("attachment-reader"),
+                       click(977, 784), check("dialog", "Attachment"), check("attachment_preview.loading", False),
+                       check("attachment_preview.kind", "Image"), check("attachment_preview.image", [640, 400]),
+                       wait(150), shot("attachment-preview-image"),
+                       click(1153, 786), check("attachment_preview.index", 1),
+                       check("attachment_preview.kind", "Text"), check("attachment_preview.loading", False),
+                       check("attachment_preview.text_bytes", 70), wait(150), shot("attachment-preview-text"),
+                       click(311, 786), check("attachment_preview.opening", False),
+                       check("attachment_preview.opened", None, "ne"), check("notice", "temporary copy", "contains"),
+                       shot("attachment-opened"),
+                       click(1153, 786), check("attachment_preview.index", 2),
+                       check("attachment_preview.kind", "PDF document"), check("attachment_preview.openable", True),
+                       check("attachment_preview.loading", False), check("attachment_preview.pages", [1, 2]),
+                       wait(150), shot("attachment-preview-pdf"),
+                       click(779, 732), check("attachment_preview.pages", [2, 2]),
+                       check("attachment_preview.loading", False), wait(150), shot("attachment-preview-pdf-page-two"),
+                       click(1153, 786), check("attachment_preview.index", 3),
+                       check("attachment_preview.kind", "Excel spreadsheet"), check("attachment_preview.loading", False),
+                       check("attachment_preview.sheets.0.first_row", ["Room", "Width"]),
+                       check("attachment_preview.sheets.0.truncated", True),
+                       wait(150), shot("attachment-preview-sheet"),
+                       click(364, 225), check("attachment_preview.sheet", 1), wait(150),
+                       shot("attachment-preview-second-sheet"),
+                       click(1153, 797), check("attachment_preview.index", 4),
+                       check("attachment_preview.kind", "Word document"), check("attachment_preview.loading", False),
+                       check("attachment_preview.blocks.0", "# Site survey"),
+                       check("attachment_preview.sheet", 0), wait(150), shot("attachment-preview-document"),
+                       click(1153, 786), check("attachment_preview.index", 5),
+                       check("attachment_preview.loading", False),
+                       check("attachment_preview.refusal", "ActiveContent"), check("attachment_preview.openable", False),
+                       wait(150), shot("attachment-preview-macros"),
+                       # The disabled Open is clicked; Escape is handled after it, so a
+                       # sent request would already show as opening.
+                       click(311, 801), key("Escape"), check("dialog", None),
+                       check("attachment_preview.opening", False))
+        opened = Path(self.mcp.call("desktop.state")["attachment_preview"]["opened"])
+        self.assertEqual(opened.name, "measurements.csv")
+        self.assertTrue(opened.read_bytes().startswith(b"Room,Width (m)"))
+        # The temporary-copy notice moves the reader up by its height.
+        self.mcp.batch(click(1162, 783), check("attachment_preview.index", 6),
+                       check("attachment_preview.loading", False),
+                       check("attachment_preview.refusal", "Program"), wait(150), shot("attachment-preview-script"),
+                       click(311, 666), key("Escape"), check("dialog", None),
+                       check("attachment_preview.opening", False), check("attachment_preview.source", None),
+                       check("selected", "Site visit photos and notes"))
+
+    def test_attachment_preview_steps_opens_and_saves_from_the_prototype_reply(self):
+        started = self.mcp.call("desktop.start")
+        print(f"Prototype attachment evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(click(400, mail_row_y(4)), check("selected", "Re: A few thoughts on the prototype"),
+                       check("attachment_count", 4),
+                       click(990, 783), check("dialog", "Attachment"), check("attachment_preview.kind", "Text"),
+                       click(1153, 786), check("attachment_preview.name", "schedule.txt"),
+                       check("attachment_preview.loading", False),
+                       click(311, 786), check("attachment_preview.opened", None, "ne"),
+                       click(430, 786), check("dialog", "Export"), check("fields.path", "schedule.txt", "contains"),
+                       shot("attachment-save-from-preview"))
+        opened = Path(self.mcp.call("desktop.state")["attachment_preview"]["opened"])
+        self.assertEqual(opened.read_bytes(), b"Review material.")
+
+    def test_attachment_preview_compact_dark_layout(self):
+        started = self.mcp.call("desktop.start", attachment_mail=True)
+        print(f"Compact attachment preview evidence: {started['artifacts']}", flush=True)
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(690, 366), check("dark", True),
+                       key("ctrl+1"), check("tab", "Mail"), check("selected", "Site visit photos and notes"),
+                       {"type": "resize", "width": 900, "height": 640}, check("window_size", [900, 640]),
+                       wait(300), shot("attachment-compact-reader"),
+                       click(615, 469), check("dialog", "Attachment"), check("attachment_preview.image", [640, 400]),
+                       wait(150), shot("attachment-compact-image"), key("Escape"), check("dialog", None),
+                       click(767, 469), check("attachment_preview.kind", "Text"),
+                       check("attachment_preview.loading", False), wait(150), shot("attachment-compact-text"),
+                       key("Escape"), check("dialog", None),
+                       click(615, 511), check("attachment_preview.kind", "PDF document"),
+                       check("attachment_preview.loading", False), check("attachment_preview.pages", [1, 2]),
+                       wait(150), shot("attachment-compact-pdf"),
+                       click(509, 452), check("attachment_preview.pages", [2, 2]),
+                       check("attachment_preview.loading", False), key("Escape"), check("dialog", None),
+                       click(767, 511), check("attachment_preview.kind", "Excel spreadsheet"),
+                       check("attachment_preview.loading", False), wait(150), shot("attachment-compact-sheet"),
+                       key("Escape"), check("dialog", None),
+                       click(615, 553), check("attachment_preview.kind", "Word document"),
+                       check("attachment_preview.loading", False), wait(150), shot("attachment-compact-document"),
+                       key("Escape"), check("dialog", None), key("Down"), check("selected", "Site visit photos and notes", "ne"))
+
     def test_large_incoming_plain_text_pages_without_size_error(self):
         started = self.mcp.call("desktop.start", large_incoming=True)
         print(f"Large plain message evidence: {started['artifacts']}", flush=True)

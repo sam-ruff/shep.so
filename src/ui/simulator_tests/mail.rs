@@ -361,7 +361,34 @@ async fn reader_toolbar_archives_before_the_body_loads() {
     h.expect("selected", "Your weekly workspace digest").await;
 }
 
+/// `test_attachment_preview_steps_opens_and_saves_from_the_prototype_reply`
+async fn attachment_preview_steps_opens_and_saves() {
+    let mut h = Harness::start().await;
+    h.click_at(400., 464.).await;
+    h.expect("selected", "Re: A few thoughts on the prototype")
+        .await;
+    h.expect("attachment_count", 4).await;
+    h.click_text("prototype-notes.txt").await;
+    h.expect("dialog", "Attachment").await;
+    h.expect("attachment_preview.kind", "Text").await;
+    h.click_at(1153., 786.).await;
+    h.expect("attachment_preview.name", "schedule.txt").await;
+    h.expect("attachment_preview.loading", false).await;
+    h.click_text("Open").await;
+    h.expect_contains("attachment_preview.opened", "schedule.txt")
+        .await;
+    h.expect_contains("notice", "temporary copy").await;
+    h.click_text("Save a copy…").await;
+    h.expect("dialog", "Export").await;
+    h.expect_contains("fields.path", "schedule.txt").await;
+    h.key("Escape").await;
+    h.expect("dialog", Null).await;
+    h.expect("selected", "Re: A few thoughts on the prototype")
+        .await;
+}
+
 scenarios!(
+    attachment_preview_steps_opens_and_saves,
     recipient_chips_paste_remove_and_undo,
     reader_toolbar_archives_before_the_body_loads,
     move_mouse_and_keyboard_and_typing_protection,

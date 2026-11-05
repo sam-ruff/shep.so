@@ -417,6 +417,13 @@
       "desktop": "ui::dropdown wraps every iced pick list (Clippy disallows the plain constructor); ui::dropdown runtime-routing tests and the saved test_dropdown_* native flows cover the event dialog in light and compact dark, the mail filter with Find open and the composer From list.",
       "mobile": "OPEN: Flutter dropdown menus were not reviewed in this wave; confirm hardware Escape/back dismisses only the menu and does not reach shortcuts.",
       "browser": "Native <select> elements; the browser owns the open popup and keyConsumed ignores keys targeted at a select, so no change was needed. No saved Playwright evidence of the native popup, which headless Chromium does not render."
+    },
+    {
+      "id": "attachment-preview-and-open",
+      "contract": "Choosing a reader attachment opens a preview: images (PNG, JPEG, GIF, WebP) scaled to fit, text shown from its beginning with a note when cut short, PDF pages one at a time, Word/PowerPoint/OpenDocument text as headings and paragraphs, Excel/OpenDocument sheets as a bounded grid with sheet tabs, and a file card naming the type for anything else. Previews never run document code. Previous/next step through the message's attachments. Open writes a private temporary copy and hands it to the system's default app; programs and scripts (by extension or by content), documents carrying macros, ActiveX, embedded OLE programs, remote templates or PDF JavaScript/launch actions, and documents that cannot be checked are never opened and say why. Save a copy saves the previewed message's file even if the selection changed. Preparation runs off the UI thread and late results never replace a newer choice.",
+      "desktop": "attachment_files (preview preparation, hayro PDF pages, streamed calamine/quick-xml Office reading, the safety guard for programs/macros/scripts, per-session private temp folder, mockable launcher) on its own bounded engine channel; ui::attachment_preview with request fencing. attachment_files unit tests, attachment_preview_tests, engine::attachment_tests (saturated provider slots), the attachment_preview_steps_opens_and_saves simulator scenario and the native test_attachment_preview_* flows (light, compact dark, temporary-copy bytes, disabled Open for a script).",
+      "mobile": "OPEN: Flutter attachments only save through the platform picker; no in-app preview or open-with-default-app.",
+      "browser": "OPEN: the browser saves attachments only; no in-page preview. An Open equivalent would be a download the browser opens, under the same executable guard."
     }
   ]
 }

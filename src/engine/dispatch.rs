@@ -28,6 +28,7 @@ pub struct CommandSender {
     network: mpsc::Sender<Command>,
     sync: mpsc::Sender<Command>,
     printing: mpsc::Sender<Command>,
+    attachments: mpsc::Sender<Command>,
     selections: mpsc::Sender<Command>,
     bulk: mpsc::Sender<Command>,
     database: mpsc::Sender<Command>,
@@ -41,6 +42,7 @@ pub(super) struct Inputs {
     network: mpsc::Receiver<Command>,
     sync: mpsc::Receiver<Command>,
     printing: mpsc::Receiver<Command>,
+    attachments: mpsc::Receiver<Command>,
     selections: mpsc::Receiver<Command>,
     pub(super) bulk: mpsc::Receiver<Command>,
     database: mpsc::Receiver<Command>,
@@ -118,6 +120,13 @@ impl CommandSender {
     }
 
     #[cfg(test)]
+    pub(crate) fn attachment_test_channels()
+    -> (Self, mpsc::Receiver<Command>, mpsc::Receiver<Command>) {
+        let (sender, inputs) = Self::channel();
+        (sender, inputs.attachments, inputs.network)
+    }
+
+    #[cfg(test)]
     pub(crate) fn selection_test_channel() -> (Self, mpsc::Receiver<Command>) {
         let (sender, inputs) = Self::channel();
         (sender, inputs.selections)
@@ -130,6 +139,7 @@ impl CommandSender {
         let (network, network_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (sync, sync_input) = mpsc::channel(1);
         let (printing, print_input) = mpsc::channel(2);
+        let (attachments, attachment_input) = mpsc::channel(4);
         let (selections, selection_input) = mpsc::channel(CHANNEL_CAPACITY);
         let (bulk, bulk_input) = mpsc::channel(1);
         let (database, database_input) = mpsc::channel(1);
@@ -142,6 +152,7 @@ impl CommandSender {
                 network,
                 sync,
                 printing,
+                attachments,
                 selections,
                 bulk,
                 database,
@@ -154,6 +165,7 @@ impl CommandSender {
                 network: network_input,
                 sync: sync_input,
                 printing: print_input,
+                attachments: attachment_input,
                 selections: selection_input,
                 bulk: bulk_input,
                 database: database_input,
@@ -191,6 +203,7 @@ impl CommandSender {
                 }
             }
             Command::Print(..) => &self.printing,
+            Command::PreviewAttachment(..) | Command::OpenAttachment(..) => &self.attachments,
             Command::Selection(..)
             | Command::ReviewSelection(..)
             | Command::ReleaseSelection(_)
@@ -347,6 +360,7 @@ impl Engine {
             self.clone().run_reads(input.reads, output.clone(), 2),
             self.clone().run_reads(input.prefetch, output.clone(), 1),
             self.clone().run_reads(input.printing, output.clone(), 1),
+            self.clone().run_reads(input.attachments, output.clone(), 2),
             self.clone()
                 .run_persistence(input.selections, output.clone()),
             self.clone()
@@ -829,6 +843,7 @@ mod tests {
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
             printing: Default::default(),
+            attachment_files: Default::default(),
             bulk_control: Default::default(),
         };
         let (sender, input) = CommandSender::channel();

@@ -1,6 +1,8 @@
 mod account_setup;
 mod account_sync;
 mod account_work;
+#[cfg(test)]
+mod attachment_tests;
 mod backups;
 #[cfg(test)]
 mod backups_tests;
@@ -150,6 +152,9 @@ pub enum Command {
     RetryBackupHistory(String, BackupTarget, SecretString),
     Restore(BackupTarget, String, SecretString),
     ExportAttachment(String, usize, String),
+    /// Request, message, attachment index and PDF page.
+    PreviewAttachment(u64, String, usize, usize),
+    OpenAttachment(u64, String, usize),
     ExportMessage(String, String),
     #[cfg(test)]
     HoldBackend {
@@ -347,6 +352,8 @@ pub enum Event {
     DraftFiles(String, Result<Arc<crate::store::DraftState>, String>),
     ForwardDraft(String, Result<Arc<crate::store::DraftState>, String>),
     Print(u64, Result<Arc<crate::printing::Preview>, String>),
+    AttachmentPreview(u64, Result<Arc<crate::attachment_files::Preview>, String>),
+    AttachmentOpened(u64, Result<std::path::PathBuf, String>),
     Sent(String, u64),
     SubmissionQueued(String, u64),
     OutgoingPage(u64, Result<Arc<crate::outgoing::OutgoingPage>, String>),
@@ -408,6 +415,7 @@ struct Engine {
     mail_sync_settings: mail_sync::Settings,
     provider_slots: dispatch::Slots,
     printing: crate::printing::Service,
+    attachment_files: crate::attachment_files::Files,
     bulk_control: Arc<bulk::Control>,
 }
 type Output = futures::channel::mpsc::Sender<Event>;
@@ -528,6 +536,7 @@ pub fn subscription(demo: &bool) -> impl Stream<Item = Event> + use<> {
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
             printing: Default::default(),
+            attachment_files: Default::default(),
             bulk_control: Default::default(),
         };
         // An owned fixture can keep all network capacity occupied indefinitely.
@@ -1912,6 +1921,43 @@ impl Engine {
                     .send(Event::Notice("Attachment saved.".into()))
                     .await?;
             }
+            Command::PreviewAttachment(request, id, index, page) => {
+                let result = async {
+                    let attachment = self.attachment(id, index).await?;
+                    tokio::task::spawn_blocking(move || {
+                        crate::attachment_files::preview(&attachment.name, &attachment.bytes, page)
+                    })
+                    .await
+                    .context("Could not prepare the preview. Try again.")
+                }
+                .await;
+                output
+                    .send(Event::AttachmentPreview(
+                        request,
+                        result.map(Arc::new).map_err(|e| format!("{e:#}")),
+                    ))
+                    .await?;
+            }
+            Command::OpenAttachment(request, id, index) => {
+                let result = async {
+                    let attachment = self.attachment(id, index).await?;
+                    let files = self.attachment_files.clone();
+                    // Fixtures never hand files to the desktop's default app.
+                    let launch = !self.demo;
+                    tokio::task::spawn_blocking(move || {
+                        files.open(&attachment.name, &attachment.bytes, launch)
+                    })
+                    .await
+                    .context("Could not open the attachment. Try again.")?
+                }
+                .await;
+                output
+                    .send(Event::AttachmentOpened(
+                        request,
+                        result.map_err(|e| format!("{e:#}")),
+                    ))
+                    .await?;
+            }
             Command::ExportMessage(id, path) => {
                 let raw = self
                     .store
@@ -1930,6 +1976,16 @@ impl Engine {
             }
         }
         Ok(())
+    }
+}
+impl Engine {
+    async fn attachment(&self, id: String, index: usize) -> anyhow::Result<Attachment> {
+        let detail = self.store.detail(id).await?;
+        detail
+            .attachments
+            .get(index)
+            .cloned()
+            .context("This attachment is no longer in the message. Refresh mail and try again.")
     }
 }
 async fn write_new(path: &str, bytes: &[u8]) -> anyhow::Result<()> {
@@ -1974,6 +2030,7 @@ mod calendar_tests {
             mail_sync_settings: Default::default(),
             provider_slots: Default::default(),
             printing: Default::default(),
+            attachment_files: Default::default(),
             bulk_control: Default::default(),
         }
     }
