@@ -965,6 +965,26 @@ class HarnessTests(unittest.TestCase):
         desktop.command.assert_not_called()
         desktop.app = None
 
+class FunctionKeyTests(unittest.TestCase):
+    def test_function_keys_lose_their_vt_switch_levels_and_other_keys_are_kept(self):
+        keymap = """    key <FK03> {
+        type= "CTRL+ALT",
+        symbols[Group1]= [ F3, F3, F3, F3, XF86Switch_VT_3 ]
+    };
+    key <FK12> {
+        type= "CTRL+ALT",
+        symbols[Group1]= [ F12, F12, F12, F12, XF86Switch_VT_12 ]
+    };
+    key <ESC> {         [          Escape ] };
+"""
+        pinned = harness.single_level_function_keys(keymap)
+        self.assertIn("key <FK03> { [ F3 ] };", pinned)
+        self.assertIn("key <FK12> { [ F12 ] };", pinned)
+        self.assertNotIn("XF86Switch_VT", pinned)
+        self.assertIn("key <ESC> {         [          Escape ] };", pinned)
+        self.assertEqual(harness.single_level_function_keys(pinned), pinned)
+
+
 class FolderHarnessTests(unittest.TestCase):
     def test_folder_action_fixtures_are_explicit_and_validated_before_launch(self):
         desktop=harness.Desktop()

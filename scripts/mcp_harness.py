@@ -67,6 +67,26 @@ def google_sign_in_env(client):
     return {"SHEP_GOOGLE_CLIENT_ID": "", "SHEP_GOOGLE_CLIENT_SECRET": ""}
 
 
+FUNCTION_KEY = re.compile(r"key <FK(\d\d)> \{[^}]*\};")
+
+
+def single_level_function_keys(keymap):
+    """Gives each F key one plain level.
+
+    Newer xkeyboard-config adds Ctrl+Alt VT-switch levels to F keys, and xdotool
+    3.20160805 then holds Alt for every F key, so F3 arrives as Alt+F3.
+    """
+    return FUNCTION_KEY.sub(lambda m: f"key <FK{m.group(1)}> {{ [ F{int(m.group(1))} ] }};", keymap)
+
+
+def pin_function_keys(env):
+    """Loads single-level F keys into the owned display's keymap."""
+    keymap = subprocess.run(["xkbcomp", "-xkb", env["DISPLAY"], "-"], env=env, capture_output=True,
+                            text=True, check=True, timeout=10).stdout
+    subprocess.run(["xkbcomp", "-w", "0", "-", env["DISPLAY"]], env=env, input=single_level_function_keys(keymap),
+                   capture_output=True, text=True, check=True, timeout=10)
+
+
 def request_window_close(display_name, window):
     """ICCCM WM_DELETE_WINDOW, including on hosts with pre-windowquit xdotool."""
     class Data(ctypes.Union):
@@ -439,7 +459,7 @@ class Desktop:
             raise ValueError("Unknown Google permissions fixture.")
         if not 900 <= width <= 2560 or not 640 <= height <= 1600:
             raise ValueError("Test window must be 900–2560 × 640–1600.")
-        for tool in ("Xvfb", "xdotool", "import", "zenity", "xclip"):
+        for tool in ("Xvfb", "xkbcomp", "xdotool", "import", "zenity", "xclip"):
             if not shutil.which(tool):
                 raise RuntimeError(f"Install {tool}; this native harness currently supports Linux/X11.")
         binary = self.binary or ROOT / "target" / "test-ui" / "shep"
@@ -459,6 +479,7 @@ class Desktop:
             raise RuntimeError("Xvfb did not allocate a display.")
         self.env.update(DISPLAY=f":{number}", WINIT_UNIX_BACKEND="x11")
         self.wait_display()
+        pin_function_keys(self.env)
         # Keep native file selection on our display, never the user's portal.
         # rfd falls back to the real GTK/Zenity picker when no portal is available.
         self.env.update(DBUS_SESSION_BUS_ADDRESS=f"unix:path={self.directory}/no-session-bus",

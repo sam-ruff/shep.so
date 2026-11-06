@@ -1658,8 +1658,11 @@ class NativeFlows(unittest.TestCase):
                         break
                     self.assertLess(time.monotonic(), deadline, f"the automatic backup runs while hidden: {busy}")
                     time.sleep(0.1)
-                self.mcp.batch(check("notice", None),
-                               wait(2000), wait(2000),
+                # Home archive may already have reported its own success; the
+                # held second copy's failure must not have been shown yet.
+                notice = self.mcp.call("desktop.state")["notice"]
+                self.assertTrue(notice is None or "acknowledgment was lost" not in notice, notice)
+                self.mcp.batch(wait(2000), wait(2000),
                                {**check("notice", "acknowledgment was lost", "contains"), "timeout_ms": 5000},
                                wait(500), check("tray.visible", False), check("close_pending", False),
                                shot("tray-hidden-after-automatic-backup-failure"),
