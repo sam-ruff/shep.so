@@ -312,6 +312,8 @@ pub enum Message {
     RetryCalendarChange(u64),
     SaveExport,
     ExportAttachment(String, usize),
+    /// Saves every attachment of the message as one zip file.
+    ExportAttachments(String),
     AttachmentPreview(attachment_preview::Message),
     SystemTheme(iced::theme::Mode),
     Resize(Size),
@@ -553,6 +555,8 @@ pub struct App {
     restore_id: String,
     restore_target: Option<BackupTarget>,
     export_index: Option<usize>,
+    /// The Export dialog saves all attachments as a zip.
+    export_all: bool,
     export_source: Option<String>,
     started: Instant,
     update_samples: VecDeque<f64>,
@@ -798,6 +802,7 @@ impl App {
                 restore_id: String::new(),
                 restore_target: None,
                 export_index: None,
+                export_all: false,
                 export_source: None,
                 started: Instant::now(),
                 update_samples: VecDeque::new(),
@@ -1238,6 +1243,7 @@ impl App {
             }
             Dialog::Export => {
                 self.export_index = None;
+                self.export_all = false;
                 self.fields.insert("path", default_export("message.eml"));
             }
             _ => {}
@@ -3655,13 +3661,30 @@ impl App {
                 self.fields.insert("path", default_export(&filename));
                 self.export_source = Some(source);
             }
+            Message::ExportAttachments(source) => {
+                let Some(detail) = self
+                    .detail
+                    .as_deref()
+                    .filter(|detail| detail.summary.id == source)
+                else {
+                    return Task::none();
+                };
+                let name = zip_name(&detail.summary.subject);
+                self.open(Dialog::Export);
+                self.export_all = true;
+                self.fields.insert("path", default_export(&name));
+                self.export_source = Some(source);
+            }
             Message::SaveExport => {
-                let source = match self.export_index {
-                    Some(_) => self.export_source.clone(),
-                    None => self.selected.clone(),
+                let source = if self.export_index.is_some() || self.export_all {
+                    self.export_source.clone()
+                } else {
+                    self.selected.clone()
                 };
                 if let Some(id) = &source {
-                    let command = if let Some(index) = self.export_index {
+                    let command = if self.export_all {
+                        Command::ExportAttachments(id.clone(), self.field("path").into())
+                    } else if let Some(index) = self.export_index {
                         Command::ExportAttachment(id.clone(), index, self.field("path").into())
                     } else {
                         Command::ExportMessage(id.clone(), self.field("path").into())
@@ -5193,6 +5216,21 @@ pub fn chord(key: &Key, modifiers: keyboard::Modifiers) -> Option<String> {
     }
     parts.push(key);
     Some(parts.join("+"))
+}
+/// A portable zip filename built from the message subject.
+fn zip_name(subject: &str) -> String {
+    let words: Vec<String> = subject
+        .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let mut stem: String = words.join(" ").chars().take(80).collect();
+    stem = stem.trim().to_owned();
+    if stem.is_empty() {
+        "attachments.zip".into()
+    } else {
+        format!("{stem} attachments.zip")
+    }
 }
 fn default_export(name: &str) -> String {
     directories::UserDirs::new()

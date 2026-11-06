@@ -1100,6 +1100,11 @@ regressions.
 Print is the footer printer icon or remappable Mod+P, including both binding slots and disable behavior. It snapshots the expanded physical message and current Formatted/Plain choice. Preparation has its own bounded capacity-two command channel and worker, independent of provider jobs and foreground reads. MIME parsing and raster conversion run off-thread using complete cached raw mail, including quoted history and attachment names. Only CID resources and already cached images permitted for this message are embedded, as WebP; printing never fetches remote resources. The current R23 download/cache limits still apply.
 
 
+Reply and Reply all are icon buttons with tooltips. With more than one
+attachment the footer adds Download all after Print: `ExportAttachments` reads
+the cached message and builds the zip in `attachment_files::zip` off the UI
+thread, numbering repeated names, and never overwrites the chosen path. Keep
+the zip, UI, engine and native `test_reader_download_all_*` regressions.
 The trusted parent prints its sandboxed srcdoc child, so long messages paginate. The child has allow-same-origin/allow-modals, never allow-scripts, forms or popups; a stricter child CSP blocks scripts and all network resources. Remove active elements/attributes and unsafe links before serialization; the parent prevents message navigation. Escape srcdoc and header data separately and substitute template markers once, never recursively into user text. Header insertion must wait for the actual srcdoc document, not the initial about:blank document. Review actual PDFs, not just serialized markup.
 
 `printing::Service` serves a self-contained document from memory on a random IPv4 loopback port and unguessable single-use path. Validate Host/method/path, bound headers/connections/timeouts, send no-store/no-referrer/CSP and stop after serving, cancellation or five-minute expiry. At most two unconsumed previews retain documents. The default browser owns printer/PDF selection; opening it is not evidence that the user printed. Retain the preview handle while its browser load may still be pending; dropping it stops an unconsumed server. Launcher and preparation failures remain visible and retry clears only the matching error. Printing does not mutate messages or block native navigation.

@@ -294,6 +294,37 @@ async fn save_exports_the_previewed_message_even_after_selection_changes() -> an
 }
 
 #[tokio::test]
+async fn download_all_saves_a_zip_of_the_reader_message() -> anyhow::Result<()> {
+    let (mut app, _, mut network, id) = reader().await?;
+    let _ = app.handle(Message::ExportAttachments(id.clone()));
+    assert_eq!(app.dialog, Some(Dialog::Export));
+    assert!(app.field("path").ends_with("Files attachments.zip"));
+
+    app.selected = Some("another-message".into());
+    let _ = app.handle(Message::SaveExport);
+    let Ok(Command::ExportAttachments(source, path)) = network.try_recv() else {
+        anyhow::bail!("expected a zip export");
+    };
+    assert_eq!(source, id);
+    assert!(path.ends_with(".zip"));
+
+    // An ordinary message export afterwards is not a zip.
+    let _ = app.handle(Message::Open(Dialog::Export));
+    let _ = app.handle(Message::SaveExport);
+    assert!(matches!(network.try_recv(), Ok(Command::ExportMessage(..))));
+    Ok(())
+}
+
+#[test]
+fn zip_names_come_from_the_subject() {
+    assert_eq!(
+        zip_name("Re: Q3 / budget, final?"),
+        "Re Q3 budget final attachments.zip"
+    );
+    assert_eq!(zip_name("  ::  "), "attachments.zip");
+}
+
+#[tokio::test]
 async fn a_click_for_a_message_no_longer_in_the_reader_is_ignored() -> anyhow::Result<()> {
     let (mut app, mut attachments, ..) = reader().await?;
     let _ = app.handle(Message::AttachmentPreview(Preview::Show("gone".into(), 0)));

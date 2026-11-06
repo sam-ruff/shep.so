@@ -15,6 +15,7 @@ import unittest
 import math
 import sqlite3
 import shutil
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 _live_spec = importlib.util.spec_from_file_location("live_mailbox", ROOT / "scripts/live_mailbox.py")
@@ -2433,7 +2434,7 @@ class NativeFlows(unittest.TestCase):
         result = self.mcp.call("desktop.start", html_mail=True, print_browser="pdf")
         print(f"Print evidence: {result['artifacts']}", flush=True)
         self.mcp.batch(check("html_ready", True), wait(150), shot("print-reader-control"),
-                       click(879,830), check("print_revision", 1),
+                       click(797,830), check("print_revision", 1),
                        {"type":"print_output", "text":"Styled sign-in sample", "name":"print-styled"},
                        check("print_pending",False), click(772,320), check("html_formatted",False),
                        key("ctrl+p"), check("print_revision",2),
@@ -2490,7 +2491,7 @@ class NativeFlows(unittest.TestCase):
     def test_forward_mouse_preserves_attachments_and_reopens_as_an_independent_draft(self):
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"),
                        check("total", 1), key("Escape"), check("html_ready", True), wait(100),
-                       shot("forward-reader-actions"), click(835,784), check("composer.visible", True),
+                       shot("forward-reader-actions"), click(749,784), check("composer.visible", True),
                        check("draft_forward", True), check("draft_forward_html", True), check("compose_fields.subject", "Fwd: Re: A few thoughts on the prototype"),
                        check("compose_fields.to", ""), check("compose_fields.cc", ""), check("compose_fields.bcc", ""),
                        check("draft_in_reply_to", None), check("draft_attachments.3.name", "review-checklist.txt"),
@@ -2901,7 +2902,7 @@ class NativeFlows(unittest.TestCase):
                        check("attachment_preview.pages", [1, 2]), shot("attachment-prepared-open-message"),
                        key("Escape"), check("dialog", None),
                        key("Down"), check("selected", "Kitchen quote"),
-                       click(986, 830), check("dialog", "Attachment"),
+                       click(900, 830), check("dialog", "Attachment"),
                        check("attachment_preview.name", "kitchen-quote.pdf"),
                        check("attachment_preview.from_cache", True), check("attachment_preview.loading", False),
                        check("attachment_preview.pages", [1, 2]), wait(150), shot("attachment-prepared-nearby-unread"),
@@ -2937,6 +2938,27 @@ class NativeFlows(unittest.TestCase):
                        click(761, 133), check("attachment_preview.full_screen", True), wait(150),
                        shot("attachment-compact-full-screen"),
                        key("Escape"), check("attachment_preview.full_screen", False), key("Escape"), check("dialog", None))
+
+    def test_reader_download_all_saves_every_attachment_as_one_zip(self):
+        started = self.mcp.call("desktop.start", attachment_mail=True)
+        print(f"Download all evidence: {started['artifacts']}", flush=True)
+        target = Path(started["artifacts"]) / "site-visit.zip"
+        self.mcp.batch(check("selected", "Site visit photos and notes"), check("attachment_count", 7),
+                       {"type": "hover", "x": 701, "y": 784}, wait(900), shot("reader-reply-all-tooltip"),
+                       click(845, 784), check("dialog", "Export"),
+                       check("fields.path", "Site visit photos and notes attachments.zip", "contains"),
+                       wait(150), shot("reader-download-all-dialog"),
+                       click(719, 458), key("ctrl+a"), paste_text(str(target)), check("fields.path", str(target)),
+                       click(503, 574), check("dialog", None),
+                       check("notice", "7 attachments saved as a zip", "contains"))
+        with zipfile.ZipFile(target) as archive:
+            self.assertEqual(archive.namelist(), [
+                "site-photo.png", "measurements.csv", "floor-plan.pdf", "room-schedule.xlsx",
+                "survey-notes.docx", "budget-tool.docx", "install.sh",
+            ])
+        # A message with one attachment has no Download all control.
+        self.mcp.batch(click(400, mail_row_y(1)), check("selected", "Kitchen quote"), check("attachment_count", 1),
+                       wait(150), shot("reader-single-attachment-footer"))
 
     def test_attachment_preview_steps_opens_and_saves_from_the_prototype_reply(self):
         started = self.mcp.call("desktop.start")
@@ -6314,7 +6336,7 @@ class NativeFlows(unittest.TestCase):
 
     def test_reply_all_mouse_and_remappable_shortcut(self):
         self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("prototype"),
-                       check("total", 1), key("Escape"), check("html_ready", True), wait(100), click(766, 784), check("composer.visible", True),
+                       check("total", 1), key("Escape"), check("html_ready", True), wait(100), click(701, 784), check("composer.visible", True),
                        check("compose_fields.to", "Daniel Park <team@example.com>, colleague@example.com"),
                        check("compose_fields.cc", "copy@example.com"), check("compose_fields.bcc", ""),
                        check("draft_in_reply_to", "<prototype@example.com>"), shot("reply-all-mouse"),
@@ -6376,7 +6398,7 @@ class NativeFlows(unittest.TestCase):
                     self.mcp.batch({"type":"resize","width":900,"height":640}, wait(150))
                 elif layout == "full":
                     self.mcp.batch(double_click(400,mail_row_y(0)), check("full_reader",True), wait(150))
-                x, y = (590,554) if layout == "compact" else ((80,834) if layout == "full" else (690,834))
+                x, y = (562,552) if layout == "compact" else ((56,834) if layout == "full" else (654,834))
                 self.mcp.batch({"type":"hover","x":x+100,"y":400}, {"type":"scroll","amount":12},
                                check("conversation_scroll",300,"gte"),
                                shot(f"conversation-footer-scrolled-{layout}-{dark}"),
@@ -6385,7 +6407,7 @@ class NativeFlows(unittest.TestCase):
                                shot(f"conversation-footer-replied-{layout}-{dark}"))
 
     def test_conversation_footer_actions_keep_the_collapsed_older_target(self):
-        for action_name, x in (("reply-all",782), ("forward",850), ("print",885)):
+        for action_name, x in (("reply-all",701), ("forward",749), ("print",797)):
             self.mcp.call("desktop.start", conversation_mail=True, print_browser="fail")
             self.mcp.batch(check("conversation_total",3), wait(150),
                            click(1322,258), check("conversation_collapsed",True),

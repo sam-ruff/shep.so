@@ -896,28 +896,16 @@ impl App {
     ) -> Element<'a, Message> {
         let ready = detail.is_some();
         let mut footer = row![
-            button(
-                row![
-                    icon_bright("reply", 20.),
-                    text("Reply").size(12).line_height(1.)
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center)
-            )
-            .padding([10, 14])
-            .style(primary)
-            .on_press_maybe(ready.then_some(Message::Reply)),
-            if self.compact_reader() {
-                self.icon_action_maybe(
-                    "reply-all",
-                    self.shortcut_hint("Reply all", Action::ReplyAll),
-                    ready.then_some(Message::ReplyAll),
-                )
-            } else {
-                action("Reply all", Message::ReplyAll)
-                    .on_press_maybe(ready.then_some(Message::ReplyAll))
-                    .into()
-            },
+            self.icon_action_maybe(
+                "reply",
+                self.shortcut_hint("Reply", Action::Reply),
+                ready.then_some(Message::Reply),
+            ),
+            self.icon_action_maybe(
+                "reply-all",
+                self.shortcut_hint("Reply all", Action::ReplyAll),
+                ready.then_some(Message::ReplyAll),
+            ),
             if self.composer.forward_pending.is_some() {
                 button(text("Preparing…").size(12))
                     .padding([10, 12])
@@ -945,6 +933,13 @@ impl App {
         ]
         .spacing(if self.compact_reader() { 4 } else { 8 })
         .align_y(Alignment::Center);
+        if let Some(detail) = detail.filter(|detail| detail.attachments.len() > 1) {
+            footer = footer.push(self.icon_action(
+                "download",
+                "Download all attachments as a zip",
+                Message::ExportAttachments(detail.summary.id.clone()),
+            ));
+        }
         if self.compact_reader() && !self.conversation_visible() {
             footer = footer
                 .push(self.icon_action(
@@ -2515,7 +2510,11 @@ impl App {
             Dialog::DiscardDraft => ("Discard draft?", ""),
             Dialog::Event => ("Calendar event", "Times use this device's timezone."),
             Dialog::Export => (
-                "Save a copy",
+                if self.export_all {
+                    "Save all attachments"
+                } else {
+                    "Save a copy"
+                },
                 "Choose a full file path. Existing files will never be overwritten.",
             ),
             Dialog::Attachment => (self.attachment_preview_title(), ""),

@@ -274,6 +274,45 @@ fn expand_tabs(text: &str) -> String {
     expanded
 }
 
+/// Packs every attachment into one zip archive, giving repeated names a
+/// numbered suffix so no file replaces another.
+pub fn zip(attachments: &[shep_mail_core::model::Attachment]) -> anyhow::Result<Vec<u8>> {
+    use zip::write::SimpleFileOptions;
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .large_file(true);
+    let mut used = std::collections::HashSet::new();
+    for attachment in attachments {
+        let name = unique_name(
+            &shep_mail_core::attachments::filename(&attachment.name),
+            &mut used,
+        );
+        writer
+            .start_file(name, options)
+            .context("Could not add an attachment to the zip file.")?;
+        writer.write_all(&attachment.bytes)?;
+    }
+    Ok(writer
+        .finish()
+        .context("Could not finish the zip file.")?
+        .into_inner())
+}
+
+fn unique_name(name: &str, used: &mut std::collections::HashSet<String>) -> String {
+    let (stem, extension) = match name.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
+        _ => (name, String::new()),
+    };
+    let mut candidate = name.to_owned();
+    let mut number = 2;
+    while !used.insert(candidate.to_lowercase()) {
+        candidate = format!("{stem} ({number}){extension}");
+        number += 1;
+    }
+    candidate
+}
+
 #[cfg_attr(test, mockall::automock)]
 pub trait Launcher: Send + Sync {
     fn open(&self, path: &Path) -> anyhow::Result<()>;

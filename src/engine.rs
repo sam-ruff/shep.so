@@ -152,6 +152,8 @@ pub enum Command {
     RetryBackupHistory(String, BackupTarget, SecretString),
     Restore(BackupTarget, String, SecretString),
     ExportAttachment(String, usize, String),
+    /// Saves every attachment of a message as one zip file at the path.
+    ExportAttachments(String, String),
     /// Request, message, attachment index and PDF page.
     PreviewAttachment(u64, String, usize, usize),
     OpenAttachment(u64, String, usize),
@@ -1926,6 +1928,24 @@ impl Engine {
                 write_new(&path, &attachment.bytes).await?;
                 output
                     .send(Event::Notice("Attachment saved.".into()))
+                    .await?;
+            }
+            Command::ExportAttachments(id, path) => {
+                let detail = self.store.detail(id).await?;
+                if detail.attachments.is_empty() {
+                    anyhow::bail!("This message no longer has attachments.");
+                }
+                let count = detail.attachments.len();
+                let bytes = tokio::task::spawn_blocking(move || {
+                    crate::attachment_files::zip(&detail.attachments)
+                })
+                .await
+                .context("Could not prepare the zip file. Try again.")??;
+                write_new(&path, &bytes).await?;
+                output
+                    .send(Event::Notice(format!(
+                        "{count} attachments saved as a zip."
+                    )))
                     .await?;
             }
             Command::PreviewAttachment(request, id, index, page) => {

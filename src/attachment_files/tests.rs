@@ -473,6 +473,39 @@ fn launcher_failures_are_reported() {
 }
 
 #[test]
+fn zip_keeps_every_attachment_under_a_distinct_name() {
+    let attachment = |name: &str, bytes: &[u8]| shep_mail_core::model::Attachment {
+        name: name.into(),
+        bytes: bytes.to_vec(),
+    };
+    let bytes = zip(&[
+        attachment("report.pdf", b"first"),
+        attachment("Report.pdf", b"second"),
+        attachment("../notes", b"third"),
+        attachment("report.pdf", b"fourth"),
+    ])
+    .expect("zip");
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("archive");
+    let mut entries = Vec::new();
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).expect("entry");
+        let mut contents = String::new();
+        std::io::Read::read_to_string(&mut file, &mut contents).expect("read");
+        entries.push((file.name().expect("name").to_string(), contents));
+    }
+    let expected = [
+        ("report.pdf", "first"),
+        ("Report (2).pdf", "second"),
+        ("notes", "third"),
+        ("report (3).pdf", "fourth"),
+    ];
+    assert_eq!(
+        entries,
+        expected.map(|(name, contents)| (name.to_owned(), contents.to_owned()))
+    );
+}
+
+#[test]
 fn copies_are_removed_with_the_session() {
     let parent = tempfile::tempdir().expect("parent");
     let files = Files::new(Some(parent.path().into()), Arc::new(MockLauncher::new()));

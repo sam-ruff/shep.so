@@ -101,3 +101,53 @@ async fn preview_and_open_run_beside_saturated_provider_work() -> anyhow::Result
     assert!(missing.is_some_and(|result| result.is_err_and(|e| e.contains("no longer"))));
     Ok(())
 }
+
+#[tokio::test]
+async fn download_all_writes_one_zip_and_never_overwrites() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let engine = calendar_tests::engine();
+    let raw = "Subject: Files\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n\
+        --b\r\nContent-Type: text/plain\r\n\r\nBody\r\n\
+        --b\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=\"notes.txt\"\r\n\r\nMonday at nine.\r\n\
+        --b\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"setup.exe\"\r\n\r\nMZ\r\n\
+        --b--\r\n";
+    let mail = parse_mail("test", "1", "INBOX", raw.into(), false, false)?;
+    let id = mail.summary.id.clone();
+    engine.store.upsert(vec![mail]).await?;
+    let (sender, input) = CommandSender::channel();
+    let (output, mut events) = futures::channel::mpsc::channel(32);
+    let _running = Running(tokio::spawn(engine.run(input, output)));
+    let path = directory.path().join("Files attachments.zip");
+    let path_text = path.to_string_lossy().into_owned();
+
+    let mut next = async |command| -> anyhow::Result<Event> {
+        sender
+            .try_send(command)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        tokio::time::timeout(crate::test_wait::HANG, async {
+            loop {
+                if let event @ (Event::Notice(_) | Event::Error(_)) =
+                    events.next().await.expect("dispatcher stopped")
+                {
+                    return event;
+                }
+            }
+        })
+        .await
+        .map_err(Into::into)
+    };
+    let saved = next(Command::ExportAttachments(id.clone(), path_text.clone())).await?;
+    assert!(matches!(saved, Event::Notice(text) if text.contains("2 attachments")));
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&path)?)?;
+    let names: Vec<_> = archive.file_names().collect::<Result<_, _>>()?;
+    assert_eq!(names, ["notes.txt", "setup.exe"]);
+    let mut notes = String::new();
+    std::io::Read::read_to_string(&mut archive.by_name("notes.txt")?, &mut notes)?;
+    assert_eq!(notes, "Monday at nine.");
+
+    let before = std::fs::read(&path)?;
+    let repeated = next(Command::ExportAttachments(id, path_text)).await?;
+    assert!(matches!(repeated, Event::Error(_)));
+    assert_eq!(std::fs::read(&path)?, before);
+    Ok(())
+}

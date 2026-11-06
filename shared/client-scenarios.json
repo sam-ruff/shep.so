@@ -355,10 +355,10 @@
     },
     {
       "id": "reader-action-footer",
-      "contract": "Reply, Reply all, Forward and Print remain outside reader scrolling, with space reserved so the last body line remains readable; disabled controls retain their space while current detail loads, and enabled actions target the expanded physical message even when collapsed or HTML is preparing.",
-      "desktop": "scripts/e2e.py conversation_footer scenarios cover real bottom clicks after scrolling in light/dark, preview/compact/full layouts, older collapsed Reply all/Forward/Print, renderer preparation and the last HTML line.",
-      "mobile": "Existing Scaffold safe-area footer in ui/reader.dart, with shared host/Android held-touch and delayed-loading coverage; separate conversation cards remain OPEN.",
-      "browser": "Existing reader_actions.ts stable footer outside reader-content with real held-pointer and keyboard activation coverage; separate conversation cards remain OPEN."
+      "contract": "Reply, Reply all, Forward and Print remain outside reader scrolling, with space reserved so the last body line remains readable; disabled controls retain their space while current detail loads, and enabled actions target the expanded physical message even when collapsed or HTML is preparing. Reply and Reply all are icon buttons with tooltips. A message with more than one attachment adds Download all after Print, which saves every attachment as one zip, giving repeated names a numbered suffix and never overwriting an existing file.",
+      "desktop": "scripts/e2e.py conversation_footer scenarios cover real bottom clicks after scrolling in light/dark, preview/compact/full layouts, older collapsed Reply all/Forward/Print, renderer preparation and the last HTML line. attachment_files zip tests, attachment_preview_tests, engine::attachment_tests and the native test_reader_download_all_saves_every_attachment_as_one_zip flow cover Download all.",
+      "mobile": "Existing Scaffold safe-area footer in ui/reader.dart, with shared host/Android held-touch and delayed-loading coverage; separate conversation cards, icon-only Reply/Reply all and Download all remain OPEN.",
+      "browser": "Existing reader_actions.ts stable footer outside reader-content with real held-pointer and keyboard activation coverage; separate conversation cards, icon-only Reply/Reply all and Download all remain OPEN."
     },
     {
       "id": "desktop-forward-print",
