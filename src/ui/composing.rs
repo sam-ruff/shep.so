@@ -2,7 +2,7 @@ use super::views::{Choice, truncate};
 use super::*;
 use crate::store::DraftState;
 use crate::ui::dropdown::pick_list;
-mod history;
+pub(super) mod history;
 mod recipient_box;
 mod recipients;
 mod sessions;
@@ -25,7 +25,7 @@ pub enum Step {
 }
 
 impl Step {
-    fn apply<T: history::Weight>(
+    pub(super) fn apply<T: history::Weight>(
         self,
         history: &mut History<T>,
         current: impl FnOnce() -> T,
@@ -129,6 +129,27 @@ pub(super) struct Histories {
     addresses: [History<Recipients>; 3],
 }
 
+/// Ctrl+Backspace and Ctrl+Delete remove a word (Option on macOS, where
+/// Command removes to the line edge). iced's editor only removes a character.
+fn delete_by_word(key: &text_editor::KeyPress) -> Option<text_editor::Binding<Message>> {
+    use text_editor::Motion;
+    let (word, edge) = match key.modified_key.as_ref() {
+        Key::Named(keyboard::key::Named::Backspace) => (Motion::WordLeft, Motion::Home),
+        Key::Named(keyboard::key::Named::Delete) => (Motion::WordRight, Motion::End),
+        _ => return None,
+    };
+    let motion = if key.modifiers.macos_command() {
+        edge
+    } else if key.modifiers.jump() {
+        word
+    } else {
+        return None;
+    };
+    Some(text_editor::Binding::Custom(Message::EditorDeleteTo(
+        motion,
+    )))
+}
+
 fn compose_binding(
     key: text_editor::KeyPress,
     shortcuts: &crate::shortcuts::Keymap,
@@ -164,6 +185,9 @@ fn compose_binding(
             });
     if navigation {
         return None;
+    }
+    if let Some(binding) = delete_by_word(&key) {
+        return Some(binding);
     }
     let binding = text_editor::Binding::from_key_press(key)?;
     if matches!(binding, text_editor::Binding::Insert(_)) && modifiers.command() && !modifiers.alt()
@@ -611,6 +635,7 @@ impl App {
                     Message::ComposeField("subject", v)
                 })
                 .id("subject")
+                .own_history()
             ]
             .align_y(Alignment::Center),
         );
@@ -1008,6 +1033,7 @@ impl App {
             },
         )
         .id(key)
+        .own_history()
         .on_submit(Message::CommitRecipients(key))
         .map_paste(recipients::paste_lines)
         .padding([7, 6])

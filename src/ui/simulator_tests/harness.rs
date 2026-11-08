@@ -425,6 +425,11 @@ impl Harness {
         self.clipboard.0 = Some(text.to_owned());
     }
 
+    /// What the last copy or cut wrote.
+    pub fn clipboard(&self) -> Option<&str> {
+        self.clipboard.0.as_deref()
+    }
+
     /// Types each character as its own key press, as xdotool does.
     pub async fn type_text(&mut self, text: &str) {
         for character in text.chars() {

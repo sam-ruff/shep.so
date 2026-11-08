@@ -113,7 +113,8 @@ back restores identical pixels.
 
 ## Adding a scenario
 
-Put it in the matching module (`mail.rs`, `preferences.rs` or `shortcuts.rs`)
+Put it in the matching module (`mail.rs`, `preferences.rs`, `shortcuts.rs` or
+`text_editing.rs`)
 as a plain `async fn`, add its name to that module's `scenarios!` list, start
 from `Harness::start()` or `Harness::with_size(900., 640.)`, and follow the
 native batch step by step. `scenarios!` runs each one through `harness::run`,

@@ -29,5 +29,6 @@ mod real_mail;
 mod real_server;
 mod shortcuts;
 mod sync_notice;
+mod text_editing;
 
 use harness::Harness;

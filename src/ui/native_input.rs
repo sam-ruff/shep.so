@@ -77,6 +77,34 @@ impl Operation for Focused {
     }
 }
 
+/// Reports the focused field once a focus operation has been applied.
+#[derive(Default)]
+struct FocusReport(Focused);
+
+impl Operation<Option<&'static str>> for FocusReport {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<Option<&'static str>>)) {
+        operate(self);
+    }
+
+    fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, state: &mut dyn Focusable) {
+        self.0.focusable(id, bounds, state);
+    }
+
+    fn finish(&self) -> iced::advanced::widget::operation::Outcome<Option<&'static str>> {
+        iced::advanced::widget::operation::Outcome::Some(self.0.0)
+    }
+}
+
+/// Moves focus like Tab, then reports the field it landed on, as a press does.
+fn tab_focus(backwards: bool) -> Task<Message> {
+    let focus = if backwards {
+        widget::operation::focus_previous()
+    } else {
+        widget::operation::focus_next()
+    };
+    focus.chain(iced::advanced::widget::operate(FocusReport::default()).map(Message::NativeFocus))
+}
+
 impl App {
     pub(super) fn native_key(
         &mut self,
@@ -85,6 +113,11 @@ impl App {
         captured: bool,
         focus: Focus,
     ) -> Task<Message> {
+        // A field that captured Ctrl+Z or Ctrl+Y stepped its own history, so a
+        // shortcut remapped to that chord must not also run.
+        if captured && composing::history_step(&key, modifiers).is_some() {
+            return Task::none();
+        }
         if focus.compose && self.dialog.is_none() && self.remapping.is_none() {
             // Undo/redo are native editing keys, never mail or remapped actions.
             if let Some(step) = composing::history_step(&key, modifiers) {
@@ -95,11 +128,7 @@ impl App {
             }
             if key == Key::Named(keyboard::key::Named::Tab) {
                 self.commit_recipients_except(None);
-                return if modifiers.shift() {
-                    widget::operation::focus_previous()
-                } else {
-                    widget::operation::focus_next()
-                };
+                return tab_focus(modifiers.shift());
             }
             if key == Key::Named(keyboard::key::Named::Escape) && modifiers.is_empty() {
                 return self.handle(Message::CloseComposer);
@@ -326,6 +355,37 @@ mod tests {
             assert_eq!(keys[0].1.find, input == "find-message");
             assert!(!keys[1].1.search && !keys[1].1.find);
         }
+    }
+
+    #[test]
+    fn a_field_undo_never_also_runs_a_shortcut_remapped_to_that_chord() {
+        let (mut app, _) = App::new();
+        app.preferences
+            .shortcuts
+            .remap(Action::Settings, "Mod+Z".into())
+            .expect("free chord");
+        for (character, modifiers) in [
+            ("z", keyboard::Modifiers::COMMAND),
+            (
+                "Z",
+                keyboard::Modifiers::COMMAND | keyboard::Modifiers::SHIFT,
+            ),
+        ] {
+            let _ = app.handle(Message::Key(
+                Key::Character(character.into()),
+                modifiers,
+                true,
+                Focus::default(),
+            ));
+            assert_eq!(app.tab, Tab::Mail);
+        }
+        let _ = app.handle(Message::Key(
+            Key::Character("z".into()),
+            keyboard::Modifiers::COMMAND,
+            false,
+            Focus::default(),
+        ));
+        assert_eq!(app.tab, Tab::Preferences);
     }
 
     #[test]

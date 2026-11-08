@@ -1436,6 +1436,63 @@ fn undo_keys_become_body_history_bindings_instead_of_text() {
 }
 
 #[test]
+fn word_deletion_removes_a_word_or_the_selection_present_when_it_runs() {
+    use text_editor::{Action, Binding, Motion};
+    let shortcuts = crate::shortcuts::Keymap::default();
+    let press = |named, modifiers| text_editor::KeyPress {
+        key: Key::Named(named),
+        modified_key: Key::Named(named),
+        physical_key: keyboard::key::Physical::Unidentified(
+            keyboard::key::NativeCode::Unidentified,
+        ),
+        modifiers,
+        text: None,
+        status: text_editor::Status::Focused { is_hovered: false },
+    };
+    let (backspace, delete) = (
+        keyboard::key::Named::Backspace,
+        keyboard::key::Named::Delete,
+    );
+    let jump = if cfg!(target_os = "macos") {
+        keyboard::Modifiers::ALT
+    } else {
+        keyboard::Modifiers::CTRL
+    };
+    let binding = |named, modifiers| compose_binding(press(named, modifiers), &shortcuts);
+    assert!(matches!(
+        binding(backspace, jump),
+        Some(Binding::Custom(Message::EditorDeleteTo(Motion::WordLeft)))
+    ));
+    assert!(matches!(
+        binding(delete, jump),
+        Some(Binding::Custom(Message::EditorDeleteTo(Motion::WordRight)))
+    ));
+    assert!(matches!(
+        binding(backspace, keyboard::Modifiers::empty()),
+        Some(Binding::Backspace)
+    ));
+
+    let (mut app, _) = App::new();
+    app.load_draft(Draft {
+        body: "alpha beta gamma".into(),
+        ..draft("current")
+    });
+    let _ = app.handle(Message::Editor(Action::Move(Motion::DocumentEnd)));
+    let _ = app.handle(Message::EditorDeleteTo(Motion::WordLeft));
+    assert_eq!(app.composer.current.editor.text(), "alpha beta ");
+    // A key queued after the binding was chosen clears the selection first.
+    let _ = app.handle(Message::Editor(Action::SelectAll));
+    let _ = app.handle(Message::Editor(Action::Move(Motion::DocumentStart)));
+    let _ = app.handle(Message::EditorDeleteTo(Motion::WordRight));
+    assert_eq!(app.composer.current.editor.text(), " beta ");
+    let _ = app.handle(Message::Editor(Action::SelectAll));
+    let _ = app.handle(Message::EditorDeleteTo(Motion::WordLeft));
+    assert_eq!(app.composer.current.editor.text(), "");
+    let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
+    assert_eq!(app.composer.current.editor.text(), " beta ");
+}
+
+#[test]
 fn body_undo_steps_back_a_word_at_a_time_and_redo_replays_it() {
     let (mut app, _) = App::new();
     app.load_draft(Draft {

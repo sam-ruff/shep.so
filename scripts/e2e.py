@@ -5764,6 +5764,68 @@ class NativeFlows(unittest.TestCase):
                        click(600, 374), check("dialog", None), check("total", 119),
                        click(85, 398), check("folder", "Archive"), check("total", 1), shot("archived-message"))
 
+    def test_text_editing_keys_in_fields(self):
+        # Undo/redo, clipboard, word and line keys edit text; Backspace, Delete
+        # and other mail shortcuts never act on mail while a field has focus.
+        untouched = (check("dialog", None), check("folder", "INBOX"), check("mail_pending", 0), check("total", 120))
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
+                       key("Tab"), check("native_focus", "subject"),
+                       key("Tab"), check("native_focus", "compose-body"), type_text("alpha beta gamma"),
+                       check("editor", "alpha beta gamma"),
+                       key("ctrl+BackSpace"), check("editor", "alpha beta "),
+                       key("ctrl+z"), check("editor", "alpha beta gamma"), key("ctrl+y"), check("editor", "alpha beta "),
+                       key("ctrl+z"), key("ctrl+shift+z"), check("editor", "alpha beta "),
+                       key("ctrl+z"), check("editor", "alpha beta gamma"),
+                       key("ctrl+Home"), key("ctrl+Delete"), check("editor", " beta gamma"),
+                       key("ctrl+End"), key("ctrl+shift+Left"), type_text("G"), check("editor", " beta G"),
+                       key("ctrl+Home"), key("ctrl+Right"), type_text("s"), check("editor", " betas G"),
+                       key("ctrl+shift+Left"), type_text("B"), check("editor", " B G"),
+                       key("ctrl+End"), key("Return"), type_text("second line"), check("editor", " B G\nsecond line"),
+                       key("Home"), type_text("> "), key("End"), type_text("."), check("editor", " B G\n> second line."),
+                       key("ctrl+Home"), key("shift+End"), type_text("First"), key("ctrl+End"), type_text("!"),
+                       check("editor", "First\n> second line.!"),
+                       key("ctrl+shift+Home"), key("BackSpace"), check("editor", ""),
+                       key("ctrl+z"), check("editor", "First\n> second line.!"),
+                       key("ctrl+a"), key("ctrl+x"), check("editor", ""), key("ctrl+v"), check("editor", "First\n> second line.!"),
+                       key("Delete"), key("BackSpace"), check("composer.visible", True), *untouched,
+                       shot("text-editing-body"))
+        self.mcp.batch(key("shift+Tab"), check("native_focus", "subject"),
+                       type_text("Quarterly plans draft"), key("ctrl+BackSpace"),
+                       check("compose_fields.subject", "Quarterly plans "),
+                       key("ctrl+z"), check("compose_fields.subject", "Quarterly plans draft"),
+                       key("ctrl+y"), check("compose_fields.subject", "Quarterly plans "),
+                       # An input shows restored text only after it redraws, so wait for it.
+                       key("ctrl+z"), check("compose_fields.subject", "Quarterly plans draft"),
+                       key("Home"), key("ctrl+Delete"), check("compose_fields.subject", " plans draft"),
+                       key("ctrl+a"), key("ctrl+x"), check("compose_fields.subject", ""),
+                       key("ctrl+v"), check("compose_fields.subject", " plans draft"),
+                       key("ctrl+a"), key("Delete"), check("compose_fields.subject", ""), *untouched,
+                       key("Escape"), check("composer.visible", False))
+        self.mcp.batch(key("ctrl+k"), check("focused_input", "search"), type_text("invoice march"),
+                       check("query", "invoice march"), key("ctrl+BackSpace"), check("query", "invoice "),
+                       key("ctrl+z"), check("query", "invoice march"), key("ctrl+y"), check("query", "invoice "),
+                       key("ctrl+z"), check("query", "invoice march"), key("Home"), key("ctrl+Delete"), check("query", " march"),
+                       key("ctrl+z"), check("query", "invoice march"),
+                       key("End"), key("ctrl+shift+Left"), type_text("april"), check("query", "invoice april"),
+                       key("ctrl+a"), key("BackSpace"), check("query", ""), key("ctrl+z"), check("query", "invoice april"),
+                       key("ctrl+a"), key("Delete"), check("query", ""), *untouched,
+                       shot("text-editing-search"))
+        self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), click(1150, 88), type_text("dark theme"),
+                       check("settings_search", "dark theme"), key("ctrl+BackSpace"), check("settings_search", "dark "),
+                       key("ctrl+z"), check("settings_search", "dark theme"),
+                       key("ctrl+shift+z"), check("settings_search", "dark "),
+                       key("ctrl+a"), key("Delete"), check("settings_search", ""),
+                       key("ctrl+z"), check("settings_search", "dark "), check("tab", "Preferences"))
+        self.mcp.batch(key("ctrl+2"), check("tab", "Calendar"), double_click(700, 474),
+                       check("dialog", "Event"), check("focused_input", "event-title"),
+                       type_text("Team lunch Friday"), key("ctrl+BackSpace"), check("fields.title", "Team lunch "),
+                       key("ctrl+z"), check("fields.title", "Team lunch Friday"),
+                       key("ctrl+y"), check("fields.title", "Team lunch "),
+                       key("ctrl+z"), check("fields.title", "Team lunch Friday"), key("Home"), key("ctrl+shift+Right"), type_text("S"), check("fields.title", "S lunch Friday"),
+                       key("ctrl+z"), check("fields.title", "Team lunch Friday"),
+                       key("End"), type_text(" yn"), check("fields.title", "Team lunch Friday yn"), check("dialog", "Event"),
+                       shot("text-editing-event"))
+
     def test_appearance_toggle_and_calendar_with_mouse(self):
         # These are settled visual captures, not input-to-paint timing evidence.
         # First-paint scheduling after appearance changes remains R15/R63 work.

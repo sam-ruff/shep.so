@@ -1,4 +1,8 @@
 //! One native text menu for inputs, editors and the formatted reader.
+use super::composing::{
+    Step,
+    history::{Edit, History},
+};
 use super::{Element, Message, Theme, components};
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
@@ -6,6 +10,10 @@ use iced::advanced::{
 };
 use iced::{Event, Length, Point, Rectangle, Renderer, Size, Vector, keyboard, widget};
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Instant;
+
+type InputState =
+    widget::text_input::State<<Renderer as iced::advanced::text::Renderer>::Paragraph>;
 
 mod input;
 #[cfg(test)]
@@ -112,12 +120,35 @@ impl Observation {
     }
 }
 
+/// An editable input's current text and how to replace it on undo or redo.
+struct Undo<'a> {
+    text: String,
+    publish: input::OnInput<'a>,
+    edits: input::Edits,
+}
+impl Undo<'_> {
+    /// Records what the input reported since the last call. Several key
+    /// presses can arrive before the app redraws the input with its new text.
+    fn record(&self, state: &mut State) {
+        let edits = self
+            .edits
+            .borrow_mut()
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default();
+        for value in edits {
+            state.track(&value, true);
+        }
+    }
+}
+
 enum Kind<'a> {
     Input {
         value: widget::text_input::Value,
         editable: bool,
         secure: bool,
         paste: Option<fn(&str) -> String>,
+        undo: Option<Undo<'a>>,
     },
     Editor {
         content: &'a widget::text_editor::Content,
@@ -169,6 +200,42 @@ impl<'a> TextContext<'a> {
         self.theme = Some(theme);
         self
     }
+    fn undo(&self) -> Option<&Undo<'a>> {
+        match &self.kind {
+            Kind::Input {
+                undo: Some(undo),
+                editable: true,
+                ..
+            } => Some(undo),
+            _ => None,
+        }
+    }
+    /// iced inputs have no undo, so a focused input steps through the history
+    /// kept here and reports the restored text as ordinary input.
+    fn undo_key(&self, tree: &mut Tree, event: &Event, shell: &mut Shell<'_, Message>) -> bool {
+        let Some(undo) = self.undo() else {
+            return false;
+        };
+        let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event else {
+            return false;
+        };
+        let Some(step) = super::composing::history_step(key, *modifiers) else {
+            return false;
+        };
+        let input = tree.children[0].state.downcast_mut::<InputState>();
+        if !input.is_focused() {
+            return false;
+        }
+        let state = tree.state.downcast_mut::<State>();
+        undo.record(state);
+        if let Some(value) = state.step(step, &undo.text) {
+            input.move_cursor_to_end();
+            shell.publish((undo.publish)(value));
+        }
+        shell.capture_event();
+        shell.request_redraw();
+        true
+    }
     fn available(&self, tree: &Tree, clip: &Clip) -> [bool; 4] {
         let (selected, populated, editable, secure) = match &self.kind {
             Kind::Input {
@@ -216,8 +283,37 @@ struct State {
     clip: Arc<Mutex<Clip>>,
     menu: Tree,
     modifiers: keyboard::Modifiers,
+    history: History<String>,
+    /// The input's text when it was last drawn, to notice each edit.
+    seen: Option<String>,
 }
 impl State {
+    /// Records an edit to the input's text. A change made while the field is
+    /// not focused came from the app, so it starts a fresh history.
+    fn track(&mut self, text: &str, focused: bool) {
+        let Some(seen) = self.seen.as_deref() else {
+            self.seen = Some(text.into());
+            return;
+        };
+        if seen == text {
+            return;
+        }
+        if focused {
+            let before = seen.to_owned();
+            self.history
+                .record(Edit::between(seen, text), Instant::now(), || before);
+        } else {
+            self.history = History::default();
+        }
+        self.seen = Some(text.into());
+    }
+    /// `text` is the drawn value, used until the input has reported an edit.
+    fn step(&mut self, step: Step, text: &str) -> Option<String> {
+        let current = self.seen.clone().unwrap_or_else(|| text.to_owned());
+        let value = step.apply(&mut self.history, || current)?;
+        self.seen = Some(value.clone());
+        Some(value)
+    }
     fn close(&mut self) {
         self.position = None;
         self.navigated = false;
@@ -291,6 +387,8 @@ impl Widget<Message, Theme, Renderer> for TextContext<'_> {
             clip: Arc::new(Mutex::new(Clip::default())),
             menu: Tree::empty(),
             modifiers: keyboard::Modifiers::default(),
+            history: History::default(),
+            seen: self.undo().map(|undo| undo.text.clone()),
         })
     }
     fn children(&self) -> Vec<Tree> {
@@ -301,8 +399,19 @@ impl Widget<Message, Theme, Renderer> for TextContext<'_> {
         if state.identity != self.identity {
             state.close();
             state.identity = self.identity.clone();
+            state.history = History::default();
+            state.seen = None;
         }
         tree.diff_children(std::slice::from_ref(&self.content));
+        if let Some(undo) = self.undo() {
+            let focused = tree.children[0]
+                .state
+                .downcast_ref::<InputState>()
+                .is_focused();
+            tree.state
+                .downcast_mut::<State>()
+                .track(&undo.text, focused);
+        }
     }
     fn size(&self) -> Size<Length> {
         self.content.as_widget().size()
@@ -346,6 +455,9 @@ impl Widget<Message, Theme, Renderer> for TextContext<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if self.undo_key(tree, event, shell) {
+            return;
+        }
         let state = tree.state.downcast_mut::<State>();
         if let Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) = event {
             state.modifiers = *modifiers;
@@ -448,6 +560,9 @@ impl Widget<Message, Theme, Renderer> for TextContext<'_> {
             shell,
             viewport,
         );
+        if let Some(undo) = self.undo() {
+            undo.record(tree.state.downcast_mut::<State>());
+        }
     }
     fn draw(
         &self,

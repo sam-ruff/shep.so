@@ -392,3 +392,106 @@ fn replacing_the_field_identity_closes_the_menu_and_rejects_old_clipboard_reply(
     assert!(state.position.is_none());
     assert!(!state.clip.lock().expect("state").ready);
 }
+
+fn command(character: &str, modifiers: keyboard::Modifiers) -> Event {
+    let key = keyboard::Key::Character(character.into());
+    Event::Keyboard(keyboard::Event::KeyPressed {
+        key: key.clone(),
+        modified_key: key,
+        physical_key: keyboard::key::Physical::Unidentified(
+            keyboard::key::NativeCode::Unidentified,
+        ),
+        location: keyboard::Location::Standard,
+        modifiers: keyboard::Modifiers::COMMAND | modifiers,
+        text: None,
+        repeat: false,
+    })
+}
+
+impl Native<'_> {
+    /// Rebuilds the input with the app's new value, as a view update would.
+    fn show(&mut self, value: &str, secure: bool) {
+        self.element = Input::new("Fixture", value)
+            .on_input(Message::Query)
+            .secure(secure)
+            .width(300)
+            .into();
+        self.element.as_widget_mut().diff(&mut self.tree);
+    }
+    fn queries(&self) -> Vec<&str> {
+        self.messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::Query(value) => Some(value.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn undo_and_redo_restore_focused_edits_and_app_changes_start_afresh() {
+    let mut native = Native::input(false);
+    native.input_state().focus();
+    native.show("alpha bravo charlie", false);
+    native.event(command("z", keyboard::Modifiers::empty()));
+    assert_eq!(native.queries(), ["alpha bravo"]);
+    native.show("alpha bravo", false);
+    native.event(command("Z", keyboard::Modifiers::SHIFT));
+    native.show("alpha bravo charlie", false);
+    native.event(command("z", keyboard::Modifiers::empty()));
+    native.show("alpha bravo", false);
+    native.event(command("y", keyboard::Modifiers::empty()));
+    assert_eq!(
+        native.queries(),
+        [
+            "alpha bravo",
+            "alpha bravo charlie",
+            "alpha bravo",
+            "alpha bravo charlie"
+        ]
+    );
+    // A value the app sets while the field is unfocused cannot be undone.
+    native.input_state().unfocus();
+    native.show("from the app", false);
+    native.input_state().focus();
+    native.event(command("z", keyboard::Modifiers::empty()));
+    assert_eq!(native.queries().len(), 4);
+}
+
+#[test]
+fn keys_that_arrive_before_a_redraw_are_each_their_own_edit() {
+    let mut native = Native::input(false);
+    native.input_state().focus();
+    native.input_state().move_cursor_to_end();
+    native.event(Event::Keyboard(keyboard::Event::KeyPressed {
+        key: keyboard::Key::Character("!".into()),
+        modified_key: keyboard::Key::Character("!".into()),
+        physical_key: keyboard::key::Physical::Unidentified(
+            keyboard::key::NativeCode::Unidentified,
+        ),
+        location: keyboard::Location::Standard,
+        modifiers: keyboard::Modifiers::empty(),
+        text: Some("!".into()),
+        repeat: false,
+    }));
+    native.event(key(
+        keyboard::key::Named::Backspace,
+        keyboard::Modifiers::empty(),
+    ));
+    native.event(command("z", keyboard::Modifiers::empty()));
+    assert_eq!(
+        native.queries(),
+        ["alpha bravo!", "alpha bravo", "alpha bravo!"]
+    );
+}
+
+#[test]
+fn password_edits_keep_no_undo_history() {
+    let mut native = Native::input(true);
+    native.input_state().focus();
+    native.show("secret two", true);
+    native.event(command("z", keyboard::Modifiers::empty()));
+    assert!(native.queries().is_empty());
+    assert!(native.tree.state.downcast_ref::<State>().seen.is_none());
+}

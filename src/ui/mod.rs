@@ -300,6 +300,8 @@ pub enum Message {
     ClearShortcut(Action, Slot),
     ResetShortcuts,
     Editor(text_editor::Action),
+    /// Deletes the selection, or the word or line part in this direction.
+    EditorDeleteTo(text_editor::Motion),
     Month(i32),
     Day(NaiveDate),
     NewEventOnDay(NaiveDate),
@@ -3545,6 +3547,20 @@ impl App {
                     self.draft_edited();
                 }
                 self.composer.current.editor.perform(action);
+            }
+            Message::EditorDeleteTo(motion) => {
+                // Read the selection now: queued keys may have moved the cursor
+                // since the binding was chosen.
+                if self.composer.current.editor.cursor().selection.is_none() {
+                    let _ = self.handle(Message::Editor(text_editor::Action::Select(motion)));
+                }
+                let edit = match motion {
+                    text_editor::Motion::WordLeft | text_editor::Motion::Home => {
+                        text_editor::Edit::Backspace
+                    }
+                    _ => text_editor::Edit::Delete,
+                };
+                return self.handle(Message::Editor(text_editor::Action::Edit(edit)));
             }
             Message::Month(delta) => {
                 let months = chrono::Months::new(delta.unsigned_abs());
