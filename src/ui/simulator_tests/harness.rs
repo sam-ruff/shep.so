@@ -24,6 +24,7 @@ use tokio::sync::mpsc;
 const DEADLINE: std::time::Duration = crate::test_wait::HANG;
 const NOTO_REGULAR: &[u8] = include_bytes!("../../../assets/NotoSans-Regular.ttf");
 const NOTO_SEMIBOLD: &[u8] = include_bytes!("../../../assets/NotoSans-SemiBold.ttf");
+const NOTO_ITALIC: &[u8] = include_bytes!("../../../assets/NotoSans-Italic.ttf");
 
 type Ui<'a> = UserInterface<'a, Message, Theme, iced::Renderer>;
 
@@ -95,7 +96,9 @@ fn load_fonts() {
             .expect("font system");
         fonts.load_font(NOTO_REGULAR.into());
         fonts.load_font(NOTO_SEMIBOLD.into());
+        fonts.load_font(NOTO_ITALIC.into());
     });
+    iced_cube::theme::set_font(iced::Font::with_name("Noto Sans"));
 }
 
 impl Harness {

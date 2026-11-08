@@ -2,10 +2,9 @@ use super::*;
 
 impl Session {
     pub(in crate::ui) fn snapshot(&self) -> Draft {
-        Draft {
-            body: self.editor.text(),
-            ..self.draft.clone()
-        }
+        let mut draft = self.draft.clone();
+        body::write(&self.editor, &mut draft);
+        draft
     }
 
     fn meaningful(&self) -> bool {
@@ -155,7 +154,7 @@ impl App {
                 .any(|saved| saved.id == draft.id && saved.revision >= draft.revision);
             Session {
                 ui_key,
-                editor: text_editor::Content::with_text(&draft.body),
+                editor: body::load(&draft),
                 show_recipients: !draft.cc.is_empty() || !draft.bcc.is_empty(),
                 addresses: addresses(&draft),
                 dirty: (!saved).then(Instant::now),

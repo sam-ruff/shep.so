@@ -579,28 +579,6 @@ fn icon_color<'a>(
         .into()
 }
 
-pub fn editor_field(
-    theme: &Theme,
-    status: widget::text_editor::Status,
-) -> widget::text_editor::Style {
-    let p = colors(theme);
-    widget::text_editor::Style {
-        background: p.surface.into(),
-        border: Border {
-            radius: 8.into(),
-            width: 1.,
-            color: if matches!(status, widget::text_editor::Status::Focused { .. }) {
-                p.accent
-            } else {
-                p.border
-            },
-        },
-        placeholder: p.muted,
-        value: p.text,
-        selection: p.tint,
-    }
-}
-
 pub fn select_menu(theme: &Theme) -> widget::overlay::menu::Style {
     let p = colors(theme);
     widget::overlay::menu::Style {

@@ -154,6 +154,7 @@ enum Kind<'a> {
         content: &'a widget::text_editor::Content,
         editable: bool,
     },
+    Rich(&'a iced_cube::rich_text_editor::Content),
     Html(&'a super::html_reader::State),
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +182,19 @@ impl<'a> TextContext<'a> {
                 content: buffer,
                 editable,
             },
+            identity: Identity::Editor(identity),
+            theme: None,
+        }
+    }
+    /// The editable message body.
+    pub fn rich(
+        content: impl Into<Element<'a, Message>>,
+        buffer: &'a iced_cube::rich_text_editor::Content,
+        identity: String,
+    ) -> Self {
+        Self {
+            content: content.into(),
+            kind: Kind::Rich(buffer),
             identity: Identity::Editor(identity),
             theme: None,
         }
@@ -258,6 +272,12 @@ impl<'a> TextContext<'a> {
                 content.cursor().selection.is_some(),
                 !content.is_empty(),
                 *editable,
+                false,
+            ),
+            Kind::Rich(content) => (
+                !content.selection().is_collapsed(),
+                !content.is_empty(),
+                true,
                 false,
             ),
             Kind::Html(state) => (

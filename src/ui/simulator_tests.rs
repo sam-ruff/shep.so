@@ -20,6 +20,7 @@ macro_rules! scenarios {
     };
 }
 
+mod formatting;
 mod harness;
 mod mail;
 mod preferences;

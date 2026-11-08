@@ -82,6 +82,7 @@ calamine = { version = "0.38.0", features = ["dates"] }
 zip = { version = "9.4.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 quick-xml = "0.42.0"
 cfb = "0.16.0"
+iced-cube = { version = "0.0.12", default-features = false, features = ["rich-text-editor", "formatting-toolbar"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = "=0.3.6"

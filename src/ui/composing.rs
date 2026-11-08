@@ -2,6 +2,7 @@ use super::views::{Choice, truncate};
 use super::*;
 use crate::store::DraftState;
 use crate::ui::dropdown::pick_list;
+pub(super) mod body;
 pub(super) mod history;
 mod recipient_box;
 mod recipients;
@@ -77,33 +78,6 @@ fn addresses(draft: &Draft) -> [Recipients; 3] {
     [draft.to.as_str(), draft.cc.as_str(), draft.bcc.as_str()].map(Recipients::parse)
 }
 
-/// The message body with its cursor, as one undo step saves it.
-pub(super) struct BodyState {
-    text: String,
-    cursor: text_editor::Cursor,
-}
-
-impl BodyState {
-    fn capture(editor: &text_editor::Content) -> Self {
-        Self {
-            text: editor.text(),
-            cursor: editor.cursor(),
-        }
-    }
-
-    fn restore(self) -> text_editor::Content {
-        let mut editor = text_editor::Content::with_text(&self.text);
-        editor.move_to(self.cursor);
-        editor
-    }
-}
-
-impl history::Weight for BodyState {
-    fn weight(&self) -> usize {
-        self.text.len()
-    }
-}
-
 /// A recipient entry's new text, with the view it was drawn from.
 #[derive(Debug, Clone)]
 pub struct EntryInput {
@@ -122,79 +96,11 @@ pub(super) struct EntryWidget {
     value: String,
 }
 
+/// The body keeps its own undo history in its `Content`.
 #[derive(Default)]
 pub(super) struct Histories {
-    body: History<BodyState>,
     subject: History<String>,
     addresses: [History<Recipients>; 3],
-}
-
-/// Ctrl+Backspace and Ctrl+Delete remove a word (Option on macOS, where
-/// Command removes to the line edge). iced's editor only removes a character.
-fn delete_by_word(key: &text_editor::KeyPress) -> Option<text_editor::Binding<Message>> {
-    use text_editor::Motion;
-    let (word, edge) = match key.modified_key.as_ref() {
-        Key::Named(keyboard::key::Named::Backspace) => (Motion::WordLeft, Motion::Home),
-        Key::Named(keyboard::key::Named::Delete) => (Motion::WordRight, Motion::End),
-        _ => return None,
-    };
-    let motion = if key.modifiers.macos_command() {
-        edge
-    } else if key.modifiers.jump() {
-        word
-    } else {
-        return None;
-    };
-    Some(text_editor::Binding::Custom(Message::EditorDeleteTo(
-        motion,
-    )))
-}
-
-fn compose_binding(
-    key: text_editor::KeyPress,
-    shortcuts: &crate::shortcuts::Keymap,
-) -> Option<text_editor::Binding<Message>> {
-    let modifiers = key.modifiers;
-    if !matches!(key.status, text_editor::Status::Focused { .. }) {
-        return None;
-    }
-    if let Some(step) = key
-        .key
-        .to_latin(key.physical_key)
-        .and_then(|c| step_for(c, modifiers))
-    {
-        return Some(text_editor::Binding::Custom(Message::ComposeHistory(
-            "compose-body",
-            step,
-        )));
-    }
-    let navigation = modifiers.command()
-        && chord(&key.key, modifiers)
-            .as_deref()
-            .and_then(|chord| shortcuts.resolve(chord))
-            .is_some_and(|action| {
-                matches!(
-                    action,
-                    Action::Search
-                        | Action::Find
-                        | Action::Mail
-                        | Action::Calendar
-                        | Action::Settings
-                        | Action::Activity
-                )
-            });
-    if navigation {
-        return None;
-    }
-    if let Some(binding) = delete_by_word(&key) {
-        return Some(binding);
-    }
-    let binding = text_editor::Binding::from_key_press(key)?;
-    if matches!(binding, text_editor::Binding::Insert(_)) && modifiers.command() && !modifiers.alt()
-    {
-        return None;
-    }
-    Some(binding)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -207,7 +113,7 @@ pub(super) enum Exit {
 pub(super) struct Session {
     pub ui_key: u64,
     pub draft: Draft,
-    pub editor: text_editor::Content,
+    pub editor: iced_cube::rich_text_editor::Content,
     pub dirty: Option<Instant>,
     pub pending: Option<u64>,
     pub saved_revision: Option<u64>,
@@ -236,6 +142,7 @@ pub(super) struct Composer {
     pub discard_pending: bool,
     pub forward_pending: Option<(String, String, u64)>,
     forward_error: Option<String>,
+    pub toolbar: body::Toolbar,
 }
 
 pub(super) struct DraftMenu {
@@ -639,34 +546,18 @@ impl App {
             ]
             .align_y(Alignment::Center),
         );
-        form = form.push(
-            super::text_context::TextContext::editor(
-                widget::text_editor(&self.composer.current.editor)
-                    .id("compose-body")
-                    .key_binding(|key| compose_binding(key, &self.preferences.shortcuts))
-                    .on_action(Message::Editor)
-                    .placeholder("Write your message…")
-                    .style(editor_field)
-                    .size(13)
-                    .padding(15)
-                    .height(
-                        (self.size.height / (self.preferences.interface_scale as f32 / 100.)
-                            * 0.32)
-                            .clamp(
-                                120.,
-                                if self.composer.current.draft.reply_context.is_some() {
-                                    200.
-                                } else {
-                                    300.
-                                },
-                            ),
-                    ),
-                &self.composer.current.editor,
-                true,
-                self.composer.current.draft.id.clone(),
-            )
-            .menu_theme(self.theme()),
-        );
+        // The toolbar takes its row from the body, so controls below keep
+        // their place.
+        let body_height =
+            (self.size.height / (self.preferences.interface_scale as f32 / 100.) * 0.32).clamp(
+                120.,
+                if self.composer.current.draft.reply_context.is_some() {
+                    200.
+                } else {
+                    300.
+                },
+            );
+        form = form.push(self.body_editor(body_height));
         if let Some(context) = &self.composer.current.draft.reply_context {
             form = form.push(
                 widget::checkbox(context.include_quote)
@@ -953,15 +844,14 @@ impl App {
         if !self.compose_editable() {
             return Task::none();
         }
+        if field == body::BODY {
+            return self.edit_body(match step {
+                Step::Undo => iced_cube::rich_text_editor::Action::Undo,
+                Step::Redo => iced_cube::rich_text_editor::Action::Redo,
+            });
+        }
         let session = &mut self.composer.current;
-        if field == "compose-body" {
-            let editor = &session.editor;
-            let Some(state) = step.apply(&mut session.history.body, || BodyState::capture(editor))
-            else {
-                return Task::none();
-            };
-            session.editor = state.restore();
-        } else if field == "subject" {
+        if field == "subject" {
             let subject = &session.draft.subject;
             let Some(state) = step.apply(&mut session.history.subject, || subject.clone()) else {
                 return Task::none();
@@ -982,31 +872,6 @@ impl App {
         }
         self.draft_edited();
         Task::none()
-    }
-
-    /// Saves the body before an edit so Ctrl+Z can return to it.
-    pub(super) fn record_body_edit(&mut self, action: &text_editor::Action) {
-        let session = &mut self.composer.current;
-        let text_editor::Action::Edit(edit) = action else {
-            // Moving the cursor ends the current typing step.
-            if !matches!(action, text_editor::Action::Scroll { .. }) {
-                session.history.body.seal();
-            }
-            return;
-        };
-        let kind = match edit {
-            _ if session.editor.cursor().selection.is_some() => Edit::Other,
-            text_editor::Edit::Insert(c) => Edit::Insert {
-                space: c.is_whitespace(),
-            },
-            text_editor::Edit::Backspace | text_editor::Edit::Delete => Edit::Delete,
-            _ => Edit::Other,
-        };
-        let editor = &session.editor;
-        session
-            .history
-            .body
-            .record(kind, Instant::now(), || BodyState::capture(editor));
     }
 
     fn recipient_field(&self, index: usize, placeholder: &'static str) -> Element<'_, Message> {
@@ -1129,10 +994,7 @@ impl App {
     }
 
     pub(super) fn current_draft(&self) -> Draft {
-        Draft {
-            body: self.composer.current.editor.text(),
-            ..self.composer.current.draft.clone()
-        }
+        self.composer.current.snapshot()
     }
 
     pub(super) fn compose_locked(&self) -> bool {

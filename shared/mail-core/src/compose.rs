@@ -238,7 +238,8 @@ pub fn build_with_message_id(
         !draft.subject.contains(['\r', '\n', '\0']),
         "The subject must be a single line."
     );
-    let body = draft.delivery_body();
+    let delivery = draft.delivery();
+    let body = delivery.text;
     anyhow::ensure!(
         body.len() <= MAX_MESSAGE_BYTES,
         "This message exceeds the current 25 MiB sending limit."
@@ -274,10 +275,7 @@ pub fn build_with_message_id(
         files.len() == draft.attachments.len() && files.len() <= MAX_ATTACHMENTS,
         "An attachment is missing. Reopen the draft and check its files."
     );
-    let html = draft
-        .forward
-        .as_ref()
-        .and_then(|quote| quote.render(&draft.body));
+    let html = delivery.html;
     let mut attachments = Vec::new();
     let mut inline = Vec::new();
     let mut total = 0usize;
@@ -305,7 +303,12 @@ pub fn build_with_message_id(
                 "An inline image has an invalid or repeated Content-ID."
             );
         }
-        if let Some(cid) = expected.content_id.as_ref().filter(|_| html.is_some()) {
+        // Only a forwarded original's HTML refers to its inline images.
+        if let Some(cid) = expected
+            .content_id
+            .as_ref()
+            .filter(|_| delivery.forwarded_html)
+        {
             inline.push(
                 lettre::message::Attachment::new_inline_with_name(
                     cid.clone(),
@@ -320,10 +323,40 @@ pub fn build_with_message_id(
         }
     }
     let plain = SinglePart::plain(body.into_owned());
-    let message = if html.is_none() && attachments.is_empty() {
-        builder.singlepart(plain)?
-    } else {
-        let mut multipart = if let Some(html) = html {
+    let message = match html {
+        None if attachments.is_empty() => builder.singlepart(plain)?,
+        Some(html) if !delivery.forwarded_html && attachments.is_empty() => builder.multipart(
+            MultiPart::alternative()
+                .singlepart(plain)
+                .singlepart(SinglePart::html(html)),
+        )?,
+        html => mixed(
+            builder,
+            plain,
+            html,
+            delivery.forwarded_html,
+            inline,
+            attachments,
+        )?,
+    };
+    anyhow::ensure!(
+        message.formatted().len() <= MAX_MESSAGE_BYTES,
+        "This message exceeds the current 25 MiB sending limit. Remove attachments or shorten the message."
+    );
+    Ok(message)
+}
+
+/// A multipart/mixed message: the body, then the attachments.
+fn mixed(
+    builder: lettre::message::MessageBuilder,
+    plain: SinglePart,
+    html: Option<String>,
+    forwarded_html: bool,
+    inline: Vec<SinglePart>,
+    attachments: Vec<SinglePart>,
+) -> anyhow::Result<lettre::Message> {
+    let mut multipart = match html {
+        Some(html) if forwarded_html => {
             let mut related = MultiPart::related().singlepart(SinglePart::html(html));
             for part in inline {
                 related = related.singlepart(part);
@@ -333,19 +366,18 @@ pub fn build_with_message_id(
                     .singlepart(plain)
                     .multipart(related),
             )
-        } else {
-            MultiPart::mixed().singlepart(plain)
-        };
-        for part in attachments {
-            multipart = multipart.singlepart(part);
         }
-        builder.multipart(multipart)?
+        Some(html) => MultiPart::mixed().multipart(
+            MultiPart::alternative()
+                .singlepart(plain)
+                .singlepart(SinglePart::html(html)),
+        ),
+        None => MultiPart::mixed().singlepart(plain),
     };
-    anyhow::ensure!(
-        message.formatted().len() <= MAX_MESSAGE_BYTES,
-        "This message exceeds the current 25 MiB sending limit. Remove attachments or shorten the message."
-    );
-    Ok(message)
+    for part in attachments {
+        multipart = multipart.singlepart(part);
+    }
+    Ok(builder.multipart(multipart)?)
 }
 
 /// Parsed envelope data for a cached browser reply. Addresses retain Rust's

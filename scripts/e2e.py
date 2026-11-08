@@ -5826,6 +5826,72 @@ class NativeFlows(unittest.TestCase):
                        key("End"), type_text(" yn"), check("fields.title", "Team lunch Friday yn"), check("dialog", "Event"),
                        shot("text-editing-event"))
 
+    def test_compose_formatting_toolbar(self):
+        # Toolbar centres at 1440x920 sit on one row above the body; the size
+        # menu opens below its control with Large as its third row.
+        size, large = (685, 328), (698, 432)
+        bold, italic, underline, strike = (769, 328), (805, 328), (841, 328), (877, 328)
+        bullets, numbers, link, clear = (926, 328), (962, 328), (1011, 328), (1047, 328)
+        # A toolbar press clears focused_input until the body has focus again.
+        def tool(at): return (click(*at), check("focused_input", "compose-body"))
+        plain = "Hello *team* today"
+        for dark in (False, True):
+            if dark:
+                self.mcp.call("desktop.start")
+                self.mcp.batch(key("ctrl+comma"), check("tab", "Preferences"), wait(80), click(690, 366),
+                               check("dark", True), key("ctrl+1"), check("tab", "Mail"))
+            theme = "dark" if dark else "light"
+            self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
+                           key("ctrl+b"), check("compose_recipients.to.entry", ""),
+                           key("Tab"), check("native_focus", "subject"), type_text("Formatting check"),
+                           key("ctrl+i"), key("ctrl+u"), check("compose_fields.subject", "Formatting check"),
+                           key("Tab"), check("native_focus", "compose-body"),
+                           type_text("Hello "), key("ctrl+b"), check("compose_format.active", ["Bold"]),
+                           type_text("team"), key("ctrl+b"), check("compose_format.active", []), type_text(" today"),
+                           # The text has no marks; they appear only in the plain alternative.
+                           check("editor", "Hello team today"), check("compose_format.plain", plain),
+                           check("compose_format.html", "<strong>team</strong>", "contains"),
+                           key("ctrl+a"), *tool(italic), check("compose_format.plain", f"_{plain}_"),
+                           key("ctrl+z"), check("compose_format.plain", plain),
+                           *tool(bullets), check("compose_format.bullets", True),
+                           key("ctrl+End"), key("Return"), type_text("second"),
+                           check("compose_format.plain", f"- {plain}\n- second"),
+                           *tool(bullets), *tool(numbers), check("compose_format.plain", f"- {plain}\n1. second"),
+                           key("shift+Home"), click(*size), wait(100), shot(f"compose-format-size-menu-{theme}"),
+                           *tool(large), check("compose_format.size", "Large"),
+                           *tool(strike), *tool(underline),
+                           check("compose_format.active", ["Underline", "Strikethrough"]),
+                           check("compose_format.plain", f"- {plain}\n1. _second_"),
+                           key("End"), key("Return"), type_text("plain line"),
+                           {"type": "hover", "x": 1200, "y": 140}, wait(100), shot(f"compose-format-toolbar-{theme}"),
+                           {"type": "hover", "x": bold[0], "y": bold[1]}, wait(600), shot(f"compose-format-tooltip-{theme}"))
+            # The new item carried the formatting on; Clear takes it off both lines.
+            self.mcp.batch(key("shift+Home"), *tool(clear), check("compose_format.size", "Normal"),
+                           key("Up"), key("Home"), key("shift+End"), *tool(clear),
+                           check("compose_format.plain", f"- {plain}\n1. second\n2. plain line"),
+                           key("ctrl+End"), key("Return"), type_text("docs"), key("shift+Home"), click(*link),
+                           check("compose_format.link", ""),
+                           check("focused_input", "iced-cube-formatting-link"), type_text("example.test/docs"),
+                           # Mail shortcuts never run from the address field.
+                           key("ctrl+d"), shot(f"compose-format-link-{theme}"), key("Return"),
+                           check("compose_format.link", None),
+                           check("compose_format.plain",
+                                 f"- {plain}\n1. second\n2. plain line\n3. docs <https://example.test/docs>"),
+                           check("compose_format.saved_html", "<a href=\"https://example.test/docs\">docs</a>", "contains"),
+                           key("ctrl+k"), check("focused_input", "search"), key("ctrl+b"), check("query", ""),
+                           check("dialog", None), check("total", 120), check("mail_pending", 0))
+        self.mcp.call("desktop.start", width=900, height=640)
+        # At 900x640 the lists, link and clear move into the More menu.
+        compact_underline = (749, 328)
+        self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"),
+                       key("Tab"), check("native_focus", "subject"), key("Tab"), check("native_focus", "compose-body"),
+                       type_text("Short note"), key("ctrl+a"), *tool(compact_underline),
+                       check("compose_format.plain", "_Short note_"), check("compose_format.active", ["Underline"]),
+                       key("End"), type_text("!"), check("editor", "Short note!"),
+                       key("ctrl+u"), key("ctrl+i"), type_text(" slanted"), check("editor", "Short note! slanted"),
+                       check("compose_format.html", "<em> slanted</em>", "contains"),
+                       {"type": "hover", "x": 800, "y": 140}, wait(100), shot("compose-format-compact"))
+
     def test_appearance_toggle_and_calendar_with_mouse(self):
         # These are settled visual captures, not input-to-paint timing evidence.
         # First-paint scheduling after appearance changes remains R15/R63 work.
@@ -6228,7 +6294,7 @@ class NativeFlows(unittest.TestCase):
                            # Tab moves focus through a widget operation, so let it apply before typing.
                            key("Tab"), wait(80), type_text("Plans"), check("compose_fields.subject", "Plans"),
                            key("Tab"), wait(80), type_text("Hello there"), check("editor", "Hello there"),
-                           key("ctrl+z"), check("editor", "Hello"), key("ctrl+y"), check("editor", "Hello there"),
+                           key("ctrl+z"), check("editor", "Hello "), key("ctrl+y"), check("editor", "Hello there"),
                            check("compose_fields.subject", "Plans"), key("shift+Tab"), wait(80), key("ctrl+z"),
                            check("compose_fields.subject", ""), check("editor", "Hello there"),
                            check("tab", "Mail"), check("total", 120), check("dialog", None),
@@ -6442,7 +6508,8 @@ class NativeFlows(unittest.TestCase):
         self.mcp.batch(key("c"), check("composer.visible", True), check("focused_input", "to"), shot("compose-compact"),
                        type_text("friend@example.com"), click(820,230), wait(80),
                        click(680,278), type_text("copy@example.com"), click(680,327), type_text("hidden@example.com"),
-                       click(680,376), type_text("Compact composer"), click(680,445), type_text("Room to write."),
+                       # The body starts below the formatting toolbar.
+                       click(680,376), type_text("Compact composer"), click(680,480), type_text("Room to write."),
                        check("compose_fields.to","friend@example.com"), check("compose_fields.cc","copy@example.com"),
                        check("compose_fields.bcc","hidden@example.com"), check("editor","Room to write.","contains"),
                        shot("compose-compact-recipients"), {"type":"hover","x":855,"y":510}, {"type":"scroll","amount":5}, wait(100),

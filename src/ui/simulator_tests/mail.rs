@@ -332,7 +332,7 @@ async fn recipient_chips_paste_remove_and_undo() {
     h.type_text("Hello there").await;
     h.expect("editor", "Hello there").await;
     h.key("ctrl+z").await;
-    h.expect("editor", "Hello").await;
+    h.expect("editor", "Hello ").await;
     h.key("ctrl+y").await;
     h.expect("editor", "Hello there").await;
     h.expect("compose_fields.subject", "Plans").await;

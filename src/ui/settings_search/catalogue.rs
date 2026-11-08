@@ -160,6 +160,10 @@ pub(super) fn generated(title: &str) -> Vec<&'static str> {
         "Keyboard shortcuts" => crate::shortcuts::Action::ALL
             .iter()
             .map(|action| action.label())
+            .chain([
+                crate::shortcuts::FORMATTING_HEADING,
+                "Turn off formatting shortcuts",
+            ])
             .collect(),
         _ => Vec::new(),
     }

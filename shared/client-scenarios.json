@@ -424,6 +424,13 @@
       "desktop": "attachment_files (preview preparation, hayro PDF pages, streamed calamine/quick-xml Office reading, the safety guard for programs/macros/scripts, per-session private temp folder, mockable launcher) on its own bounded engine channel; ui::attachment_preview with request fencing. attachment_files unit tests, attachment_preview_tests, engine::attachment_tests (saturated provider slots), the attachment_preview_steps_opens_and_saves simulator scenario and the native test_attachment_preview_* flows (light, compact dark, temporary-copy bytes, disabled Open for a script).",
       "mobile": "OPEN: Flutter attachments only save through the platform picker; no in-app preview or open-with-default-app.",
       "browser": "OPEN: the browser saves attachments only; no in-page preview. An Open equivalent would be a download the browser opens, under the same executable guard."
+    },
+    {
+      "id": "compose-formatting-toolbar",
+      "contract": "The message body is a rich text editor that shows formatting as it will be sent, with no marks in the text. A toolbar above it offers text size (small, normal, large, huge), bold, italic, underline, strikethrough, bulleted and numbered lists, link and clear formatting, shows which are on at the caret and names each shortcut in its tooltip. Ctrl/Command+B, I and U and the other formatting shortcuts act only while the body has focus, need a modifier, can be remapped and can all be turned off at once. Draft.body is the plain-text alternative and Draft.body_html the HTML of what the sender wrote, omitted when nothing is formatted. Formatted drafts send multipart/alternative; unformatted ones send text/plain as before. Reply quotes are sent as plain text in both parts and an unchanged forwarded original keeps its own HTML and inline images. A body changed without its HTML reloads as plain text.",
+      "desktop": "iced-cube rich_text_editor and formatting_toolbar in ui/composing/body.rs; Draft::delivery and compose::build with mail-core formatted_contract tests; shortcuts::Keymap::editor unit tests; composing unit tests for save, reload, reply, forward, link and stale HTML; iced_test compose_formatting_toolbar scenarios; native test_compose_formatting_toolbar with light and dark captures.",
+      "mobile": "OPEN: no toolbar or body_html. The Dart Draft needs the field kept on save, or the desktop reloads a mobile-edited body as plain text, which is the safe fallback.",
+      "browser": "OPEN: no toolbar or body_html. The TypeScript Draft and gateway draft mapping need the field kept on save; until then a browser-edited body reloads as plain text on desktop."
     }
   ]
 }

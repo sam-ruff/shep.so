@@ -299,9 +299,10 @@ pub enum Message {
     Remap(Action, Slot),
     ClearShortcut(Action, Slot),
     ResetShortcuts,
-    Editor(text_editor::Action),
-    /// Deletes the selection, or the word or line part in this direction.
-    EditorDeleteTo(text_editor::Motion),
+    /// Turns every formatting shortcut off.
+    FormattingShortcutsOff,
+    Editor(iced_cube::rich_text_editor::Action),
+    Formatting(iced_cube::formatting_toolbar::Event),
     Month(i32),
     Day(NaiveDate),
     NewEventOnDay(NaiveDate),
@@ -610,6 +611,7 @@ async fn write_observation(
 }
 
 pub fn run(activation: Option<crate::activation::Signal>, mailto: Option<String>) -> iced::Result {
+    iced_cube::theme::set_font(iced::Font::with_name("Noto Sans"));
     iced::daemon(
         move || App::boot(activation.clone(), mailto.clone()),
         App::update,
@@ -622,6 +624,9 @@ pub fn run(activation: Option<crate::activation::Signal>, mailto: Option<String>
     .default_font(iced::Font::with_name("Noto Sans"))
     .font(include_bytes!("../../assets/NotoSans-Regular.ttf").as_slice())
     .font(include_bytes!("../../assets/NotoSans-SemiBold.ttf").as_slice())
+    // Italic text in the message editor.
+    .font(include_bytes!("../../assets/NotoSans-Italic.ttf").as_slice())
+    .font(include_bytes!("../../assets/NotoSans-SemiBoldItalic.ttf").as_slice())
     .run()
 }
 impl App {
@@ -830,6 +835,10 @@ impl App {
     fn theme(&self) -> Theme {
         self.theme_cache
             .get(self.preferences.palettes.get(self.dark()), self.dark())
+    }
+    fn cube_theme(&self) -> Theme {
+        self.theme_cache
+            .cube(self.preferences.palettes.get(self.dark()), self.dark())
     }
 
     /// Fixture builds mark their header, except in store screenshot captures.
@@ -1281,6 +1290,9 @@ impl App {
         let tray_close = self.continue_tray_close();
         self.update_desktop_badge();
         self.update_notification_settings();
+        // Keeps the toolbar on the current draft and shortcuts. The editor's
+        // own link requests were answered while handling its action.
+        let _ = self.sync_formatting();
         let task = Task::batch([
             task,
             close,
@@ -2770,6 +2782,11 @@ impl App {
                             && !self.composer.current.minimized
                             && self.dialog.is_none()
                     }
+                    iced_cube::formatting_toolbar::LINK_FIELD => {
+                        self.compose_visible()
+                            && self.dialog.is_none()
+                            && self.composer.toolbar.state.link().is_some()
+                    }
                     "search" => self.tab == Tab::Mail && self.dialog.is_none() && !self.full_reader,
                     _ => false,
                 };
@@ -3538,30 +3555,13 @@ impl App {
                 self.preferences.shortcuts = Default::default();
                 self.save_preferences();
             }
-            Message::Editor(action) => {
-                if !self.compose_visible() || self.dialog.is_some() || self.compose_locked() {
-                    return Task::none();
-                }
-                self.record_body_edit(&action);
-                if action.is_edit() {
-                    self.draft_edited();
-                }
-                self.composer.current.editor.perform(action);
+            Message::FormattingShortcutsOff => {
+                self.remapping = None;
+                self.preferences.shortcuts.clear_formatting();
+                self.save_preferences();
             }
-            Message::EditorDeleteTo(motion) => {
-                // Read the selection now: queued keys may have moved the cursor
-                // since the binding was chosen.
-                if self.composer.current.editor.cursor().selection.is_none() {
-                    let _ = self.handle(Message::Editor(text_editor::Action::Select(motion)));
-                }
-                let edit = match motion {
-                    text_editor::Motion::WordLeft | text_editor::Motion::Home => {
-                        text_editor::Edit::Backspace
-                    }
-                    _ => text_editor::Edit::Delete,
-                };
-                return self.handle(Message::Editor(text_editor::Action::Edit(edit)));
-            }
+            Message::Editor(action) => return self.edit_body(action),
+            Message::Formatting(event) => return self.format_body(event),
             Message::Month(delta) => {
                 let months = chrono::Months::new(delta.unsigned_abs());
                 self.month = if delta < 0 {
@@ -4737,6 +4737,15 @@ impl App {
                     }
                 }
                 Action::ClosePreview => self.handle(Message::ClosePreview),
+                // The focused body editor handles these; elsewhere they do nothing.
+                Action::Bold
+                | Action::Italic
+                | Action::Underline
+                | Action::Strikethrough
+                | Action::BulletList
+                | Action::NumberedList
+                | Action::Link
+                | Action::ClearFormatting => Task::none(),
             };
         }
         Task::none()
@@ -4767,6 +4776,7 @@ impl App {
             "subject": self.compose_field("subject"),
         });
         data["compose_recipients"] = self.recipients_observation();
+        data["compose_format"] = self.formatting_observation();
         data["composer"] = serde_json::json!({
             "visible": self.compose_visible(),
             "id": self.composer.current.draft.id,
@@ -5000,7 +5010,12 @@ impl App {
                 .forward
                 .as_ref()
                 .is_some_and(|quote| !quote.html_body.is_empty()
-                    && self.composer.current.editor.text().ends_with(&quote.text))
+                    && self
+                        .composer
+                        .current
+                        .editor
+                        .plain_text()
+                        .ends_with(&quote.text))
         );
         data["draft_in_reply_to"] = serde_json::json!(self.composer.current.draft.in_reply_to);
         data["focused_input"] = serde_json::json!(self.focused_input);

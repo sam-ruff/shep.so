@@ -1,38 +1,26 @@
 use super::*;
+use iced_cube::rich_text_editor::{Action as Rich, Edit as RichEdit, Motion as RichMotion};
 
 #[test]
-fn command_navigation_cannot_insert_text_and_editor_bindings_remain_available() {
-    let shortcuts = crate::shortcuts::Keymap::default();
-    let press = |character: &str, modifiers| text_editor::KeyPress {
-        key: Key::Character(character.into()),
-        modified_key: Key::Character(character.into()),
-        physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Comma),
-        modifiers,
-        text: Some(character.into()),
-        status: text_editor::Status::Focused { is_hovered: false },
-    };
+fn the_body_leaves_app_navigation_chords_to_the_app() {
+    let (chords, _) = crate::shortcuts::Keymap::default().editor();
     let command = keyboard::Modifiers::COMMAND;
-    for character in [",", "1", "2", "k", "f"] {
-        assert!(compose_binding(press(character, command), &shortcuts).is_none());
+    for character in [",", "1", "2", "k", "f", "d", "r", "p"] {
+        assert_eq!(
+            chords.resolve(&Key::Character(character.into()), command),
+            None,
+            "{character}"
+        );
     }
-    assert!(matches!(
-        compose_binding(press(",", keyboard::Modifiers::empty()), &shortcuts),
-        Some(text_editor::Binding::Insert(','))
-    ));
-    assert!(matches!(
-        compose_binding(press("@", command | keyboard::Modifiers::ALT), &shortcuts),
-        Some(text_editor::Binding::Insert('@'))
-    ));
-    for (character, expected) in [("c", "copy"), ("x", "cut"), ("v", "paste"), ("a", "select")] {
-        let binding = compose_binding(press(character, command), &shortcuts);
-        assert!(matches!(
-            (binding, expected),
-            (Some(text_editor::Binding::Copy), "copy")
-                | (Some(text_editor::Binding::Cut), "cut")
-                | (Some(text_editor::Binding::Paste), "paste")
-                | (Some(text_editor::Binding::SelectAll), "select")
-        ));
-    }
+}
+
+fn type_into(app: &mut App, text: &str) {
+    let _ = app.handle(Message::Editor(Rich::Edit(RichEdit::Insert(text.into()))));
+}
+
+fn select_all_and_paste(app: &mut App, text: &str) {
+    let _ = app.handle(Message::Editor(Rich::SelectAll));
+    let _ = app.handle(Message::Editor(Rich::Edit(RichEdit::Paste(text.into()))));
 }
 
 fn draft(id: &str) -> Draft {
@@ -68,10 +56,7 @@ fn first_mail_page_preserves_blank_and_edited_composers() -> anyhow::Result<()> 
         if edited {
             app.load_draft(draft("working"));
             let _ = app.handle(Message::ComposeField("subject", "Unsent subject".into()));
-            let _ = app.handle(Message::Editor(text_editor::Action::SelectAll));
-            let _ = app.handle(Message::Editor(text_editor::Action::Edit(
-                text_editor::Edit::Paste(Arc::new("Unsent body".into())),
-            )));
+            select_all_and_paste(&mut app, "Unsent body");
             assert_eq!(app.current_draft().subject, "Unsent subject");
             assert_eq!(app.current_draft().body.trim(), "Unsent body");
         } else {
@@ -575,9 +560,7 @@ fn forwarding_formatting_survives_native_editor_roundtrip_and_new_note() {
     app.composer
         .current
         .editor
-        .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-            Arc::new("New note.\n".into()),
-        )));
+        .perform(Rich::Edit(RichEdit::Paste("New note.\n".into())));
     let draft = app.current_draft();
     assert!(
         draft
@@ -1299,9 +1282,7 @@ async fn changing_the_preference_never_rewrites_parked_or_saved_replies() {
 
 fn type_body(app: &mut App, text: &str) {
     for c in text.chars() {
-        let _ = app.handle(Message::Editor(text_editor::Action::Edit(
-            text_editor::Edit::Insert(c),
-        )));
+        type_into(app, &c.to_string());
     }
 }
 
@@ -1398,95 +1379,23 @@ fn ctrl_z(field: &'static str, modifiers: keyboard::Modifiers) -> Message {
 }
 
 #[test]
-fn undo_keys_become_body_history_bindings_instead_of_text() {
-    let shortcuts = crate::shortcuts::Keymap::default();
-    let press = |character: &str, modifiers| text_editor::KeyPress {
-        key: Key::Character(character.into()),
-        modified_key: Key::Character(character.into()),
-        physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyZ),
-        modifiers,
-        text: Some(character.into()),
-        status: text_editor::Status::Focused { is_hovered: false },
-    };
-    let command = keyboard::Modifiers::COMMAND;
-    for (character, modifiers, expected) in [
-        ("z", command, Step::Undo),
-        ("Z", command | keyboard::Modifiers::SHIFT, Step::Redo),
-        ("y", command, Step::Redo),
-    ] {
-        assert!(matches!(
-            compose_binding(press(character, modifiers), &shortcuts),
-            Some(text_editor::Binding::Custom(Message::ComposeHistory("compose-body", step)))
-                if step == expected
-        ));
-    }
-    assert!(matches!(
-        compose_binding(press("z", keyboard::Modifiers::empty()), &shortcuts),
-        Some(text_editor::Binding::Insert('z'))
-    ));
-    assert!(!matches!(
-        compose_binding(press("z", command | keyboard::Modifiers::ALT), &shortcuts),
-        Some(text_editor::Binding::Custom(_))
-    ));
-    let unfocused = text_editor::KeyPress {
-        status: text_editor::Status::Active,
-        ..press("z", command)
-    };
-    assert!(compose_binding(unfocused, &shortcuts).is_none());
-}
-
-#[test]
-fn word_deletion_removes_a_word_or_the_selection_present_when_it_runs() {
-    use text_editor::{Action, Binding, Motion};
-    let shortcuts = crate::shortcuts::Keymap::default();
-    let press = |named, modifiers| text_editor::KeyPress {
-        key: Key::Named(named),
-        modified_key: Key::Named(named),
-        physical_key: keyboard::key::Physical::Unidentified(
-            keyboard::key::NativeCode::Unidentified,
-        ),
-        modifiers,
-        text: None,
-        status: text_editor::Status::Focused { is_hovered: false },
-    };
-    let (backspace, delete) = (
-        keyboard::key::Named::Backspace,
-        keyboard::key::Named::Delete,
-    );
-    let jump = if cfg!(target_os = "macos") {
-        keyboard::Modifiers::ALT
-    } else {
-        keyboard::Modifiers::CTRL
-    };
-    let binding = |named, modifiers| compose_binding(press(named, modifiers), &shortcuts);
-    assert!(matches!(
-        binding(backspace, jump),
-        Some(Binding::Custom(Message::EditorDeleteTo(Motion::WordLeft)))
-    ));
-    assert!(matches!(
-        binding(delete, jump),
-        Some(Binding::Custom(Message::EditorDeleteTo(Motion::WordRight)))
-    ));
-    assert!(matches!(
-        binding(backspace, keyboard::Modifiers::empty()),
-        Some(Binding::Backspace)
-    ));
-
+fn word_deletion_removes_a_word_or_the_selection() {
     let (mut app, _) = App::new();
     app.load_draft(Draft {
         body: "alpha beta gamma".into(),
         ..draft("current")
     });
-    let _ = app.handle(Message::Editor(Action::Move(Motion::DocumentEnd)));
-    let _ = app.handle(Message::EditorDeleteTo(Motion::WordLeft));
+    let delete = |app: &mut App, edit| {
+        let _ = app.handle(Message::Editor(Rich::Edit(edit)));
+    };
+    let _ = app.handle(Message::Editor(Rich::Move(RichMotion::DocumentEnd)));
+    delete(&mut app, RichEdit::DeleteWordBackward);
     assert_eq!(app.composer.current.editor.text(), "alpha beta ");
-    // A key queued after the binding was chosen clears the selection first.
-    let _ = app.handle(Message::Editor(Action::SelectAll));
-    let _ = app.handle(Message::Editor(Action::Move(Motion::DocumentStart)));
-    let _ = app.handle(Message::EditorDeleteTo(Motion::WordRight));
+    let _ = app.handle(Message::Editor(Rich::Move(RichMotion::DocumentStart)));
+    delete(&mut app, RichEdit::DeleteWordForward);
     assert_eq!(app.composer.current.editor.text(), " beta ");
-    let _ = app.handle(Message::Editor(Action::SelectAll));
-    let _ = app.handle(Message::EditorDeleteTo(Motion::WordLeft));
+    let _ = app.handle(Message::Editor(Rich::SelectAll));
+    delete(&mut app, RichEdit::DeleteWordBackward);
     assert_eq!(app.composer.current.editor.text(), "");
     let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
     assert_eq!(app.composer.current.editor.text(), " beta ");
@@ -1503,7 +1412,7 @@ fn body_undo_steps_back_a_word_at_a_time_and_redo_replays_it() {
     let revision = app.composer.current.draft.revision;
     app.composer.current.dirty = None;
     let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
-    assert_eq!(app.composer.current.editor.text(), "Hello");
+    assert_eq!(app.composer.current.editor.text(), "Hello ");
     assert!(app.composer.current.draft.revision > revision);
     assert!(app.composer.current.dirty.is_some(), "autosave stores it");
     let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
@@ -1515,9 +1424,9 @@ fn body_undo_steps_back_a_word_at_a_time_and_redo_replays_it() {
     assert_eq!(app.composer.current.editor.text(), "Hello there");
 
     // A paste is its own step, and the cursor returns to where it was.
-    let _ = app.handle(Message::Editor(text_editor::Action::Edit(
-        text_editor::Edit::Paste(Arc::new(" and more".into())),
-    )));
+    let _ = app.handle(Message::Editor(Rich::Edit(RichEdit::Paste(
+        " and more".into(),
+    ))));
     type_body(&mut app, "!");
     let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
     assert_eq!(app.composer.current.editor.text(), "Hello there and more");
@@ -1536,9 +1445,7 @@ fn moving_the_cursor_ends_a_typing_step() {
         ..draft("current")
     });
     type_body(&mut app, "ab");
-    let _ = app.handle(Message::Editor(text_editor::Action::Move(
-        text_editor::Motion::Left,
-    )));
+    let _ = app.handle(Message::Editor(Rich::Move(RichMotion::Left)));
     type_body(&mut app, "c");
     assert_eq!(app.composer.current.editor.text(), "acb");
     let _ = app.handle(Message::ComposeHistory("compose-body", Step::Undo));
@@ -1697,4 +1604,231 @@ fn recipient_edits_and_undo_wait_while_sending_and_history_survives_parking() {
     assert_eq!(app.composer.current.addresses[0].entry, "late@example.com");
     let _ = app.handle(ctrl_z("to", keyboard::Modifiers::COMMAND));
     assert_eq!(app.compose_field("to"), "friend@example.com");
+}
+
+fn blank(app: &mut App) {
+    app.load_draft(Draft {
+        body: String::new(),
+        ..draft("current")
+    });
+}
+
+fn press_tool(app: &mut App, tool: iced_cube::formatting_toolbar::Tool) {
+    use iced_cube::{formatting_toolbar::Event, toolbar};
+    let _ = app.handle(Message::Formatting(Event::Toolbar(toolbar::Event::Press(
+        tool,
+    ))));
+}
+
+fn sending_account() -> Account {
+    serde_json::from_value(serde_json::json!({"id":"work", "name":"Work",
+        "email":"sender@example.test", "protocol":"Imap", "host":"imap.example.test",
+        "port":993, "username":"sender", "smtp_host":"smtp.example.test", "smtp_port":465}))
+    .expect("account")
+}
+
+/// The plain text and HTML parts a draft sends.
+fn sent(draft: &Draft) -> (String, Option<String>) {
+    let wire = crate::compose::build(&sending_account(), draft, vec![])
+        .expect("build")
+        .formatted();
+    let parsed = shep_mail_core::mime::parse(&wire).expect("parse");
+    let body = shep_mail_core::reader::extract(&parsed).expect("extract");
+    (
+        body.text.replace("\r\n", "\n").trim_end().to_owned(),
+        body.html.into_iter().next().map(|part| part.source),
+    )
+}
+
+#[test]
+fn formatting_saves_html_beside_the_plain_body_and_reloads_as_formatted() {
+    use iced_cube::formatting_toolbar::Tool;
+    let (mut app, _) = App::new();
+    blank(&mut app);
+    type_body(&mut app, "Bring ");
+    press_tool(&mut app, Tool::Bold);
+    assert!(app.composer.toolbar.state.is_on(Tool::Bold));
+    type_body(&mut app, "notes");
+    press_tool(&mut app, Tool::Bold);
+    type_body(&mut app, " please");
+    let saved = app.current_draft();
+    assert_eq!(saved.body, "Bring *notes* please");
+    let html = saved.body_html.clone().expect("formatted");
+    assert!(
+        html.contains("Bring <strong>notes</strong> please"),
+        "{html}"
+    );
+    assert!(app.composer.current.dirty.is_some());
+
+    let (text, sent_html) = sent(&saved);
+    assert_eq!(text, "Bring *notes* please");
+    assert!(sent_html.expect("html part").contains(&html));
+
+    app.load_draft(draft("other"));
+    app.composer.parked.clear();
+    app.load_draft(saved.clone());
+    let reloaded = &app.composer.current.editor;
+    assert_eq!(reloaded.text(), "Bring notes please");
+    assert!(reloaded.has_formatting());
+    assert_eq!(app.current_draft().body_html, saved.body_html);
+}
+
+#[test]
+fn an_unformatted_body_saves_and_sends_plain_text_only() {
+    let (mut app, _) = App::new();
+    blank(&mut app);
+    type_body(&mut app, "Typed *stars* stay");
+    let saved = app.current_draft();
+    assert_eq!(saved.body, "Typed *stars* stay");
+    assert_eq!(saved.body_html, None);
+    assert_eq!(sent(&saved), ("Typed *stars* stay".into(), None));
+}
+
+#[test]
+fn formatting_cleared_again_returns_the_draft_to_plain_text() {
+    use iced_cube::formatting_toolbar::Tool;
+    let (mut app, _) = App::new();
+    blank(&mut app);
+    type_body(&mut app, "Underlined");
+    let _ = app.handle(Message::Editor(Rich::SelectAll));
+    press_tool(&mut app, Tool::Underline);
+    assert!(app.current_draft().body_html.is_some());
+    press_tool(&mut app, Tool::Clear);
+    let saved = app.current_draft();
+    assert_eq!(saved.body, "Underlined");
+    assert_eq!(saved.body_html, None);
+}
+
+#[test]
+fn a_body_changed_without_its_html_reloads_as_the_plain_body() {
+    let stale = Draft {
+        body: "Rewritten on another device".into(),
+        body_html: Some("<div><b>Old</b> text</div>".into()),
+        ..draft("current")
+    };
+    let content = super::body::load(&stale);
+    assert_eq!(content.text(), "Rewritten on another device");
+    assert!(!content.has_formatting());
+}
+
+#[test]
+fn a_formatted_reply_keeps_its_quote_plain_in_both_parts() {
+    use iced_cube::formatting_toolbar::Tool;
+    let (mut app, _) = App::new();
+    app.load_draft(Draft {
+        body: String::new(),
+        account_id: "work".into(),
+        reply_context: Some(ReplyContext {
+            account_id: "work".into(),
+            mail_id: "original".into(),
+            quote: "\n\nOn Monday, Sender wrote:\n> Use <b>tags</b>".into(),
+            include_quote: true,
+        }),
+        ..draft("current")
+    });
+    type_body(&mut app, "Agreed");
+    let _ = app.handle(Message::Editor(Rich::SelectAll));
+    press_tool(&mut app, Tool::Italic);
+    let saved = app.current_draft();
+    assert_eq!(saved.body, "_Agreed_");
+    let (text, html) = sent(&saved);
+    assert_eq!(
+        text,
+        "_Agreed_\n\nOn Monday, Sender wrote:\n> Use <b>tags</b>"
+    );
+    let html = html.expect("html part");
+    assert!(html.contains("<em>Agreed</em>"), "{html}");
+    assert!(html.contains("&gt; Use &lt;b&gt;tags&lt;/b&gt;"), "{html}");
+}
+
+#[test]
+fn a_formatted_forward_note_saves_apart_from_the_original_and_reloads() {
+    use iced_cube::formatting_toolbar::Tool;
+    let (mut app, _) = App::new();
+    let (forward, _) = crate::compose::prepare_forward(
+        "fwd".into(),
+        "work".into(),
+        b"Subject: Sample\r\nContent-Type: text/html\r\n\r\n<p>First <i>paragraph</i>.</p>",
+    )
+    .expect("forward");
+    let original = forward.forward.clone().expect("quote");
+    app.load_draft(Draft {
+        to: "friend@example.com".into(),
+        ..forward
+    });
+    press_tool(&mut app, Tool::Bold);
+    type_body(&mut app, "Please review");
+    let saved = app.current_draft();
+    assert!(saved.body.starts_with("*Please review*\n\n"));
+    assert!(saved.body.ends_with(&original.text));
+    assert_eq!(saved.forwarded_note(), Some("*Please review*\n\n"));
+    let note = saved.body_html.clone().expect("note html");
+    assert!(note.contains("<strong>Please review</strong>"), "{note}");
+    assert!(!note.contains("Forwarded message"), "{note}");
+    let (text, html) = sent(&saved);
+    assert!(text.starts_with("*Please review*"));
+    let html = html.expect("html part");
+    assert!(
+        html.contains(&note) && html.contains("<i>paragraph</i>"),
+        "{html}"
+    );
+
+    let reloaded = super::body::load(&saved);
+    assert_eq!(reloaded.plain_text(), saved.body);
+    assert!(reloaded.has_formatting());
+}
+
+#[test]
+fn the_link_shortcut_opens_the_toolbar_field_and_its_address_links_the_word() {
+    use iced_cube::formatting_toolbar::Event;
+    let (mut app, _) = App::new();
+    blank(&mut app);
+    type_body(&mut app, "docs");
+    let _ = app.handle(Message::Editor(Rich::SelectAll));
+    let _ = app.handle(Message::Editor(Rich::RequestLink));
+    assert_eq!(app.composer.toolbar.state.link(), Some(""));
+    let _ = app.handle(Message::Formatting(Event::LinkChanged(
+        "example.test/docs".into(),
+    )));
+    let _ = app.handle(Message::Formatting(Event::LinkSubmit));
+    assert_eq!(app.composer.toolbar.state.link(), None);
+    let saved = app.current_draft();
+    assert_eq!(saved.body, "docs <https://example.test/docs>");
+    assert!(
+        saved
+            .body_html
+            .expect("html")
+            .contains("<a href=\"https://example.test/docs\">docs</a>")
+    );
+}
+
+#[test]
+fn formatting_waits_while_the_draft_is_sending() {
+    use iced_cube::formatting_toolbar::Tool;
+    let (mut app, _) = App::new();
+    blank(&mut app);
+    type_body(&mut app, "Locked");
+    let _ = app.handle(Message::Editor(Rich::SelectAll));
+    app.busy.insert("send:current".into());
+    press_tool(&mut app, Tool::Bold);
+    type_body(&mut app, "x");
+    assert_eq!(app.current_draft().body, "Locked");
+    assert_eq!(app.current_draft().body_html, None);
+}
+
+#[test]
+fn turning_formatting_shortcuts_off_clears_them_and_the_toolbar_hints() {
+    let (mut app, _) = App::new();
+    blank(&mut app);
+    let _ = app.handle(Message::FormattingShortcutsOff);
+    for (action, _) in Action::FORMATTING {
+        assert_eq!(app.preferences.shortcuts.key(action), "");
+    }
+    let _ = app.sync_formatting();
+    let tooltips = app.composer.toolbar.state.toolbar();
+    assert!(
+        format!("{tooltips:?}").contains("Bold") && !format!("{tooltips:?}").contains("Ctrl+B")
+    );
+    let _ = app.handle(Message::ResetShortcuts);
+    assert_eq!(app.preferences.shortcuts.key(Action::Bold), "Mod+B");
 }

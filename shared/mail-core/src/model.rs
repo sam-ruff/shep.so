@@ -325,6 +325,12 @@ pub struct Draft {
     pub references: Vec<String>,
     #[serde(default)]
     pub forward: Option<crate::compose::ForwardQuote>,
+    /// HTML of the formatted text the sender wrote: all of `body`, or only
+    /// the note above an unchanged forwarded original (see
+    /// [`Draft::forwarded_note`]). `body` stays its plain-text alternative.
+    /// Omitted for unformatted drafts, which send plain text only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_html: Option<String>,
     // File bytes and associations have separate storage; saving text cannot
     // undo a file import/removal that finished while the user was typing.
     #[serde(default, skip_serializing)]
@@ -353,6 +359,71 @@ impl Draft {
             None => std::borrow::Cow::Borrowed(&self.body),
         }
     }
+
+    /// The text written above a forwarded original that is still unchanged
+    /// and starts on its own line, or `None` when there is no such original.
+    pub fn forwarded_note(&self) -> Option<&str> {
+        let quote = self.forward.as_ref()?;
+        let note = self.body.strip_suffix(quote.text.as_str())?;
+        (note.is_empty() || note.ends_with('\n')).then_some(note)
+    }
+
+    /// What the draft sends. Formatting covers only what the sender wrote;
+    /// reply quotes stay plain and an unchanged forwarded original keeps its
+    /// own HTML.
+    pub fn delivery(&self) -> Delivery<'_> {
+        let text = self.delivery_body();
+        let Some(written) = self.body_html.as_deref() else {
+            let html = self
+                .forward
+                .as_ref()
+                .and_then(|quote| quote.render(&self.body));
+            return Delivery {
+                text,
+                forwarded_html: html.is_some(),
+                html,
+            };
+        };
+        let plain = shep_mail_content::forwarding::plain_html;
+        if let (Some(quote), Some(_)) = (&self.forward, self.forwarded_note()) {
+            if let Some(html) = quote.render_note(written) {
+                return Delivery {
+                    text,
+                    html: Some(html),
+                    forwarded_html: true,
+                };
+            }
+            return Delivery {
+                text,
+                html: Some(html_document(&format!("{written}{}", plain(&quote.text)))),
+                forwarded_html: false,
+            };
+        }
+        let quote = self
+            .reply_context
+            .as_ref()
+            .filter(|context| context.include_quote)
+            .map(|context| plain(&context.quote))
+            .unwrap_or_default();
+        Delivery {
+            text,
+            html: Some(html_document(&format!("{written}{quote}"))),
+            forwarded_html: false,
+        }
+    }
+}
+
+fn html_document(body: &str) -> String {
+    format!("<!doctype html><html><head><meta charset=\"utf-8\"></head><body>{body}</body></html>")
+}
+
+/// The plain text and optional HTML a draft sends.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Delivery<'a> {
+    pub text: std::borrow::Cow<'a, str>,
+    pub html: Option<String>,
+    /// The HTML is a forwarded original's, which refers to its inline images.
+    pub forwarded_html: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

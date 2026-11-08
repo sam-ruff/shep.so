@@ -3061,6 +3061,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "iced-cube"
+version = "0.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b0e62c03267259363a1f493023319567127a6f034a8633c2248ba4f81417d2a"
+dependencies = [
+ "iced",
+ "lucide-static-svg",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "iced_core"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3952,6 +3963,12 @@ name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
+
+[[package]]
+name = "lucide-static-svg"
+version = "1.48.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6665a04596107930eefd18d8cffeadb747702f77a0d2986feb65fb0c9ce36878"
 
 [[package]]
 name = "mac-notification-sys"
@@ -6736,6 +6753,7 @@ dependencies = [
  "hayro",
  "ical",
  "iced",
+ "iced-cube",
  "iced_runtime",
  "iced_test",
  "iced_tiny_skia",

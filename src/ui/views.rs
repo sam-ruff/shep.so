@@ -2412,6 +2412,22 @@ impl App {
         ]
         .spacing(3);
         for action in Action::ALL {
+            if action == Action::Bold {
+                actions = actions.push(
+                    row![
+                        muted(crate::shortcuts::FORMATTING_HEADING)
+                            .size(11)
+                            .font(BOLD),
+                        space().width(Length::Fill),
+                        button(text("Turn off formatting shortcuts").size(12))
+                            .padding([8, 12])
+                            .style(ghost)
+                            .on_press(Message::FormattingShortcutsOff),
+                    ]
+                    .align_y(Alignment::Center)
+                    .padding([6, 0]),
+                );
+            }
             let mut bindings = row![].spacing(8);
             for slot in [Slot::Primary, Slot::Secondary] {
                 let active = self.remapping == Some((action, slot));

@@ -1778,11 +1778,18 @@ the splitting contract for every client. `RecipientBox` keeps the entry as its
 first widget child so chip changes cannot drop its focus. A batch of native keys
 edits the input's previous text, so entry messages carry their view generation
 and `apply_input` applies the input's own edit; never trust the raw value after
-a split. `ui/composing/history.rs` gives the body, Subject and each recipient
-field a bounded undo history (iced has none). Ctrl/Cmd+Z, Ctrl+Shift+Z and
+a split. `ui/composing/history.rs` gives Subject and each recipient field a
+bounded undo history (iced has none); the body is iced-cube's rich text editor,
+whose `Content` keeps its own. Ctrl/Cmd+Z, Ctrl+Shift+Z and
 Ctrl+Y are native editing keys routed by the focused field, never mail or
 remapped actions. Preserve the shared-case, batched-input and remapped-chord
 tests and the `recipient_chips_paste_remove_and_undo` simulator/native flows.
+
+The body's formatting toolbar and `Draft.body_html` contract are described in
+[the mail reference](docs/agents/mail.md). Never show formatting as marks in the
+text: the user rejected that. `body` stays the plain-text alternative, so
+clients without formatting keep working and the desktop reloads their edits as
+plain text.
 
 
 ## Complete database export

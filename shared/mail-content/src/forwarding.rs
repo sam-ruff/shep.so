@@ -18,18 +18,26 @@ impl ForwardQuote {
     /// Preserve formatting when adding a note above the original. Editing the
     /// quoted text deliberately switches to the edited plain-text alternative.
     pub fn render(&self, body: &str) -> Option<String> {
+        let note = body.strip_suffix(&self.text)?;
+        self.render_note(&plain_html(note))
+    }
+
+    /// The original's HTML below `note`, an HTML fragment the sender wrote.
+    pub fn render_note(&self, note: &str) -> Option<String> {
         if self.html_body.is_empty() {
             return None;
         }
-        let note = body.strip_suffix(&self.text)?;
         Some(format!(
-            "<!doctype html><html><head><meta charset=\"utf-8\">{}</head><body{}><div style=\"white-space:pre-wrap\">{}</div>{}</body></html>",
-            self.html_head,
-            self.html_attributes,
-            escape(note),
-            self.html_body
+            "<!doctype html><html><head><meta charset=\"utf-8\">{}</head><body{}>{note}{}</body></html>",
+            self.html_head, self.html_attributes, self.html_body
         ))
     }
+}
+
+/// Plain text as an HTML fragment that shows it exactly, keeping its spaces
+/// and line breaks.
+pub fn plain_html(text: &str) -> String {
+    format!("<div style=\"white-space:pre-wrap\">{}</div>", escape(text))
 }
 
 fn escape(value: &str) -> String {

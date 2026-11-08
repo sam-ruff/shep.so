@@ -7,21 +7,53 @@ use iced::{Alignment, Border, Length};
 use std::cell::RefCell;
 
 /// Owned by the UI thread; only rebuild the iced palette when its input changes.
+type Cached = RefCell<Option<(Palette, bool, Theme)>>;
+
 #[derive(Default)]
-pub(super) struct ThemeCache(RefCell<Option<(Palette, bool, Theme)>>);
+pub(super) struct ThemeCache {
+    shep: Cached,
+    cube: Cached,
+}
 impl ThemeCache {
     pub fn get(&self, palette: Palette, dark: bool) -> Theme {
-        let mut cached = self.0.borrow_mut();
-        if let Some((previous, previous_dark, theme)) = &*cached
-            && *previous == palette
-            && *previous_dark == dark
-        {
-            return theme.clone();
-        }
-        let theme = make_theme(palette, dark);
-        *cached = Some((palette, dark, theme.clone()));
-        theme
+        cached(&self.shep, palette, dark, make_theme)
     }
+    /// The same colours for iced-cube components, which read them through
+    /// `iced_cube::theme::Tokens`.
+    pub fn cube(&self, palette: Palette, dark: bool) -> Theme {
+        cached(&self.cube, palette, dark, cube_theme)
+    }
+}
+fn cached(cache: &Cached, palette: Palette, dark: bool, make: fn(Palette, bool) -> Theme) -> Theme {
+    let mut cached = cache.borrow_mut();
+    if let Some((previous, previous_dark, theme)) = &*cached
+        && *previous == palette
+        && *previous_dark == dark
+    {
+        return theme.clone();
+    }
+    let theme = make(palette, dark);
+    *cached = Some((palette, dark, theme.clone()));
+    theme
+}
+pub(super) fn cube_theme(p: Palette, dark: bool) -> Theme {
+    let rgb = |value: Rgb| hex(value.value());
+    let base = if dark {
+        iced_cube::theme::Config::dark()
+    } else {
+        iced_cube::theme::Config::light()
+    };
+    base.name(if dark { "Shep Dark" } else { "Shep Light" })
+        .background(rgb(p.surface))
+        .foreground(rgb(p.text))
+        .primary(rgb(p.accent))
+        .secondary(rgb(p.secondary))
+        .accent(rgb(p.selection))
+        .border(rgb(p.border))
+        .destructive(rgb(p.danger))
+        .success(rgb(p.success))
+        .warning(rgb(p.warning))
+        .build()
 }
 pub(super) fn make_theme(p: Palette, dark: bool) -> Theme {
     let rgb = |value: Rgb| hex(value.value());

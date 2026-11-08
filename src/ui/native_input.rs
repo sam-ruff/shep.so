@@ -14,7 +14,14 @@ pub struct Focus {
     pub field: Option<&'static str>,
 }
 
-const COMPOSE_FIELDS: [&str; 5] = ["to", "cc", "bcc", "subject", "compose-body"];
+const COMPOSE_FIELDS: [&str; 6] = [
+    "to",
+    "cc",
+    "bcc",
+    "subject",
+    "compose-body",
+    iced_cube::formatting_toolbar::LINK_FIELD,
+];
 
 impl Operation for Focus {
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
@@ -29,7 +36,7 @@ impl Operation for Focus {
         let [search, find] = IDS.get_or_init(|| [Id::new("search"), Id::new("find-message")]);
         self.search |= id == Some(search);
         self.find |= id == Some(find);
-        static COMPOSE_IDS: std::sync::OnceLock<[Id; 5]> = std::sync::OnceLock::new();
+        static COMPOSE_IDS: std::sync::OnceLock<[Id; 6]> = std::sync::OnceLock::new();
         if let Some(index) = COMPOSE_IDS
             .get_or_init(|| COMPOSE_FIELDS.map(Id::new))
             .iter()
