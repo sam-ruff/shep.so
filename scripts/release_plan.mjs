@@ -16,7 +16,7 @@ export async function planRelease(source, release) {
     throw new Error('Release analysis returned an invalid version');
   }
   return { schema: 1, source, scope: 'desktop', version,
-    targets: ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc'] };
+    targets: ['x86_64-unknown-linux-gnu'] };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

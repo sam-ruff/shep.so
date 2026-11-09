@@ -289,13 +289,12 @@ class ReleasePackaging(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     verify.verify(archive, skip_install=True)
 
-    def test_assembly_requires_both_platforms_and_checks_each_original_sidecar(self):
-        self.package()
+    def test_assembly_requires_released_platforms_and_checks_each_original_sidecar(self):
         with self.assertRaises(ValueError):
             release.assemble("1.2.3", SOURCE, self.root)
-        windows = self.package(WINDOWS)
+        linux = self.package()
         release.assemble("1.2.3", SOURCE, self.root)
-        (windows.parent / (windows.name + ".sha256")).write_text(f"{'0' * 64}  {windows.name}\n")
+        (linux.parent / (linux.name + ".sha256")).write_text(f"{'0' * 64}  {linux.name}\n")
         with self.assertRaises(subprocess.CalledProcessError):
             release.assemble("1.2.3", SOURCE, self.root,
                              run=lambda command, check=True, **kwargs: subprocess.run(command, check=check, **kwargs, capture_output=True))

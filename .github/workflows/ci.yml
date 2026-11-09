@@ -60,10 +60,14 @@ jobs:
             runner: [self-hosted, sophie]
             target: x86_64-unknown-linux-gnu
             python: python3
-          - platform: windows
-            runner: [self-hosted, Windows, X64]
-            target: x86_64-pc-windows-msvc
-            python: python
+          # Windows is off while the pool's Windows clones cannot start a runner. To restore it, add
+          # this entry back and put Windows back in RELEASED_TARGETS (scripts/release.py), the
+          # targets in scripts/release_plan.mjs and scripts/release_ci.py, and the
+          # desktop-release-windows download in release.yml.
+          # - platform: windows
+          #   runner: [self-hosted, Windows, X64]
+          #   target: x86_64-pc-windows-msvc
+          #   python: python
     runs-on: ${{ matrix.runner }}
     # Linux runs unit tests, the benchmark build and the full native suite in sequence; the
     # suite alone passed 36 minutes on 18 September 2026 when the 120 minute cap cancelled it.

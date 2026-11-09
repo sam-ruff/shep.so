@@ -30,6 +30,8 @@ TARGETS = {
     "x86_64-unknown-linux-gnu": ("linux", "x86_64", "shep"),
     "x86_64-pc-windows-msvc": ("windows", "x86_64", "shep.exe"),
 }
+# The targets a release must contain. Windows is left out while its CI is off (see ci.yml).
+RELEASED_TARGETS = ("x86_64-unknown-linux-gnu",)
 CONTENTS = (
     "README.md", "LICENSE", "licenses/libcurl.txt", "licenses/curl-rust.txt",
     "vendor/curl/LICENSE", "vendor/curl/README.shep.md",
@@ -246,7 +248,7 @@ def package(version, target, source, epoch, binary, root=ROOT):
 def assemble(version, source, root=ROOT, run=subprocess.run):
     dist = root / "dist"
     check_dist(dist, version, source)
-    for target in TARGETS:
+    for target in RELEASED_TARGETS:
         archive = dist / archive_name(version, target)
         if not archive.is_file():
             raise ValueError(f"Missing release archive: {archive.name}")

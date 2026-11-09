@@ -19,7 +19,7 @@ test('analysis cannot execute prepare, commit or publication plugins', async () 
   assert.equal(plan.version, '1.2.3');
   assert.equal(plan.source, source);
   assert.equal(plan.scope, 'desktop');
-  assert.deepEqual(plan.targets, ['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc']);
+  assert.deepEqual(plan.targets, ['x86_64-unknown-linux-gnu']);
 });
 
 test('no release remains explicit; invalid source cannot call the analyser', async () => {

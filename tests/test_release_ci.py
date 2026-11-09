@@ -20,7 +20,7 @@ class ReleaseEligibility(unittest.TestCase):
             "head_repository": {"full_name": "owner/mail"},
         }}
         self.plan = {"schema": 1, "source": SOURCE, "version": "1.2.3", "scope": "desktop",
-                     "targets": ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]}
+                     "targets": ["x86_64-unknown-linux-gnu"]}
 
     def test_successful_current_main_is_required(self):
         self.assertEqual(RELEASE.validate_run(self.event, "owner/mail", SOURCE), SOURCE)
@@ -36,10 +36,11 @@ class ReleaseEligibility(unittest.TestCase):
         with self.assertRaises(ValueError):
             RELEASE.validate_run(self.event, "owner/mail", "b" * 40)
 
-    def test_plan_is_bound_to_source_scope_and_both_platforms(self):
+    def test_plan_is_bound_to_source_scope_and_released_platforms(self):
         self.assertEqual(RELEASE.validate_plan(self.plan, SOURCE), "1.2.3")
         for key, value in [("schema", 2), ("source", "b" * 40), ("scope", "all-clients"),
-                           ("targets", ["x86_64-unknown-linux-gnu"]),
+                           ("targets", ["x86_64-pc-windows-msvc"]),
+                           ("targets", ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]),
                            ("version", "1.2.3\nrelease=yes"), ("version", 123)]:
             with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 RELEASE.validate_plan({**self.plan, key: value}, SOURCE)

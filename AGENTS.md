@@ -296,6 +296,8 @@ On 13 September Sam requested release CI so the install scripts can use publishe
 binaries. This supersedes the dormant desktop quality/release instruction.
 `.github/workflows/ci.yml` tests Linux and Windows and prepares desktop archives;
 `release.yml` publishes only artifacts from the successful current-main push.
+Since 9 November 2026 the Windows leg is temporarily off and releases are Linux only, because
+the pool's Windows clones could not start a runner; `ci.yml` lists what to restore.
 Linux uses `[self-hosted, sophie]`, Windows `[self-hosted, Windows, X64]`. The
 existing pool registers ephemeral runners when jobs start, so an empty runner
 list does not establish missing capacity. Fork pull requests cannot run on these

@@ -28,7 +28,7 @@ def validate_plan(plan, source):
     if (not isinstance(plan, dict) or plan.get("schema") != 1 or "version" not in plan
             or plan.get("source") != source or not SOURCE.fullmatch(source)
             or plan.get("scope") != "desktop"
-            or plan.get("targets") != ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]):
+            or plan.get("targets") != ["x86_64-unknown-linux-gnu"]):
         raise ValueError("Release plan does not match the tested desktop source")
     version = plan.get("version")
     if version is not None and (not isinstance(version, str) or not VERSION.fullmatch(version)):

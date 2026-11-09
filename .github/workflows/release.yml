@@ -50,13 +50,6 @@ jobs:
           path: dist
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
-        if: steps.plan.outputs.version != ''
-        with:
-          name: desktop-release-windows
-          path: dist
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         if: steps.plan.outputs.version != ''
         with:
