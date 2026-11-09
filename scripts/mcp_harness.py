@@ -40,6 +40,9 @@ _tray_spec.loader.exec_module(_tray_fixture)
 MEMORY_START_SECONDS = 20
 FILE_WORKSPACE_START_SECONDS = 60
 KILLED_EXIT_SECONDS = 30
+# A cold Zenity maps its picker in about 0.5 s when idle but can take over 5 s on
+# a loaded runner. Each picker step waits on an observed condition up to this bound.
+PICKER_SECONDS = 30
 
 
 LIVE_VARIABLES = ("SHEP_LIVE_IMAP_HOST", "SHEP_LIVE_IMAP_PORT", "SHEP_LIVE_IMAP_USER",
@@ -871,7 +874,7 @@ class Desktop:
                     or not path.parent.is_dir()
                     or (not path.is_file() and (not save or path.exists()))):
                 raise ValueError("Choose a fixture file inside this run's artifact directory.")
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + PICKER_SECONDS
         while True:
             try:
                 windows = self.command("xdotool", "search", "--onlyvisible", "--class", "zenity")
@@ -890,7 +893,7 @@ class Desktop:
         else:
             self.enter_picker_path(window, path)
             self.command("import", "-window", "root", "-quality", "90", str(self.directory / "native-file-picker.webp"))
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + PICKER_SECONDS
         confirm_after = time.monotonic()
         while True:
             try:
@@ -930,7 +933,7 @@ class Desktop:
         # A mapped GTK picker can still ignore its first location shortcut.
         # Verify text copied back by GTK before Return; the old clipboard owner
         # must exit, otherwise reading our own pasted value proves nothing.
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + PICKER_SECONDS
         while time.monotonic() < deadline:
             self.command("xdotool", "windowfocus", "--sync", window)
             self.command("xdotool", "key", "--clearmodifiers", "--delay", "1", "ctrl+l")

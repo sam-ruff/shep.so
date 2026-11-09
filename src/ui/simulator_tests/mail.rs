@@ -118,7 +118,11 @@ async fn search_mouse_focus_blocks_default_and_remapped_delete_chords() {
     h.key("Escape").await;
     h.key("alt+d").await;
     h.expect("total", 119).await;
-    h.expect("action_toast.label", "Deleted 1 message").await;
+    // The toast expires after six seconds of wall-clock time, which a starved
+    // run can spend before observing it, so check the message reached Trash.
+    h.click_at(85., 438.).await;
+    h.expect("folder", "Trash").await;
+    h.expect("total", 1).await;
 }
 
 /// `test_drafts_collapse_context_cancel_and_discard`

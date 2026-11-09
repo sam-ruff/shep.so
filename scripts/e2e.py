@@ -7939,7 +7939,13 @@ class NativeFlows(unittest.TestCase):
             # their reversals can be queued behind one another.
             drain = [wait(2000), wait(2000), wait(2000),
                      {**check("mail_pending", 1, "lte"), "timeout_ms": 5000}] + drain
+        # mail_pending leaves out a journaled Undo, whose restored row stays a
+        # placeholder (no drag, no flag) until the store reconciles its bulk
+        # effect. Agreeing first means the count is not read from a store answer
+        # that predates the Undo.
         return drain + [{**check("store_truth.agrees", True), "timeout_ms": 5000},
+                        {**check("store_truth.truth.bulk_effects", 0), "timeout_ms": 5000},
+                        {**check("store_truth.agrees", True), "timeout_ms": 5000},
                         {**check("drawn_rows.consistent", True), "timeout_ms": 5000}]
 
     def page_refilled(self, total):
