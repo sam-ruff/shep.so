@@ -640,10 +640,10 @@ impl App {
     fn open_button(&self, padding: [u16; 2]) -> Element<'_, super::Message> {
         let state = &self.attachment_preview;
         let openable = state.target.is_some()
-            && !state
+            && state
                 .preview
                 .as_ref()
-                .is_some_and(|preview| !preview.openable());
+                .is_none_or(|preview| preview.openable());
         button(
             row![
                 icon_bright("external", 18.),
