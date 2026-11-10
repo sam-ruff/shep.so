@@ -215,6 +215,13 @@ class ReleasePackaging(unittest.TestCase):
             with self.subTest(tracked=tracked, untracked=untracked), self.assertRaises(ValueError):
                 release.verify_source_tree(self.root, run)
 
+    def test_first_release_changelog_may_be_untracked(self):
+        def run(command, **kwargs):
+            output = "" if command[1] == "diff" else "CHANGELOG.md\n"
+            return subprocess.CompletedProcess(command, 0, output)
+
+        release.verify_source_tree(self.root, run)
+
     def test_verifier_rejects_wrong_executable_architecture_even_with_fresh_checksums(self):
         binary = self.root / "wrong-platform"
         binary.write_bytes(executable(WINDOWS))

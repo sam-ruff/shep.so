@@ -124,7 +124,8 @@ def verify_source_tree(root, run=subprocess.run):
                   check=True, text=True, stdout=subprocess.PIPE).stdout.splitlines()
     untracked = run(["git", "ls-files", "--others", "--exclude-standard"], cwd=root,
                     check=True, text=True, stdout=subprocess.PIPE).stdout.splitlines()
-    if set(tracked) - {*VERSION_FILES, "CHANGELOG.md"} or untracked:
+    # The first release creates CHANGELOG.md, so it may still be untracked.
+    if set(tracked) - {*VERSION_FILES, "CHANGELOG.md"} or set(untracked) - {"CHANGELOG.md"}:
         raise ValueError("Release source has changes outside the version/changelog preparation")
     for path in set(tracked) & set(VERSION_FILES):
         original = run(["git", "show", f"HEAD:{path}"], cwd=root,
