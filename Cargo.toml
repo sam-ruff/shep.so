@@ -6,7 +6,7 @@ exclude = ["backend", "flutter/rust"]
 
 [package]
 name = "shep"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.89"
 description = "A calm email and calendar client with excellent mouse and keyboard support"
